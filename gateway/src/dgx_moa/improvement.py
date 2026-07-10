@@ -17,11 +17,46 @@ def _read(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(path.read_text()))
 
 
+def statistics(result: dict[str, Any]) -> dict[str, Any]:
+    tasks = cast(list[dict[str, Any]], result.get("tasks", []))
+    failures = [item for task in tasks for item in task.get("failure_classes", [])]
+    known_tokens = [
+        int(task["input_tokens"]) for task in tasks if isinstance(task.get("input_tokens"), int)
+    ]
+    failure_tasks = [task for task in tasks if task.get("failure_classes")]
+    return {
+        "failure_frequency": {item: failures.count(item) for item in sorted(set(failures))},
+        "failure_impact_tasks": sum(not task.get("task_success") for task in tasks),
+        "token_waste": sum(known_tokens) if len(known_tokens) == len(tasks) else None,
+        "time_waste_seconds": sum(float(task["wall_clock_seconds"]) for task in failure_tasks),
+        "review_rejection_rate": (
+            sum(int(task.get("reviewer_rejections", 0)) for task in tasks) / len(tasks)
+            if tasks
+            else 0
+        ),
+        "replan_rate": sum(int(task.get("replans", 0)) for task in tasks) / len(tasks)
+        if tasks
+        else 0,
+        "route_inefficiency": None,
+        "false_completion_rate": sum(
+            bool(task.get("task_success")) and not bool(task.get("completion_evidence"))
+            for task in tasks
+        )
+        / len(tasks)
+        if tasks
+        else 0,
+        "profile_switch_failure_rate": None,
+        "context_overflow_frequency": failures.count("CONTEXT_OVERFLOW"),
+    }
+
+
 def mine(benchmark: Path, output: Path) -> dict[str, Any]:
     result = _read(benchmark)
-    summary = result["summary"]
-    failures = summary["failure_class_distribution"]
-    failure_class, affected = max(failures.items(), key=lambda item: item[1], default=("NONE", 0))
+    evidence = statistics(result)
+    failures = evidence["failure_frequency"]
+    failure_class, affected = max(
+        failures.items(), key=lambda item: (item[1], item[0]), default=("NONE", 0)
+    )
     proposal = {
         "schema_version": "improvement-proposal-v1",
         "proposal_id": "IMP-2026-0001",
@@ -30,9 +65,10 @@ def mine(benchmark: Path, output: Path) -> dict[str, Any]:
         "evidence": {
             "affected_tasks": affected,
             "failure_class": failure_class,
-            "wasted_input_tokens": None,
-            "wasted_seconds": None,
+            "wasted_input_tokens": evidence["token_waste"],
+            "wasted_seconds": evidence["time_waste_seconds"],
         },
+        "statistics": evidence,
         "suspected_layer": "controller",
         "proposed_change": (
             "Block normalized equivalent failed tool calls before another executor turn."

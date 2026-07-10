@@ -6,33 +6,35 @@ import pytest
 from dgx_moa.adapters import register
 from dgx_moa.benchmark import TASKS, summarize
 from dgx_moa.dataset import build
-from dgx_moa.improvement import compare, mine
+from dgx_moa.improvement import compare, mine, statistics
 
 
 def test_benchmark_shape_and_improvement_tools(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert len(TASKS) == 10
     benchmark = tmp_path / "baseline.json"
+    tasks = [
+        {
+            "task_success": True,
+            "wall_clock_seconds": 1.0,
+            "tool_calls": 1,
+            "failure_classes": ["REPEATED_ACTION"],
+            "expected_route": "fast",
+            "reviewer_rejections": 0,
+            "judge_invocations": 0,
+        }
+    ]
     benchmark.write_text(
         json.dumps(
             {
-                "summary": summarize(
-                    [
-                        {
-                            "task_success": True,
-                            "wall_clock_seconds": 1.0,
-                            "tool_calls": 1,
-                            "failure_classes": ["REPEATED_ACTION"],
-                            "expected_route": "fast",
-                            "reviewer_rejections": 0,
-                            "judge_invocations": 0,
-                        }
-                    ]
-                )
+                "summary": summarize(tasks),
+                "tasks": tasks,
             }
         )
     )
     proposal = mine(benchmark, tmp_path / "proposal.json")
     assert proposal["proposal_id"] == "IMP-2026-0001"
+    assert proposal["statistics"]["failure_frequency"] == {"REPEATED_ACTION": 1}
+    assert statistics({"tasks": []})["replan_rate"] == 0
     candidate = tmp_path / "candidate.json"
     candidate.write_text(json.dumps({"summary": summarize([])}))
     verdict = compare(benchmark, candidate, tmp_path / "comparison.json")
