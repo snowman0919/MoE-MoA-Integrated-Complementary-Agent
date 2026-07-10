@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 
 import httpx
@@ -202,7 +203,7 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer test-secret"},
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "stream"},
             json={
                 "model": "dgx-moa-agent",
                 "stream": True,
@@ -212,6 +213,12 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         assert response.status_code == 200
         assert '"content":"ok"' in response.text
         assert "data: [DONE]" in response.text
+        trace = json.loads((settings.state_db.parent.parent / "traces/stream.jsonl").read_text())
+        assert {event["event_type"] for event in trace["events"]} >= {
+            "request_received",
+            "route_selected",
+            "tool_call_requested",
+        }
 
 
 def test_api_validation(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

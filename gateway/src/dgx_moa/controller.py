@@ -169,6 +169,7 @@ class Controller:
             state.phase = Phase.AWAITING_HEAVY_JUDGE
         elif completion_ready(state):
             state.phase = Phase.COMPLETED
+            self.store.event(state.session_id, "task_completed", state.completion_evidence)
         self.store.save(state)
 
     def role_context(self, role: str, state: SessionState, observation: str) -> dict[str, Any]:
@@ -313,6 +314,9 @@ class Controller:
 
     async def review(self, state: SessionState, observation: str) -> dict[str, Any]:
         state.phase = Phase.REVIEWING
+        self.store.event(
+            state.session_id, "review_started", {"observation": str(redact(observation))[:500]}
+        )
         request = {
             "model": self.settings.models["reviewer"].served_name,
             "messages": [
@@ -356,6 +360,9 @@ class Controller:
 
     async def judge(self, state: SessionState, observation: str) -> dict[str, Any]:
         state.phase = Phase.HEAVY_REVIEW
+        self.store.event(
+            state.session_id, "judge_requested", {"observation": str(redact(observation))[:500]}
+        )
         schema = JudgeVerdict.model_json_schema()
         request = {
             "model": self.settings.models["judge"].served_name,
@@ -384,6 +391,7 @@ class Controller:
         state.heavy_switch_count += 1
         if verdict.verdict == "blocked":
             state.phase = Phase.BLOCKED
+            self.store.event(state.session_id, "task_blocked", {"reason": "judge_blocked"})
         elif verdict.verdict == "accept" and verdict.completion_allowed:
             state.phase = Phase.COMPLETED
         else:

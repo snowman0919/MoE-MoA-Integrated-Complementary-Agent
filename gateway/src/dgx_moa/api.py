@@ -149,11 +149,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         raw = body.model_dump(exclude_none=True)
         try:
             state = request.app.state.controller.session(session_id, raw["messages"])
+            request.app.state.store.event(
+                session_id,
+                "request_received",
+                {"stream": body.stream, "task_id": str(body.metadata.get("task_id", ""))},
+            )
             request.app.state.controller.select_route(state, body.metadata)
             if body.metadata.get("no_progress"):
                 request.app.state.controller.note_no_progress(state)
             prepared = await request.app.state.controller.prepare_executor(state, raw)
             if body.stream:
+                request.app.state.traces.record(
+                    state, task_id=str(body.metadata.get("task_id", ""))
+                )
                 return StreamingResponse(
                     request.app.state.provider.stream(
                         "executor", configured.models["executor"], prepared
