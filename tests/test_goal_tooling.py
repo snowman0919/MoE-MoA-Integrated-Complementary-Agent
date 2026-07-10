@@ -5,7 +5,7 @@ import json
 import pytest
 from dgx_moa.adapters import register
 from dgx_moa.benchmark import TASKS, summarize
-from dgx_moa.dataset import build
+from dgx_moa.dataset import build, quality_tier
 from dgx_moa.improvement import compare, mine, statistics
 
 
@@ -73,3 +73,12 @@ def test_dataset_and_adapter_promotion_guard(tmp_path) -> None:  # type: ignore[
     path.write_text(json.dumps(metadata))
     with pytest.raises(ValueError, match="human approval"):
         register(path, tmp_path / "adapters")
+
+
+def test_dataset_quality_tiers() -> None:
+    assert quality_tier({"human_correction": {"fix": "x"}}) == "Gold"
+    assert (
+        quality_tier({"final_status": "completed", "review_outcome": {"status": "approved"}})
+        == "Silver"
+    )
+    assert quality_tier({"failure_classification": {"TEST_FAILURE": 1}}) == "Negative"
