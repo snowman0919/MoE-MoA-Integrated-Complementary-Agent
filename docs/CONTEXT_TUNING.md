@@ -20,3 +20,8 @@ Current resident evidence:
 
 These are the current stable baseline, not guessed maxima. Larger candidates
 require larger KV reservations and a fresh profile-level three-restart trial.
+
+`DGX_MOA_<ROLE>_KV_CACHE_MEMORY_BYTES` overrides the role reservation for an
+isolated calibration retry. It does not establish a new context limit or replace
+the required readiness/headroom validation; the judge default remains
+`4000000000` bytes until a lower value is measured.
