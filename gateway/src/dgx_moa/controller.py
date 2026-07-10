@@ -20,7 +20,10 @@ class DuplicateFailedCall(ValueError):
 
 
 def fingerprint(call: dict[str, Any]) -> str:
-    normalized_call = call.get("function", call)
+    normalized_call = dict(call.get("function", call))
+    arguments = normalized_call.get("arguments")
+    if isinstance(arguments, str):
+        normalized_call["arguments"] = arguments.strip()
     normalized = json.dumps(normalized_call, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(normalized.encode()).hexdigest()
 

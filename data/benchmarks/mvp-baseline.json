@@ -13,7 +13,7 @@
       "standard": 6
     },
     "task_success_rate": 1.0,
-    "time_per_successful_task": 0.0315982,
+    "time_per_successful_task": 0.0273758,
     "tokens_per_successful_task": null,
     "tool_calls_per_successful_task": 1.2
   },
@@ -39,7 +39,7 @@
       "tests_passed": true,
       "tool_calls": 1,
       "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.018924
+      "wall_clock_seconds": 0.019358
     },
     {
       "completion_evidence": "validation commands passed",
@@ -62,7 +62,7 @@
       "tests_passed": true,
       "tool_calls": 1,
       "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.027332
+      "wall_clock_seconds": 0.021307
     },
     {
       "completion_evidence": "validation commands passed",
@@ -85,7 +85,7 @@
       "tests_passed": true,
       "tool_calls": 1,
       "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.032923
+      "wall_clock_seconds": 0.025553
     },
     {
       "completion_evidence": "validation commands passed",
@@ -108,7 +108,7 @@
       "tests_passed": true,
       "tool_calls": 1,
       "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.033382
+      "wall_clock_seconds": 0.02141
     },
     {
       "completion_evidence": "validation commands passed",
@@ -131,7 +131,7 @@
       "tests_passed": true,
       "tool_calls": 1,
       "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.033937
+      "wall_clock_seconds": 0.035136
     },
     {
       "completion_evidence": "validation commands passed",
@@ -154,7 +154,7 @@
       "tests_passed": true,
       "tool_calls": 1,
       "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.02652
+      "wall_clock_seconds": 0.027265
     },
     {
       "completion_evidence": "validation commands passed",
@@ -179,7 +179,7 @@
       "tests_passed": true,
       "tool_calls": 2,
       "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.035654
+      "wall_clock_seconds": 0.030334
     },
     {
       "completion_evidence": "validation commands passed",
@@ -204,7 +204,7 @@
       "tests_passed": true,
       "tool_calls": 2,
       "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.037181
+      "wall_clock_seconds": 0.029895
     },
     {
       "completion_evidence": "validation commands passed",
@@ -227,7 +227,7 @@
       "tests_passed": true,
       "tool_calls": 1,
       "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.033263
+      "wall_clock_seconds": 0.028756
     },
     {
       "completion_evidence": "validation commands passed",
@@ -250,7 +250,7 @@
       "tests_passed": true,
       "tool_calls": 1,
       "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.036866
+      "wall_clock_seconds": 0.034744
     }
   ]
 }

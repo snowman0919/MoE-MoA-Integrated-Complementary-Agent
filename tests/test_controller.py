@@ -37,6 +37,12 @@ def test_duplicate_failed_call_ignores_call_id(settings, stub_provider: StubProv
     )
 
 
+def test_fingerprint_ignores_argument_edge_whitespace() -> None:
+    first = {"function": {"name": "shell", "arguments": '{"cmd":"false"}'}}
+    second = {"function": {"name": "shell", "arguments": '  {"cmd":"false"}  '}}
+    assert fingerprint(first) == fingerprint(second)
+
+
 def test_no_progress_and_step_budget(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     store = StateStore(settings.state_db)
     controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
