@@ -110,3 +110,13 @@ def test_metadata_routes_heavy_and_gates_completion(settings, stub_provider: Stu
     controller.apply_metadata(state, {"public_api": True})
     assert state.phase == Phase.AWAITING_HEAVY_JUDGE
     assert state.judge_status == "eligible"
+
+
+def test_repository_identity_cannot_change_within_session(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="repo")
+    controller.select_route(state, {"repository": {"workspace": "/one", "commit": "a"}})
+    with pytest.raises(ValueError, match="repository identity changed"):
+        controller.select_route(state, {"repository": {"workspace": "/two", "commit": "b"}})

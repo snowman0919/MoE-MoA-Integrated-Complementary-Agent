@@ -39,6 +39,66 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert stub_provider.calls == ["planner", "executor"]
 
 
+def test_tool_result_continuation_uses_same_session(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def continue_after_tool(role, model, request):  # type: ignore[no-untyped-def]
+        if role == "executor" and any(
+            message.get("role") == "tool" for message in request["messages"]
+        ):
+            return {
+                "id": "chatcmpl-final",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "tool result received"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"total_tokens": 4},
+            }
+        return await original(role, model, request)
+
+    stub_provider.complete = continue_after_tool  # type: ignore[method-assign]
+    headers = {"Authorization": "Bearer test-secret", "X-Session-ID": "continued"}
+    with client_with_stub(settings, stub_provider) as client:
+        first = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "work"}]},
+        )
+        call = first.json()["choices"][0]["message"]
+        second = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [
+                    {"role": "user", "content": "work"},
+                    call,
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-preserved",
+                        "content": '{"tool_name":"shell","stdout":"ok","exit_code":0}',
+                    },
+                ],
+            },
+        )
+        assert second.status_code == 200
+        assert second.json()["choices"][0]["message"]["content"] == "tool result received"
+        state = client.app.state.store.get("continued")
+        assert state and state.tool_results == [
+            {
+                "tool_name": "shell",
+                "arguments": {},
+                "stdout": "ok",
+                "stderr": "",
+                "exit_code": 0,
+                "duration_ms": 0,
+                "truncated": False,
+            }
+        ]
+
+
 def test_auth_enabled_invalid_key_returns_401(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     with client_with_stub(settings, stub_provider) as client:
         response = client.get("/v1/models", headers={"Authorization": "Bearer definitely-wrong"})

@@ -92,7 +92,7 @@ below. Heavy-judge validation is appended after its first isolated startup.
 
 ## Development Branch Validation
 
-- `uv run pytest -q`: exit `0`; `59 passed`, one third-party TestClient warning.
+- `uv run pytest -q`: exit `0`; `62 passed`, one third-party TestClient warning.
 - `uv run ruff check gateway/src tests`: exit `0`.
 - `uv run mypy`: exit `0`; `23` source files.
 - `scripts/run-mvp-benchmark.sh`: exit `0`; `10/10` synthetic fixture tasks
@@ -101,10 +101,12 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `scripts/build-training-dataset.sh`, and `scripts/export-agentic-traces.sh`:
   exit `0`.
 - `systemd-analyze --user verify systemd/*`: exit `0`.
-- Read-only user-service check on `2026-07-11`: `dgx-moa.target` and
-  `dgx-moa-resident.target` were `inactive`; `dgx-moa-gateway.service` reported
-  `active`, but `127.0.0.1:9000` refused `/healthz` and `/readyz`. No service
-  restart or profile switch was performed from this development checkout.
+- Read-only user-service check on `2026-07-11`: gateway `/healthz` returned
+  `200` on configured tailnet address `100.125.239.72:9000`; loopback is not
+  configured for this gateway. `/readyz` returned `503` because profile state
+  was `failed` after judge startup hit the 16 GiB headroom gate (`exit 70`).
+  Executor rollback was still loading; no service restart or profile switch was
+  performed from this development checkout.
 
 ## Tailscale
 

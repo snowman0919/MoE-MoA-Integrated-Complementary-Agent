@@ -118,6 +118,12 @@ def test_profile_state_and_failed_switch(monkeypatch, tmp_path) -> None:  # type
     assert manager.current()["active_profile"] == "stopped"
 
 
+def test_unrecoverable_profile_failure_is_degraded(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    manager = ProfileManager(tmp_path / "run", tmp_path)
+    manager.record("resident")
+    assert manager.failed("judge", "restore failed")["status"] == "degraded"
+
+
 def test_profile_checkpoint(tmp_path) -> None:  # type: ignore[no-untyped-def]
     path = tmp_path / "state.db"
     with sqlite3.connect(path) as database:
