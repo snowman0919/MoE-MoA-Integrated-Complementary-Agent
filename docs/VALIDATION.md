@@ -118,6 +118,9 @@ below. Heavy-judge validation is appended after its first isolated startup.
   in the same session with HTTP `200`, no additional tool call, and
   `{"output":"validation fixture"}`; usage `629` prompt / `7` completion /
   `636` total tokens.
+- `scripts/validate-opencode-loop.sh` against recovered resident services:
+  exit `0`; session `opencode-loop-1783701252`; authenticated discovery,
+  tool-result continuation, and streaming passed.
 
 ## Tailscale
 

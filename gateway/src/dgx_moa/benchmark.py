@@ -20,6 +20,7 @@ class BenchmarkTask:
     request: str
     allowed_paths: tuple[str, ...]
     validation_commands: tuple[str, ...]
+    acceptance_criteria: tuple[str, ...]
     expected_route: str
     heavy_judge_eligible: bool
     time_budget_seconds: int = 30
@@ -30,31 +31,66 @@ PYTHON = ("python app.py",)
 APP = ("app.py",)
 TASKS = (
     BenchmarkTask(
-        "analysis", "Inspect repository", ("README.md",), ("test -f README.md",), "fast", False
+        "analysis",
+        "Inspect repository",
+        ("README.md",),
+        ("test -f README.md",),
+        ("README exists",),
+        "fast",
+        False,
     ),
-    BenchmarkTask("bug-one", "Fix one file", APP, PYTHON, "fast", False),
-    BenchmarkTask("bug-two", "Fix another one file", APP, PYTHON, "fast", False),
+    BenchmarkTask("bug-one", "Fix one file", APP, PYTHON, ("app runs",), "fast", False),
+    BenchmarkTask("bug-two", "Fix another one file", APP, PYTHON, ("app runs",), "fast", False),
     BenchmarkTask(
         "regression",
         "Add regression test",
         ("test_app.py",),
         ("python test_app.py",),
+        ("regression test runs",),
         "standard",
         False,
     ),
     BenchmarkTask(
-        "feature-a", "Add two-file feature", ("app.py", "lib.py"), PYTHON, "standard", False
+        "feature-a",
+        "Add two-file feature",
+        ("app.py", "lib.py"),
+        PYTHON,
+        ("app runs",),
+        "standard",
+        False,
     ),
     BenchmarkTask(
-        "feature-b", "Add multi-file feature", ("app.py", "lib.py"), PYTHON, "standard", False
+        "feature-b",
+        "Add multi-file feature",
+        ("app.py", "lib.py"),
+        PYTHON,
+        ("app runs",),
+        "standard",
+        False,
     ),
-    BenchmarkTask("missing-path", "Recover from missing path", APP, PYTHON, "standard", False),
     BenchmarkTask(
-        "repeat-failure", "Recover from repeated failure", APP, PYTHON, "standard", False
+        "missing-path", "Recover from missing path", APP, PYTHON, ("app runs",), "standard", False
     ),
-    BenchmarkTask("ambiguous", "Clarify scope then change", APP, PYTHON, "standard", False),
     BenchmarkTask(
-        "review-correction", "Correct reviewer rejection", APP, PYTHON, "escalation", True
+        "repeat-failure",
+        "Recover from repeated failure",
+        APP,
+        PYTHON,
+        ("app runs",),
+        "standard",
+        False,
+    ),
+    BenchmarkTask(
+        "ambiguous", "Clarify scope then change", APP, PYTHON, ("app runs",), "standard", False
+    ),
+    BenchmarkTask(
+        "review-correction",
+        "Correct reviewer rejection",
+        APP,
+        PYTHON,
+        ("app runs",),
+        "escalation",
+        True,
     ),
 )
 
@@ -150,8 +186,14 @@ def _run_task(task: BenchmarkTask, trace_dir: Path) -> dict[str, Any]:
     )
     return {
         "task_id": task.task_id,
+        "user_request": task.request,
         "fixture_repository": "generated",
         "starting_commit": starting_commit,
+        "allowed_paths": list(task.allowed_paths),
+        "validation_commands": list(task.validation_commands),
+        "acceptance_criteria": list(task.acceptance_criteria),
+        "time_budget_seconds": task.time_budget_seconds,
+        "step_budget": task.step_budget,
         "expected_route": task.expected_route,
         "heavy_judge_eligible": task.heavy_judge_eligible,
         "task_success": tests_passed,
@@ -170,7 +212,7 @@ def _run_task(task: BenchmarkTask, trace_dir: Path) -> dict[str, Any]:
         "judge_invocations": int(task.heavy_judge_eligible),
         "files_changed": len(changed.splitlines()),
         "meaningful_diff_lines": changed_lines,
-        "unnecessary_diff_lines": 0,
+        "unnecessary_diff_lines": None,
         "failure_classes": failures,
     }
 

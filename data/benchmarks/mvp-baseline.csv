@@ -1,11 +1,11 @@
-completion_evidence,duplicate_actions,expected_route,failure_classes,files_changed,fixture_repository,heavy_judge_eligible,input_tokens,invalid_tool_calls,judge_invocations,meaningful_diff_lines,output_tokens,replans,reviewer_rejections,starting_commit,task_id,task_success,tests_passed,tool_calls,unnecessary_diff_lines,wall_clock_seconds
-validation commands passed,0,fast,,0,generated,False,,0,0,0,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,analysis,True,True,1,0,0.018924
-validation commands passed,0,fast,,1,generated,False,,0,0,2,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,bug-one,True,True,1,0,0.027332
-validation commands passed,0,fast,,1,generated,False,,0,0,2,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,bug-two,True,True,1,0,0.032923
-validation commands passed,0,standard,,1,generated,False,,0,0,1,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,regression,True,True,1,0,0.033382
-validation commands passed,0,standard,,2,generated,False,,0,0,4,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,feature-a,True,True,1,0,0.033937
-validation commands passed,0,standard,,2,generated,False,,0,0,4,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,feature-b,True,True,1,0,0.02652
-validation commands passed,0,standard,NONEXISTENT_PATH,1,generated,False,,0,0,2,,1,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,missing-path,True,True,2,0,0.035654
-validation commands passed,1,standard,REPEATED_ACTION,1,generated,False,,0,0,2,,1,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,repeat-failure,True,True,2,0,0.037181
-validation commands passed,0,standard,,1,generated,False,,0,0,2,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,ambiguous,True,True,1,0,0.033263
-validation commands passed,0,escalation,,1,generated,True,,0,1,2,,0,1,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,review-correction,True,True,1,0,0.036866
+acceptance_criteria,allowed_paths,completion_evidence,duplicate_actions,expected_route,failure_classes,files_changed,fixture_repository,heavy_judge_eligible,input_tokens,invalid_tool_calls,judge_invocations,meaningful_diff_lines,output_tokens,replans,reviewer_rejections,starting_commit,step_budget,task_id,task_success,tests_passed,time_budget_seconds,tool_calls,unnecessary_diff_lines,user_request,validation_commands,wall_clock_seconds
+['README exists'],['README.md'],validation commands passed,0,fast,,0,generated,False,,0,0,0,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,8,analysis,True,True,30,1,,Inspect repository,['test -f README.md'],0.052421
+['app runs'],['app.py'],validation commands passed,0,fast,,1,generated,False,,0,0,2,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,8,bug-one,True,True,30,1,,Fix one file,['python app.py'],0.026183
+['app runs'],['app.py'],validation commands passed,0,fast,,1,generated,False,,0,0,2,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,8,bug-two,True,True,30,1,,Fix another one file,['python app.py'],0.024073
+['regression test runs'],['test_app.py'],validation commands passed,0,standard,,1,generated,False,,0,0,1,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,8,regression,True,True,30,1,,Add regression test,['python test_app.py'],0.021653
+['app runs'],"['app.py', 'lib.py']",validation commands passed,0,standard,,2,generated,False,,0,0,4,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,8,feature-a,True,True,30,1,,Add two-file feature,['python app.py'],0.029631
+['app runs'],"['app.py', 'lib.py']",validation commands passed,0,standard,,2,generated,False,,0,0,4,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,8,feature-b,True,True,30,1,,Add multi-file feature,['python app.py'],0.026659
+['app runs'],['app.py'],validation commands passed,0,standard,NONEXISTENT_PATH,1,generated,False,,0,0,2,,1,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,8,missing-path,True,True,30,2,,Recover from missing path,['python app.py'],0.024265
+['app runs'],['app.py'],validation commands passed,1,standard,REPEATED_ACTION,1,generated,False,,0,0,2,,1,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,8,repeat-failure,True,True,30,2,,Recover from repeated failure,['python app.py'],0.029919
+['app runs'],['app.py'],validation commands passed,0,standard,,1,generated,False,,0,0,2,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,8,ambiguous,True,True,30,1,,Clarify scope then change,['python app.py'],0.032404
+['app runs'],['app.py'],validation commands passed,0,escalation,,1,generated,True,,0,1,2,,0,1,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,8,review-correction,True,True,30,1,,Correct reviewer rejection,['python app.py'],0.028588

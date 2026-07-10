@@ -13,12 +13,18 @@
       "standard": 6
     },
     "task_success_rate": 1.0,
-    "time_per_successful_task": 0.0315982,
+    "time_per_successful_task": 0.0295796,
     "tokens_per_successful_task": null,
     "tool_calls_per_successful_task": 1.2
   },
   "tasks": [
     {
+      "acceptance_criteria": [
+        "README exists"
+      ],
+      "allowed_paths": [
+        "README.md"
+      ],
       "completion_evidence": "validation commands passed",
       "duplicate_actions": 0,
       "expected_route": "fast",
@@ -34,14 +40,26 @@
       "replans": 0,
       "reviewer_rejections": 0,
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
+      "step_budget": 8,
       "task_id": "analysis",
       "task_success": true,
       "tests_passed": true,
+      "time_budget_seconds": 30,
       "tool_calls": 1,
-      "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.018924
+      "unnecessary_diff_lines": null,
+      "user_request": "Inspect repository",
+      "validation_commands": [
+        "test -f README.md"
+      ],
+      "wall_clock_seconds": 0.052421
     },
     {
+      "acceptance_criteria": [
+        "app runs"
+      ],
+      "allowed_paths": [
+        "app.py"
+      ],
       "completion_evidence": "validation commands passed",
       "duplicate_actions": 0,
       "expected_route": "fast",
@@ -57,14 +75,26 @@
       "replans": 0,
       "reviewer_rejections": 0,
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
+      "step_budget": 8,
       "task_id": "bug-one",
       "task_success": true,
       "tests_passed": true,
+      "time_budget_seconds": 30,
       "tool_calls": 1,
-      "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.027332
+      "unnecessary_diff_lines": null,
+      "user_request": "Fix one file",
+      "validation_commands": [
+        "python app.py"
+      ],
+      "wall_clock_seconds": 0.026183
     },
     {
+      "acceptance_criteria": [
+        "app runs"
+      ],
+      "allowed_paths": [
+        "app.py"
+      ],
       "completion_evidence": "validation commands passed",
       "duplicate_actions": 0,
       "expected_route": "fast",
@@ -80,14 +110,26 @@
       "replans": 0,
       "reviewer_rejections": 0,
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
+      "step_budget": 8,
       "task_id": "bug-two",
       "task_success": true,
       "tests_passed": true,
+      "time_budget_seconds": 30,
       "tool_calls": 1,
-      "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.032923
+      "unnecessary_diff_lines": null,
+      "user_request": "Fix another one file",
+      "validation_commands": [
+        "python app.py"
+      ],
+      "wall_clock_seconds": 0.024073
     },
     {
+      "acceptance_criteria": [
+        "regression test runs"
+      ],
+      "allowed_paths": [
+        "test_app.py"
+      ],
       "completion_evidence": "validation commands passed",
       "duplicate_actions": 0,
       "expected_route": "standard",
@@ -103,14 +145,27 @@
       "replans": 0,
       "reviewer_rejections": 0,
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
+      "step_budget": 8,
       "task_id": "regression",
       "task_success": true,
       "tests_passed": true,
+      "time_budget_seconds": 30,
       "tool_calls": 1,
-      "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.033382
+      "unnecessary_diff_lines": null,
+      "user_request": "Add regression test",
+      "validation_commands": [
+        "python test_app.py"
+      ],
+      "wall_clock_seconds": 0.021653
     },
     {
+      "acceptance_criteria": [
+        "app runs"
+      ],
+      "allowed_paths": [
+        "app.py",
+        "lib.py"
+      ],
       "completion_evidence": "validation commands passed",
       "duplicate_actions": 0,
       "expected_route": "standard",
@@ -126,14 +181,27 @@
       "replans": 0,
       "reviewer_rejections": 0,
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
+      "step_budget": 8,
       "task_id": "feature-a",
       "task_success": true,
       "tests_passed": true,
+      "time_budget_seconds": 30,
       "tool_calls": 1,
-      "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.033937
+      "unnecessary_diff_lines": null,
+      "user_request": "Add two-file feature",
+      "validation_commands": [
+        "python app.py"
+      ],
+      "wall_clock_seconds": 0.029631
     },
     {
+      "acceptance_criteria": [
+        "app runs"
+      ],
+      "allowed_paths": [
+        "app.py",
+        "lib.py"
+      ],
       "completion_evidence": "validation commands passed",
       "duplicate_actions": 0,
       "expected_route": "standard",
@@ -149,14 +217,26 @@
       "replans": 0,
       "reviewer_rejections": 0,
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
+      "step_budget": 8,
       "task_id": "feature-b",
       "task_success": true,
       "tests_passed": true,
+      "time_budget_seconds": 30,
       "tool_calls": 1,
-      "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.02652
+      "unnecessary_diff_lines": null,
+      "user_request": "Add multi-file feature",
+      "validation_commands": [
+        "python app.py"
+      ],
+      "wall_clock_seconds": 0.026659
     },
     {
+      "acceptance_criteria": [
+        "app runs"
+      ],
+      "allowed_paths": [
+        "app.py"
+      ],
       "completion_evidence": "validation commands passed",
       "duplicate_actions": 0,
       "expected_route": "standard",
@@ -174,14 +254,26 @@
       "replans": 1,
       "reviewer_rejections": 0,
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
+      "step_budget": 8,
       "task_id": "missing-path",
       "task_success": true,
       "tests_passed": true,
+      "time_budget_seconds": 30,
       "tool_calls": 2,
-      "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.035654
+      "unnecessary_diff_lines": null,
+      "user_request": "Recover from missing path",
+      "validation_commands": [
+        "python app.py"
+      ],
+      "wall_clock_seconds": 0.024265
     },
     {
+      "acceptance_criteria": [
+        "app runs"
+      ],
+      "allowed_paths": [
+        "app.py"
+      ],
       "completion_evidence": "validation commands passed",
       "duplicate_actions": 1,
       "expected_route": "standard",
@@ -199,14 +291,26 @@
       "replans": 1,
       "reviewer_rejections": 0,
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
+      "step_budget": 8,
       "task_id": "repeat-failure",
       "task_success": true,
       "tests_passed": true,
+      "time_budget_seconds": 30,
       "tool_calls": 2,
-      "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.037181
+      "unnecessary_diff_lines": null,
+      "user_request": "Recover from repeated failure",
+      "validation_commands": [
+        "python app.py"
+      ],
+      "wall_clock_seconds": 0.029919
     },
     {
+      "acceptance_criteria": [
+        "app runs"
+      ],
+      "allowed_paths": [
+        "app.py"
+      ],
       "completion_evidence": "validation commands passed",
       "duplicate_actions": 0,
       "expected_route": "standard",
@@ -222,14 +326,26 @@
       "replans": 0,
       "reviewer_rejections": 0,
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
+      "step_budget": 8,
       "task_id": "ambiguous",
       "task_success": true,
       "tests_passed": true,
+      "time_budget_seconds": 30,
       "tool_calls": 1,
-      "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.033263
+      "unnecessary_diff_lines": null,
+      "user_request": "Clarify scope then change",
+      "validation_commands": [
+        "python app.py"
+      ],
+      "wall_clock_seconds": 0.032404
     },
     {
+      "acceptance_criteria": [
+        "app runs"
+      ],
+      "allowed_paths": [
+        "app.py"
+      ],
       "completion_evidence": "validation commands passed",
       "duplicate_actions": 0,
       "expected_route": "escalation",
@@ -245,12 +361,18 @@
       "replans": 0,
       "reviewer_rejections": 1,
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
+      "step_budget": 8,
       "task_id": "review-correction",
       "task_success": true,
       "tests_passed": true,
+      "time_budget_seconds": 30,
       "tool_calls": 1,
-      "unnecessary_diff_lines": 0,
-      "wall_clock_seconds": 0.036866
+      "unnecessary_diff_lines": null,
+      "user_request": "Correct reviewer rejection",
+      "validation_commands": [
+        "python app.py"
+      ],
+      "wall_clock_seconds": 0.028588
     }
   ]
 }
