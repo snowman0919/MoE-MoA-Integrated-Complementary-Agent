@@ -28,3 +28,9 @@ def test_trace_schema_and_secret_redaction(tmp_path) -> None:  # type: ignore[no
     trace = json.loads(path.read_text())
     assert set(trace) == TRACE_FIELDS
     assert "secret" not in trace["tool_observation"]
+
+
+def test_repeated_messages_are_deduplicated() -> None:
+    limits = Limits(max_retained_observations=3)
+    messages = [{"role": "tool", "content": "same"}] * 2
+    assert len(compress_messages(messages, limits)) == 1

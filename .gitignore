@@ -9,6 +9,8 @@ __pycache__/
 data/state/*.db*
 data/traces/*.jsonl
 data/benchmarks/*.json
+!data/benchmarks/mvp-baseline.json
+data/datasets/*.jsonl
 data/run/
 data/state/*-completion.json
 data/state/*-models.json

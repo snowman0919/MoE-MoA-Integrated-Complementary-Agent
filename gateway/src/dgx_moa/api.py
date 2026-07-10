@@ -19,6 +19,7 @@ from .providers import ModelProvider, validate_assistant_response
 from .schemas import ChatRequest, ProfileResponse
 from .security import admin_dependency, auth_dependency
 from .state import StateStore
+from .trace import TraceRecorder
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -34,6 +35,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.store = store
         app.state.provider = provider
         app.state.controller = Controller(configured, store, provider)
+        app.state.traces = TraceRecorder(configured.state_db.parent.parent / "traces", store)
         app.state.profiles = ProfileManager(
             configured.run_dir, Path(os.getenv("DGX_MOA_PROJECT_ROOT", "."))
         )
@@ -49,10 +51,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def readyz(request: Request) -> JSONResponse:
         profile_state = request.app.state.profiles.current()
         current = profile_state["active_profile"]
-        if profile_state["status"] == "transitioning":
+        if profile_state["status"] in {"transitioning", "degraded", "failed"}:
             return JSONResponse(
                 {
-                    "status": "transitioning",
+                    "status": profile_state["status"],
                     "from": profile_state.get("from", current),
                     "to": profile_state.get("to", "unknown"),
                 },
@@ -125,8 +127,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         x_session_id: str | None = Header(default=None),
     ) -> Response:
-        current_profile = request.app.state.profiles.current()["active_profile"]
-        if current_profile == "judge":
+        profile_state = request.app.state.profiles.current()
+        current_profile = profile_state["active_profile"]
+        if current_profile == "judge" or profile_state["status"] in {
+            "transitioning",
+            "failed",
+            "degraded",
+        }:
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "coding requests unavailable during heavy-judge profile",
@@ -140,6 +147,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         raw = body.model_dump(exclude_none=True)
         try:
             state = request.app.state.controller.session(session_id, raw["messages"])
+            request.app.state.controller.select_route(state, body.metadata)
             if body.metadata.get("no_progress"):
                 request.app.state.controller.note_no_progress(state)
             prepared = await request.app.state.controller.prepare_executor(state, raw)
@@ -158,6 +166,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if body.metadata.get("executor_complete") and "reviewer" in configured.models:
                 await request.app.state.controller.review(state, str(response))
                 request.app.state.controller.apply_metadata(state, body.metadata)
+            request.app.state.traces.record(state, task_id=str(body.metadata.get("task_id", "")))
             return JSONResponse(response, headers={"X-Session-ID": session_id})
         except DuplicateFailedCall as error:
             raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error

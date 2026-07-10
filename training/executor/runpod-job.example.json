@@ -1,0 +1,1 @@
+{"provider":"runpod","submission":"manual","base_model":"RedHatAI/Qwen3-Coder-Next-NVFP4","dataset":"data/datasets/executor-sft.jsonl","adapter_output":"/workspace/adapters/executor-candidate"}

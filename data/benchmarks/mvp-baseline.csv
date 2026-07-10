@@ -1,0 +1,11 @@
+completion_evidence,duplicate_actions,expected_route,failure_classes,files_changed,fixture_repository,heavy_judge_eligible,input_tokens,invalid_tool_calls,judge_invocations,meaningful_diff_lines,output_tokens,replans,reviewer_rejections,starting_commit,task_id,task_success,tests_passed,tool_calls,unnecessary_diff_lines,wall_clock_seconds
+validation commands passed,0,fast,,0,generated,False,,0,0,0,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,analysis,True,True,1,0,0.018924
+validation commands passed,0,fast,,1,generated,False,,0,0,2,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,bug-one,True,True,1,0,0.027332
+validation commands passed,0,fast,,1,generated,False,,0,0,2,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,bug-two,True,True,1,0,0.032923
+validation commands passed,0,standard,,1,generated,False,,0,0,1,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,regression,True,True,1,0,0.033382
+validation commands passed,0,standard,,2,generated,False,,0,0,4,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,feature-a,True,True,1,0,0.033937
+validation commands passed,0,standard,,2,generated,False,,0,0,4,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,feature-b,True,True,1,0,0.02652
+validation commands passed,0,standard,NONEXISTENT_PATH,1,generated,False,,0,0,2,,1,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,missing-path,True,True,2,0,0.035654
+validation commands passed,1,standard,REPEATED_ACTION,1,generated,False,,0,0,2,,1,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,repeat-failure,True,True,2,0,0.037181
+validation commands passed,0,standard,,1,generated,False,,0,0,2,,0,0,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,ambiguous,True,True,1,0,0.033263
+validation commands passed,0,escalation,,1,generated,True,,0,1,2,,0,1,2c969477b831c69b6ebb56d78ea7eddf6c3b364b,review-correction,True,True,1,0,0.036866

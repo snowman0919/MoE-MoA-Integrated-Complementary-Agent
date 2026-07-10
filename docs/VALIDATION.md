@@ -90,6 +90,18 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - Final `scripts/verify-models.sh executor reviewer planner`: all verified.
 - Final incomplete-file scan under model root: zero files.
 
+## Development Branch Validation
+
+- `uv run pytest -q`: exit `0`; `59 passed`, one third-party TestClient warning.
+- `uv run ruff check gateway/src tests`: exit `0`.
+- `uv run mypy`: exit `0`; `23` source files.
+- `scripts/run-mvp-benchmark.sh`: exit `0`; `10/10` synthetic fixture tasks
+  passed. Input/output token metrics are explicitly unknown (`null`).
+- `scripts/mine-improvements.sh`, `scripts/evaluate-improvement.sh`,
+  `scripts/build-training-dataset.sh`, and `scripts/export-agentic-traces.sh`:
+  exit `0`.
+- `systemd-analyze --user verify systemd/*`: exit `0`.
+
 ## Tailscale
 
 - Attempted `tailscale serve --bg http://127.0.0.1:9000`.

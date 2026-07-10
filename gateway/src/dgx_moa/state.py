@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -29,8 +30,12 @@ def now() -> str:
 class SessionState(BaseModel):
     session_id: str
     objective: str = ""
+    repository: dict[str, str] = Field(default_factory=dict)
+    route: str = "standard"
+    route_reasons: list[str] = Field(default_factory=list)
     phase: Phase = Phase.INTAKE
     verified_facts: list[str] = Field(default_factory=list)
+    tool_results: list[dict[str, Any]] = Field(default_factory=list)
     hypotheses: list[str] = Field(default_factory=list)
     plan: list[dict[str, Any]] = Field(default_factory=list)
     completed_steps: list[str] = Field(default_factory=list)
@@ -59,6 +64,11 @@ class StateStore:
                 "CREATE TABLE IF NOT EXISTS sessions "
                 "(session_id TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at TEXT NOT NULL)"
             )
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS events "
+                "(session_id TEXT NOT NULL, event_type TEXT NOT NULL, payload TEXT NOT NULL, "
+                "created_at TEXT NOT NULL)"
+            )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30)
@@ -81,3 +91,23 @@ class StateStore:
                 "updated_at=excluded.updated_at",
                 (state.session_id, state.model_dump_json(), state.updated_at),
             )
+
+    def event(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        with self._connect() as database:
+            database.execute(
+                "INSERT INTO events(session_id, event_type, payload, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (session_id, event_type, json.dumps(payload, sort_keys=True), now()),
+            )
+
+    def events(self, session_id: str) -> list[dict[str, Any]]:
+        with self._connect() as database:
+            rows = database.execute(
+                "SELECT event_type, payload, created_at FROM events WHERE session_id = ? "
+                "ORDER BY rowid",
+                (session_id,),
+            ).fetchall()
+        return [
+            {"event_type": event_type, "payload": json.loads(payload), "created_at": created_at}
+            for event_type, payload, created_at in rows
+        ]

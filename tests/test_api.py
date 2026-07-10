@@ -123,6 +123,21 @@ def test_coding_request_retries_during_judge(settings, stub_provider: StubProvid
         assert response.headers["retry-after"] == "30"
 
 
+def test_coding_request_retries_during_transition(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    app = create_app(settings)
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.profiles.record("resident")
+        app.state.profiles.transition("judge")
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
+        )
+        assert response.status_code == 503
+
+
 def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(

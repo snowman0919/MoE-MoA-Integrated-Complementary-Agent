@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "improvement-proposal-v1",
+  "type": "object",
+  "required": ["proposal_id", "title", "evidence", "suspected_layer", "proposed_change", "risk", "requires_human_approval"],
+  "properties": {"proposal_id": {"pattern": "^IMP-[0-9]{4}-[0-9]{4}$"}, "suspected_layer": {"enum": ["controller", "prompt", "routing", "context", "model", "infrastructure", "benchmark"]}, "requires_human_approval": {"const": true}}
+}

@@ -1,6 +1,6 @@
 # State
 
-Updated: 2026-07-10T20:34:07+09:00
+Updated: 2026-07-11T00:00:00+09:00
 
 ## Verified Host
 
@@ -68,3 +68,11 @@ Updated: 2026-07-10T20:34:07+09:00
 
 Resident systemd profile is ready; heavy judge download/runtime validation and
 empirical context tuning remain in progress.
+
+## Development Branch Evidence
+
+- `codex/goal` adds repository-aware session state, route reasons, normalized
+  tool observations, role-specific bounded contexts, JSONL decision-point traces,
+  deterministic fixture benchmarking, and guarded improvement/dataset/adapter tools.
+- The benchmark baseline is synthetic; it does not replace resident runtime or
+  physical remote OpenCode validation.
