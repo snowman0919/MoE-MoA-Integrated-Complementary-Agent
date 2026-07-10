@@ -121,6 +121,8 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - `scripts/validate-opencode-loop.sh` against recovered resident services:
   exit `0`; session `opencode-loop-1783701252`; authenticated discovery,
   tool-result continuation, and streaming passed.
+- Final read-only resident check: `/readyz` returned `200` with executor,
+  planner, and reviewer ready; `MemAvailable` was `23184121856` bytes.
 
 ## Tailscale
 
