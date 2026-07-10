@@ -66,8 +66,9 @@ Updated: 2026-07-11T00:00:00+09:00
 
 ## Current Phase
 
-Resident systemd profile is ready; heavy judge download/runtime validation and
-empirical context tuning remain in progress.
+Resident profile recovered after an attempted heavy-judge startup failed its
+headroom gate. Executor, reviewer, and planner are ready again; heavy judge
+does not yet have a valid structured-verdict runtime result.
 
 ## Development Branch Evidence
 

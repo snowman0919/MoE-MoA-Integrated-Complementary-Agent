@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 
 from dgx_moa.compression import compress_messages, compress_text
-from dgx_moa.config import Limits
+from dgx_moa.config import Limits, ModelConfig
 from dgx_moa.security import redact
-from dgx_moa.trace import TRACE_FIELDS, export_trace
+from dgx_moa.state import SessionState
+from dgx_moa.trace import TRACE_FIELDS, export_trace, trace_record
 
 
 def test_redaction_and_compression(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -34,3 +35,20 @@ def test_repeated_messages_are_deduplicated() -> None:
     limits = Limits(max_retained_observations=3)
     messages = [{"role": "tool", "content": "same"}] * 2
     assert len(compress_messages(messages, limits)) == 1
+
+
+def test_trace_contains_model_revision_and_context(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    model = ModelConfig(
+        repository="test/executor",
+        revision="abc",
+        classification="official",
+        base_url="http://127.0.0.1:8101",
+        served_name="executor",
+        destination=tmp_path / "executor",
+        context_length=1024,
+    )
+    trace = trace_record(SessionState(session_id="trace"), models={"executor": model})
+    assert trace["model_revisions"] == {
+        "executor": {"repository": "test/executor", "revision": "abc"}
+    }
+    assert trace["context_configuration"]["executor"]["context_length"] == 1024

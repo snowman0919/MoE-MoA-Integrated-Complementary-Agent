@@ -2,6 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "agent-trace-v1",
   "type": "object",
-  "required": ["schema_version", "session_id", "objective", "selected_route", "events", "metrics"],
+  "required": ["schema_version", "session_id", "task_id", "workspace_identity", "objective", "selected_route", "model_revisions", "context_configuration", "events", "final_status", "completion_evidence", "metrics"],
   "properties": {"schema_version": {"const": "agent-trace-v1"}, "session_id": {"type": "string"}, "task_id": {"type": "string"}, "objective": {"type": "string"}, "events": {"type": "array"}, "metrics": {"type": "object"}}
 }

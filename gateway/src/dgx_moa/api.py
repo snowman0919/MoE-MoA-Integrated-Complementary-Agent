@@ -35,7 +35,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.store = store
         app.state.provider = provider
         app.state.controller = Controller(configured, store, provider)
-        app.state.traces = TraceRecorder(configured.state_db.parent.parent / "traces", store)
+        app.state.traces = TraceRecorder(
+            configured.state_db.parent.parent / "traces", store, configured.models
+        )
         app.state.profiles = ProfileManager(
             configured.run_dir, Path(os.getenv("DGX_MOA_PROJECT_ROOT", "."))
         )

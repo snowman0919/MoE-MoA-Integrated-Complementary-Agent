@@ -92,7 +92,7 @@ below. Heavy-judge validation is appended after its first isolated startup.
 
 ## Development Branch Validation
 
-- `uv run pytest -q`: exit `0`; `62 passed`, one third-party TestClient warning.
+- `uv run pytest -q`: exit `0`; `65 passed`, one third-party TestClient warning.
 - `uv run ruff check gateway/src tests`: exit `0`.
 - `uv run mypy`: exit `0`; `23` source files.
 - `scripts/run-mvp-benchmark.sh`: exit `0`; `10/10` synthetic fixture tasks
@@ -105,8 +105,19 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `200` on configured tailnet address `100.125.239.72:9000`; loopback is not
   configured for this gateway. `/readyz` returned `503` because profile state
   was `failed` after judge startup hit the 16 GiB headroom gate (`exit 70`).
-  Executor rollback was still loading; no service restart or profile switch was
-  performed from this development checkout.
+  Rollback completed without intervention: executor, reviewer, and planner
+  returned ready; gateway `/readyz` returned `200`; available memory was
+  `23037333504` bytes.
+- Real gateway read-only request, session `runtime-readonly-1783700774`:
+  HTTP `200`, response `READY`, usage `356` prompt / `2` completion / `358`
+  total tokens.
+- Real tool continuation, session `runtime-tool-1783700822`: first HTTP `200`
+  response preserved tool ID `chatcmpl-tool-a8fafd00dce4b44d` for
+  `read_file("/tmp/dgx-moa-validation.txt")`, usage `678` prompt / `35`
+  completion / `713` total. A normalized synthetic tool observation continued
+  in the same session with HTTP `200`, no additional tool call, and
+  `{"output":"validation fixture"}`; usage `629` prompt / `7` completion /
+  `636` total tokens.
 
 ## Tailscale
 

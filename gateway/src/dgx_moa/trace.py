@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .config import ModelConfig
 from .security import redact
 from .state import SessionState, StateStore
 
@@ -39,6 +40,7 @@ def trace_record(
     events: list[dict[str, Any]] | None = None,
     task_id: str = "",
     metrics: dict[str, Any] | None = None,
+    models: dict[str, ModelConfig] | None = None,
 ) -> dict[str, Any]:
     """Build bounded decision-point trace, never a source or transcript archive."""
     latest = state.tool_results[-1] if state.tool_results else {}
@@ -49,8 +51,14 @@ def trace_record(
         "workspace_identity": state.repository,
         "objective": state.objective,
         "selected_route": {"route": state.route, "reasons": state.route_reasons},
-        "model_revisions": {},
-        "context_configuration": {},
+        "model_revisions": {
+            role: {"repository": model.repository, "revision": model.revision}
+            for role, model in (models or {}).items()
+        },
+        "context_configuration": {
+            role: {"context_length": model.context_length, "max_num_seqs": model.max_num_seqs}
+            for role, model in (models or {}).items()
+        },
         "events": events or [],
         "final_status": state.phase,
         "completion_evidence": state.completion_evidence,
@@ -75,9 +83,12 @@ def export_trace(path: str | Path, trace: dict[str, Any]) -> None:
 
 
 class TraceRecorder:
-    def __init__(self, directory: str | Path, store: StateStore):
+    def __init__(
+        self, directory: str | Path, store: StateStore, models: dict[str, ModelConfig] | None = None
+    ):
         self.directory = Path(directory)
         self.store = store
+        self.models = models or {}
 
     def record(
         self, state: SessionState, *, task_id: str = "", metrics: dict[str, Any] | None = None
@@ -90,6 +101,7 @@ class TraceRecorder:
                 events=self.store.events(state.session_id),
                 task_id=task_id,
                 metrics=metrics,
+                models=self.models,
             ),
         )
         return path

@@ -66,6 +66,29 @@ async def test_planner_and_reviewer_routing(settings, stub_provider: StubProvide
 
 
 @pytest.mark.asyncio
+async def test_planner_retries_one_malformed_structured_response(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider
+) -> None:
+    original = stub_provider.complete
+    calls = 0
+
+    async def malformed_then_valid(role, model, request):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        if role == "planner":
+            calls += 1
+            if calls == 1:
+                return {"choices": [{"message": {"content": None}}]}
+        return await original(role, model, request)
+
+    stub_provider.complete = malformed_then_valid  # type: ignore[method-assign]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session("retry-plan", [{"role": "user", "content": "nontrivial task"}])
+    await controller.prepare_executor(state, {"model": "dgx-moa-agent", "messages": []})
+    assert calls == 2
+    assert state.plan == [{"step": "change"}]
+
+
+@pytest.mark.asyncio
 async def test_reviewer_rejection_enters_correction(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 

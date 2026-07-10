@@ -56,7 +56,9 @@ def response_message(response: dict[str, Any]) -> dict[str, Any]:
 
 
 def parse_json_content(response: dict[str, Any]) -> dict[str, Any]:
-    content = response_message(response).get("content", "{}")
+    content = response_message(response).get("content")
+    if not isinstance(content, str):
+        raise ValueError("structured model response missing content")
     if content.startswith("```"):
         content = content.split("\n", 1)[1].rsplit("```", 1)[0]
     return cast(dict[str, Any], json.loads(content))

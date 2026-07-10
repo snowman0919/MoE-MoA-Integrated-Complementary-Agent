@@ -274,7 +274,18 @@ class Controller:
             planner = await self.provider.complete(
                 "planner", self.settings.models["planner"], planner_request
             )
-            parsed = parse_json_content(planner)
+            try:
+                parsed = parse_json_content(planner)
+            except ValueError:
+                self.store.event(
+                    state.session_id,
+                    "replan_requested",
+                    {"reason": "planner_structured_output_invalid"},
+                )
+                planner = await self.provider.complete(
+                    "planner", self.settings.models["planner"], planner_request
+                )
+                parsed = parse_json_content(planner)
             state.plan = parsed.get("plan", [])
             state.acceptance_criteria = parsed.get("acceptance_criteria", [])
             self.store.event(state.session_id, "plan_created", {"steps": len(state.plan)})
