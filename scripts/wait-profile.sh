@@ -22,7 +22,12 @@ while :; do
     echo "profile=$profile ready available_bytes=$available"
     exit 0
   fi
+  for role in executor planner reviewer judge; do
+    if [[ "$(systemctl --user show "dgx-moa-$role.service" -p ExecMainStatus --value 2>/dev/null || true)" == 1 ]]; then
+      echo "profile=$profile service_failed=dgx-moa-$role.service" >&2
+      exit 1
+    fi
+  done
   (( SECONDS < deadline )) || { echo "profile=$profile readiness timeout=$timeout" >&2; exit 1; }
   sleep 5
 done
-

@@ -18,6 +18,7 @@ Environment=XDG_CACHE_HOME=/home/kotori9/.cache
 Environment=MAX_JOBS=1
 Environment=CMAKE_BUILD_PARALLEL_LEVEL=1
 ExecStart=/home/kotori9/dgx-moa-agent/.venv/bin/python -m dgx_moa.serve reviewer
+ExecStartPre=/home/kotori9/dgx-moa-agent/scripts/wait-model.sh executor
 ExecStartPost=/home/kotori9/dgx-moa-agent/scripts/wait-model.sh reviewer
 Restart=on-failure
 RestartSec=5
