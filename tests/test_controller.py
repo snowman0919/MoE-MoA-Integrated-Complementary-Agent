@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+import pytest
+from dgx_moa.controller import Controller, DuplicateFailedCall, fingerprint
+from dgx_moa.state import Phase, SessionState, StateStore
+
+from .conftest import StubProvider
+
+
+def tool_messages(call_id: str, observation: str):  # type: ignore[no-untyped-def]
+    return [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": "shell", "arguments": '{"cmd":"false"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": call_id, "content": observation},
+    ]
+
+
+def test_duplicate_failed_call_ignores_call_id(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="x")
+    controller._observe(state, tool_messages("first", '{"exit_code":2,"error":"bad"}'))
+    assert len(state.failed_call_fingerprints) == 1
+    controller._observe(state, tool_messages("first", '{"exit_code":2,"error":"bad"}'))
+    with pytest.raises(DuplicateFailedCall):
+        controller._observe(state, tool_messages("second", '{"exit_code":2,"error":"bad"}'))
+    assert fingerprint(tool_messages("first", "")[0]["tool_calls"][0]) == fingerprint(
+        tool_messages("second", "")[0]["tool_calls"][0]
+    )
+
+
+def test_no_progress_and_step_budget(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="x")
+    for _ in range(3):
+        controller.note_no_progress(state)
+    assert state.phase == Phase.BLOCKED
+    settings.limits.max_steps = 1
+    exhausted = SessionState(session_id="y", step_count=1)
+    store.save(exhausted)
+    with pytest.raises(ValueError, match="step budget"):
+        controller.session("y", [{"role": "user", "content": "x"}])
+
+
+@pytest.mark.asyncio
+async def test_planner_and_reviewer_routing(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session("x", [{"role": "user", "content": "nontrivial task"}])
+    await controller.prepare_executor(
+        state, {"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]}
+    )
+    assert state.plan and state.phase == Phase.EXECUTING
+    result = await controller.review(state, "diff")
+    assert result["status"] == "approved"
+    assert state.review_status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_reviewer_rejection_enters_correction(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def reject(role, model, request):  # type: ignore[no-untyped-def]
+        if role == "reviewer":
+            return {
+                "choices": [{"message": {"content": '{"status":"rejected","findings":["bug"]}'}}]
+            }
+        return await original(role, model, request)
+
+    stub_provider.complete = reject  # type: ignore[method-assign]
+    state = SessionState(session_id="reject")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    await controller.review(state, "diff")
+    assert state.review_status == "rejected"
+    assert state.phase == Phase.CORRECTION
+
+
+@pytest.mark.asyncio
+async def test_strict_judge_verdict_allows_completion(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider
+) -> None:
+    state = SessionState(session_id="judge")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    result = await controller.judge(state, "verified evidence")
+    assert result["verdict"] == "accept"
+    assert state.judge_status == "accept"
+    assert state.phase == Phase.COMPLETED
+    assert state.heavy_switch_count == 1
+
+
+def test_metadata_routes_heavy_and_gates_completion(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="metadata",
+        review_status="approved",
+        acceptance_criteria=["tests"],
+    )
+    controller.apply_metadata(state, {"completion_evidence": {"tests": "exit 0"}})
+    assert state.phase == Phase.COMPLETED
+    state.phase = Phase.EXECUTING
+    controller.apply_metadata(state, {"public_api": True})
+    assert state.phase == Phase.AWAITING_HEAVY_JUDGE
+    assert state.judge_status == "eligible"

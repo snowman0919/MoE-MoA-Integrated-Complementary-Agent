@@ -1,0 +1,18 @@
+[
+  {
+    "path": "/home/kotori9/models/dgx-moa/judge",
+    "status": "verified",
+    "revision": "b8c66d2098edd8c9c26bde2b2ff41b5967e111ae",
+    "architecture": [
+      "Mistral3ForConditionalGeneration"
+    ],
+    "quantization": "modelopt",
+    "shard_count": 10,
+    "actual_bytes": 95259215514,
+    "errors": [],
+    "role": "judge",
+    "repository": "nvidia/Mistral-Medium-3.5-128B-NVFP4",
+    "elapsed_seconds": 845.69,
+    "free_bytes": 132261859328
+  }
+]

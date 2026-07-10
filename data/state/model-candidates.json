@@ -1,0 +1,4389 @@
+[
+  {
+    "repository": "Qwen/Qwen3-Coder-Next",
+    "owner": "Qwen",
+    "exists": true,
+    "revision": "a7fbcb5c0e12d62a448eaa0e260346bf5dcc0feb",
+    "license": "apache-2.0",
+    "gated": false,
+    "private": false,
+    "classification": "official",
+    "architecture": [
+      "Qwen3NextForCausalLM"
+    ],
+    "model_type": "qwen3_next",
+    "quantization": null,
+    "quantization_config": {},
+    "total_parameters": 79674391296,
+    "active_parameters": 10,
+    "shard_count": 40,
+    "download_size": 159376351965,
+    "chat_template": true,
+    "trust_remote_code": true,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1519
+      },
+      {
+        "name": "README.md",
+        "size": 7600
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 6068
+      },
+      {
+        "name": "config.json",
+        "size": 1178
+      },
+      {
+        "name": "generation_config.json",
+        "size": 214
+      },
+      {
+        "name": "merges.txt",
+        "size": 1671839
+      },
+      {
+        "name": "model-00001-of-00040.safetensors",
+        "size": 3999619288
+      },
+      {
+        "name": "model-00002-of-00040.safetensors",
+        "size": 3999841816
+      },
+      {
+        "name": "model-00003-of-00040.safetensors",
+        "size": 3999515608
+      },
+      {
+        "name": "model-00004-of-00040.safetensors",
+        "size": 3999842032
+      },
+      {
+        "name": "model-00005-of-00040.safetensors",
+        "size": 3999842240
+      },
+      {
+        "name": "model-00006-of-00040.safetensors",
+        "size": 3999853248
+      },
+      {
+        "name": "model-00007-of-00040.safetensors",
+        "size": 3999841944
+      },
+      {
+        "name": "model-00008-of-00040.safetensors",
+        "size": 3999842032
+      },
+      {
+        "name": "model-00009-of-00040.safetensors",
+        "size": 3999843224
+      },
+      {
+        "name": "model-00010-of-00040.safetensors",
+        "size": 3999517840
+      },
+      {
+        "name": "model-00011-of-00040.safetensors",
+        "size": 4000181328
+      },
+      {
+        "name": "model-00012-of-00040.safetensors",
+        "size": 3999843912
+      },
+      {
+        "name": "model-00013-of-00040.safetensors",
+        "size": 3999517504
+      },
+      {
+        "name": "model-00014-of-00040.safetensors",
+        "size": 3999844016
+      },
+      {
+        "name": "model-00015-of-00040.safetensors",
+        "size": 4000181768
+      },
+      {
+        "name": "model-00016-of-00040.safetensors",
+        "size": 3999517280
+      },
+      {
+        "name": "model-00017-of-00040.safetensors",
+        "size": 3999843912
+      },
+      {
+        "name": "model-00018-of-00040.safetensors",
+        "size": 3999843912
+      },
+      {
+        "name": "model-00019-of-00040.safetensors",
+        "size": 3999844120
+      },
+      {
+        "name": "model-00020-of-00040.safetensors",
+        "size": 3999855064
+      },
+      {
+        "name": "model-00021-of-00040.safetensors",
+        "size": 3999843824
+      },
+      {
+        "name": "model-00022-of-00040.safetensors",
+        "size": 3999843912
+      },
+      {
+        "name": "model-00023-of-00040.safetensors",
+        "size": 3999517496
+      },
+      {
+        "name": "model-00024-of-00040.safetensors",
+        "size": 3999844296
+      },
+      {
+        "name": "model-00025-of-00040.safetensors",
+        "size": 4000181328
+      },
+      {
+        "name": "model-00026-of-00040.safetensors",
+        "size": 3999517504
+      },
+      {
+        "name": "model-00027-of-00040.safetensors",
+        "size": 3999843912
+      },
+      {
+        "name": "model-00028-of-00040.safetensors",
+        "size": 3999844016
+      },
+      {
+        "name": "model-00029-of-00040.safetensors",
+        "size": 3999855352
+      },
+      {
+        "name": "model-00030-of-00040.safetensors",
+        "size": 3999843704
+      },
+      {
+        "name": "model-00031-of-00040.safetensors",
+        "size": 3999843912
+      },
+      {
+        "name": "model-00032-of-00040.safetensors",
+        "size": 3999843912
+      },
+      {
+        "name": "model-00033-of-00040.safetensors",
+        "size": 3999517720
+      },
+      {
+        "name": "model-00034-of-00040.safetensors",
+        "size": 4000181528
+      },
+      {
+        "name": "model-00035-of-00040.safetensors",
+        "size": 3999843824
+      },
+      {
+        "name": "model-00036-of-00040.safetensors",
+        "size": 3999517504
+      },
+      {
+        "name": "model-00037-of-00040.safetensors",
+        "size": 3999843904
+      },
+      {
+        "name": "model-00038-of-00040.safetensors",
+        "size": 3999844296
+      },
+      {
+        "name": "model-00039-of-00040.safetensors",
+        "size": 3999854920
+      },
+      {
+        "name": "model-00040-of-00040.safetensors",
+        "size": 3365572528
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 6759619
+      },
+      {
+        "name": "qwen3_coder_detector_sgl.py",
+        "size": 19855
+      },
+      {
+        "name": "qwen3coder_tool_parser_vllm.py",
+        "size": 31680
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 7032399
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 11681
+      },
+      {
+        "name": "vocab.json",
+        "size": 2776833
+      }
+    ]
+  },
+  {
+    "repository": "Qwen/Qwen3-Coder-Next-FP8",
+    "owner": "Qwen",
+    "exists": true,
+    "revision": "da6e2ed27304dd39abadd9c82ef50e8de67bdd4c",
+    "license": "apache-2.0",
+    "gated": false,
+    "private": false,
+    "classification": "official",
+    "architecture": [
+      "Qwen3NextForCausalLM"
+    ],
+    "model_type": "qwen3_next",
+    "quantization": "fp8",
+    "quantization_config": {
+      "quant_method": "fp8",
+      "activation_scheme": "dynamic",
+      "weight_per_tensor": false,
+      "act_per_tensor": false,
+      "weight_block_size": [
+        128,
+        128
+      ],
+      "modules_to_not_convert": [
+        "lm_head",
+        "model.embed_tokens",
+        "model.layers.0.linear_attn.conv1d",
+        "model.layers.0.linear_attn.in_proj_ba",
+        "model.layers.0.mlp.gate",
+        "model.layers.0.mlp.shared_expert_gate",
+        "model.layers.1.linear_attn.conv1d",
+        "model.layers.1.linear_attn.in_proj_ba",
+        "model.layers.1.mlp.gate",
+        "model.layers.1.mlp.shared_expert_gate",
+        "model.layers.10.linear_attn.conv1d",
+        "model.layers.10.linear_attn.in_proj_ba",
+        "model.layers.10.mlp.gate",
+        "model.layers.10.mlp.shared_expert_gate",
+        "model.layers.11.mlp.gate",
+        "model.layers.11.mlp.shared_expert_gate",
+        "model.layers.12.linear_attn.conv1d",
+        "model.layers.12.linear_attn.in_proj_ba",
+        "model.layers.12.mlp.gate",
+        "model.layers.12.mlp.shared_expert_gate",
+        "model.layers.13.linear_attn.conv1d",
+        "model.layers.13.linear_attn.in_proj_ba",
+        "model.layers.13.mlp.gate",
+        "model.layers.13.mlp.shared_expert_gate",
+        "model.layers.14.linear_attn.conv1d",
+        "model.layers.14.linear_attn.in_proj_ba",
+        "model.layers.14.mlp.gate",
+        "model.layers.14.mlp.shared_expert_gate",
+        "model.layers.15.mlp.gate",
+        "model.layers.15.mlp.shared_expert_gate",
+        "model.layers.16.linear_attn.conv1d",
+        "model.layers.16.linear_attn.in_proj_ba",
+        "model.layers.16.mlp.gate",
+        "model.layers.16.mlp.shared_expert_gate",
+        "model.layers.17.linear_attn.conv1d",
+        "model.layers.17.linear_attn.in_proj_ba",
+        "model.layers.17.mlp.gate",
+        "model.layers.17.mlp.shared_expert_gate",
+        "model.layers.18.linear_attn.conv1d",
+        "model.layers.18.linear_attn.in_proj_ba",
+        "model.layers.18.mlp.gate",
+        "model.layers.18.mlp.shared_expert_gate",
+        "model.layers.19.mlp.gate",
+        "model.layers.19.mlp.shared_expert_gate",
+        "model.layers.2.linear_attn.conv1d",
+        "model.layers.2.linear_attn.in_proj_ba",
+        "model.layers.2.mlp.gate",
+        "model.layers.2.mlp.shared_expert_gate",
+        "model.layers.20.linear_attn.conv1d",
+        "model.layers.20.linear_attn.in_proj_ba",
+        "model.layers.20.mlp.gate",
+        "model.layers.20.mlp.shared_expert_gate",
+        "model.layers.21.linear_attn.conv1d",
+        "model.layers.21.linear_attn.in_proj_ba",
+        "model.layers.21.mlp.gate",
+        "model.layers.21.mlp.shared_expert_gate",
+        "model.layers.22.linear_attn.conv1d",
+        "model.layers.22.linear_attn.in_proj_ba",
+        "model.layers.22.mlp.gate",
+        "model.layers.22.mlp.shared_expert_gate",
+        "model.layers.23.mlp.gate",
+        "model.layers.23.mlp.shared_expert_gate",
+        "model.layers.24.linear_attn.conv1d",
+        "model.layers.24.linear_attn.in_proj_ba",
+        "model.layers.24.mlp.gate",
+        "model.layers.24.mlp.shared_expert_gate",
+        "model.layers.25.linear_attn.conv1d",
+        "model.layers.25.linear_attn.in_proj_ba",
+        "model.layers.25.mlp.gate",
+        "model.layers.25.mlp.shared_expert_gate",
+        "model.layers.26.linear_attn.conv1d",
+        "model.layers.26.linear_attn.in_proj_ba",
+        "model.layers.26.mlp.gate",
+        "model.layers.26.mlp.shared_expert_gate",
+        "model.layers.27.mlp.gate",
+        "model.layers.27.mlp.shared_expert_gate",
+        "model.layers.28.linear_attn.conv1d",
+        "model.layers.28.linear_attn.in_proj_ba",
+        "model.layers.28.mlp.gate",
+        "model.layers.28.mlp.shared_expert_gate",
+        "model.layers.29.linear_attn.conv1d",
+        "model.layers.29.linear_attn.in_proj_ba",
+        "model.layers.29.mlp.gate",
+        "model.layers.29.mlp.shared_expert_gate",
+        "model.layers.3.mlp.gate",
+        "model.layers.3.mlp.shared_expert_gate",
+        "model.layers.30.linear_attn.conv1d",
+        "model.layers.30.linear_attn.in_proj_ba",
+        "model.layers.30.mlp.gate",
+        "model.layers.30.mlp.shared_expert_gate",
+        "model.layers.31.mlp.gate",
+        "model.layers.31.mlp.shared_expert_gate",
+        "model.layers.32.linear_attn.conv1d",
+        "model.layers.32.linear_attn.in_proj_ba",
+        "model.layers.32.mlp.gate",
+        "model.layers.32.mlp.shared_expert_gate",
+        "model.layers.33.linear_attn.conv1d",
+        "model.layers.33.linear_attn.in_proj_ba",
+        "model.layers.33.mlp.gate",
+        "model.layers.33.mlp.shared_expert_gate",
+        "model.layers.34.linear_attn.conv1d",
+        "model.layers.34.linear_attn.in_proj_ba",
+        "model.layers.34.mlp.gate",
+        "model.layers.34.mlp.shared_expert_gate",
+        "model.layers.35.mlp.gate",
+        "model.layers.35.mlp.shared_expert_gate",
+        "model.layers.36.linear_attn.conv1d",
+        "model.layers.36.linear_attn.in_proj_ba",
+        "model.layers.36.mlp.gate",
+        "model.layers.36.mlp.shared_expert_gate",
+        "model.layers.37.linear_attn.conv1d",
+        "model.layers.37.linear_attn.in_proj_ba",
+        "model.layers.37.mlp.gate",
+        "model.layers.37.mlp.shared_expert_gate",
+        "model.layers.38.linear_attn.conv1d",
+        "model.layers.38.linear_attn.in_proj_ba",
+        "model.layers.38.mlp.gate",
+        "model.layers.38.mlp.shared_expert_gate",
+        "model.layers.39.mlp.gate",
+        "model.layers.39.mlp.shared_expert_gate",
+        "model.layers.4.linear_attn.conv1d",
+        "model.layers.4.linear_attn.in_proj_ba",
+        "model.layers.4.mlp.gate",
+        "model.layers.4.mlp.shared_expert_gate",
+        "model.layers.40.linear_attn.conv1d",
+        "model.layers.40.linear_attn.in_proj_ba",
+        "model.layers.40.mlp.gate",
+        "model.layers.40.mlp.shared_expert_gate",
+        "model.layers.41.linear_attn.conv1d",
+        "model.layers.41.linear_attn.in_proj_ba",
+        "model.layers.41.mlp.gate",
+        "model.layers.41.mlp.shared_expert_gate",
+        "model.layers.42.linear_attn.conv1d",
+        "model.layers.42.linear_attn.in_proj_ba",
+        "model.layers.42.mlp.gate",
+        "model.layers.42.mlp.shared_expert_gate",
+        "model.layers.43.mlp.gate",
+        "model.layers.43.mlp.shared_expert_gate",
+        "model.layers.44.linear_attn.conv1d",
+        "model.layers.44.linear_attn.in_proj_ba",
+        "model.layers.44.mlp.gate",
+        "model.layers.44.mlp.shared_expert_gate",
+        "model.layers.45.linear_attn.conv1d",
+        "model.layers.45.linear_attn.in_proj_ba",
+        "model.layers.45.mlp.gate",
+        "model.layers.45.mlp.shared_expert_gate",
+        "model.layers.46.linear_attn.conv1d",
+        "model.layers.46.linear_attn.in_proj_ba",
+        "model.layers.46.mlp.gate",
+        "model.layers.46.mlp.shared_expert_gate",
+        "model.layers.47.mlp.gate",
+        "model.layers.47.mlp.shared_expert_gate",
+        "model.layers.5.linear_attn.conv1d",
+        "model.layers.5.linear_attn.in_proj_ba",
+        "model.layers.5.mlp.gate",
+        "model.layers.5.mlp.shared_expert_gate",
+        "model.layers.6.linear_attn.conv1d",
+        "model.layers.6.linear_attn.in_proj_ba",
+        "model.layers.6.mlp.gate",
+        "model.layers.6.mlp.shared_expert_gate",
+        "model.layers.7.mlp.gate",
+        "model.layers.7.mlp.shared_expert_gate",
+        "model.layers.8.linear_attn.conv1d",
+        "model.layers.8.linear_attn.in_proj_ba",
+        "model.layers.8.mlp.gate",
+        "model.layers.8.mlp.shared_expert_gate",
+        "model.layers.9.linear_attn.conv1d",
+        "model.layers.9.linear_attn.in_proj_ba",
+        "model.layers.9.mlp.gate",
+        "model.layers.9.mlp.shared_expert_gate"
+      ]
+    },
+    "total_parameters": 79679212800,
+    "active_parameters": 10,
+    "shard_count": 40,
+    "download_size": 80407784154,
+    "chat_template": true,
+    "trust_remote_code": true,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1584
+      },
+      {
+        "name": "README.md",
+        "size": 8082
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 6068
+      },
+      {
+        "name": "config.json",
+        "size": 9836
+      },
+      {
+        "name": "generation_config.json",
+        "size": 214
+      },
+      {
+        "name": "merges.txt",
+        "size": 1671839
+      },
+      {
+        "name": "model-00001-of-00040.safetensors",
+        "size": 2313917472
+      },
+      {
+        "name": "model-00002-of-00040.safetensors",
+        "size": 2001731528
+      },
+      {
+        "name": "model-00003-of-00040.safetensors",
+        "size": 2001406544
+      },
+      {
+        "name": "model-00004-of-00040.safetensors",
+        "size": 2001732024
+      },
+      {
+        "name": "model-00005-of-00040.safetensors",
+        "size": 2001732960
+      },
+      {
+        "name": "model-00006-of-00040.safetensors",
+        "size": 2002790192
+      },
+      {
+        "name": "model-00007-of-00040.safetensors",
+        "size": 2001731792
+      },
+      {
+        "name": "model-00008-of-00040.safetensors",
+        "size": 2001731960
+      },
+      {
+        "name": "model-00009-of-00040.safetensors",
+        "size": 2001737552
+      },
+      {
+        "name": "model-00010-of-00040.safetensors",
+        "size": 2001411064
+      },
+      {
+        "name": "model-00011-of-00040.safetensors",
+        "size": 2003119416
+      },
+      {
+        "name": "model-00012-of-00040.safetensors",
+        "size": 2001735720
+      },
+      {
+        "name": "model-00013-of-00040.safetensors",
+        "size": 2001410320
+      },
+      {
+        "name": "model-00014-of-00040.safetensors",
+        "size": 2001736280
+      },
+      {
+        "name": "model-00015-of-00040.safetensors",
+        "size": 2003119368
+      },
+      {
+        "name": "model-00016-of-00040.safetensors",
+        "size": 2001409888
+      },
+      {
+        "name": "model-00017-of-00040.safetensors",
+        "size": 2001735720
+      },
+      {
+        "name": "model-00018-of-00040.safetensors",
+        "size": 2001735784
+      },
+      {
+        "name": "model-00019-of-00040.safetensors",
+        "size": 2001736712
+      },
+      {
+        "name": "model-00020-of-00040.safetensors",
+        "size": 2002792760
+      },
+      {
+        "name": "model-00021-of-00040.safetensors",
+        "size": 2001735552
+      },
+      {
+        "name": "model-00022-of-00040.safetensors",
+        "size": 2001735720
+      },
+      {
+        "name": "model-00023-of-00040.safetensors",
+        "size": 2001410368
+      },
+      {
+        "name": "model-00024-of-00040.safetensors",
+        "size": 2001737192
+      },
+      {
+        "name": "model-00025-of-00040.safetensors",
+        "size": 2003119408
+      },
+      {
+        "name": "model-00026-of-00040.safetensors",
+        "size": 2001410328
+      },
+      {
+        "name": "model-00027-of-00040.safetensors",
+        "size": 2001735720
+      },
+      {
+        "name": "model-00028-of-00040.safetensors",
+        "size": 2001736272
+      },
+      {
+        "name": "model-00029-of-00040.safetensors",
+        "size": 2002793952
+      },
+      {
+        "name": "model-00030-of-00040.safetensors",
+        "size": 2001735296
+      },
+      {
+        "name": "model-00031-of-00040.safetensors",
+        "size": 2001735720
+      },
+      {
+        "name": "model-00032-of-00040.safetensors",
+        "size": 2001735784
+      },
+      {
+        "name": "model-00033-of-00040.safetensors",
+        "size": 2001410816
+      },
+      {
+        "name": "model-00034-of-00040.safetensors",
+        "size": 2003119328
+      },
+      {
+        "name": "model-00035-of-00040.safetensors",
+        "size": 2001735544
+      },
+      {
+        "name": "model-00036-of-00040.safetensors",
+        "size": 2001410328
+      },
+      {
+        "name": "model-00037-of-00040.safetensors",
+        "size": 2001735824
+      },
+      {
+        "name": "model-00038-of-00040.safetensors",
+        "size": 2001737184
+      },
+      {
+        "name": "model-00039-of-00040.safetensors",
+        "size": 2002794000
+      },
+      {
+        "name": "model-00040-of-00040.safetensors",
+        "size": 1994375208
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 14819483
+      },
+      {
+        "name": "qwen3_coder_detector_sgl.py",
+        "size": 19855
+      },
+      {
+        "name": "qwen3coder_tool_parser_vllm.py",
+        "size": 31680
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 7032399
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 11681
+      },
+      {
+        "name": "vocab.json",
+        "size": 2776833
+      }
+    ]
+  },
+  {
+    "repository": "RedHatAI/Qwen3-Coder-Next-NVFP4",
+    "owner": "RedHatAI",
+    "exists": true,
+    "revision": "27a8f16f463b9a13c91c332c40cf93e09717347e",
+    "license": "apache-2.0",
+    "gated": false,
+    "private": false,
+    "classification": "unverified",
+    "architecture": [
+      "Qwen3NextForCausalLM"
+    ],
+    "model_type": "qwen3_next",
+    "quantization": "compressed-tensors",
+    "quantization_config": {
+      "config_groups": {
+        "group_0": {
+          "format": "nvfp4-pack-quantized",
+          "input_activations": {
+            "actorder": null,
+            "block_structure": null,
+            "dynamic": "local",
+            "group_size": 16,
+            "num_bits": 4,
+            "observer": "static_minmax",
+            "observer_kwargs": {},
+            "scale_dtype": "torch.float8_e4m3fn",
+            "strategy": "tensor_group",
+            "symmetric": true,
+            "type": "float",
+            "zp_dtype": null
+          },
+          "output_activations": null,
+          "targets": [
+            "Linear"
+          ],
+          "weights": {
+            "actorder": null,
+            "block_structure": null,
+            "dynamic": false,
+            "group_size": 16,
+            "num_bits": 4,
+            "observer": "mse",
+            "observer_kwargs": {},
+            "scale_dtype": "torch.float8_e4m3fn",
+            "strategy": "tensor_group",
+            "symmetric": true,
+            "type": "float",
+            "zp_dtype": null
+          }
+        }
+      },
+      "format": "nvfp4-pack-quantized",
+      "global_compression_ratio": null,
+      "ignore": [
+        "model.layers.0.linear_attn.in_proj_qkvz",
+        "model.layers.0.linear_attn.in_proj_ba",
+        "model.layers.0.linear_attn.out_proj",
+        "model.layers.0.mlp.gate",
+        "model.layers.0.mlp.shared_expert_gate",
+        "model.layers.1.linear_attn.in_proj_qkvz",
+        "model.layers.1.linear_attn.in_proj_ba",
+        "model.layers.1.linear_attn.out_proj",
+        "model.layers.1.mlp.gate",
+        "model.layers.1.mlp.shared_expert_gate",
+        "model.layers.2.linear_attn.in_proj_qkvz",
+        "model.layers.2.linear_attn.in_proj_ba",
+        "model.layers.2.linear_attn.out_proj",
+        "model.layers.2.mlp.gate",
+        "model.layers.2.mlp.shared_expert_gate",
+        "model.layers.3.mlp.gate",
+        "model.layers.3.mlp.shared_expert_gate",
+        "model.layers.4.linear_attn.in_proj_qkvz",
+        "model.layers.4.linear_attn.in_proj_ba",
+        "model.layers.4.linear_attn.out_proj",
+        "model.layers.4.mlp.gate",
+        "model.layers.4.mlp.shared_expert_gate",
+        "model.layers.5.linear_attn.in_proj_qkvz",
+        "model.layers.5.linear_attn.in_proj_ba",
+        "model.layers.5.linear_attn.out_proj",
+        "model.layers.5.mlp.gate",
+        "model.layers.5.mlp.shared_expert_gate",
+        "model.layers.6.linear_attn.in_proj_qkvz",
+        "model.layers.6.linear_attn.in_proj_ba",
+        "model.layers.6.linear_attn.out_proj",
+        "model.layers.6.mlp.gate",
+        "model.layers.6.mlp.shared_expert_gate",
+        "model.layers.7.mlp.gate",
+        "model.layers.7.mlp.shared_expert_gate",
+        "model.layers.8.linear_attn.in_proj_qkvz",
+        "model.layers.8.linear_attn.in_proj_ba",
+        "model.layers.8.linear_attn.out_proj",
+        "model.layers.8.mlp.gate",
+        "model.layers.8.mlp.shared_expert_gate",
+        "model.layers.9.linear_attn.in_proj_qkvz",
+        "model.layers.9.linear_attn.in_proj_ba",
+        "model.layers.9.linear_attn.out_proj",
+        "model.layers.9.mlp.gate",
+        "model.layers.9.mlp.shared_expert_gate",
+        "model.layers.10.linear_attn.in_proj_qkvz",
+        "model.layers.10.linear_attn.in_proj_ba",
+        "model.layers.10.linear_attn.out_proj",
+        "model.layers.10.mlp.gate",
+        "model.layers.10.mlp.shared_expert_gate",
+        "model.layers.11.mlp.gate",
+        "model.layers.11.mlp.shared_expert_gate",
+        "model.layers.12.linear_attn.in_proj_qkvz",
+        "model.layers.12.linear_attn.in_proj_ba",
+        "model.layers.12.linear_attn.out_proj",
+        "model.layers.12.mlp.gate",
+        "model.layers.12.mlp.shared_expert_gate",
+        "model.layers.13.linear_attn.in_proj_qkvz",
+        "model.layers.13.linear_attn.in_proj_ba",
+        "model.layers.13.linear_attn.out_proj",
+        "model.layers.13.mlp.gate",
+        "model.layers.13.mlp.shared_expert_gate",
+        "model.layers.14.linear_attn.in_proj_qkvz",
+        "model.layers.14.linear_attn.in_proj_ba",
+        "model.layers.14.linear_attn.out_proj",
+        "model.layers.14.mlp.gate",
+        "model.layers.14.mlp.shared_expert_gate",
+        "model.layers.15.mlp.gate",
+        "model.layers.15.mlp.shared_expert_gate",
+        "model.layers.16.linear_attn.in_proj_qkvz",
+        "model.layers.16.linear_attn.in_proj_ba",
+        "model.layers.16.linear_attn.out_proj",
+        "model.layers.16.mlp.gate",
+        "model.layers.16.mlp.shared_expert_gate",
+        "model.layers.17.linear_attn.in_proj_qkvz",
+        "model.layers.17.linear_attn.in_proj_ba",
+        "model.layers.17.linear_attn.out_proj",
+        "model.layers.17.mlp.gate",
+        "model.layers.17.mlp.shared_expert_gate",
+        "model.layers.18.linear_attn.in_proj_qkvz",
+        "model.layers.18.linear_attn.in_proj_ba",
+        "model.layers.18.linear_attn.out_proj",
+        "model.layers.18.mlp.gate",
+        "model.layers.18.mlp.shared_expert_gate",
+        "model.layers.19.mlp.gate",
+        "model.layers.19.mlp.shared_expert_gate",
+        "model.layers.20.linear_attn.in_proj_qkvz",
+        "model.layers.20.linear_attn.in_proj_ba",
+        "model.layers.20.linear_attn.out_proj",
+        "model.layers.20.mlp.gate",
+        "model.layers.20.mlp.shared_expert_gate",
+        "model.layers.21.linear_attn.in_proj_qkvz",
+        "model.layers.21.linear_attn.in_proj_ba",
+        "model.layers.21.linear_attn.out_proj",
+        "model.layers.21.mlp.gate",
+        "model.layers.21.mlp.shared_expert_gate",
+        "model.layers.22.linear_attn.in_proj_qkvz",
+        "model.layers.22.linear_attn.in_proj_ba",
+        "model.layers.22.linear_attn.out_proj",
+        "model.layers.22.mlp.gate",
+        "model.layers.22.mlp.shared_expert_gate",
+        "model.layers.23.mlp.gate",
+        "model.layers.23.mlp.shared_expert_gate",
+        "model.layers.24.linear_attn.in_proj_qkvz",
+        "model.layers.24.linear_attn.in_proj_ba",
+        "model.layers.24.linear_attn.out_proj",
+        "model.layers.24.mlp.gate",
+        "model.layers.24.mlp.shared_expert_gate",
+        "model.layers.25.linear_attn.in_proj_qkvz",
+        "model.layers.25.linear_attn.in_proj_ba",
+        "model.layers.25.linear_attn.out_proj",
+        "model.layers.25.mlp.gate",
+        "model.layers.25.mlp.shared_expert_gate",
+        "model.layers.26.linear_attn.in_proj_qkvz",
+        "model.layers.26.linear_attn.in_proj_ba",
+        "model.layers.26.linear_attn.out_proj",
+        "model.layers.26.mlp.gate",
+        "model.layers.26.mlp.shared_expert_gate",
+        "model.layers.27.mlp.gate",
+        "model.layers.27.mlp.shared_expert_gate",
+        "model.layers.28.linear_attn.in_proj_qkvz",
+        "model.layers.28.linear_attn.in_proj_ba",
+        "model.layers.28.linear_attn.out_proj",
+        "model.layers.28.mlp.gate",
+        "model.layers.28.mlp.shared_expert_gate",
+        "model.layers.29.linear_attn.in_proj_qkvz",
+        "model.layers.29.linear_attn.in_proj_ba",
+        "model.layers.29.linear_attn.out_proj",
+        "model.layers.29.mlp.gate",
+        "model.layers.29.mlp.shared_expert_gate",
+        "model.layers.30.linear_attn.in_proj_qkvz",
+        "model.layers.30.linear_attn.in_proj_ba",
+        "model.layers.30.linear_attn.out_proj",
+        "model.layers.30.mlp.gate",
+        "model.layers.30.mlp.shared_expert_gate",
+        "model.layers.31.mlp.gate",
+        "model.layers.31.mlp.shared_expert_gate",
+        "model.layers.32.linear_attn.in_proj_qkvz",
+        "model.layers.32.linear_attn.in_proj_ba",
+        "model.layers.32.linear_attn.out_proj",
+        "model.layers.32.mlp.gate",
+        "model.layers.32.mlp.shared_expert_gate",
+        "model.layers.33.linear_attn.in_proj_qkvz",
+        "model.layers.33.linear_attn.in_proj_ba",
+        "model.layers.33.linear_attn.out_proj",
+        "model.layers.33.mlp.gate",
+        "model.layers.33.mlp.shared_expert_gate",
+        "model.layers.34.linear_attn.in_proj_qkvz",
+        "model.layers.34.linear_attn.in_proj_ba",
+        "model.layers.34.linear_attn.out_proj",
+        "model.layers.34.mlp.gate",
+        "model.layers.34.mlp.shared_expert_gate",
+        "model.layers.35.mlp.gate",
+        "model.layers.35.mlp.shared_expert_gate",
+        "model.layers.36.linear_attn.in_proj_qkvz",
+        "model.layers.36.linear_attn.in_proj_ba",
+        "model.layers.36.linear_attn.out_proj",
+        "model.layers.36.mlp.gate",
+        "model.layers.36.mlp.shared_expert_gate",
+        "model.layers.37.linear_attn.in_proj_qkvz",
+        "model.layers.37.linear_attn.in_proj_ba",
+        "model.layers.37.linear_attn.out_proj",
+        "model.layers.37.mlp.gate",
+        "model.layers.37.mlp.shared_expert_gate",
+        "model.layers.38.linear_attn.in_proj_qkvz",
+        "model.layers.38.linear_attn.in_proj_ba",
+        "model.layers.38.linear_attn.out_proj",
+        "model.layers.38.mlp.gate",
+        "model.layers.38.mlp.shared_expert_gate",
+        "model.layers.39.mlp.gate",
+        "model.layers.39.mlp.shared_expert_gate",
+        "model.layers.40.linear_attn.in_proj_qkvz",
+        "model.layers.40.linear_attn.in_proj_ba",
+        "model.layers.40.linear_attn.out_proj",
+        "model.layers.40.mlp.gate",
+        "model.layers.40.mlp.shared_expert_gate",
+        "model.layers.41.linear_attn.in_proj_qkvz",
+        "model.layers.41.linear_attn.in_proj_ba",
+        "model.layers.41.linear_attn.out_proj",
+        "model.layers.41.mlp.gate",
+        "model.layers.41.mlp.shared_expert_gate",
+        "model.layers.42.linear_attn.in_proj_qkvz",
+        "model.layers.42.linear_attn.in_proj_ba",
+        "model.layers.42.linear_attn.out_proj",
+        "model.layers.42.mlp.gate",
+        "model.layers.42.mlp.shared_expert_gate",
+        "model.layers.43.mlp.gate",
+        "model.layers.43.mlp.shared_expert_gate",
+        "model.layers.44.linear_attn.in_proj_qkvz",
+        "model.layers.44.linear_attn.in_proj_ba",
+        "model.layers.44.linear_attn.out_proj",
+        "model.layers.44.mlp.gate",
+        "model.layers.44.mlp.shared_expert_gate",
+        "model.layers.45.linear_attn.in_proj_qkvz",
+        "model.layers.45.linear_attn.in_proj_ba",
+        "model.layers.45.linear_attn.out_proj",
+        "model.layers.45.mlp.gate",
+        "model.layers.45.mlp.shared_expert_gate",
+        "model.layers.46.linear_attn.in_proj_qkvz",
+        "model.layers.46.linear_attn.in_proj_ba",
+        "model.layers.46.linear_attn.out_proj",
+        "model.layers.46.mlp.gate",
+        "model.layers.46.mlp.shared_expert_gate",
+        "model.layers.47.mlp.gate",
+        "model.layers.47.mlp.shared_expert_gate",
+        "lm_head"
+      ],
+      "kv_cache_scheme": null,
+      "quant_method": "compressed-tensors",
+      "quantization_status": "compressed",
+      "sparsity_config": {},
+      "transform_config": {},
+      "version": "0.13.1.dev47+gcfc24ef"
+    },
+    "total_parameters": null,
+    "active_parameters": 10,
+    "shard_count": 10,
+    "download_size": 47613230236,
+    "chat_template": true,
+    "trust_remote_code": true,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1635
+      },
+      {
+        "name": "README.md",
+        "size": 6665
+      },
+      {
+        "name": "added_tokens.json",
+        "size": 707
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 6068
+      },
+      {
+        "name": "config.json",
+        "size": 12767
+      },
+      {
+        "name": "evaluation.json",
+        "size": 28922
+      },
+      {
+        "name": "generation_config.json",
+        "size": 192
+      },
+      {
+        "name": "merges.txt",
+        "size": 1671853
+      },
+      {
+        "name": "model-00001-of-00010.safetensors",
+        "size": 5003034072
+      },
+      {
+        "name": "model-00002-of-00010.safetensors",
+        "size": 5003502512
+      },
+      {
+        "name": "model-00003-of-00010.safetensors",
+        "size": 5003532512
+      },
+      {
+        "name": "model-00004-of-00010.safetensors",
+        "size": 5003863032
+      },
+      {
+        "name": "model-00005-of-00010.safetensors",
+        "size": 5003533424
+      },
+      {
+        "name": "model-00006-of-00010.safetensors",
+        "size": 5003534464
+      },
+      {
+        "name": "model-00007-of-00010.safetensors",
+        "size": 5003974752
+      },
+      {
+        "name": "model-00008-of-00010.safetensors",
+        "size": 5003534480
+      },
+      {
+        "name": "model-00009-of-00010.safetensors",
+        "size": 5003534480
+      },
+      {
+        "name": "model-00010-of-00010.safetensors",
+        "size": 2534645064
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 29728645
+      },
+      {
+        "name": "nvfp4_quantize.py",
+        "size": 2215
+      },
+      {
+        "name": "preds.json",
+        "size": 876034
+      },
+      {
+        "name": "recipe.yaml",
+        "size": 236
+      },
+      {
+        "name": "special_tokens_map.json",
+        "size": 613
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 11422654
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 5405
+      },
+      {
+        "name": "vocab.json",
+        "size": 2776833
+      }
+    ]
+  },
+  {
+    "repository": "ucbye/Qwen3-Coder-Next-NVFP4-GB10",
+    "owner": "ucbye",
+    "exists": true,
+    "revision": "f631484c53c313cf58715b1644688b02eee09d15",
+    "license": "apache-2.0",
+    "gated": false,
+    "private": false,
+    "classification": "unverified",
+    "architecture": [
+      "Qwen3NextForCausalLM"
+    ],
+    "model_type": "qwen3_next",
+    "quantization": "compressed-tensors",
+    "quantization_config": {
+      "config_groups": {
+        "group_0": {
+          "format": "nvfp4-pack-quantized",
+          "input_activations": {
+            "actorder": null,
+            "block_structure": null,
+            "dynamic": "local",
+            "group_size": 16,
+            "num_bits": 4,
+            "observer": "static_minmax",
+            "observer_kwargs": {},
+            "scale_dtype": "torch.float8_e4m3fn",
+            "strategy": "tensor_group",
+            "symmetric": true,
+            "type": "float",
+            "zp_dtype": null
+          },
+          "output_activations": null,
+          "targets": [
+            "Linear"
+          ],
+          "weights": {
+            "actorder": null,
+            "block_structure": null,
+            "dynamic": false,
+            "group_size": 16,
+            "num_bits": 4,
+            "observer": "static_minmax",
+            "observer_kwargs": {},
+            "scale_dtype": "torch.float8_e4m3fn",
+            "strategy": "tensor_group",
+            "symmetric": true,
+            "type": "float",
+            "zp_dtype": null
+          }
+        }
+      },
+      "format": "nvfp4-pack-quantized",
+      "global_compression_ratio": null,
+      "ignore": [
+        "model.layers.0.linear_attn.in_proj_ba",
+        "model.layers.0.mlp.gate",
+        "model.layers.0.mlp.shared_expert_gate",
+        "model.layers.1.linear_attn.in_proj_ba",
+        "model.layers.1.mlp.gate",
+        "model.layers.1.mlp.shared_expert_gate",
+        "model.layers.2.linear_attn.in_proj_ba",
+        "model.layers.2.mlp.gate",
+        "model.layers.2.mlp.shared_expert_gate",
+        "model.layers.3.mlp.gate",
+        "model.layers.3.mlp.shared_expert_gate",
+        "model.layers.4.linear_attn.in_proj_ba",
+        "model.layers.4.mlp.gate",
+        "model.layers.4.mlp.shared_expert_gate",
+        "model.layers.5.linear_attn.in_proj_ba",
+        "model.layers.5.mlp.gate",
+        "model.layers.5.mlp.shared_expert_gate",
+        "model.layers.6.linear_attn.in_proj_ba",
+        "model.layers.6.mlp.gate",
+        "model.layers.6.mlp.shared_expert_gate",
+        "model.layers.7.mlp.gate",
+        "model.layers.7.mlp.shared_expert_gate",
+        "model.layers.8.linear_attn.in_proj_ba",
+        "model.layers.8.mlp.gate",
+        "model.layers.8.mlp.shared_expert_gate",
+        "model.layers.9.linear_attn.in_proj_ba",
+        "model.layers.9.mlp.gate",
+        "model.layers.9.mlp.shared_expert_gate",
+        "model.layers.10.linear_attn.in_proj_ba",
+        "model.layers.10.mlp.gate",
+        "model.layers.10.mlp.shared_expert_gate",
+        "model.layers.11.mlp.gate",
+        "model.layers.11.mlp.shared_expert_gate",
+        "model.layers.12.linear_attn.in_proj_ba",
+        "model.layers.12.mlp.gate",
+        "model.layers.12.mlp.shared_expert_gate",
+        "model.layers.13.linear_attn.in_proj_ba",
+        "model.layers.13.mlp.gate",
+        "model.layers.13.mlp.shared_expert_gate",
+        "model.layers.14.linear_attn.in_proj_ba",
+        "model.layers.14.mlp.gate",
+        "model.layers.14.mlp.shared_expert_gate",
+        "model.layers.15.mlp.gate",
+        "model.layers.15.mlp.shared_expert_gate",
+        "model.layers.16.linear_attn.in_proj_ba",
+        "model.layers.16.mlp.gate",
+        "model.layers.16.mlp.shared_expert_gate",
+        "model.layers.17.linear_attn.in_proj_ba",
+        "model.layers.17.mlp.gate",
+        "model.layers.17.mlp.shared_expert_gate",
+        "model.layers.18.linear_attn.in_proj_ba",
+        "model.layers.18.mlp.gate",
+        "model.layers.18.mlp.shared_expert_gate",
+        "model.layers.19.mlp.gate",
+        "model.layers.19.mlp.shared_expert_gate",
+        "model.layers.20.linear_attn.in_proj_ba",
+        "model.layers.20.mlp.gate",
+        "model.layers.20.mlp.shared_expert_gate",
+        "model.layers.21.linear_attn.in_proj_ba",
+        "model.layers.21.mlp.gate",
+        "model.layers.21.mlp.shared_expert_gate",
+        "model.layers.22.linear_attn.in_proj_ba",
+        "model.layers.22.mlp.gate",
+        "model.layers.22.mlp.shared_expert_gate",
+        "model.layers.23.mlp.gate",
+        "model.layers.23.mlp.shared_expert_gate",
+        "model.layers.24.linear_attn.in_proj_ba",
+        "model.layers.24.mlp.gate",
+        "model.layers.24.mlp.shared_expert_gate",
+        "model.layers.25.linear_attn.in_proj_ba",
+        "model.layers.25.mlp.gate",
+        "model.layers.25.mlp.shared_expert_gate",
+        "model.layers.26.linear_attn.in_proj_ba",
+        "model.layers.26.mlp.gate",
+        "model.layers.26.mlp.shared_expert_gate",
+        "model.layers.27.mlp.gate",
+        "model.layers.27.mlp.shared_expert_gate",
+        "model.layers.28.linear_attn.in_proj_ba",
+        "model.layers.28.mlp.gate",
+        "model.layers.28.mlp.shared_expert_gate",
+        "model.layers.29.linear_attn.in_proj_ba",
+        "model.layers.29.mlp.gate",
+        "model.layers.29.mlp.shared_expert_gate",
+        "model.layers.30.linear_attn.in_proj_ba",
+        "model.layers.30.mlp.gate",
+        "model.layers.30.mlp.shared_expert_gate",
+        "model.layers.31.mlp.gate",
+        "model.layers.31.mlp.shared_expert_gate",
+        "model.layers.32.linear_attn.in_proj_ba",
+        "model.layers.32.mlp.gate",
+        "model.layers.32.mlp.shared_expert_gate",
+        "model.layers.33.linear_attn.in_proj_ba",
+        "model.layers.33.mlp.gate",
+        "model.layers.33.mlp.shared_expert_gate",
+        "model.layers.34.linear_attn.in_proj_ba",
+        "model.layers.34.mlp.gate",
+        "model.layers.34.mlp.shared_expert_gate",
+        "model.layers.35.mlp.gate",
+        "model.layers.35.mlp.shared_expert_gate",
+        "model.layers.36.linear_attn.in_proj_ba",
+        "model.layers.36.mlp.gate",
+        "model.layers.36.mlp.shared_expert_gate",
+        "model.layers.37.linear_attn.in_proj_ba",
+        "model.layers.37.mlp.gate",
+        "model.layers.37.mlp.shared_expert_gate",
+        "model.layers.38.linear_attn.in_proj_ba",
+        "model.layers.38.mlp.gate",
+        "model.layers.38.mlp.shared_expert_gate",
+        "model.layers.39.mlp.gate",
+        "model.layers.39.mlp.shared_expert_gate",
+        "model.layers.40.linear_attn.in_proj_ba",
+        "model.layers.40.mlp.gate",
+        "model.layers.40.mlp.shared_expert_gate",
+        "model.layers.41.linear_attn.in_proj_ba",
+        "model.layers.41.mlp.gate",
+        "model.layers.41.mlp.shared_expert_gate",
+        "model.layers.42.linear_attn.in_proj_ba",
+        "model.layers.42.mlp.gate",
+        "model.layers.42.mlp.shared_expert_gate",
+        "model.layers.43.mlp.gate",
+        "model.layers.43.mlp.shared_expert_gate",
+        "model.layers.44.linear_attn.in_proj_ba",
+        "model.layers.44.mlp.gate",
+        "model.layers.44.mlp.shared_expert_gate",
+        "model.layers.45.linear_attn.in_proj_ba",
+        "model.layers.45.mlp.gate",
+        "model.layers.45.mlp.shared_expert_gate",
+        "model.layers.46.linear_attn.in_proj_ba",
+        "model.layers.46.mlp.gate",
+        "model.layers.46.mlp.shared_expert_gate",
+        "model.layers.47.mlp.gate",
+        "model.layers.47.mlp.shared_expert_gate",
+        "lm_head"
+      ],
+      "kv_cache_scheme": null,
+      "quant_method": "compressed-tensors",
+      "quantization_status": "compressed",
+      "sparsity_config": {},
+      "transform_config": {},
+      "version": "0.13.0"
+    },
+    "total_parameters": null,
+    "active_parameters": 10,
+    "shard_count": 10,
+    "download_size": 45875890918,
+    "chat_template": true,
+    "trust_remote_code": false,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1635
+      },
+      {
+        "name": "README.md",
+        "size": 3111
+      },
+      {
+        "name": "added_tokens.json",
+        "size": 707
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 6068
+      },
+      {
+        "name": "config.json",
+        "size": 9322
+      },
+      {
+        "name": "generation_config.json",
+        "size": 192
+      },
+      {
+        "name": "merges.txt",
+        "size": 1671853
+      },
+      {
+        "name": "model-00001-of-00010.safetensors",
+        "size": 5003129456
+      },
+      {
+        "name": "model-00002-of-00010.safetensors",
+        "size": 5003663792
+      },
+      {
+        "name": "model-00003-of-00010.safetensors",
+        "size": 5003901048
+      },
+      {
+        "name": "model-00004-of-00010.safetensors",
+        "size": 5003634936
+      },
+      {
+        "name": "model-00005-of-00010.safetensors",
+        "size": 5003695608
+      },
+      {
+        "name": "model-00006-of-00010.safetensors",
+        "size": 5003901760
+      },
+      {
+        "name": "model-00007-of-00010.safetensors",
+        "size": 5003696752
+      },
+      {
+        "name": "model-00008-of-00010.safetensors",
+        "size": 5003633680
+      },
+      {
+        "name": "model-00009-of-00010.safetensors",
+        "size": 5003901768
+      },
+      {
+        "name": "model-00010-of-00010.safetensors",
+        "size": 797083168
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 29750557
+      },
+      {
+        "name": "special_tokens_map.json",
+        "size": 613
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 11422654
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 5405
+      },
+      {
+        "name": "vocab.json",
+        "size": 2776833
+      }
+    ]
+  },
+  {
+    "repository": "nvidia/Nemotron-Cascade-2-30B-A3B",
+    "owner": "nvidia",
+    "exists": true,
+    "revision": "6327cdbcf907e1c7cec9cb29fb6e6cebdf8feaf7",
+    "license": "other",
+    "gated": false,
+    "private": false,
+    "classification": "vendor-provided",
+    "architecture": [
+      "NemotronHForCausalLM"
+    ],
+    "model_type": "nemotron_h",
+    "quantization": null,
+    "quantization_config": {},
+    "total_parameters": 31577937344,
+    "active_parameters": 6,
+    "shard_count": 13,
+    "download_size": 63177218531,
+    "chat_template": true,
+    "trust_remote_code": true,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1836
+      },
+      {
+        "name": "README.md",
+        "size": 18446
+      },
+      {
+        "name": "assets/Nemotron_Cascade_2.pdf",
+        "size": 1077265
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/a.py",
+        "size": 3157
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/b.py",
+        "size": 5373
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/c.py",
+        "size": 7628
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/d.py",
+        "size": 3447
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/e.py",
+        "size": 4031
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/f.py",
+        "size": 3246
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/g.py",
+        "size": 9367
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/h.py",
+        "size": 5725
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/i.py",
+        "size": 2653
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/j.py",
+        "size": 2862
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/k.py",
+        "size": 3293
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/l.py",
+        "size": 1540
+      },
+      {
+        "name": "assets/solutions/imo2025/IMO2025.pdf",
+        "size": 530682
+      },
+      {
+        "name": "assets/solutions/imoproofbench/IMO-ProofBench.jsonl",
+        "size": 396068
+      },
+      {
+        "name": "assets/solutions/ioi2025/festival.cpp",
+        "size": 4833
+      },
+      {
+        "name": "assets/solutions/ioi2025/migrations-subtask1.cpp",
+        "size": 2815
+      },
+      {
+        "name": "assets/solutions/ioi2025/migrations-subtask2.cpp",
+        "size": 6396
+      },
+      {
+        "name": "assets/solutions/ioi2025/obstacles.cpp",
+        "size": 6825
+      },
+      {
+        "name": "assets/solutions/ioi2025/souvenirs-subtask1_3.cpp",
+        "size": 1651
+      },
+      {
+        "name": "assets/solutions/ioi2025/souvenirs-subtask4.cpp",
+        "size": 471
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part1.cpp",
+        "size": 3778
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part2-subtask1.cpp",
+        "size": 4902
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part2-subtask2.cpp",
+        "size": 11580
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part2-subtask3.cpp",
+        "size": 7492
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part2-subtask4.cpp",
+        "size": 4701
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part2-subtask5.cpp",
+        "size": 5430
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part2-subtask6.cpp",
+        "size": 4619
+      },
+      {
+        "name": "assets/solutions/ioi2025/worldmap.cpp",
+        "size": 8398
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 10925
+      },
+      {
+        "name": "config.json",
+        "size": 1841
+      },
+      {
+        "name": "configuration_nemotron_h.py",
+        "size": 12893
+      },
+      {
+        "name": "fig/nemotron-cascade-2-results.png",
+        "size": 400746
+      },
+      {
+        "name": "generation_config.json",
+        "size": 138
+      },
+      {
+        "name": "model-00001-of-00013.safetensors",
+        "size": 4991204552
+      },
+      {
+        "name": "model-00002-of-00013.safetensors",
+        "size": 4992601016
+      },
+      {
+        "name": "model-00003-of-00013.safetensors",
+        "size": 4992601360
+      },
+      {
+        "name": "model-00004-of-00013.safetensors",
+        "size": 4995692800
+      },
+      {
+        "name": "model-00005-of-00013.safetensors",
+        "size": 4980545528
+      },
+      {
+        "name": "model-00006-of-00013.safetensors",
+        "size": 4999409808
+      },
+      {
+        "name": "model-00007-of-00013.safetensors",
+        "size": 4992601488
+      },
+      {
+        "name": "model-00008-of-00013.safetensors",
+        "size": 4992601520
+      },
+      {
+        "name": "model-00009-of-00013.safetensors",
+        "size": 4995692800
+      },
+      {
+        "name": "model-00010-of-00013.safetensors",
+        "size": 4992601520
+      },
+      {
+        "name": "model-00011-of-00013.safetensors",
+        "size": 4995692800
+      },
+      {
+        "name": "model-00012-of-00013.safetensors",
+        "size": 4995692816
+      },
+      {
+        "name": "model-00013-of-00013.safetensors",
+        "size": 3239751000
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 613296
+      },
+      {
+        "name": "modeling_nemotron_h.py",
+        "size": 83189
+      },
+      {
+        "name": "special_tokens_map.json",
+        "size": 449
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 17078327
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 177209
+      }
+    ]
+  },
+  {
+    "repository": "chankhavu/Nemotron-Cascade-2-30B-A3B-NVFP4",
+    "owner": "chankhavu",
+    "exists": true,
+    "revision": "80ee3ccfe8cb5eb019a0cde78449e8b197a0155f",
+    "license": "other",
+    "gated": false,
+    "private": false,
+    "classification": "unverified",
+    "architecture": [
+      "NemotronHForCausalLM"
+    ],
+    "model_type": "nemotron_h",
+    "quantization": null,
+    "quantization_config": {},
+    "total_parameters": 16332031424,
+    "active_parameters": 6,
+    "shard_count": 4,
+    "download_size": 19362589115,
+    "chat_template": true,
+    "trust_remote_code": true,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1570
+      },
+      {
+        "name": "README.md",
+        "size": 5017
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 10925
+      },
+      {
+        "name": "config.json",
+        "size": 1817
+      },
+      {
+        "name": "configuration_nemotron_h.py",
+        "size": 12893
+      },
+      {
+        "name": "generation_config.json",
+        "size": 150
+      },
+      {
+        "name": "hf_quant_config.json",
+        "size": 3048
+      },
+      {
+        "name": "model-00001-of-00004.safetensors",
+        "size": 4999482232
+      },
+      {
+        "name": "model-00002-of-00004.safetensors",
+        "size": 5000720912
+      },
+      {
+        "name": "model-00003-of-00004.safetensors",
+        "size": 4998692784
+      },
+      {
+        "name": "model-00004-of-00004.safetensors",
+        "size": 4343917056
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 2401324
+      },
+      {
+        "name": "modeling_nemotron_h.py",
+        "size": 83189
+      },
+      {
+        "name": "special_tokens_map.json",
+        "size": 563
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 17078426
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 177209
+      }
+    ]
+  },
+  {
+    "repository": "cyankiwi/Nemotron-Cascade-2-30B-A3B-AWQ-4bit",
+    "owner": "cyankiwi",
+    "exists": true,
+    "revision": "49cee6bbed2edd4e2d305d948ac443714a2ab242",
+    "license": "other",
+    "gated": false,
+    "private": false,
+    "classification": "unverified",
+    "architecture": [
+      "NemotronHForCausalLM"
+    ],
+    "model_type": "nemotron_h",
+    "quantization": "compressed-tensors",
+    "quantization_config": {
+      "config_groups": {
+        "group_0": {
+          "format": "pack-quantized",
+          "input_activations": null,
+          "output_activations": null,
+          "targets": [
+            "Linear"
+          ],
+          "weights": {
+            "actorder": null,
+            "block_structure": null,
+            "dynamic": false,
+            "group_size": 32,
+            "num_bits": 4,
+            "observer": "mse",
+            "observer_kwargs": {},
+            "scale_dtype": null,
+            "strategy": "group",
+            "symmetric": true,
+            "type": "int",
+            "zp_dtype": null
+          }
+        }
+      },
+      "format": "pack-quantized",
+      "global_compression_ratio": null,
+      "ignore": [
+        "backbone.layers.0.mixer.in_proj",
+        "backbone.layers.0.mixer.out_proj",
+        "backbone.layers.1.mixer.shared_experts.up_proj",
+        "backbone.layers.1.mixer.shared_experts.down_proj",
+        "backbone.layers.2.mixer.in_proj",
+        "backbone.layers.2.mixer.out_proj",
+        "backbone.layers.3.mixer.shared_experts.up_proj",
+        "backbone.layers.3.mixer.shared_experts.down_proj",
+        "backbone.layers.4.mixer.in_proj",
+        "backbone.layers.4.mixer.out_proj",
+        "backbone.layers.6.mixer.shared_experts.up_proj",
+        "backbone.layers.6.mixer.shared_experts.down_proj",
+        "backbone.layers.7.mixer.in_proj",
+        "backbone.layers.7.mixer.out_proj",
+        "backbone.layers.8.mixer.shared_experts.up_proj",
+        "backbone.layers.8.mixer.shared_experts.down_proj",
+        "backbone.layers.9.mixer.in_proj",
+        "backbone.layers.9.mixer.out_proj",
+        "backbone.layers.10.mixer.shared_experts.up_proj",
+        "backbone.layers.10.mixer.shared_experts.down_proj",
+        "backbone.layers.11.mixer.in_proj",
+        "backbone.layers.11.mixer.out_proj",
+        "backbone.layers.13.mixer.shared_experts.up_proj",
+        "backbone.layers.13.mixer.shared_experts.down_proj",
+        "backbone.layers.14.mixer.in_proj",
+        "backbone.layers.14.mixer.out_proj",
+        "backbone.layers.15.mixer.shared_experts.up_proj",
+        "backbone.layers.15.mixer.shared_experts.down_proj",
+        "backbone.layers.16.mixer.in_proj",
+        "backbone.layers.16.mixer.out_proj",
+        "backbone.layers.17.mixer.shared_experts.up_proj",
+        "backbone.layers.17.mixer.shared_experts.down_proj",
+        "backbone.layers.18.mixer.in_proj",
+        "backbone.layers.18.mixer.out_proj",
+        "backbone.layers.20.mixer.shared_experts.up_proj",
+        "backbone.layers.20.mixer.shared_experts.down_proj",
+        "backbone.layers.21.mixer.in_proj",
+        "backbone.layers.21.mixer.out_proj",
+        "backbone.layers.22.mixer.shared_experts.up_proj",
+        "backbone.layers.22.mixer.shared_experts.down_proj",
+        "backbone.layers.23.mixer.in_proj",
+        "backbone.layers.23.mixer.out_proj",
+        "backbone.layers.24.mixer.shared_experts.up_proj",
+        "backbone.layers.24.mixer.shared_experts.down_proj",
+        "backbone.layers.25.mixer.in_proj",
+        "backbone.layers.25.mixer.out_proj",
+        "backbone.layers.27.mixer.shared_experts.up_proj",
+        "backbone.layers.27.mixer.shared_experts.down_proj",
+        "backbone.layers.28.mixer.in_proj",
+        "backbone.layers.28.mixer.out_proj",
+        "backbone.layers.29.mixer.shared_experts.up_proj",
+        "backbone.layers.29.mixer.shared_experts.down_proj",
+        "backbone.layers.30.mixer.in_proj",
+        "backbone.layers.30.mixer.out_proj",
+        "backbone.layers.31.mixer.shared_experts.up_proj",
+        "backbone.layers.31.mixer.shared_experts.down_proj",
+        "backbone.layers.32.mixer.in_proj",
+        "backbone.layers.32.mixer.out_proj",
+        "backbone.layers.34.mixer.shared_experts.up_proj",
+        "backbone.layers.34.mixer.shared_experts.down_proj",
+        "backbone.layers.35.mixer.in_proj",
+        "backbone.layers.35.mixer.out_proj",
+        "backbone.layers.36.mixer.shared_experts.up_proj",
+        "backbone.layers.36.mixer.shared_experts.down_proj",
+        "backbone.layers.37.mixer.in_proj",
+        "backbone.layers.37.mixer.out_proj",
+        "backbone.layers.38.mixer.shared_experts.up_proj",
+        "backbone.layers.38.mixer.shared_experts.down_proj",
+        "backbone.layers.39.mixer.in_proj",
+        "backbone.layers.39.mixer.out_proj",
+        "backbone.layers.40.mixer.shared_experts.up_proj",
+        "backbone.layers.40.mixer.shared_experts.down_proj",
+        "backbone.layers.41.mixer.in_proj",
+        "backbone.layers.41.mixer.out_proj",
+        "backbone.layers.43.mixer.shared_experts.up_proj",
+        "backbone.layers.43.mixer.shared_experts.down_proj",
+        "backbone.layers.44.mixer.in_proj",
+        "backbone.layers.44.mixer.out_proj",
+        "backbone.layers.45.mixer.shared_experts.up_proj",
+        "backbone.layers.45.mixer.shared_experts.down_proj",
+        "backbone.layers.46.mixer.in_proj",
+        "backbone.layers.46.mixer.out_proj",
+        "backbone.layers.47.mixer.shared_experts.up_proj",
+        "backbone.layers.47.mixer.shared_experts.down_proj",
+        "backbone.layers.48.mixer.in_proj",
+        "backbone.layers.48.mixer.out_proj",
+        "backbone.layers.49.mixer.shared_experts.up_proj",
+        "backbone.layers.49.mixer.shared_experts.down_proj",
+        "backbone.layers.50.mixer.in_proj",
+        "backbone.layers.50.mixer.out_proj",
+        "backbone.layers.51.mixer.shared_experts.up_proj",
+        "backbone.layers.51.mixer.shared_experts.down_proj",
+        "lm_head"
+      ],
+      "kv_cache_scheme": null,
+      "quant_method": "compressed-tensors",
+      "quantization_status": "compressed",
+      "sparsity_config": {},
+      "transform_config": {},
+      "version": "0.14.1.a20260326"
+    },
+    "total_parameters": 6674510832,
+    "active_parameters": 6,
+    "shard_count": 5,
+    "download_size": 20767782252,
+    "chat_template": true,
+    "trust_remote_code": true,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1780
+      },
+      {
+        "name": "README.md",
+        "size": 17832
+      },
+      {
+        "name": "assets/Nemotron_Cascade_2.pdf",
+        "size": 1077265
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/a.py",
+        "size": 3157
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/b.py",
+        "size": 5373
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/c.py",
+        "size": 7628
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/d.py",
+        "size": 3447
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/e.py",
+        "size": 4031
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/f.py",
+        "size": 3246
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/g.py",
+        "size": 9367
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/h.py",
+        "size": 5725
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/i.py",
+        "size": 2653
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/j.py",
+        "size": 2862
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/k.py",
+        "size": 3293
+      },
+      {
+        "name": "assets/solutions/icpcwf2025/l.py",
+        "size": 1540
+      },
+      {
+        "name": "assets/solutions/imo2025/IMO2025.pdf",
+        "size": 530682
+      },
+      {
+        "name": "assets/solutions/imoproofbench/IMO-ProofBench.jsonl",
+        "size": 396068
+      },
+      {
+        "name": "assets/solutions/ioi2025/festival.cpp",
+        "size": 4833
+      },
+      {
+        "name": "assets/solutions/ioi2025/migrations-subtask1.cpp",
+        "size": 2815
+      },
+      {
+        "name": "assets/solutions/ioi2025/migrations-subtask2.cpp",
+        "size": 6396
+      },
+      {
+        "name": "assets/solutions/ioi2025/obstacles.cpp",
+        "size": 6825
+      },
+      {
+        "name": "assets/solutions/ioi2025/souvenirs-subtask1_3.cpp",
+        "size": 1651
+      },
+      {
+        "name": "assets/solutions/ioi2025/souvenirs-subtask4.cpp",
+        "size": 471
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part1.cpp",
+        "size": 3778
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part2-subtask1.cpp",
+        "size": 4902
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part2-subtask2.cpp",
+        "size": 11580
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part2-subtask3.cpp",
+        "size": 7492
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part2-subtask4.cpp",
+        "size": 4701
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part2-subtask5.cpp",
+        "size": 5430
+      },
+      {
+        "name": "assets/solutions/ioi2025/triples-part2-subtask6.cpp",
+        "size": 4619
+      },
+      {
+        "name": "assets/solutions/ioi2025/worldmap.cpp",
+        "size": 8398
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 10925
+      },
+      {
+        "name": "config.json",
+        "size": 7403
+      },
+      {
+        "name": "configuration_nemotron_h.py",
+        "size": 12893
+      },
+      {
+        "name": "fig/nemotron-cascade-2-results.png",
+        "size": 400746
+      },
+      {
+        "name": "generation_config.json",
+        "size": 138
+      },
+      {
+        "name": "model-00001-of-00005.safetensors",
+        "size": 4998055384
+      },
+      {
+        "name": "model-00002-of-00005.safetensors",
+        "size": 4956379680
+      },
+      {
+        "name": "model-00003-of-00005.safetensors",
+        "size": 5000317528
+      },
+      {
+        "name": "model-00004-of-00005.safetensors",
+        "size": 5000439912
+      },
+      {
+        "name": "model-00005-of-00005.safetensors",
+        "size": 790843960
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 1822892
+      },
+      {
+        "name": "modeling_nemotron_h.py",
+        "size": 83189
+      },
+      {
+        "name": "recipe.yaml",
+        "size": 1777
+      },
+      {
+        "name": "special_tokens_map.json",
+        "size": 449
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 17078327
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 177209
+      }
+    ]
+  },
+  {
+    "repository": "CohereLabs/North-Mini-Code-1.0",
+    "owner": "CohereLabs",
+    "exists": true,
+    "revision": "d11e61a842617a22dc328552fa5bb86231ee4f37",
+    "license": "apache-2.0",
+    "gated": false,
+    "private": false,
+    "classification": "official",
+    "architecture": [
+      "Cohere2MoeForCausalLM"
+    ],
+    "model_type": "cohere2_moe",
+    "quantization": null,
+    "quantization_config": {},
+    "total_parameters": 30484303872,
+    "active_parameters": 8,
+    "shard_count": 49,
+    "download_size": 61000844277,
+    "chat_template": true,
+    "trust_remote_code": false,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".eval_results/swe-bench-pro.yaml",
+        "size": 234
+      },
+      {
+        "name": ".eval_results/swe-bench-verified.yaml",
+        "size": 248
+      },
+      {
+        "name": ".eval_results/terminal-bench-v2.yaml",
+        "size": 249
+      },
+      {
+        "name": ".gitattributes",
+        "size": 1570
+      },
+      {
+        "name": "README.md",
+        "size": 10485
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 12397
+      },
+      {
+        "name": "config.json",
+        "size": 2342
+      },
+      {
+        "name": "generation_config.json",
+        "size": 136
+      },
+      {
+        "name": "model-00001-of-00049.safetensors",
+        "size": 1551917728
+      },
+      {
+        "name": "model-00002-of-00049.safetensors",
+        "size": 1246284112
+      },
+      {
+        "name": "model-00003-of-00049.safetensors",
+        "size": 1246284112
+      },
+      {
+        "name": "model-00004-of-00049.safetensors",
+        "size": 1246284112
+      },
+      {
+        "name": "model-00005-of-00049.safetensors",
+        "size": 1246284112
+      },
+      {
+        "name": "model-00006-of-00049.safetensors",
+        "size": 1246284112
+      },
+      {
+        "name": "model-00007-of-00049.safetensors",
+        "size": 1246284112
+      },
+      {
+        "name": "model-00008-of-00049.safetensors",
+        "size": 1246284112
+      },
+      {
+        "name": "model-00009-of-00049.safetensors",
+        "size": 1246284112
+      },
+      {
+        "name": "model-00010-of-00049.safetensors",
+        "size": 1246284224
+      },
+      {
+        "name": "model-00011-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00012-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00013-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00014-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00015-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00016-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00017-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00018-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00019-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00020-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00021-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00022-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00023-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00024-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00025-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00026-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00027-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00028-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00029-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00030-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00031-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00032-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00033-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00034-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00035-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00036-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00037-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00038-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00039-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00040-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00041-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00042-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00043-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00044-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00045-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00046-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00047-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00048-of-00049.safetensors",
+        "size": 1246284504
+      },
+      {
+        "name": "model-00049-of-00049.safetensors",
+        "size": 843615384
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 1688465
+      },
+      {
+        "name": "special_tokens_map.json",
+        "size": 672
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 28217141
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 8954
+      }
+    ]
+  },
+  {
+    "repository": "CohereLabs/North-Mini-Code-1.0-fp8",
+    "owner": "CohereLabs",
+    "exists": true,
+    "revision": "736dde3c255d7726551e6e12af59967f08a20eb6",
+    "license": "apache-2.0",
+    "gated": false,
+    "private": false,
+    "classification": "official",
+    "architecture": [
+      "Cohere2MoeForCausalLM"
+    ],
+    "model_type": "cohere2_moe",
+    "quantization": "compressed-tensors",
+    "quantization_config": {
+      "config_groups": {
+        "group_0": {
+          "format": "float-quantized",
+          "input_activations": {
+            "actorder": null,
+            "block_structure": null,
+            "dynamic": true,
+            "group_size": null,
+            "num_bits": 8,
+            "observer": null,
+            "observer_kwargs": {},
+            "scale_dtype": null,
+            "strategy": "token",
+            "symmetric": true,
+            "type": "float",
+            "zp_dtype": null
+          },
+          "output_activations": null,
+          "targets": [
+            "Linear"
+          ],
+          "weights": {
+            "actorder": null,
+            "block_structure": null,
+            "dynamic": false,
+            "group_size": null,
+            "num_bits": 8,
+            "observer": "memoryless_minmax",
+            "observer_kwargs": {},
+            "scale_dtype": null,
+            "strategy": "channel",
+            "symmetric": true,
+            "type": "float",
+            "zp_dtype": null
+          }
+        }
+      },
+      "format": "float-quantized",
+      "global_compression_ratio": null,
+      "ignore": [
+        "model.layers.0.self_attn.q_proj",
+        "model.layers.0.self_attn.k_proj",
+        "model.layers.0.self_attn.v_proj",
+        "model.layers.0.self_attn.o_proj",
+        "model.layers.0.mlp.gate_proj",
+        "model.layers.0.mlp.up_proj",
+        "model.layers.0.mlp.down_proj",
+        "model.layers.1.self_attn.q_proj",
+        "model.layers.1.self_attn.k_proj",
+        "model.layers.1.self_attn.v_proj",
+        "model.layers.1.self_attn.o_proj",
+        "model.layers.1.mlp.gate",
+        "model.layers.2.self_attn.q_proj",
+        "model.layers.2.self_attn.k_proj",
+        "model.layers.2.self_attn.v_proj",
+        "model.layers.2.self_attn.o_proj",
+        "model.layers.2.mlp.gate",
+        "model.layers.3.self_attn.q_proj",
+        "model.layers.3.self_attn.k_proj",
+        "model.layers.3.self_attn.v_proj",
+        "model.layers.3.self_attn.o_proj",
+        "model.layers.3.mlp.gate",
+        "model.layers.4.self_attn.q_proj",
+        "model.layers.4.self_attn.k_proj",
+        "model.layers.4.self_attn.v_proj",
+        "model.layers.4.self_attn.o_proj",
+        "model.layers.4.mlp.gate",
+        "model.layers.5.self_attn.q_proj",
+        "model.layers.5.self_attn.k_proj",
+        "model.layers.5.self_attn.v_proj",
+        "model.layers.5.self_attn.o_proj",
+        "model.layers.5.mlp.gate",
+        "model.layers.6.self_attn.q_proj",
+        "model.layers.6.self_attn.k_proj",
+        "model.layers.6.self_attn.v_proj",
+        "model.layers.6.self_attn.o_proj",
+        "model.layers.6.mlp.gate",
+        "model.layers.7.self_attn.q_proj",
+        "model.layers.7.self_attn.k_proj",
+        "model.layers.7.self_attn.v_proj",
+        "model.layers.7.self_attn.o_proj",
+        "model.layers.7.mlp.gate",
+        "model.layers.8.self_attn.q_proj",
+        "model.layers.8.self_attn.k_proj",
+        "model.layers.8.self_attn.v_proj",
+        "model.layers.8.self_attn.o_proj",
+        "model.layers.8.mlp.gate",
+        "model.layers.9.self_attn.q_proj",
+        "model.layers.9.self_attn.k_proj",
+        "model.layers.9.self_attn.v_proj",
+        "model.layers.9.self_attn.o_proj",
+        "model.layers.9.mlp.gate",
+        "model.layers.10.self_attn.q_proj",
+        "model.layers.10.self_attn.k_proj",
+        "model.layers.10.self_attn.v_proj",
+        "model.layers.10.self_attn.o_proj",
+        "model.layers.10.mlp.gate",
+        "model.layers.11.self_attn.q_proj",
+        "model.layers.11.self_attn.k_proj",
+        "model.layers.11.self_attn.v_proj",
+        "model.layers.11.self_attn.o_proj",
+        "model.layers.11.mlp.gate",
+        "model.layers.12.self_attn.q_proj",
+        "model.layers.12.self_attn.k_proj",
+        "model.layers.12.self_attn.v_proj",
+        "model.layers.12.self_attn.o_proj",
+        "model.layers.12.mlp.gate",
+        "model.layers.13.self_attn.q_proj",
+        "model.layers.13.self_attn.k_proj",
+        "model.layers.13.self_attn.v_proj",
+        "model.layers.13.self_attn.o_proj",
+        "model.layers.13.mlp.gate",
+        "model.layers.14.self_attn.q_proj",
+        "model.layers.14.self_attn.k_proj",
+        "model.layers.14.self_attn.v_proj",
+        "model.layers.14.self_attn.o_proj",
+        "model.layers.14.mlp.gate",
+        "model.layers.15.self_attn.q_proj",
+        "model.layers.15.self_attn.k_proj",
+        "model.layers.15.self_attn.v_proj",
+        "model.layers.15.self_attn.o_proj",
+        "model.layers.15.mlp.gate",
+        "model.layers.16.self_attn.q_proj",
+        "model.layers.16.self_attn.k_proj",
+        "model.layers.16.self_attn.v_proj",
+        "model.layers.16.self_attn.o_proj",
+        "model.layers.16.mlp.gate",
+        "model.layers.17.self_attn.q_proj",
+        "model.layers.17.self_attn.k_proj",
+        "model.layers.17.self_attn.v_proj",
+        "model.layers.17.self_attn.o_proj",
+        "model.layers.17.mlp.gate",
+        "model.layers.18.self_attn.q_proj",
+        "model.layers.18.self_attn.k_proj",
+        "model.layers.18.self_attn.v_proj",
+        "model.layers.18.self_attn.o_proj",
+        "model.layers.18.mlp.gate",
+        "model.layers.19.self_attn.q_proj",
+        "model.layers.19.self_attn.k_proj",
+        "model.layers.19.self_attn.v_proj",
+        "model.layers.19.self_attn.o_proj",
+        "model.layers.19.mlp.gate",
+        "model.layers.20.self_attn.q_proj",
+        "model.layers.20.self_attn.k_proj",
+        "model.layers.20.self_attn.v_proj",
+        "model.layers.20.self_attn.o_proj",
+        "model.layers.20.mlp.gate",
+        "model.layers.21.self_attn.q_proj",
+        "model.layers.21.self_attn.k_proj",
+        "model.layers.21.self_attn.v_proj",
+        "model.layers.21.self_attn.o_proj",
+        "model.layers.21.mlp.gate",
+        "model.layers.22.self_attn.q_proj",
+        "model.layers.22.self_attn.k_proj",
+        "model.layers.22.self_attn.v_proj",
+        "model.layers.22.self_attn.o_proj",
+        "model.layers.22.mlp.gate",
+        "model.layers.23.self_attn.q_proj",
+        "model.layers.23.self_attn.k_proj",
+        "model.layers.23.self_attn.v_proj",
+        "model.layers.23.self_attn.o_proj",
+        "model.layers.23.mlp.gate",
+        "model.layers.24.self_attn.q_proj",
+        "model.layers.24.self_attn.k_proj",
+        "model.layers.24.self_attn.v_proj",
+        "model.layers.24.self_attn.o_proj",
+        "model.layers.24.mlp.gate",
+        "model.layers.25.self_attn.q_proj",
+        "model.layers.25.self_attn.k_proj",
+        "model.layers.25.self_attn.v_proj",
+        "model.layers.25.self_attn.o_proj",
+        "model.layers.25.mlp.gate",
+        "model.layers.26.self_attn.q_proj",
+        "model.layers.26.self_attn.k_proj",
+        "model.layers.26.self_attn.v_proj",
+        "model.layers.26.self_attn.o_proj",
+        "model.layers.26.mlp.gate",
+        "model.layers.27.self_attn.q_proj",
+        "model.layers.27.self_attn.k_proj",
+        "model.layers.27.self_attn.v_proj",
+        "model.layers.27.self_attn.o_proj",
+        "model.layers.27.mlp.gate",
+        "model.layers.28.self_attn.q_proj",
+        "model.layers.28.self_attn.k_proj",
+        "model.layers.28.self_attn.v_proj",
+        "model.layers.28.self_attn.o_proj",
+        "model.layers.28.mlp.gate",
+        "model.layers.29.self_attn.q_proj",
+        "model.layers.29.self_attn.k_proj",
+        "model.layers.29.self_attn.v_proj",
+        "model.layers.29.self_attn.o_proj",
+        "model.layers.29.mlp.gate",
+        "model.layers.30.self_attn.q_proj",
+        "model.layers.30.self_attn.k_proj",
+        "model.layers.30.self_attn.v_proj",
+        "model.layers.30.self_attn.o_proj",
+        "model.layers.30.mlp.gate",
+        "model.layers.31.self_attn.q_proj",
+        "model.layers.31.self_attn.k_proj",
+        "model.layers.31.self_attn.v_proj",
+        "model.layers.31.self_attn.o_proj",
+        "model.layers.31.mlp.gate",
+        "model.layers.32.self_attn.q_proj",
+        "model.layers.32.self_attn.k_proj",
+        "model.layers.32.self_attn.v_proj",
+        "model.layers.32.self_attn.o_proj",
+        "model.layers.32.mlp.gate",
+        "model.layers.33.self_attn.q_proj",
+        "model.layers.33.self_attn.k_proj",
+        "model.layers.33.self_attn.v_proj",
+        "model.layers.33.self_attn.o_proj",
+        "model.layers.33.mlp.gate",
+        "model.layers.34.self_attn.q_proj",
+        "model.layers.34.self_attn.k_proj",
+        "model.layers.34.self_attn.v_proj",
+        "model.layers.34.self_attn.o_proj",
+        "model.layers.34.mlp.gate",
+        "model.layers.35.self_attn.q_proj",
+        "model.layers.35.self_attn.k_proj",
+        "model.layers.35.self_attn.v_proj",
+        "model.layers.35.self_attn.o_proj",
+        "model.layers.35.mlp.gate",
+        "model.layers.36.self_attn.q_proj",
+        "model.layers.36.self_attn.k_proj",
+        "model.layers.36.self_attn.v_proj",
+        "model.layers.36.self_attn.o_proj",
+        "model.layers.36.mlp.gate",
+        "model.layers.37.self_attn.q_proj",
+        "model.layers.37.self_attn.k_proj",
+        "model.layers.37.self_attn.v_proj",
+        "model.layers.37.self_attn.o_proj",
+        "model.layers.37.mlp.gate",
+        "model.layers.38.self_attn.q_proj",
+        "model.layers.38.self_attn.k_proj",
+        "model.layers.38.self_attn.v_proj",
+        "model.layers.38.self_attn.o_proj",
+        "model.layers.38.mlp.gate",
+        "model.layers.39.self_attn.q_proj",
+        "model.layers.39.self_attn.k_proj",
+        "model.layers.39.self_attn.v_proj",
+        "model.layers.39.self_attn.o_proj",
+        "model.layers.39.mlp.gate",
+        "model.layers.40.self_attn.q_proj",
+        "model.layers.40.self_attn.k_proj",
+        "model.layers.40.self_attn.v_proj",
+        "model.layers.40.self_attn.o_proj",
+        "model.layers.40.mlp.gate",
+        "model.layers.41.self_attn.q_proj",
+        "model.layers.41.self_attn.k_proj",
+        "model.layers.41.self_attn.v_proj",
+        "model.layers.41.self_attn.o_proj",
+        "model.layers.41.mlp.gate",
+        "model.layers.42.self_attn.q_proj",
+        "model.layers.42.self_attn.k_proj",
+        "model.layers.42.self_attn.v_proj",
+        "model.layers.42.self_attn.o_proj",
+        "model.layers.42.mlp.gate",
+        "model.layers.43.self_attn.q_proj",
+        "model.layers.43.self_attn.k_proj",
+        "model.layers.43.self_attn.v_proj",
+        "model.layers.43.self_attn.o_proj",
+        "model.layers.43.mlp.gate",
+        "model.layers.44.self_attn.q_proj",
+        "model.layers.44.self_attn.k_proj",
+        "model.layers.44.self_attn.v_proj",
+        "model.layers.44.self_attn.o_proj",
+        "model.layers.44.mlp.gate",
+        "model.layers.45.self_attn.q_proj",
+        "model.layers.45.self_attn.k_proj",
+        "model.layers.45.self_attn.v_proj",
+        "model.layers.45.self_attn.o_proj",
+        "model.layers.45.mlp.gate",
+        "model.layers.46.self_attn.q_proj",
+        "model.layers.46.self_attn.k_proj",
+        "model.layers.46.self_attn.v_proj",
+        "model.layers.46.self_attn.o_proj",
+        "model.layers.46.mlp.gate",
+        "model.layers.47.self_attn.q_proj",
+        "model.layers.47.self_attn.k_proj",
+        "model.layers.47.self_attn.v_proj",
+        "model.layers.47.self_attn.o_proj",
+        "model.layers.47.mlp.gate",
+        "model.layers.48.self_attn.q_proj",
+        "model.layers.48.self_attn.k_proj",
+        "model.layers.48.self_attn.v_proj",
+        "model.layers.48.self_attn.o_proj",
+        "model.layers.48.mlp.gate",
+        "lm_head"
+      ],
+      "kv_cache_scheme": null,
+      "quant_method": "compressed-tensors",
+      "quantization_status": "compressed",
+      "sparsity_config": {},
+      "transform_config": {},
+      "version": "0.15.1.dev6+g077e752"
+    },
+    "total_parameters": 30506323968,
+    "active_parameters": 8,
+    "shard_count": 7,
+    "download_size": 32058048563,
+    "chat_template": true,
+    "trust_remote_code": false,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1570
+      },
+      {
+        "name": "README.md",
+        "size": 5942
+      },
+      {
+        "name": "__create_dir__",
+        "size": 0
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 12397
+      },
+      {
+        "name": "config.json",
+        "size": 13590
+      },
+      {
+        "name": "generation_config.json",
+        "size": 136
+      },
+      {
+        "name": "model-00001-of-00007.safetensors",
+        "size": 4999427136
+      },
+      {
+        "name": "model-00002-of-00007.safetensors",
+        "size": 4999649328
+      },
+      {
+        "name": "model-00003-of-00007.safetensors",
+        "size": 4999651360
+      },
+      {
+        "name": "model-00004-of-00007.safetensors",
+        "size": 4999650992
+      },
+      {
+        "name": "model-00005-of-00007.safetensors",
+        "size": 4999650664
+      },
+      {
+        "name": "model-00006-of-00007.safetensors",
+        "size": 5000759096
+      },
+      {
+        "name": "model-00007-of-00007.safetensors",
+        "size": 2027496552
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 3463217
+      },
+      {
+        "name": "recipe.yaml",
+        "size": 320
+      },
+      {
+        "name": "special_tokens_map.json",
+        "size": 577
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 28217141
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 48545
+      }
+    ]
+  },
+  {
+    "repository": "CohereLabs/North-Mini-Code-1.0-w4a16",
+    "owner": "CohereLabs",
+    "exists": true,
+    "revision": "1e55f4aa327aba4c0b7a1da0d0f24626d3af5c90",
+    "license": "apache-2.0",
+    "gated": false,
+    "private": false,
+    "classification": "official",
+    "architecture": [
+      "Cohere2MoeForCausalLM"
+    ],
+    "model_type": "cohere2_moe",
+    "quantization": "compressed-tensors",
+    "quantization_config": {
+      "config_groups": {
+        "group_0": {
+          "targets": [
+            "Linear"
+          ],
+          "weights": {
+            "num_bits": 4,
+            "type": "float",
+            "symmetric": true,
+            "group_size": 16,
+            "strategy": "tensor_group",
+            "block_structure": null,
+            "dynamic": false,
+            "actorder": null,
+            "scale_dtype": "torch.float8_e4m3fn",
+            "zp_dtype": null,
+            "observer": "memoryless_minmax",
+            "observer_kwargs": {}
+          },
+          "input_activations": null,
+          "output_activations": null
+        }
+      },
+      "kv_cache_scheme": null,
+      "format": "nvfp4-pack-quantized",
+      "quantization_status": "compressed",
+      "global_compression_ratio": null,
+      "ignore": [
+        "model.embed_tokens",
+        "model.layers.0.input_layernorm",
+        "model.layers.0.mlp.down_proj",
+        "model.layers.0.mlp.gate_proj",
+        "model.layers.0.mlp.up_proj",
+        "model.layers.0.self_attn.k_proj",
+        "model.layers.0.self_attn.o_proj",
+        "model.layers.0.self_attn.q_proj",
+        "model.layers.0.self_attn.v_proj",
+        "model.layers.1.input_layernorm",
+        "model.layers.1.mlp.gate",
+        "model.layers.1.self_attn.k_proj",
+        "model.layers.1.self_attn.o_proj",
+        "model.layers.1.self_attn.q_proj",
+        "model.layers.1.self_attn.v_proj",
+        "model.layers.10.input_layernorm",
+        "model.layers.10.mlp.gate",
+        "model.layers.10.self_attn.k_proj",
+        "model.layers.10.self_attn.o_proj",
+        "model.layers.10.self_attn.q_proj",
+        "model.layers.10.self_attn.v_proj",
+        "model.layers.11.input_layernorm",
+        "model.layers.11.mlp.gate",
+        "model.layers.11.self_attn.k_proj",
+        "model.layers.11.self_attn.o_proj",
+        "model.layers.11.self_attn.q_proj",
+        "model.layers.11.self_attn.v_proj",
+        "model.layers.12.input_layernorm",
+        "model.layers.12.mlp.gate",
+        "model.layers.12.self_attn.k_proj",
+        "model.layers.12.self_attn.o_proj",
+        "model.layers.12.self_attn.q_proj",
+        "model.layers.12.self_attn.v_proj",
+        "model.layers.13.input_layernorm",
+        "model.layers.13.mlp.gate",
+        "model.layers.13.self_attn.k_proj",
+        "model.layers.13.self_attn.o_proj",
+        "model.layers.13.self_attn.q_proj",
+        "model.layers.13.self_attn.v_proj",
+        "model.layers.14.input_layernorm",
+        "model.layers.14.mlp.gate",
+        "model.layers.14.self_attn.k_proj",
+        "model.layers.14.self_attn.o_proj",
+        "model.layers.14.self_attn.q_proj",
+        "model.layers.14.self_attn.v_proj",
+        "model.layers.15.input_layernorm",
+        "model.layers.15.mlp.gate",
+        "model.layers.15.self_attn.k_proj",
+        "model.layers.15.self_attn.o_proj",
+        "model.layers.15.self_attn.q_proj",
+        "model.layers.15.self_attn.v_proj",
+        "model.layers.16.input_layernorm",
+        "model.layers.16.mlp.gate",
+        "model.layers.16.self_attn.k_proj",
+        "model.layers.16.self_attn.o_proj",
+        "model.layers.16.self_attn.q_proj",
+        "model.layers.16.self_attn.v_proj",
+        "model.layers.17.input_layernorm",
+        "model.layers.17.mlp.gate",
+        "model.layers.17.self_attn.k_proj",
+        "model.layers.17.self_attn.o_proj",
+        "model.layers.17.self_attn.q_proj",
+        "model.layers.17.self_attn.v_proj",
+        "model.layers.18.input_layernorm",
+        "model.layers.18.mlp.gate",
+        "model.layers.18.self_attn.k_proj",
+        "model.layers.18.self_attn.o_proj",
+        "model.layers.18.self_attn.q_proj",
+        "model.layers.18.self_attn.v_proj",
+        "model.layers.19.input_layernorm",
+        "model.layers.19.mlp.gate",
+        "model.layers.19.self_attn.k_proj",
+        "model.layers.19.self_attn.o_proj",
+        "model.layers.19.self_attn.q_proj",
+        "model.layers.19.self_attn.v_proj",
+        "model.layers.2.input_layernorm",
+        "model.layers.2.mlp.gate",
+        "model.layers.2.self_attn.k_proj",
+        "model.layers.2.self_attn.o_proj",
+        "model.layers.2.self_attn.q_proj",
+        "model.layers.2.self_attn.v_proj",
+        "model.layers.20.input_layernorm",
+        "model.layers.20.mlp.gate",
+        "model.layers.20.self_attn.k_proj",
+        "model.layers.20.self_attn.o_proj",
+        "model.layers.20.self_attn.q_proj",
+        "model.layers.20.self_attn.v_proj",
+        "model.layers.21.input_layernorm",
+        "model.layers.21.mlp.gate",
+        "model.layers.21.self_attn.k_proj",
+        "model.layers.21.self_attn.o_proj",
+        "model.layers.21.self_attn.q_proj",
+        "model.layers.21.self_attn.v_proj",
+        "model.layers.22.input_layernorm",
+        "model.layers.22.mlp.gate",
+        "model.layers.22.self_attn.k_proj",
+        "model.layers.22.self_attn.o_proj",
+        "model.layers.22.self_attn.q_proj",
+        "model.layers.22.self_attn.v_proj",
+        "model.layers.23.input_layernorm",
+        "model.layers.23.mlp.gate",
+        "model.layers.23.self_attn.k_proj",
+        "model.layers.23.self_attn.o_proj",
+        "model.layers.23.self_attn.q_proj",
+        "model.layers.23.self_attn.v_proj",
+        "model.layers.24.input_layernorm",
+        "model.layers.24.mlp.gate",
+        "model.layers.24.self_attn.k_proj",
+        "model.layers.24.self_attn.o_proj",
+        "model.layers.24.self_attn.q_proj",
+        "model.layers.24.self_attn.v_proj",
+        "model.layers.25.input_layernorm",
+        "model.layers.25.mlp.gate",
+        "model.layers.25.self_attn.k_proj",
+        "model.layers.25.self_attn.o_proj",
+        "model.layers.25.self_attn.q_proj",
+        "model.layers.25.self_attn.v_proj",
+        "model.layers.26.input_layernorm",
+        "model.layers.26.mlp.gate",
+        "model.layers.26.self_attn.k_proj",
+        "model.layers.26.self_attn.o_proj",
+        "model.layers.26.self_attn.q_proj",
+        "model.layers.26.self_attn.v_proj",
+        "model.layers.27.input_layernorm",
+        "model.layers.27.mlp.gate",
+        "model.layers.27.self_attn.k_proj",
+        "model.layers.27.self_attn.o_proj",
+        "model.layers.27.self_attn.q_proj",
+        "model.layers.27.self_attn.v_proj",
+        "model.layers.28.input_layernorm",
+        "model.layers.28.mlp.gate",
+        "model.layers.28.self_attn.k_proj",
+        "model.layers.28.self_attn.o_proj",
+        "model.layers.28.self_attn.q_proj",
+        "model.layers.28.self_attn.v_proj",
+        "model.layers.29.input_layernorm",
+        "model.layers.29.mlp.gate",
+        "model.layers.29.self_attn.k_proj",
+        "model.layers.29.self_attn.o_proj",
+        "model.layers.29.self_attn.q_proj",
+        "model.layers.29.self_attn.v_proj",
+        "model.layers.3.input_layernorm",
+        "model.layers.3.mlp.gate",
+        "model.layers.3.self_attn.k_proj",
+        "model.layers.3.self_attn.o_proj",
+        "model.layers.3.self_attn.q_proj",
+        "model.layers.3.self_attn.v_proj",
+        "model.layers.30.input_layernorm",
+        "model.layers.30.mlp.gate",
+        "model.layers.30.self_attn.k_proj",
+        "model.layers.30.self_attn.o_proj",
+        "model.layers.30.self_attn.q_proj",
+        "model.layers.30.self_attn.v_proj",
+        "model.layers.31.input_layernorm",
+        "model.layers.31.mlp.gate",
+        "model.layers.31.self_attn.k_proj",
+        "model.layers.31.self_attn.o_proj",
+        "model.layers.31.self_attn.q_proj",
+        "model.layers.31.self_attn.v_proj",
+        "model.layers.32.input_layernorm",
+        "model.layers.32.mlp.gate",
+        "model.layers.32.self_attn.k_proj",
+        "model.layers.32.self_attn.o_proj",
+        "model.layers.32.self_attn.q_proj",
+        "model.layers.32.self_attn.v_proj",
+        "model.layers.33.input_layernorm",
+        "model.layers.33.mlp.gate",
+        "model.layers.33.self_attn.k_proj",
+        "model.layers.33.self_attn.o_proj",
+        "model.layers.33.self_attn.q_proj",
+        "model.layers.33.self_attn.v_proj",
+        "model.layers.34.input_layernorm",
+        "model.layers.34.mlp.gate",
+        "model.layers.34.self_attn.k_proj",
+        "model.layers.34.self_attn.o_proj",
+        "model.layers.34.self_attn.q_proj",
+        "model.layers.34.self_attn.v_proj",
+        "model.layers.35.input_layernorm",
+        "model.layers.35.mlp.gate",
+        "model.layers.35.self_attn.k_proj",
+        "model.layers.35.self_attn.o_proj",
+        "model.layers.35.self_attn.q_proj",
+        "model.layers.35.self_attn.v_proj",
+        "model.layers.36.input_layernorm",
+        "model.layers.36.mlp.gate",
+        "model.layers.36.self_attn.k_proj",
+        "model.layers.36.self_attn.o_proj",
+        "model.layers.36.self_attn.q_proj",
+        "model.layers.36.self_attn.v_proj",
+        "model.layers.37.input_layernorm",
+        "model.layers.37.mlp.gate",
+        "model.layers.37.self_attn.k_proj",
+        "model.layers.37.self_attn.o_proj",
+        "model.layers.37.self_attn.q_proj",
+        "model.layers.37.self_attn.v_proj",
+        "model.layers.38.input_layernorm",
+        "model.layers.38.mlp.gate",
+        "model.layers.38.self_attn.k_proj",
+        "model.layers.38.self_attn.o_proj",
+        "model.layers.38.self_attn.q_proj",
+        "model.layers.38.self_attn.v_proj",
+        "model.layers.39.input_layernorm",
+        "model.layers.39.mlp.gate",
+        "model.layers.39.self_attn.k_proj",
+        "model.layers.39.self_attn.o_proj",
+        "model.layers.39.self_attn.q_proj",
+        "model.layers.39.self_attn.v_proj",
+        "model.layers.4.input_layernorm",
+        "model.layers.4.mlp.gate",
+        "model.layers.4.self_attn.k_proj",
+        "model.layers.4.self_attn.o_proj",
+        "model.layers.4.self_attn.q_proj",
+        "model.layers.4.self_attn.v_proj",
+        "model.layers.40.input_layernorm",
+        "model.layers.40.mlp.gate",
+        "model.layers.40.self_attn.k_proj",
+        "model.layers.40.self_attn.o_proj",
+        "model.layers.40.self_attn.q_proj",
+        "model.layers.40.self_attn.v_proj",
+        "model.layers.41.input_layernorm",
+        "model.layers.41.mlp.gate",
+        "model.layers.41.self_attn.k_proj",
+        "model.layers.41.self_attn.o_proj",
+        "model.layers.41.self_attn.q_proj",
+        "model.layers.41.self_attn.v_proj",
+        "model.layers.42.input_layernorm",
+        "model.layers.42.mlp.gate",
+        "model.layers.42.self_attn.k_proj",
+        "model.layers.42.self_attn.o_proj",
+        "model.layers.42.self_attn.q_proj",
+        "model.layers.42.self_attn.v_proj",
+        "model.layers.43.input_layernorm",
+        "model.layers.43.mlp.gate",
+        "model.layers.43.self_attn.k_proj",
+        "model.layers.43.self_attn.o_proj",
+        "model.layers.43.self_attn.q_proj",
+        "model.layers.43.self_attn.v_proj",
+        "model.layers.44.input_layernorm",
+        "model.layers.44.mlp.gate",
+        "model.layers.44.self_attn.k_proj",
+        "model.layers.44.self_attn.o_proj",
+        "model.layers.44.self_attn.q_proj",
+        "model.layers.44.self_attn.v_proj",
+        "model.layers.45.input_layernorm",
+        "model.layers.45.mlp.gate",
+        "model.layers.45.self_attn.k_proj",
+        "model.layers.45.self_attn.o_proj",
+        "model.layers.45.self_attn.q_proj",
+        "model.layers.45.self_attn.v_proj",
+        "model.layers.46.input_layernorm",
+        "model.layers.46.mlp.gate",
+        "model.layers.46.self_attn.k_proj",
+        "model.layers.46.self_attn.o_proj",
+        "model.layers.46.self_attn.q_proj",
+        "model.layers.46.self_attn.v_proj",
+        "model.layers.47.input_layernorm",
+        "model.layers.47.mlp.gate",
+        "model.layers.47.self_attn.k_proj",
+        "model.layers.47.self_attn.o_proj",
+        "model.layers.47.self_attn.q_proj",
+        "model.layers.47.self_attn.v_proj",
+        "model.layers.48.input_layernorm",
+        "model.layers.48.mlp.gate",
+        "model.layers.48.self_attn.k_proj",
+        "model.layers.48.self_attn.o_proj",
+        "model.layers.48.self_attn.q_proj",
+        "model.layers.48.self_attn.v_proj",
+        "model.layers.5.input_layernorm",
+        "model.layers.5.mlp.gate",
+        "model.layers.5.self_attn.k_proj",
+        "model.layers.5.self_attn.o_proj",
+        "model.layers.5.self_attn.q_proj",
+        "model.layers.5.self_attn.v_proj",
+        "model.layers.6.input_layernorm",
+        "model.layers.6.mlp.gate",
+        "model.layers.6.self_attn.k_proj",
+        "model.layers.6.self_attn.o_proj",
+        "model.layers.6.self_attn.q_proj",
+        "model.layers.6.self_attn.v_proj",
+        "model.layers.7.input_layernorm",
+        "model.layers.7.mlp.gate",
+        "model.layers.7.self_attn.k_proj",
+        "model.layers.7.self_attn.o_proj",
+        "model.layers.7.self_attn.q_proj",
+        "model.layers.7.self_attn.v_proj",
+        "model.layers.8.input_layernorm",
+        "model.layers.8.mlp.gate",
+        "model.layers.8.self_attn.k_proj",
+        "model.layers.8.self_attn.o_proj",
+        "model.layers.8.self_attn.q_proj",
+        "model.layers.8.self_attn.v_proj",
+        "model.layers.9.input_layernorm",
+        "model.layers.9.mlp.gate",
+        "model.layers.9.self_attn.k_proj",
+        "model.layers.9.self_attn.o_proj",
+        "model.layers.9.self_attn.q_proj",
+        "model.layers.9.self_attn.v_proj",
+        "model.norm"
+      ],
+      "version": "0.15.1.dev6+g077e752",
+      "quant_method": "compressed-tensors",
+      "sparsity_config": {},
+      "transform_config": {}
+    },
+    "total_parameters": 30484303872,
+    "active_parameters": 8,
+    "shard_count": 4,
+    "download_size": 19382986619,
+    "chat_template": true,
+    "trust_remote_code": false,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1570
+      },
+      {
+        "name": "README.md",
+        "size": 7449
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 12398
+      },
+      {
+        "name": "config.json",
+        "size": 15249
+      },
+      {
+        "name": "generation_config.json",
+        "size": 136
+      },
+      {
+        "name": "model-00001-of-00004.safetensors",
+        "size": 5372290582
+      },
+      {
+        "name": "model-00002-of-00004.safetensors",
+        "size": 5370206950
+      },
+      {
+        "name": "model-00003-of-00004.safetensors",
+        "size": 5370876144
+      },
+      {
+        "name": "model-00004-of-00004.safetensors",
+        "size": 3234214028
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 7135346
+      },
+      {
+        "name": "special_tokens_map.json",
+        "size": 672
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 28217141
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 8954
+      }
+    ]
+  },
+  {
+    "repository": "Qwen/Qwen3.5-122B-A10B",
+    "owner": "Qwen",
+    "exists": true,
+    "revision": "dc4d348443bc740c68e2d77492492c11606384d5",
+    "license": "apache-2.0",
+    "gated": false,
+    "private": false,
+    "classification": "official",
+    "architecture": [
+      "Qwen3_5MoeForConditionalGeneration"
+    ],
+    "model_type": "qwen3_5_moe",
+    "quantization": null,
+    "quantization_config": {},
+    "total_parameters": 125086497008,
+    "active_parameters": null,
+    "shard_count": 39,
+    "download_size": 250196472926,
+    "chat_template": true,
+    "trust_remote_code": false,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1570
+      },
+      {
+        "name": "LICENSE",
+        "size": 11544
+      },
+      {
+        "name": "README.md",
+        "size": 92633
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 7756
+      },
+      {
+        "name": "config.json",
+        "size": 3798
+      },
+      {
+        "name": "generation_config.json",
+        "size": 244
+      },
+      {
+        "name": "merges.txt",
+        "size": 3353259
+      },
+      {
+        "name": "model.safetensors-00001-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00002-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00003-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00004-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00005-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00006-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00007-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00008-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00009-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00010-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00011-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00012-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00013-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00014-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00015-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00016-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00017-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00018-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00019-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00020-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00021-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00022-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00023-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00024-of-00039.safetensors",
+        "size": 6442451224
+      },
+      {
+        "name": "model.safetensors-00025-of-00039.safetensors",
+        "size": 6442451488
+      },
+      {
+        "name": "model.safetensors-00026-of-00039.safetensors",
+        "size": 6442451488
+      },
+      {
+        "name": "model.safetensors-00027-of-00039.safetensors",
+        "size": 6442451488
+      },
+      {
+        "name": "model.safetensors-00028-of-00039.safetensors",
+        "size": 6442451488
+      },
+      {
+        "name": "model.safetensors-00029-of-00039.safetensors",
+        "size": 6442451488
+      },
+      {
+        "name": "model.safetensors-00030-of-00039.safetensors",
+        "size": 6442451488
+      },
+      {
+        "name": "model.safetensors-00031-of-00039.safetensors",
+        "size": 6442451488
+      },
+      {
+        "name": "model.safetensors-00032-of-00039.safetensors",
+        "size": 6442451488
+      },
+      {
+        "name": "model.safetensors-00033-of-00039.safetensors",
+        "size": 6442451488
+      },
+      {
+        "name": "model.safetensors-00034-of-00039.safetensors",
+        "size": 6442451488
+      },
+      {
+        "name": "model.safetensors-00035-of-00039.safetensors",
+        "size": 6442451488
+      },
+      {
+        "name": "model.safetensors-00036-of-00039.safetensors",
+        "size": 6442451488
+      },
+      {
+        "name": "model.safetensors-00037-of-00039.safetensors",
+        "size": 6398416496
+      },
+      {
+        "name": "model.safetensors-00038-of-00039.safetensors",
+        "size": 6439563496
+      },
+      {
+        "name": "model.safetensors-00039-of-00039.safetensors",
+        "size": 5407023640
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 203032
+      },
+      {
+        "name": "preprocessor_config.json",
+        "size": 390
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 12807982
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 16710
+      },
+      {
+        "name": "video_preprocessor_config.json",
+        "size": 385
+      },
+      {
+        "name": "vocab.json",
+        "size": 6722759
+      }
+    ]
+  },
+  {
+    "repository": "Qwen/Qwen3.5-122B-A10B-GPTQ-Int4",
+    "owner": "Qwen",
+    "exists": true,
+    "revision": "30cd92cba9707a9aba09d1e490ed4b66b78e9606",
+    "license": "apache-2.0",
+    "gated": false,
+    "private": false,
+    "classification": "official",
+    "architecture": [
+      "Qwen3_5MoeForConditionalGeneration"
+    ],
+    "model_type": "qwen3_5_moe",
+    "quantization": "gptq",
+    "quantization_config": {
+      "bits": 4,
+      "group_size": 128,
+      "damp_percent": 0.01,
+      "desc_act": false,
+      "static_groups": false,
+      "sym": true,
+      "true_sequential": true,
+      "quant_method": "gptq",
+      "dynamic": {
+        "lm_head": {},
+        "model.language_model.embed_tokens": {},
+        "-:.*attn.*": {},
+        "-:.*shared_expert.*": {},
+        "-:.*mtp.*": {},
+        "-:.*visual.*": {}
+      },
+      "modules_to_not_convert": []
+    },
+    "total_parameters": 125086497008,
+    "active_parameters": null,
+    "shard_count": 39,
+    "download_size": 78905490088,
+    "chat_template": true,
+    "trust_remote_code": false,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1635
+      },
+      {
+        "name": "LICENSE",
+        "size": 11343
+      },
+      {
+        "name": "README.md",
+        "size": 92257
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 7756
+      },
+      {
+        "name": "config.json",
+        "size": 4333
+      },
+      {
+        "name": "configuration.json",
+        "size": 48
+      },
+      {
+        "name": "generation_config.json",
+        "size": 244
+      },
+      {
+        "name": "merges.txt",
+        "size": 3353259
+      },
+      {
+        "name": "model.safetensors-00001-of-00039.safetensors",
+        "size": 1686664408
+      },
+      {
+        "name": "model.safetensors-00002-of-00039.safetensors",
+        "size": 1686664408
+      },
+      {
+        "name": "model.safetensors-00003-of-00039.safetensors",
+        "size": 1686662360
+      },
+      {
+        "name": "model.safetensors-00004-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00005-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00006-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00007-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00008-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00009-of-00039.safetensors",
+        "size": 1686664408
+      },
+      {
+        "name": "model.safetensors-00010-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00011-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00012-of-00039.safetensors",
+        "size": 1686664408
+      },
+      {
+        "name": "model.safetensors-00013-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00014-of-00039.safetensors",
+        "size": 1686664408
+      },
+      {
+        "name": "model.safetensors-00015-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00016-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00017-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00018-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00019-of-00039.safetensors",
+        "size": 1686664408
+      },
+      {
+        "name": "model.safetensors-00020-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00021-of-00039.safetensors",
+        "size": 1686664408
+      },
+      {
+        "name": "model.safetensors-00022-of-00039.safetensors",
+        "size": 1686664408
+      },
+      {
+        "name": "model.safetensors-00023-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00024-of-00039.safetensors",
+        "size": 1686666456
+      },
+      {
+        "name": "model.safetensors-00025-of-00039.safetensors",
+        "size": 1678277824
+      },
+      {
+        "name": "model.safetensors-00026-of-00039.safetensors",
+        "size": 1678277824
+      },
+      {
+        "name": "model.safetensors-00027-of-00039.safetensors",
+        "size": 1678279872
+      },
+      {
+        "name": "model.safetensors-00028-of-00039.safetensors",
+        "size": 1678279872
+      },
+      {
+        "name": "model.safetensors-00029-of-00039.safetensors",
+        "size": 1678278848
+      },
+      {
+        "name": "model.safetensors-00030-of-00039.safetensors",
+        "size": 1678278848
+      },
+      {
+        "name": "model.safetensors-00031-of-00039.safetensors",
+        "size": 1678278848
+      },
+      {
+        "name": "model.safetensors-00032-of-00039.safetensors",
+        "size": 1678279872
+      },
+      {
+        "name": "model.safetensors-00033-of-00039.safetensors",
+        "size": 1678279872
+      },
+      {
+        "name": "model.safetensors-00034-of-00039.safetensors",
+        "size": 1678278848
+      },
+      {
+        "name": "model.safetensors-00035-of-00039.safetensors",
+        "size": 1678277824
+      },
+      {
+        "name": "model.safetensors-00036-of-00039.safetensors",
+        "size": 1678279872
+      },
+      {
+        "name": "model.safetensors-00037-of-00039.safetensors",
+        "size": 6398416496
+      },
+      {
+        "name": "model.safetensors-00038-of-00039.safetensors",
+        "size": 6439563496
+      },
+      {
+        "name": "model.safetensors-00039-of-00039.safetensors",
+        "size": 5407023640
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 18144667
+      },
+      {
+        "name": "preprocessor_config.json",
+        "size": 390
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 12807982
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 16710
+      },
+      {
+        "name": "video_preprocessor_config.json",
+        "size": 385
+      },
+      {
+        "name": "vocab.json",
+        "size": 6722759
+      }
+    ]
+  },
+  {
+    "repository": "nvidia/Qwen3.5-122B-A10B-NVFP4",
+    "owner": "nvidia",
+    "exists": true,
+    "revision": "98915d837c4e7c87ac8296d02e89de19b3207e6d",
+    "license": "apache-2.0",
+    "gated": false,
+    "private": false,
+    "classification": "vendor-provided",
+    "architecture": [
+      "Qwen3_5MoeForConditionalGeneration"
+    ],
+    "model_type": "qwen3_5_moe",
+    "quantization": "modelopt",
+    "quantization_config": {
+      "config_groups": {
+        "group_0": {
+          "input_activations": {
+            "dynamic": false,
+            "num_bits": 4,
+            "type": "float",
+            "group_size": 16
+          },
+          "weights": {
+            "dynamic": false,
+            "num_bits": 4,
+            "type": "float",
+            "group_size": 16
+          },
+          "targets": [
+            "Linear"
+          ]
+        }
+      },
+      "ignore": [
+        "lm_head",
+        "model.language_model.layers.0.linear_attn*",
+        "model.language_model.layers.0.mlp.shared_expert*",
+        "model.language_model.layers.0.mlp.shared_expert_gate",
+        "model.language_model.layers.1.linear_attn*",
+        "model.language_model.layers.1.mlp.shared_expert*",
+        "model.language_model.layers.1.mlp.shared_expert_gate",
+        "model.language_model.layers.10.linear_attn*",
+        "model.language_model.layers.10.mlp.shared_expert*",
+        "model.language_model.layers.10.mlp.shared_expert_gate",
+        "model.language_model.layers.11.mlp.shared_expert*",
+        "model.language_model.layers.11.mlp.shared_expert_gate",
+        "model.language_model.layers.11.self_attn*",
+        "model.language_model.layers.12.linear_attn*",
+        "model.language_model.layers.12.mlp.shared_expert*",
+        "model.language_model.layers.12.mlp.shared_expert_gate",
+        "model.language_model.layers.13.linear_attn*",
+        "model.language_model.layers.13.mlp.shared_expert*",
+        "model.language_model.layers.13.mlp.shared_expert_gate",
+        "model.language_model.layers.14.linear_attn*",
+        "model.language_model.layers.14.mlp.shared_expert*",
+        "model.language_model.layers.14.mlp.shared_expert_gate",
+        "model.language_model.layers.15.mlp.shared_expert*",
+        "model.language_model.layers.15.mlp.shared_expert_gate",
+        "model.language_model.layers.15.self_attn*",
+        "model.language_model.layers.16.linear_attn*",
+        "model.language_model.layers.16.mlp.shared_expert*",
+        "model.language_model.layers.16.mlp.shared_expert_gate",
+        "model.language_model.layers.17.linear_attn*",
+        "model.language_model.layers.17.mlp.shared_expert*",
+        "model.language_model.layers.17.mlp.shared_expert_gate",
+        "model.language_model.layers.18.linear_attn*",
+        "model.language_model.layers.18.mlp.shared_expert*",
+        "model.language_model.layers.18.mlp.shared_expert_gate",
+        "model.language_model.layers.19.mlp.shared_expert*",
+        "model.language_model.layers.19.mlp.shared_expert_gate",
+        "model.language_model.layers.19.self_attn*",
+        "model.language_model.layers.2.linear_attn*",
+        "model.language_model.layers.2.mlp.shared_expert*",
+        "model.language_model.layers.2.mlp.shared_expert_gate",
+        "model.language_model.layers.20.linear_attn*",
+        "model.language_model.layers.20.mlp.shared_expert*",
+        "model.language_model.layers.20.mlp.shared_expert_gate",
+        "model.language_model.layers.21.linear_attn*",
+        "model.language_model.layers.21.mlp.shared_expert*",
+        "model.language_model.layers.21.mlp.shared_expert_gate",
+        "model.language_model.layers.22.linear_attn*",
+        "model.language_model.layers.22.mlp.shared_expert*",
+        "model.language_model.layers.22.mlp.shared_expert_gate",
+        "model.language_model.layers.23.mlp.shared_expert*",
+        "model.language_model.layers.23.mlp.shared_expert_gate",
+        "model.language_model.layers.23.self_attn*",
+        "model.language_model.layers.24.linear_attn*",
+        "model.language_model.layers.24.mlp.shared_expert*",
+        "model.language_model.layers.24.mlp.shared_expert_gate",
+        "model.language_model.layers.25.linear_attn*",
+        "model.language_model.layers.25.mlp.shared_expert*",
+        "model.language_model.layers.25.mlp.shared_expert_gate",
+        "model.language_model.layers.26.linear_attn*",
+        "model.language_model.layers.26.mlp.shared_expert*",
+        "model.language_model.layers.26.mlp.shared_expert_gate",
+        "model.language_model.layers.27.mlp.shared_expert*",
+        "model.language_model.layers.27.mlp.shared_expert_gate",
+        "model.language_model.layers.27.self_attn*",
+        "model.language_model.layers.28.linear_attn*",
+        "model.language_model.layers.28.mlp.shared_expert*",
+        "model.language_model.layers.28.mlp.shared_expert_gate",
+        "model.language_model.layers.29.linear_attn*",
+        "model.language_model.layers.29.mlp.shared_expert*",
+        "model.language_model.layers.29.mlp.shared_expert_gate",
+        "model.language_model.layers.3.mlp.shared_expert*",
+        "model.language_model.layers.3.mlp.shared_expert_gate",
+        "model.language_model.layers.3.self_attn*",
+        "model.language_model.layers.30.linear_attn*",
+        "model.language_model.layers.30.mlp.shared_expert*",
+        "model.language_model.layers.30.mlp.shared_expert_gate",
+        "model.language_model.layers.31.mlp.shared_expert*",
+        "model.language_model.layers.31.mlp.shared_expert_gate",
+        "model.language_model.layers.31.self_attn*",
+        "model.language_model.layers.32.linear_attn*",
+        "model.language_model.layers.32.mlp.shared_expert*",
+        "model.language_model.layers.32.mlp.shared_expert_gate",
+        "model.language_model.layers.33.linear_attn*",
+        "model.language_model.layers.33.mlp.shared_expert*",
+        "model.language_model.layers.33.mlp.shared_expert_gate",
+        "model.language_model.layers.34.linear_attn*",
+        "model.language_model.layers.34.mlp.shared_expert*",
+        "model.language_model.layers.34.mlp.shared_expert_gate",
+        "model.language_model.layers.35.mlp.shared_expert*",
+        "model.language_model.layers.35.mlp.shared_expert_gate",
+        "model.language_model.layers.35.self_attn*",
+        "model.language_model.layers.36.linear_attn*",
+        "model.language_model.layers.36.mlp.shared_expert*",
+        "model.language_model.layers.36.mlp.shared_expert_gate",
+        "model.language_model.layers.37.linear_attn*",
+        "model.language_model.layers.37.mlp.shared_expert*",
+        "model.language_model.layers.37.mlp.shared_expert_gate",
+        "model.language_model.layers.38.linear_attn*",
+        "model.language_model.layers.38.mlp.shared_expert*",
+        "model.language_model.layers.38.mlp.shared_expert_gate",
+        "model.language_model.layers.39.mlp.shared_expert*",
+        "model.language_model.layers.39.mlp.shared_expert_gate",
+        "model.language_model.layers.39.self_attn*",
+        "model.language_model.layers.4.linear_attn*",
+        "model.language_model.layers.4.mlp.shared_expert*",
+        "model.language_model.layers.4.mlp.shared_expert_gate",
+        "model.language_model.layers.40.linear_attn*",
+        "model.language_model.layers.40.mlp.shared_expert*",
+        "model.language_model.layers.40.mlp.shared_expert_gate",
+        "model.language_model.layers.41.linear_attn*",
+        "model.language_model.layers.41.mlp.shared_expert*",
+        "model.language_model.layers.41.mlp.shared_expert_gate",
+        "model.language_model.layers.42.linear_attn*",
+        "model.language_model.layers.42.mlp.shared_expert*",
+        "model.language_model.layers.42.mlp.shared_expert_gate",
+        "model.language_model.layers.43.mlp.shared_expert*",
+        "model.language_model.layers.43.mlp.shared_expert_gate",
+        "model.language_model.layers.43.self_attn*",
+        "model.language_model.layers.44.linear_attn*",
+        "model.language_model.layers.44.mlp.shared_expert*",
+        "model.language_model.layers.44.mlp.shared_expert_gate",
+        "model.language_model.layers.45.linear_attn*",
+        "model.language_model.layers.45.mlp.shared_expert*",
+        "model.language_model.layers.45.mlp.shared_expert_gate",
+        "model.language_model.layers.46.linear_attn*",
+        "model.language_model.layers.46.mlp.shared_expert*",
+        "model.language_model.layers.46.mlp.shared_expert_gate",
+        "model.language_model.layers.47.mlp.shared_expert*",
+        "model.language_model.layers.47.mlp.shared_expert_gate",
+        "model.language_model.layers.47.self_attn*",
+        "model.language_model.layers.5.linear_attn*",
+        "model.language_model.layers.5.mlp.shared_expert*",
+        "model.language_model.layers.5.mlp.shared_expert_gate",
+        "model.language_model.layers.6.linear_attn*",
+        "model.language_model.layers.6.mlp.shared_expert*",
+        "model.language_model.layers.6.mlp.shared_expert_gate",
+        "model.language_model.layers.7.mlp.shared_expert*",
+        "model.language_model.layers.7.mlp.shared_expert_gate",
+        "model.language_model.layers.7.self_attn*",
+        "model.language_model.layers.8.linear_attn*",
+        "model.language_model.layers.8.mlp.shared_expert*",
+        "model.language_model.layers.8.mlp.shared_expert_gate",
+        "model.language_model.layers.9.linear_attn*",
+        "model.language_model.layers.9.mlp.shared_expert*",
+        "model.language_model.layers.9.mlp.shared_expert_gate",
+        "model.visual*",
+        "mtp.layers.0*",
+        "mtp*"
+      ],
+      "quant_algo": "NVFP4",
+      "kv_cache_scheme": {
+        "dynamic": false,
+        "num_bits": 8,
+        "type": "float"
+      },
+      "producer": {
+        "name": "modelopt",
+        "version": "0.0.1.dev752+gbd4fc3a65.d20260504"
+      },
+      "quant_method": "modelopt"
+    },
+    "total_parameters": 64580759280,
+    "active_parameters": null,
+    "shard_count": 9,
+    "download_size": 83531051042,
+    "chat_template": true,
+    "trust_remote_code": false,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1635
+      },
+      {
+        "name": "README.md",
+        "size": 8151
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 7756
+      },
+      {
+        "name": "config.json",
+        "size": 14274
+      },
+      {
+        "name": "generation_config.json",
+        "size": 244
+      },
+      {
+        "name": "hf_quant_config.json",
+        "size": 9583
+      },
+      {
+        "name": "model-00001-of-00009.safetensors",
+        "size": 10000615592
+      },
+      {
+        "name": "model-00002-of-00009.safetensors",
+        "size": 10002004216
+      },
+      {
+        "name": "model-00003-of-00009.safetensors",
+        "size": 10001267992
+      },
+      {
+        "name": "model-00004-of-00009.safetensors",
+        "size": 10002020448
+      },
+      {
+        "name": "model-00005-of-00009.safetensors",
+        "size": 10001267592
+      },
+      {
+        "name": "model-00006-of-00009.safetensors",
+        "size": 9974109760
+      },
+      {
+        "name": "model-00007-of-00009.safetensors",
+        "size": 10002339192
+      },
+      {
+        "name": "model-00008-of-00009.safetensors",
+        "size": 9999073984
+      },
+      {
+        "name": "model-00009-of-00009.safetensors",
+        "size": 3512306232
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 16456165
+      },
+      {
+        "name": "preprocessor_config.json",
+        "size": 390
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 12807982
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 16710
+      },
+      {
+        "name": "video_preprocessor_config.json",
+        "size": 385
+      },
+      {
+        "name": "vocab.json",
+        "size": 6722759
+      }
+    ]
+  },
+  {
+    "repository": "RedHatAI/Qwen3.5-122B-A10B-NVFP4",
+    "owner": "RedHatAI",
+    "exists": true,
+    "revision": "49d19c108259a21450c40b8af38828b0a97390d8",
+    "license": "unknown",
+    "gated": false,
+    "private": false,
+    "classification": "unverified",
+    "architecture": [
+      "Qwen3_5MoeForConditionalGeneration"
+    ],
+    "model_type": "qwen3_5_moe",
+    "quantization": "compressed-tensors",
+    "quantization_config": {
+      "config_groups": {
+        "group_0": {
+          "format": "nvfp4-pack-quantized",
+          "input_activations": {
+            "actorder": null,
+            "block_structure": null,
+            "dynamic": "local",
+            "group_size": 16,
+            "num_bits": 4,
+            "observer": "static_minmax",
+            "observer_kwargs": {},
+            "scale_dtype": "torch.float8_e4m3fn",
+            "strategy": "tensor_group",
+            "symmetric": true,
+            "type": "float",
+            "zp_dtype": null
+          },
+          "output_activations": null,
+          "targets": [
+            "Linear"
+          ],
+          "weights": {
+            "actorder": null,
+            "block_structure": null,
+            "dynamic": false,
+            "group_size": 16,
+            "num_bits": 4,
+            "observer": "memoryless_minmax",
+            "observer_kwargs": {},
+            "scale_dtype": "torch.float8_e4m3fn",
+            "strategy": "tensor_group",
+            "symmetric": true,
+            "type": "float",
+            "zp_dtype": null
+          }
+        }
+      },
+      "format": "nvfp4-pack-quantized",
+      "global_compression_ratio": null,
+      "ignore": [
+        "model.visual.blocks.0.attn.qkv",
+        "model.visual.blocks.0.attn.proj",
+        "model.visual.blocks.0.mlp.linear_fc1",
+        "model.visual.blocks.0.mlp.linear_fc2",
+        "model.visual.blocks.1.attn.qkv",
+        "model.visual.blocks.1.attn.proj",
+        "model.visual.blocks.1.mlp.linear_fc1",
+        "model.visual.blocks.1.mlp.linear_fc2",
+        "model.visual.blocks.2.attn.qkv",
+        "model.visual.blocks.2.attn.proj",
+        "model.visual.blocks.2.mlp.linear_fc1",
+        "model.visual.blocks.2.mlp.linear_fc2",
+        "model.visual.blocks.3.attn.qkv",
+        "model.visual.blocks.3.attn.proj",
+        "model.visual.blocks.3.mlp.linear_fc1",
+        "model.visual.blocks.3.mlp.linear_fc2",
+        "model.visual.blocks.4.attn.qkv",
+        "model.visual.blocks.4.attn.proj",
+        "model.visual.blocks.4.mlp.linear_fc1",
+        "model.visual.blocks.4.mlp.linear_fc2",
+        "model.visual.blocks.5.attn.qkv",
+        "model.visual.blocks.5.attn.proj",
+        "model.visual.blocks.5.mlp.linear_fc1",
+        "model.visual.blocks.5.mlp.linear_fc2",
+        "model.visual.blocks.6.attn.qkv",
+        "model.visual.blocks.6.attn.proj",
+        "model.visual.blocks.6.mlp.linear_fc1",
+        "model.visual.blocks.6.mlp.linear_fc2",
+        "model.visual.blocks.7.attn.qkv",
+        "model.visual.blocks.7.attn.proj",
+        "model.visual.blocks.7.mlp.linear_fc1",
+        "model.visual.blocks.7.mlp.linear_fc2",
+        "model.visual.blocks.8.attn.qkv",
+        "model.visual.blocks.8.attn.proj",
+        "model.visual.blocks.8.mlp.linear_fc1",
+        "model.visual.blocks.8.mlp.linear_fc2",
+        "model.visual.blocks.9.attn.qkv",
+        "model.visual.blocks.9.attn.proj",
+        "model.visual.blocks.9.mlp.linear_fc1",
+        "model.visual.blocks.9.mlp.linear_fc2",
+        "model.visual.blocks.10.attn.qkv",
+        "model.visual.blocks.10.attn.proj",
+        "model.visual.blocks.10.mlp.linear_fc1",
+        "model.visual.blocks.10.mlp.linear_fc2",
+        "model.visual.blocks.11.attn.qkv",
+        "model.visual.blocks.11.attn.proj",
+        "model.visual.blocks.11.mlp.linear_fc1",
+        "model.visual.blocks.11.mlp.linear_fc2",
+        "model.visual.blocks.12.attn.qkv",
+        "model.visual.blocks.12.attn.proj",
+        "model.visual.blocks.12.mlp.linear_fc1",
+        "model.visual.blocks.12.mlp.linear_fc2",
+        "model.visual.blocks.13.attn.qkv",
+        "model.visual.blocks.13.attn.proj",
+        "model.visual.blocks.13.mlp.linear_fc1",
+        "model.visual.blocks.13.mlp.linear_fc2",
+        "model.visual.blocks.14.attn.qkv",
+        "model.visual.blocks.14.attn.proj",
+        "model.visual.blocks.14.mlp.linear_fc1",
+        "model.visual.blocks.14.mlp.linear_fc2",
+        "model.visual.blocks.15.attn.qkv",
+        "model.visual.blocks.15.attn.proj",
+        "model.visual.blocks.15.mlp.linear_fc1",
+        "model.visual.blocks.15.mlp.linear_fc2",
+        "model.visual.blocks.16.attn.qkv",
+        "model.visual.blocks.16.attn.proj",
+        "model.visual.blocks.16.mlp.linear_fc1",
+        "model.visual.blocks.16.mlp.linear_fc2",
+        "model.visual.blocks.17.attn.qkv",
+        "model.visual.blocks.17.attn.proj",
+        "model.visual.blocks.17.mlp.linear_fc1",
+        "model.visual.blocks.17.mlp.linear_fc2",
+        "model.visual.blocks.18.attn.qkv",
+        "model.visual.blocks.18.attn.proj",
+        "model.visual.blocks.18.mlp.linear_fc1",
+        "model.visual.blocks.18.mlp.linear_fc2",
+        "model.visual.blocks.19.attn.qkv",
+        "model.visual.blocks.19.attn.proj",
+        "model.visual.blocks.19.mlp.linear_fc1",
+        "model.visual.blocks.19.mlp.linear_fc2",
+        "model.visual.blocks.20.attn.qkv",
+        "model.visual.blocks.20.attn.proj",
+        "model.visual.blocks.20.mlp.linear_fc1",
+        "model.visual.blocks.20.mlp.linear_fc2",
+        "model.visual.blocks.21.attn.qkv",
+        "model.visual.blocks.21.attn.proj",
+        "model.visual.blocks.21.mlp.linear_fc1",
+        "model.visual.blocks.21.mlp.linear_fc2",
+        "model.visual.blocks.22.attn.qkv",
+        "model.visual.blocks.22.attn.proj",
+        "model.visual.blocks.22.mlp.linear_fc1",
+        "model.visual.blocks.22.mlp.linear_fc2",
+        "model.visual.blocks.23.attn.qkv",
+        "model.visual.blocks.23.attn.proj",
+        "model.visual.blocks.23.mlp.linear_fc1",
+        "model.visual.blocks.23.mlp.linear_fc2",
+        "model.visual.blocks.24.attn.qkv",
+        "model.visual.blocks.24.attn.proj",
+        "model.visual.blocks.24.mlp.linear_fc1",
+        "model.visual.blocks.24.mlp.linear_fc2",
+        "model.visual.blocks.25.attn.qkv",
+        "model.visual.blocks.25.attn.proj",
+        "model.visual.blocks.25.mlp.linear_fc1",
+        "model.visual.blocks.25.mlp.linear_fc2",
+        "model.visual.blocks.26.attn.qkv",
+        "model.visual.blocks.26.attn.proj",
+        "model.visual.blocks.26.mlp.linear_fc1",
+        "model.visual.blocks.26.mlp.linear_fc2",
+        "model.visual.merger.linear_fc1",
+        "model.visual.merger.linear_fc2",
+        "model.language_model.layers.0.linear_attn.out_proj",
+        "model.language_model.layers.0.linear_attn.in_proj_qkv",
+        "model.language_model.layers.0.linear_attn.in_proj_z",
+        "model.language_model.layers.0.linear_attn.in_proj_b",
+        "model.language_model.layers.0.linear_attn.in_proj_a",
+        "model.language_model.layers.0.mlp.gate",
+        "model.language_model.layers.0.mlp.shared_expert_gate",
+        "model.language_model.layers.1.linear_attn.out_proj",
+        "model.language_model.layers.1.linear_attn.in_proj_qkv",
+        "model.language_model.layers.1.linear_attn.in_proj_z",
+        "model.language_model.layers.1.linear_attn.in_proj_b",
+        "model.language_model.layers.1.linear_attn.in_proj_a",
+        "model.language_model.layers.1.mlp.gate",
+        "model.language_model.layers.1.mlp.shared_expert_gate",
+        "model.language_model.layers.2.linear_attn.out_proj",
+        "model.language_model.layers.2.linear_attn.in_proj_qkv",
+        "model.language_model.layers.2.linear_attn.in_proj_z",
+        "model.language_model.layers.2.linear_attn.in_proj_b",
+        "model.language_model.layers.2.linear_attn.in_proj_a",
+        "model.language_model.layers.2.mlp.gate",
+        "model.language_model.layers.2.mlp.shared_expert_gate",
+        "model.language_model.layers.3.mlp.gate",
+        "model.language_model.layers.3.mlp.shared_expert_gate",
+        "model.language_model.layers.4.linear_attn.out_proj",
+        "model.language_model.layers.4.linear_attn.in_proj_qkv",
+        "model.language_model.layers.4.linear_attn.in_proj_z",
+        "model.language_model.layers.4.linear_attn.in_proj_b",
+        "model.language_model.layers.4.linear_attn.in_proj_a",
+        "model.language_model.layers.4.mlp.gate",
+        "model.language_model.layers.4.mlp.shared_expert_gate",
+        "model.language_model.layers.5.linear_attn.out_proj",
+        "model.language_model.layers.5.linear_attn.in_proj_qkv",
+        "model.language_model.layers.5.linear_attn.in_proj_z",
+        "model.language_model.layers.5.linear_attn.in_proj_b",
+        "model.language_model.layers.5.linear_attn.in_proj_a",
+        "model.language_model.layers.5.mlp.gate",
+        "model.language_model.layers.5.mlp.shared_expert_gate",
+        "model.language_model.layers.6.linear_attn.out_proj",
+        "model.language_model.layers.6.linear_attn.in_proj_qkv",
+        "model.language_model.layers.6.linear_attn.in_proj_z",
+        "model.language_model.layers.6.linear_attn.in_proj_b",
+        "model.language_model.layers.6.linear_attn.in_proj_a",
+        "model.language_model.layers.6.mlp.gate",
+        "model.language_model.layers.6.mlp.shared_expert_gate",
+        "model.language_model.layers.7.mlp.gate",
+        "model.language_model.layers.7.mlp.shared_expert_gate",
+        "model.language_model.layers.8.linear_attn.out_proj",
+        "model.language_model.layers.8.linear_attn.in_proj_qkv",
+        "model.language_model.layers.8.linear_attn.in_proj_z",
+        "model.language_model.layers.8.linear_attn.in_proj_b",
+        "model.language_model.layers.8.linear_attn.in_proj_a",
+        "model.language_model.layers.8.mlp.gate",
+        "model.language_model.layers.8.mlp.shared_expert_gate",
+        "model.language_model.layers.9.linear_attn.out_proj",
+        "model.language_model.layers.9.linear_attn.in_proj_qkv",
+        "model.language_model.layers.9.linear_attn.in_proj_z",
+        "model.language_model.layers.9.linear_attn.in_proj_b",
+        "model.language_model.layers.9.linear_attn.in_proj_a",
+        "model.language_model.layers.9.mlp.gate",
+        "model.language_model.layers.9.mlp.shared_expert_gate",
+        "model.language_model.layers.10.linear_attn.out_proj",
+        "model.language_model.layers.10.linear_attn.in_proj_qkv",
+        "model.language_model.layers.10.linear_attn.in_proj_z",
+        "model.language_model.layers.10.linear_attn.in_proj_b",
+        "model.language_model.layers.10.linear_attn.in_proj_a",
+        "model.language_model.layers.10.mlp.gate",
+        "model.language_model.layers.10.mlp.shared_expert_gate",
+        "model.language_model.layers.11.mlp.gate",
+        "model.language_model.layers.11.mlp.shared_expert_gate",
+        "model.language_model.layers.12.linear_attn.out_proj",
+        "model.language_model.layers.12.linear_attn.in_proj_qkv",
+        "model.language_model.layers.12.linear_attn.in_proj_z",
+        "model.language_model.layers.12.linear_attn.in_proj_b",
+        "model.language_model.layers.12.linear_attn.in_proj_a",
+        "model.language_model.layers.12.mlp.gate",
+        "model.language_model.layers.12.mlp.shared_expert_gate",
+        "model.language_model.layers.13.linear_attn.out_proj",
+        "model.language_model.layers.13.linear_attn.in_proj_qkv",
+        "model.language_model.layers.13.linear_attn.in_proj_z",
+        "model.language_model.layers.13.linear_attn.in_proj_b",
+        "model.language_model.layers.13.linear_attn.in_proj_a",
+        "model.language_model.layers.13.mlp.gate",
+        "model.language_model.layers.13.mlp.shared_expert_gate",
+        "model.language_model.layers.14.linear_attn.out_proj",
+        "model.language_model.layers.14.linear_attn.in_proj_qkv",
+        "model.language_model.layers.14.linear_attn.in_proj_z",
+        "model.language_model.layers.14.linear_attn.in_proj_b",
+        "model.language_model.layers.14.linear_attn.in_proj_a",
+        "model.language_model.layers.14.mlp.gate",
+        "model.language_model.layers.14.mlp.shared_expert_gate",
+        "model.language_model.layers.15.mlp.gate",
+        "model.language_model.layers.15.mlp.shared_expert_gate",
+        "model.language_model.layers.16.linear_attn.out_proj",
+        "model.language_model.layers.16.linear_attn.in_proj_qkv",
+        "model.language_model.layers.16.linear_attn.in_proj_z",
+        "model.language_model.layers.16.linear_attn.in_proj_b",
+        "model.language_model.layers.16.linear_attn.in_proj_a",
+        "model.language_model.layers.16.mlp.gate",
+        "model.language_model.layers.16.mlp.shared_expert_gate",
+        "model.language_model.layers.17.linear_attn.out_proj",
+        "model.language_model.layers.17.linear_attn.in_proj_qkv",
+        "model.language_model.layers.17.linear_attn.in_proj_z",
+        "model.language_model.layers.17.linear_attn.in_proj_b",
+        "model.language_model.layers.17.linear_attn.in_proj_a",
+        "model.language_model.layers.17.mlp.gate",
+        "model.language_model.layers.17.mlp.shared_expert_gate",
+        "model.language_model.layers.18.linear_attn.out_proj",
+        "model.language_model.layers.18.linear_attn.in_proj_qkv",
+        "model.language_model.layers.18.linear_attn.in_proj_z",
+        "model.language_model.layers.18.linear_attn.in_proj_b",
+        "model.language_model.layers.18.linear_attn.in_proj_a",
+        "model.language_model.layers.18.mlp.gate",
+        "model.language_model.layers.18.mlp.shared_expert_gate",
+        "model.language_model.layers.19.mlp.gate",
+        "model.language_model.layers.19.mlp.shared_expert_gate",
+        "model.language_model.layers.20.linear_attn.out_proj",
+        "model.language_model.layers.20.linear_attn.in_proj_qkv",
+        "model.language_model.layers.20.linear_attn.in_proj_z",
+        "model.language_model.layers.20.linear_attn.in_proj_b",
+        "model.language_model.layers.20.linear_attn.in_proj_a",
+        "model.language_model.layers.20.mlp.gate",
+        "model.language_model.layers.20.mlp.shared_expert_gate",
+        "model.language_model.layers.21.linear_attn.out_proj",
+        "model.language_model.layers.21.linear_attn.in_proj_qkv",
+        "model.language_model.layers.21.linear_attn.in_proj_z",
+        "model.language_model.layers.21.linear_attn.in_proj_b",
+        "model.language_model.layers.21.linear_attn.in_proj_a",
+        "model.language_model.layers.21.mlp.gate",
+        "model.language_model.layers.21.mlp.shared_expert_gate",
+        "model.language_model.layers.22.linear_attn.out_proj",
+        "model.language_model.layers.22.linear_attn.in_proj_qkv",
+        "model.language_model.layers.22.linear_attn.in_proj_z",
+        "model.language_model.layers.22.linear_attn.in_proj_b",
+        "model.language_model.layers.22.linear_attn.in_proj_a",
+        "model.language_model.layers.22.mlp.gate",
+        "model.language_model.layers.22.mlp.shared_expert_gate",
+        "model.language_model.layers.23.mlp.gate",
+        "model.language_model.layers.23.mlp.shared_expert_gate",
+        "model.language_model.layers.24.linear_attn.out_proj",
+        "model.language_model.layers.24.linear_attn.in_proj_qkv",
+        "model.language_model.layers.24.linear_attn.in_proj_z",
+        "model.language_model.layers.24.linear_attn.in_proj_b",
+        "model.language_model.layers.24.linear_attn.in_proj_a",
+        "model.language_model.layers.24.mlp.gate",
+        "model.language_model.layers.24.mlp.shared_expert_gate",
+        "model.language_model.layers.25.linear_attn.out_proj",
+        "model.language_model.layers.25.linear_attn.in_proj_qkv",
+        "model.language_model.layers.25.linear_attn.in_proj_z",
+        "model.language_model.layers.25.linear_attn.in_proj_b",
+        "model.language_model.layers.25.linear_attn.in_proj_a",
+        "model.language_model.layers.25.mlp.gate",
+        "model.language_model.layers.25.mlp.shared_expert_gate",
+        "model.language_model.layers.26.linear_attn.out_proj",
+        "model.language_model.layers.26.linear_attn.in_proj_qkv",
+        "model.language_model.layers.26.linear_attn.in_proj_z",
+        "model.language_model.layers.26.linear_attn.in_proj_b",
+        "model.language_model.layers.26.linear_attn.in_proj_a",
+        "model.language_model.layers.26.mlp.gate",
+        "model.language_model.layers.26.mlp.shared_expert_gate",
+        "model.language_model.layers.27.mlp.gate",
+        "model.language_model.layers.27.mlp.shared_expert_gate",
+        "model.language_model.layers.28.linear_attn.out_proj",
+        "model.language_model.layers.28.linear_attn.in_proj_qkv",
+        "model.language_model.layers.28.linear_attn.in_proj_z",
+        "model.language_model.layers.28.linear_attn.in_proj_b",
+        "model.language_model.layers.28.linear_attn.in_proj_a",
+        "model.language_model.layers.28.mlp.gate",
+        "model.language_model.layers.28.mlp.shared_expert_gate",
+        "model.language_model.layers.29.linear_attn.out_proj",
+        "model.language_model.layers.29.linear_attn.in_proj_qkv",
+        "model.language_model.layers.29.linear_attn.in_proj_z",
+        "model.language_model.layers.29.linear_attn.in_proj_b",
+        "model.language_model.layers.29.linear_attn.in_proj_a",
+        "model.language_model.layers.29.mlp.gate",
+        "model.language_model.layers.29.mlp.shared_expert_gate",
+        "model.language_model.layers.30.linear_attn.out_proj",
+        "model.language_model.layers.30.linear_attn.in_proj_qkv",
+        "model.language_model.layers.30.linear_attn.in_proj_z",
+        "model.language_model.layers.30.linear_attn.in_proj_b",
+        "model.language_model.layers.30.linear_attn.in_proj_a",
+        "model.language_model.layers.30.mlp.gate",
+        "model.language_model.layers.30.mlp.shared_expert_gate",
+        "model.language_model.layers.31.mlp.gate",
+        "model.language_model.layers.31.mlp.shared_expert_gate",
+        "model.language_model.layers.32.linear_attn.out_proj",
+        "model.language_model.layers.32.linear_attn.in_proj_qkv",
+        "model.language_model.layers.32.linear_attn.in_proj_z",
+        "model.language_model.layers.32.linear_attn.in_proj_b",
+        "model.language_model.layers.32.linear_attn.in_proj_a",
+        "model.language_model.layers.32.mlp.gate",
+        "model.language_model.layers.32.mlp.shared_expert_gate",
+        "model.language_model.layers.33.linear_attn.out_proj",
+        "model.language_model.layers.33.linear_attn.in_proj_qkv",
+        "model.language_model.layers.33.linear_attn.in_proj_z",
+        "model.language_model.layers.33.linear_attn.in_proj_b",
+        "model.language_model.layers.33.linear_attn.in_proj_a",
+        "model.language_model.layers.33.mlp.gate",
+        "model.language_model.layers.33.mlp.shared_expert_gate",
+        "model.language_model.layers.34.linear_attn.out_proj",
+        "model.language_model.layers.34.linear_attn.in_proj_qkv",
+        "model.language_model.layers.34.linear_attn.in_proj_z",
+        "model.language_model.layers.34.linear_attn.in_proj_b",
+        "model.language_model.layers.34.linear_attn.in_proj_a",
+        "model.language_model.layers.34.mlp.gate",
+        "model.language_model.layers.34.mlp.shared_expert_gate",
+        "model.language_model.layers.35.mlp.gate",
+        "model.language_model.layers.35.mlp.shared_expert_gate",
+        "model.language_model.layers.36.linear_attn.out_proj",
+        "model.language_model.layers.36.linear_attn.in_proj_qkv",
+        "model.language_model.layers.36.linear_attn.in_proj_z",
+        "model.language_model.layers.36.linear_attn.in_proj_b",
+        "model.language_model.layers.36.linear_attn.in_proj_a",
+        "model.language_model.layers.36.mlp.gate",
+        "model.language_model.layers.36.mlp.shared_expert_gate",
+        "model.language_model.layers.37.linear_attn.out_proj",
+        "model.language_model.layers.37.linear_attn.in_proj_qkv",
+        "model.language_model.layers.37.linear_attn.in_proj_z",
+        "model.language_model.layers.37.linear_attn.in_proj_b",
+        "model.language_model.layers.37.linear_attn.in_proj_a",
+        "model.language_model.layers.37.mlp.gate",
+        "model.language_model.layers.37.mlp.shared_expert_gate",
+        "model.language_model.layers.38.linear_attn.out_proj",
+        "model.language_model.layers.38.linear_attn.in_proj_qkv",
+        "model.language_model.layers.38.linear_attn.in_proj_z",
+        "model.language_model.layers.38.linear_attn.in_proj_b",
+        "model.language_model.layers.38.linear_attn.in_proj_a",
+        "model.language_model.layers.38.mlp.gate",
+        "model.language_model.layers.38.mlp.shared_expert_gate",
+        "model.language_model.layers.39.mlp.gate",
+        "model.language_model.layers.39.mlp.shared_expert_gate",
+        "model.language_model.layers.40.linear_attn.out_proj",
+        "model.language_model.layers.40.linear_attn.in_proj_qkv",
+        "model.language_model.layers.40.linear_attn.in_proj_z",
+        "model.language_model.layers.40.linear_attn.in_proj_b",
+        "model.language_model.layers.40.linear_attn.in_proj_a",
+        "model.language_model.layers.40.mlp.gate",
+        "model.language_model.layers.40.mlp.shared_expert_gate",
+        "model.language_model.layers.41.linear_attn.out_proj",
+        "model.language_model.layers.41.linear_attn.in_proj_qkv",
+        "model.language_model.layers.41.linear_attn.in_proj_z",
+        "model.language_model.layers.41.linear_attn.in_proj_b",
+        "model.language_model.layers.41.linear_attn.in_proj_a",
+        "model.language_model.layers.41.mlp.gate",
+        "model.language_model.layers.41.mlp.shared_expert_gate",
+        "model.language_model.layers.42.linear_attn.out_proj",
+        "model.language_model.layers.42.linear_attn.in_proj_qkv",
+        "model.language_model.layers.42.linear_attn.in_proj_z",
+        "model.language_model.layers.42.linear_attn.in_proj_b",
+        "model.language_model.layers.42.linear_attn.in_proj_a",
+        "model.language_model.layers.42.mlp.gate",
+        "model.language_model.layers.42.mlp.shared_expert_gate",
+        "model.language_model.layers.43.mlp.gate",
+        "model.language_model.layers.43.mlp.shared_expert_gate",
+        "model.language_model.layers.44.linear_attn.out_proj",
+        "model.language_model.layers.44.linear_attn.in_proj_qkv",
+        "model.language_model.layers.44.linear_attn.in_proj_z",
+        "model.language_model.layers.44.linear_attn.in_proj_b",
+        "model.language_model.layers.44.linear_attn.in_proj_a",
+        "model.language_model.layers.44.mlp.gate",
+        "model.language_model.layers.44.mlp.shared_expert_gate",
+        "model.language_model.layers.45.linear_attn.out_proj",
+        "model.language_model.layers.45.linear_attn.in_proj_qkv",
+        "model.language_model.layers.45.linear_attn.in_proj_z",
+        "model.language_model.layers.45.linear_attn.in_proj_b",
+        "model.language_model.layers.45.linear_attn.in_proj_a",
+        "model.language_model.layers.45.mlp.gate",
+        "model.language_model.layers.45.mlp.shared_expert_gate",
+        "model.language_model.layers.46.linear_attn.out_proj",
+        "model.language_model.layers.46.linear_attn.in_proj_qkv",
+        "model.language_model.layers.46.linear_attn.in_proj_z",
+        "model.language_model.layers.46.linear_attn.in_proj_b",
+        "model.language_model.layers.46.linear_attn.in_proj_a",
+        "model.language_model.layers.46.mlp.gate",
+        "model.language_model.layers.46.mlp.shared_expert_gate",
+        "model.language_model.layers.47.mlp.gate",
+        "model.language_model.layers.47.mlp.shared_expert_gate",
+        "lm_head"
+      ],
+      "kv_cache_scheme": null,
+      "quant_method": "compressed-tensors",
+      "quantization_status": "compressed",
+      "sparsity_config": {},
+      "transform_config": {},
+      "version": "0.14.1.dev13+g0ca8630.d20260316"
+    },
+    "total_parameters": 71217533040,
+    "active_parameters": null,
+    "shard_count": 2,
+    "download_size": 76484732971,
+    "chat_template": true,
+    "trust_remote_code": false,
+    "tool_call_parser": "runtime-test-required",
+    "reasoning_parser": "runtime-test-required",
+    "minimum_vllm_version": "runtime-test-required",
+    "files": [
+      {
+        "name": ".gitattributes",
+        "size": 1635
+      },
+      {
+        "name": "README.md",
+        "size": 8706
+      },
+      {
+        "name": "chat_template.jinja",
+        "size": 7756
+      },
+      {
+        "name": "config.json",
+        "size": 26147
+      },
+      {
+        "name": "generation_config.json",
+        "size": 213
+      },
+      {
+        "name": "model-00001-of-00002.safetensors",
+        "size": 50013190712
+      },
+      {
+        "name": "model-00002-of-00002.safetensors",
+        "size": 26427627592
+      },
+      {
+        "name": "model.safetensors.index.json",
+        "size": 17155824
+      },
+      {
+        "name": "preprocessor_config.json",
+        "size": 390
+      },
+      {
+        "name": "recipe.yaml",
+        "size": 311
+      },
+      {
+        "name": "tokenizer.json",
+        "size": 19989442
+      },
+      {
+        "name": "tokenizer_config.json",
+        "size": 1099
+      },
+      {
+        "name": "video_preprocessor_config.json",
+        "size": 385
+      },
+      {
+        "name": "vocab.json",
+        "size": 6722759
+      }
+    ]
+  }
+]

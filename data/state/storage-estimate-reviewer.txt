@@ -1,0 +1,11 @@
+role	repository	revision	download size	existing cached size	new required bytes	destination	classification
+reviewer	CohereLabs/North-Mini-Code-1.0-w4a16	1e55f4aa327aba4c0b7a1da0d0f24626d3af5c90	19382986619	0	19382986619	/home/kotori9/models/dgx-moa/reviewer	official
+final_model_bytes=19382986619
+temporary_bytes=19382986619
+docker_allowance_bytes=30000000000
+safety_margin_bytes=13753194648
+required_bytes=82519167886
+free_bytes=320383971328
+remaining_bytes=237864803442
+minimum_free_bytes=80000000000
+safe=True

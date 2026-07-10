@@ -1,0 +1,11 @@
+role	repository	revision	download size	existing cached size	new required bytes	destination	classification
+judge	nvidia/Qwen3.5-122B-A10B-NVFP4	98915d837c4e7c87ac8296d02e89de19b3207e6d	83531051042	0	83531051042	/home/kotori9/models/dgx-moa/judge	vendor-provided
+final_model_bytes=83531051042
+temporary_bytes=83531051042
+docker_allowance_bytes=30000000000
+safety_margin_bytes=39412420417
+required_bytes=236474522501
+free_bytes=320383934464
+remaining_bytes=83909411963
+minimum_free_bytes=80000000000
+safe=True

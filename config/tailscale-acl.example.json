@@ -1,0 +1,11 @@
+{
+  "grants": [
+    {
+      "src": ["group:developers"],
+      "dst": ["tag:dgx-moa"],
+      "ip": ["tcp:443"]
+    }
+  ],
+  "tagOwners": {"tag:dgx-moa": ["autogroup:admin"]}
+}
+

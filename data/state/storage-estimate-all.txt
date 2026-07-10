@@ -1,0 +1,14 @@
+role	repository	revision	download size	existing cached size	new required bytes	destination	classification
+executor	RedHatAI/Qwen3-Coder-Next-NVFP4	27a8f16f463b9a13c91c332c40cf93e09717347e	47613230236	0	47613230236	/home/kotori9/models/dgx-moa/executor	community-maintained
+planner	cyankiwi/Nemotron-Cascade-2-30B-A3B-AWQ-4bit	49cee6bbed2edd4e2d305d948ac443714a2ab242	20767782252	0	20767782252	/home/kotori9/models/dgx-moa/planner	community-maintained
+reviewer	CohereLabs/North-Mini-Code-1.0-w4a16	1e55f4aa327aba4c0b7a1da0d0f24626d3af5c90	19382986619	0	19382986619	/home/kotori9/models/dgx-moa/reviewer	official
+judge	nvidia/Qwen3.5-122B-A10B-NVFP4	98915d837c4e7c87ac8296d02e89de19b3207e6d	83531051042	0	83531051042	/home/kotori9/models/dgx-moa/judge	vendor-provided
+final_model_bytes=171295050149
+temporary_bytes=83531051042
+docker_allowance_bytes=30000000000
+safety_margin_bytes=56965220239
+required_bytes=341791321430
+free_bytes=320384012288
+remaining_bytes=-21407309142
+minimum_free_bytes=80000000000
+safe=False

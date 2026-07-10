@@ -1,0 +1,8 @@
+# Copy `models.yaml`, then change only verified repositories and pinned revisions.
+gateway:
+  model_name: dgx-moa-agent
+  bind_host: 127.0.0.1
+  bind_port: 9000
+models: {}
+# Optional prepared adapter field under a complete executor entry:
+# lora_adapter: /path/to/adapter

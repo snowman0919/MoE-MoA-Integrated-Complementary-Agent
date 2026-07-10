@@ -1,0 +1,11 @@
+role	repository	revision	download size	existing cached size	new required bytes	destination	classification
+executor	RedHatAI/Qwen3-Coder-Next-NVFP4	27a8f16f463b9a13c91c332c40cf93e09717347e	47613230236	0	47613230236	/home/kotori9/models/dgx-moa/executor	community-maintained
+final_model_bytes=47613230236
+temporary_bytes=47613230236
+docker_allowance_bytes=30000000000
+safety_margin_bytes=25045292095
+required_bytes=150271752567
+free_bytes=320383991808
+remaining_bytes=170112239241
+minimum_free_bytes=80000000000
+safe=True

@@ -1,0 +1,20 @@
+[
+  {
+    "path": "/home/kotori9/models/dgx-moa/reviewer",
+    "status": "invalid",
+    "revision": "1e55f4aa327aba4c0b7a1da0d0f24626d3af5c90",
+    "architecture": [
+      "Cohere2MoeForCausalLM"
+    ],
+    "quantization": "compressed-tensors",
+    "shard_count": 4,
+    "actual_bytes": 19486825825,
+    "errors": [
+      "1 incomplete files remain"
+    ],
+    "role": "reviewer",
+    "repository": "CohereLabs/North-Mini-Code-1.0-w4a16",
+    "elapsed_seconds": 256.042,
+    "free_bytes": 252773376000
+  }
+]

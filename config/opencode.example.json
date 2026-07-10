@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "dgx-moa": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "DGX MoA",
+      "options": {
+        "baseURL": "http://<DGX_TAILSCALE_IP>:9000/v1",
+        "apiKey": "{env:DGX_MOA_API_KEY}"
+      },
+      "models": {
+        "dgx-moa-agent": {"name": "DGX MoA Agent"}
+      }
+    }
+  },
+  "model": "dgx-moa/dgx-moa-agent"
+}

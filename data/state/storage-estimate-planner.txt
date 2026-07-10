@@ -1,0 +1,11 @@
+role	repository	revision	download size	existing cached size	new required bytes	destination	classification
+planner	cyankiwi/Nemotron-Cascade-2-30B-A3B-AWQ-4bit	49cee6bbed2edd4e2d305d948ac443714a2ab242	20767782252	0	20767782252	/home/kotori9/models/dgx-moa/planner	community-maintained
+final_model_bytes=20767782252
+temporary_bytes=20767782252
+docker_allowance_bytes=30000000000
+safety_margin_bytes=14307112901
+required_bytes=85842677405
+free_bytes=320383954944
+remaining_bytes=234541277539
+minimum_free_bytes=80000000000
+safe=True

@@ -1,0 +1,18 @@
+[
+  {
+    "path": "/home/kotori9/models/dgx-moa/executor",
+    "status": "verified",
+    "revision": "27a8f16f463b9a13c91c332c40cf93e09717347e",
+    "architecture": [
+      "Qwen3NextForCausalLM"
+    ],
+    "quantization": "compressed-tensors",
+    "shard_count": 10,
+    "actual_bytes": 47613238658,
+    "errors": [],
+    "role": "executor",
+    "repository": "RedHatAI/Qwen3-Coder-Next-NVFP4",
+    "elapsed_seconds": 440.692,
+    "free_bytes": 272748711936
+  }
+]

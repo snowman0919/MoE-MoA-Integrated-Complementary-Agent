@@ -1,0 +1,39 @@
+[Unit]
+Description=DGX MoA planner
+PartOf=dgx-moa-resident.target
+Before=dgx-moa-resident.target
+After=dgx-moa-reviewer.service
+Conflicts=dgx-moa-judge.service dgx-moa-judge.target
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=/home/kotori9/dgx-moa-agent
+EnvironmentFile=/home/kotori9/dgx-moa-agent/.env
+EnvironmentFile=-/home/kotori9/dgx-moa-agent/.env.local
+Environment=PYTHONPATH=/home/kotori9/dgx-moa-agent/compat
+Environment=VLLM_BIN=/home/kotori9/.pyenv/shims/vllm
+Environment=XDG_CACHE_HOME=/home/kotori9/.cache
+Environment=MAX_JOBS=1
+Environment=CMAKE_BUILD_PARALLEL_LEVEL=1
+ExecStart=/home/kotori9/dgx-moa-agent/.venv/bin/python -m dgx_moa.serve planner
+ExecStartPost=/home/kotori9/dgx-moa-agent/scripts/wait-model.sh planner
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=3600
+TimeoutStopSec=180
+KillSignal=SIGTERM
+SuccessExitStatus=0 143
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/kotori9/dgx-moa-agent
+ReadWritePaths=/home/kotori9/models
+ReadWritePaths=/home/kotori9/.cache/vllm
+ReadWritePaths=/home/kotori9/.cache/flashinfer
+ReadWritePaths=%t/dgx-moa
+RuntimeDirectory=dgx-moa
+LockPersonality=true
+RestrictSUIDSGID=true

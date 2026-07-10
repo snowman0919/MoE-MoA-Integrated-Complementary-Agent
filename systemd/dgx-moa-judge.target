@@ -1,0 +1,6 @@
+[Unit]
+Description=DGX MoA heavy-judge profile
+Requires=dgx-moa-gateway.service dgx-moa-judge.service
+After=dgx-moa-gateway.service dgx-moa-judge.service dgx-moa-resident.target
+Conflicts=dgx-moa-resident.target
+

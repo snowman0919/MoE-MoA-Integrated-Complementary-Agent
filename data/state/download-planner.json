@@ -1,0 +1,18 @@
+[
+  {
+    "path": "/home/kotori9/models/dgx-moa/planner",
+    "status": "verified",
+    "revision": "49cee6bbed2edd4e2d305d948ac443714a2ab242",
+    "architecture": [
+      "NemotronHForCausalLM"
+    ],
+    "quantization": "compressed-tensors",
+    "shard_count": 5,
+    "actual_bytes": 20767794920,
+    "errors": [],
+    "role": "planner",
+    "repository": "cyankiwi/Nemotron-Cascade-2-30B-A3B-AWQ-4bit",
+    "elapsed_seconds": 236.669,
+    "free_bytes": 231865245696
+  }
+]

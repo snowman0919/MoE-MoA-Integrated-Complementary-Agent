@@ -1,0 +1,33 @@
+[Unit]
+Description=DGX MoA gateway
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=/home/kotori9/dgx-moa-agent
+EnvironmentFile=/home/kotori9/dgx-moa-agent/.env
+EnvironmentFile=-/home/kotori9/dgx-moa-agent/.env.local
+ExecStart=/home/kotori9/dgx-moa-agent/.venv/bin/dgx-moa
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=60
+KillSignal=SIGTERM
+SuccessExitStatus=0 143
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/kotori9/dgx-moa-agent
+ReadWritePaths=/home/kotori9/models
+ReadWritePaths=%t/dgx-moa
+RuntimeDirectory=dgx-moa
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target
+
