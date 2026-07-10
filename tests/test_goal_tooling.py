@@ -73,6 +73,9 @@ def test_dataset_and_adapter_promotion_guard(tmp_path) -> None:  # type: ignore[
     path.write_text(json.dumps(metadata))
     with pytest.raises(ValueError, match="human approval"):
         register(path, tmp_path / "adapters")
+    metadata["status"] = "candidate"
+    path.write_text(json.dumps(metadata))
+    assert register(path, tmp_path / "adapters").is_file()
 
 
 def test_dataset_quality_tiers() -> None:
