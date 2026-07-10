@@ -101,6 +101,10 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `scripts/build-training-dataset.sh`, and `scripts/export-agentic-traces.sh`:
   exit `0`.
 - `systemd-analyze --user verify systemd/*`: exit `0`.
+- Read-only user-service check on `2026-07-11`: `dgx-moa.target` and
+  `dgx-moa-resident.target` were `inactive`; `dgx-moa-gateway.service` reported
+  `active`, but `127.0.0.1:9000` refused `/healthz` and `/readyz`. No service
+  restart or profile switch was performed from this development checkout.
 
 ## Tailscale
 
