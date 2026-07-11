@@ -168,6 +168,9 @@ below. Heavy-judge validation is appended after its first isolated startup.
   worker process and provided no final completion within the bounded run; that PID
   and fixture were removed. This is edit-path evidence only, not a completed
   one-file scenario.
+- OpenCode `serve`/`run --attach` diagnostic: a loopback-only server reached
+  readiness on Pocket4, but the attach client exited without submitting the task
+  or changing the fixture. Server, temporary config, and fixture were removed.
 - Consolidated `scripts/smoke-test.sh`: exit `0`; session
   `opencode-loop-1783728287`; tool continuation and streaming passed. The
   streaming check captures output before matching `[DONE]`, avoiding a
