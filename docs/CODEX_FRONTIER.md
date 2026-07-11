@@ -7,6 +7,14 @@ documentation identifies GPT-5.6 Sol as `gpt-5.6-sol`; runner passes
 `model_reasoning_effort="high"`, verified from installed Codex configuration.
 Profile smoke still confirms account entitlement before first real run.
 
+Current authoritative state is connected but disabled:
+`DGX_MOA_FRONTIER_ENABLED=false`, reason
+`host_sandbox_capability_blocked`. The secondary OAuth profile returned valid
+Sol/High structured output, but bubblewrap could not configure loopback under the
+host AppArmor policy (`RTM_NEWADDR: Operation not permitted`). The controller
+records `FRONTIER_DISABLED` and does not invoke Codex. This is not a production
+blocker.
+
 Profiles live outside repository under `~/.local/share/dgx-moa/codex-profiles`.
 Run `scripts/codex-profile.sh login primary` or `login secondary`; profile directories
 are owner-only and credentials are neither read nor logged by project code.
@@ -26,3 +34,7 @@ Each candidate needs focused tests, benchmark, scope validation, secret scan, lo
 review, and human approval. Candidates touching baseline, evaluator, or benchmark code
 require a previous stable evaluator. Usage-limit, auth, timeout, protocol, scope, and
 validation failures are explicit trace classes. No remote frontier administration endpoint exists.
+
+Do not alter AppArmor, disable sandboxing, grant broad networking, or rotate OAuth
+accounts implicitly. Re-enable only after a minimal capability fix is measured and
+human-approved.

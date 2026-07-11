@@ -7,6 +7,7 @@ scripts/install-systemd-user.sh
 systemctl --user enable dgx-moa-resident.target
 systemctl --user start dgx-moa.target
 scripts/systemd-status.sh
+scripts/runtime-status.sh
 ```
 
 Units: `dgx-moa-gateway.service`, `dgx-moa-executor.service`,
@@ -18,6 +19,11 @@ Resident and judge targets conflict. Model services use loopback ports and
 systemd user journald. `MAX_JOBS=1` serializes FlashInfer CUDA JIT; concurrent
 `cicc` processes previously exhausted unified memory. `ProtectHome=read-only`
 and explicit cache `ReadWritePaths` are tested with the active profile.
+
+Profile transitions are serialized by `data/run/profile.lock`; failed starts
+stop the requested target and restore the previous resident profile. Do not
+change unit topology, model selection, KV reservations, context limits, or memory
+gates without new measured evidence and approval.
 
 Check lifecycle and logs:
 
