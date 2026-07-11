@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 from dgx_moa.frontier import (
     FrontierResult,
     FrontierTask,
     build_frontier_task,
+    codex_command,
     evaluate_frontier_candidate,
     frontier_eligible,
     load_frontier_config,
@@ -93,6 +95,9 @@ def test_frontier_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
     config = tmp_path / "frontier.yaml"
     config.write_text("model: gpt-5.6-sol\nreasoning_effort: high\n")
     assert load_frontier_config(config).model == "gpt-5.6-sol"
+    command = codex_command("primary", config, tmp_path, "gpt-5.6-sol", "high", config)
+    assert 'model_reasoning_effort="high"' in command
+    assert command[command.index("--model") + 1] == "gpt-5.6-sol"
 
 
 def test_frontier_rejects_production_worktree(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -106,3 +111,40 @@ def test_frontier_rejects_production_worktree(tmp_path) -> None:  # type: ignore
     )
     with pytest.raises(ValueError, match="must not be production"):
         validate_isolated_worktree(task, tmp_path)
+
+
+def test_frontier_accepts_registered_isolated_worktree(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    production = tmp_path / "production"
+    worktree = tmp_path / "frontier"
+    production.mkdir()
+    subprocess.run(["git", "init", "-q", str(production)], check=True)
+    (production / "README.md").write_text("fixture\n")
+    subprocess.run(["git", "-C", str(production), "add", "README.md"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(production),
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(production), "worktree", "add", "-qb", "frontier/test", str(worktree)],
+        check=True,
+    )
+    task = FrontierTask(
+        task_id="one",
+        objective="x",
+        repository_identity={"workspace_path": str(production)},
+        base_commit="abc",
+        allowed_paths=["gateway"],
+        acceptance_criteria=[],
+    )
+    validate_isolated_worktree(task, worktree)
