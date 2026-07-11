@@ -67,6 +67,7 @@ $result = [ordered]@{{
   final_process_state = if ($timedOut) {{ "killed_at_timeout" }} else {{ "exited" }}
   exit_code = $exitCode
   fixture_completion = if (Test-Path (Join-Path $dir "COMPLETION.txt")) {{ [IO.File]::ReadAllText((Join-Path $dir "COMPLETION.txt")) }} else {{ $null }}
+  fixture_diff = if (Test-Path (Join-Path $dir "COMPLETION.txt")) {{ @{{ added = "COMPLETION.txt"; content = [IO.File]::ReadAllText((Join-Path $dir "COMPLETION.txt")) }} }} else {{ $null }}
   stdout_tail = $stdout.Substring([Math]::Max(0, $stdout.Length - 6000))
   stderr_tail = $stderr.Substring([Math]::Max(0, $stderr.Length - 2000))
 }}

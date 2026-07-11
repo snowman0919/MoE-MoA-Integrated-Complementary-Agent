@@ -206,17 +206,17 @@ below. Heavy-judge validation is appended after its first isolated startup.
   streams recorded `stop`, `tool_calls`, and `stop` respectively, each followed
   by `[DONE]`, HTTP EOF, and a matching `stream_completed` gateway timestamp.
   Artifact: `data/diagnostics/opencode-completion/`
-  `opencode-sse-f99c217e-cc9a-4885-9446-f39e5b8ce1b9.json`.
+  `opencode-sse-d656ffdc-ca38-4340-b9eb-d2b79445ae4f.json`.
 - Bounded physical OpenCode acceptance on `2026-07-12`: Pocket4 OpenCode
   `1.17.18` ran direct `opencode.exe` with explicit isolated `--dir`; PowerShell
-  parent PID `27500` started run-owned OpenCode PID `31764`. It emitted
+  parent PID `3544` started run-owned OpenCode PID `35868`. It emitted
   `tool-calls`, then continuation final `stop` in session
-  `ses_0ae38680affeM3Rp7QF9V0DnRc`, wrote `COMPLETION.txt` as `DONE`, and
+  `ses_0ae328bf5ffeCrrWy7hFprQjIN`, wrote `COMPLETION.txt` as `DONE`, and
   exited `0`. Child snapshots observed `opencode.exe` and `conhost.exe` during
   the run; after final SSE the run-owned child list was empty. The fixture and
   all run-owned processes were removed. Artifact:
   `data/diagnostics/opencode-completion/`
-  `opencode-physical-5aaa1846-44ba-4868-a978-70d96ab163f3.json`.
+  `opencode-physical-59a5d08a-e1d0-4b56-aacf-53801cb86471.json`.
 - Final live loop checks on `2026-07-12`: `scripts/validate-opencode-loop.sh`
   passed session `opencode-loop-1783783547`; `scripts/smoke-test.sh` passed
   session `opencode-loop-1783783550`; gateway `/readyz` returned `200` with

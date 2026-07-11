@@ -35,9 +35,21 @@ def stamp() -> str:
 
 
 def capture(
-    client: httpx.Client, url: str, token: str, session: str, body: dict[str, Any]
+    client: httpx.Client,
+    url: str,
+    token: str,
+    session: str,
+    request_sequence: int,
+    body: dict[str, Any],
 ) -> dict[str, Any]:
-    events: list[dict[str, Any]] = [{"sequence": 1, "type": "response_started", "at": stamp()}]
+    events: list[dict[str, Any]] = [
+        {
+            "sequence": 1,
+            "type": "response_started",
+            "request_sequence": request_sequence,
+            "at": stamp(),
+        }
+    ]
     tool_calls: dict[int, dict[str, Any]] = {}
     done = False
     started = time.monotonic()
@@ -48,44 +60,73 @@ def capture(
         json=body,
     ) as response:
         response.raise_for_status()
-        for line in response.iter_lines():
-            if not line or not line.startswith("data: "):
-                continue
-            payload = line[6:]
-            sequence = len(events) + 1
-            if payload == "[DONE]":
-                done = True
-                events.append({"sequence": sequence, "type": "done", "at": stamp()})
-                continue
-            chunk = json.loads(payload)
-            choice = (chunk.get("choices") or [{}])[0]
-            delta = choice.get("delta") or {}
-            event: dict[str, Any] = {
-                "sequence": sequence,
-                "type": "chunk",
-                "choice_index": choice.get("index"),
-                "delta_keys": sorted(delta),
-                "finish_reason": choice.get("finish_reason"),
-            }
-            if "usage" in chunk:
-                event["usage_position"] = sequence
-            for call in delta.get("tool_calls") or []:
-                index = int(call.get("index", 0))
-                target = tool_calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
-                if isinstance(call.get("id"), str):
-                    target["id"] += call["id"]
-                function = call.get("function") or {}
-                if isinstance(function.get("name"), str):
-                    target["name"] += function["name"]
-                if isinstance(function.get("arguments"), str):
-                    target["arguments"] += function["arguments"]
-            events.append(event)
+        buffer = b""
+        for raw in response.iter_raw():
+            buffer += raw.replace(b"\r\n", b"\n")
+            while b"\n\n" in buffer:
+                frame, buffer = buffer.split(b"\n\n", 1)
+                if not frame.startswith(b"data: "):
+                    continue
+                payload = frame[6:].decode()
+                sequence = len(events) + 1
+                if payload == "[DONE]":
+                    if done:
+                        raise RuntimeError("duplicate DONE")
+                    done = True
+                    events.append(
+                        {
+                            "sequence": sequence,
+                            "type": "done",
+                            "request_sequence": request_sequence,
+                            "at": stamp(),
+                        }
+                    )
+                    continue
+                if done:
+                    raise RuntimeError("SSE payload after DONE")
+                chunk = json.loads(payload)
+                choice = (chunk.get("choices") or [{}])[0]
+                delta = choice.get("delta") or {}
+                event_type = (
+                    "final_choice"
+                    if choice.get("finish_reason")
+                    else "tool_call_delta"
+                    if delta.get("tool_calls")
+                    else "content_delta"
+                    if "content" in delta
+                    else "chunk"
+                )
+                event: dict[str, Any] = {
+                    "sequence": sequence,
+                    "type": event_type,
+                    "request_sequence": request_sequence,
+                    "assistant_role": delta.get("role", "assistant"),
+                    "choice_index": choice.get("index"),
+                    "delta_keys": sorted(delta),
+                    "finish_reason": choice.get("finish_reason"),
+                }
+                if "usage" in chunk:
+                    event["usage_position"] = sequence
+                for call in delta.get("tool_calls") or []:
+                    index = int(call.get("index", 0))
+                    target = tool_calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                    if isinstance(call.get("id"), str):
+                        target["id"] += call["id"]
+                    function = call.get("function") or {}
+                    if isinstance(function.get("name"), str):
+                        target["name"] += function["name"]
+                    if isinstance(function.get("arguments"), str):
+                        target["arguments"] += function["arguments"]
+                events.append(event)
+        if buffer:
+            raise RuntimeError("SSE body ended without blank-line framing")
     events.append({"sequence": len(events) + 1, "type": "eof", "at": stamp()})
     finish = [event["finish_reason"] for event in events if event.get("finish_reason")]
     if not done or events[-1]["type"] != "eof":
         raise RuntimeError("SSE did not reach DONE then EOF")
     return {
         "session_id": session,
+        "request_sequence": request_sequence,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "events": events,
         "finish_reasons": finish,
@@ -98,12 +139,12 @@ def capture(
             }
             for call in tool_calls.values()
         ],
-        "connection_closed_at": stamp(),
+        "http_connection_close_timestamp": stamp(),
     }
 
 
 def expect(result: dict[str, Any], finish: str) -> None:
-    if result["finish_reasons"][-1:] != [finish]:
+    if result["finish_reasons"] != [finish]:
         raise RuntimeError(f"expected final finish_reason={finish}, got {result['finish_reasons']}")
 
 
@@ -143,6 +184,7 @@ def main() -> None:
             url,
             token,
             session,
+            1,
             {
                 "model": "dgx-moa-agent",
                 "stream": True,
@@ -155,6 +197,7 @@ def main() -> None:
             url,
             token,
             session,
+            2,
             {
                 "model": "dgx-moa-agent",
                 "stream": True,
@@ -175,6 +218,7 @@ def main() -> None:
             url,
             token,
             session,
+            3,
             {
                 "model": "dgx-moa-agent",
                 "stream": True,
@@ -212,6 +256,7 @@ def main() -> None:
             },
         )
         expect(continuation, "stop")
+        continuation["tool_result_continuation_id"] = call["id"]
     gateway_events = completion_events(args.state_db, session)
     if [event["event_type"] for event in gateway_events] != ["stream_completed"] * 3:
         raise RuntimeError(f"expected three gateway stream completions, got {gateway_events}")
