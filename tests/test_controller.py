@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from dgx_moa.controller import Controller, DuplicateFailedCall, fingerprint
+from dgx_moa.controller import Controller, DuplicateFailedCall, classify_failure, fingerprint
 from dgx_moa.state import Phase, SessionState, StateStore
 
 from .conftest import StubProvider
@@ -35,6 +35,12 @@ def test_duplicate_failed_call_ignores_call_id(settings, stub_provider: StubProv
     assert fingerprint(tool_messages("first", "")[0]["tool_calls"][0]) == fingerprint(
         tool_messages("second", "")[0]["tool_calls"][0]
     )
+
+
+def test_failure_classification() -> None:
+    assert classify_failure("No such file or directory") == "NONEXISTENT_PATH"
+    assert classify_failure("SyntaxError: invalid syntax") == "SYNTAX_ERROR"
+    assert classify_failure("request timed out") == "TIMEOUT"
 
 
 def test_no_progress_and_step_budget(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

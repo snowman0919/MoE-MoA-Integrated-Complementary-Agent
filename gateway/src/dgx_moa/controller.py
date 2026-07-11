@@ -37,6 +37,23 @@ def failure_family(observation: str) -> str:
     return hashlib.sha256(first.encode()).hexdigest()[:16]
 
 
+def classify_failure(observation: str) -> str:
+    normalized = observation.lower()
+    if any(marker in normalized for marker in ("no such file", "not found", "nonexistent")):
+        return "NONEXISTENT_PATH"
+    if any(marker in normalized for marker in ("syntaxerror", "syntax error")):
+        return "SYNTAX_ERROR"
+    if any(marker in normalized for marker in ("typeerror", "type error")):
+        return "TYPE_ERROR"
+    if "context" in normalized and any(marker in normalized for marker in ("overflow", "length")):
+        return "CONTEXT_OVERFLOW"
+    if any(marker in normalized for marker in ("timed out", "timeout")):
+        return "TIMEOUT"
+    if any(marker in normalized for marker in ("vllm", "cuda", "model backend")):
+        return "MODEL_BACKEND_ERROR"
+    return "TEST_FAILURE"
+
+
 def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
     """Keep tool evidence structured; tolerate OpenCode-compatible string payloads."""
     content = message.get("content", "")
@@ -128,6 +145,11 @@ class Controller:
             if failed and state.last_tool_call:
                 call_fingerprint = fingerprint(state.last_tool_call)
                 if call_fingerprint in state.failed_call_fingerprints:
+                    self.store.event(
+                        state.session_id,
+                        "failure_classified",
+                        {"class": "REPEATED_ACTION", "fingerprint": call_fingerprint},
+                    )
                     raise DuplicateFailedCall("identical failed tool call blocked")
                 state.failed_call_fingerprints.append(call_fingerprint)
                 family = failure_family(observation)
@@ -135,7 +157,7 @@ class Controller:
                 self.store.event(
                     state.session_id,
                     "failure_classified",
-                    {"class": "TEST_FAILURE", "fingerprint": family},
+                    {"class": classify_failure(observation), "fingerprint": family},
                 )
                 if state.failure_families[family] >= 2:
                     state.phase = Phase.REPLANNING
