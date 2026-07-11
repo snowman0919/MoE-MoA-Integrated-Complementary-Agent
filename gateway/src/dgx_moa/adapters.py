@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .improvement import compare
+
 STATUSES = {"candidate", "testing", "canary", "approved", "rejected", "retired"}
 REQUIRED = {
     "adapter_id",
@@ -34,12 +36,38 @@ def register(metadata_path: Path, root: Path) -> Path:
     return destination
 
 
+def evaluate(metadata_path: Path, baseline: Path, candidate: Path, output: Path) -> dict[str, Any]:
+    metadata = json.loads(metadata_path.read_text())
+    if metadata.get("status") not in {"candidate", "testing", "canary"}:
+        raise ValueError("adapter is not eligible for evaluation")
+    result = compare(baseline, candidate, output)
+    result["adapter_id"] = metadata["adapter_id"]
+    result["automatic_promotion"] = False
+    output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("metadata", type=Path)
     parser.add_argument("--root", type=Path, default=Path.home() / "models/adapters")
+    parser.add_argument("--baseline", type=Path)
+    parser.add_argument("--candidate", type=Path)
+    parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
-    print(register(arguments.metadata, arguments.root))
+    if arguments.baseline or arguments.candidate or arguments.output:
+        if not all((arguments.baseline, arguments.candidate, arguments.output)):
+            raise SystemExit("--baseline, --candidate, and --output are required together")
+        print(
+            json.dumps(
+                evaluate(
+                    arguments.metadata, arguments.baseline, arguments.candidate, arguments.output
+                ),
+                indent=2,
+            )
+        )
+    else:
+        print(register(arguments.metadata, arguments.root))
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from dgx_moa.adapters import register
+from dgx_moa.adapters import evaluate, register
 from dgx_moa.benchmark import TASKS, benchmark_models, summarize
 from dgx_moa.dataset import build, quality_tier
 from dgx_moa.improvement import compare, mine, statistics
@@ -77,6 +77,21 @@ def test_dataset_and_adapter_promotion_guard(tmp_path) -> None:  # type: ignore[
     metadata["status"] = "candidate"
     path.write_text(json.dumps(metadata))
     assert register(path, tmp_path / "adapters").is_file()
+    benchmark = tmp_path / "adapter-benchmark.json"
+    benchmark.write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "failure_class_distribution": {},
+                    "task_success_rate": 1.0,
+                    "time_per_successful_task": 1.0,
+                }
+            }
+        )
+    )
+    result = evaluate(path, benchmark, benchmark, tmp_path / "adapter-comparison.json")
+    assert result["adapter_id"] == "executor-v1"
+    assert result["automatic_promotion"] is False
 
 
 def test_dataset_quality_tiers() -> None:
