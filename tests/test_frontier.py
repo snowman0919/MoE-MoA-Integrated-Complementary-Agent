@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 from dgx_moa.frontier import (
@@ -16,6 +17,7 @@ from dgx_moa.frontier import (
     load_frontier_config,
     profile_lock,
     profile_status,
+    record_frontier_run,
     select_frontier_profile,
     validate_isolated_worktree,
     validate_profile_name,
@@ -108,6 +110,21 @@ def test_frontier_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
     )
 
 
+def test_frontier_output_schema_uses_strict_property_types() -> None:
+    schema = json.loads((Path(__file__).parents[1] / "schemas/frontier-result-v1.json").read_text())
+    assert schema["properties"]["schema_version"] == {
+        "type": "string",
+        "const": "frontier-result-v1",
+    }
+    assert schema["properties"]["status"]["type"] == "string"
+    assert schema["properties"]["changes"]["items"]["required"] == ["path", "purpose"]
+    assert schema["properties"]["validation"]["items"]["required"] == [
+        "command",
+        "exit_code",
+        "summary",
+    ]
+
+
 def test_frontier_rejects_production_worktree(tmp_path) -> None:  # type: ignore[no-untyped-def]
     task = FrontierTask(
         task_id="one",
@@ -142,6 +159,29 @@ def test_frontier_rejects_immutable_evaluator_change() -> None:
             secret_scan_passed=True,
             local_review_passed=True,
         )
+
+
+def test_frontier_run_record_excludes_credentials(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    task = FrontierTask(
+        task_id="record",
+        objective="x",
+        repository_identity={"workspace_path": "/repo"},
+        base_commit="abc",
+        allowed_paths=[],
+        acceptance_criteria=[],
+    )
+    path = record_frontier_run(
+        tmp_path,
+        task,
+        profile="secondary",
+        model="gpt-5.6-sol",
+        reasoning_effort="high",
+        result=FrontierResult(
+            status="blocked", summary="x", root_cause="x", recommended_next_action="local"
+        ),
+        failure_class="FRONTIER_VALIDATION_FAILURE",
+    )
+    assert "auth" not in path.read_text().lower()
 
 
 def test_frontier_accepts_registered_isolated_worktree(tmp_path) -> None:  # type: ignore[no-untyped-def]

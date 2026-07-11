@@ -21,8 +21,10 @@ Updated: 2026-07-11
 - Phase 5: heavy judge has no successful structured-verdict transaction. Previous judge startup
   hit memory headroom protection and restored resident. Repeating without changed capacity would
   only interrupt resident service.
-- Phase 8: `primary` and `secondary` profile directories are intentionally absent. Interactive
-  OAuth login and one bounded `gpt-5.6-sol` High smoke per authorized profile are required.
+- Phase 8: both OAuth profiles are authenticated. Primary returned its explicit usage limit;
+  secondary produced a valid Sol/High structured result from an isolated worktree but was blocked
+  before inspection by local bubblewrap loopback setup. Repairing that sandbox is required before
+  a completed frontier candidate can be evaluated.
 
 No item in this file authorizes deployment, merge, adapter promotion, external upload, paid job,
 or security/systemd/network change.

@@ -3,6 +3,6 @@
   "title": "frontier-result-v1",
   "type": "object",
   "required": ["schema_version", "status", "summary", "root_cause", "changes", "validation", "remaining_risks", "recommended_next_action", "commit"],
-  "properties": {"schema_version": {"const": "frontier-result-v1"}, "status": {"enum": ["completed", "partial", "blocked", "failed"]}, "summary": {"type": "string"}, "root_cause": {"type": "string"}, "changes": {"type": "array"}, "validation": {"type": "array"}, "remaining_risks": {"type": "array", "items": {"type": "string"}}, "recommended_next_action": {"type": "string"}, "commit": {"type": ["string", "null"]}},
+  "properties": {"schema_version": {"type": "string", "const": "frontier-result-v1"}, "status": {"type": "string", "enum": ["completed", "partial", "blocked", "failed"]}, "summary": {"type": "string"}, "root_cause": {"type": "string"}, "changes": {"type": "array", "items": {"type": "object", "required": ["path", "purpose"], "properties": {"path": {"type": "string"}, "purpose": {"type": "string"}}, "additionalProperties": false}}, "validation": {"type": "array", "items": {"type": "object", "required": ["command", "exit_code", "summary"], "properties": {"command": {"type": "string"}, "exit_code": {"type": "integer"}, "summary": {"type": "string"}}, "additionalProperties": false}}, "remaining_risks": {"type": "array", "items": {"type": "string"}}, "recommended_next_action": {"type": "string"}, "commit": {"type": ["string", "null"]}},
   "additionalProperties": false
 }

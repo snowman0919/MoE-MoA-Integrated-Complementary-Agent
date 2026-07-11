@@ -344,6 +344,37 @@ def classify_frontier_failure(output: str) -> str:
     return "FRONTIER_PROTOCOL_ERROR"
 
 
+def record_frontier_run(
+    run_dir: Path,
+    task: FrontierTask,
+    *,
+    profile: str,
+    model: str,
+    reasoning_effort: str,
+    result: FrontierResult,
+    failure_class: str | None = None,
+) -> Path:
+    destination = run_dir / "frontier-runs" / f"{task.task_id}.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        json.dumps(
+            {
+                "task_id": task.task_id,
+                "profile": validate_profile_name(profile),
+                "model": model,
+                "reasoning_effort": reasoning_effort,
+                "starting_commit": task.base_commit,
+                "worktree": task.repository_identity.get("workspace_path", ""),
+                "result": result.model_dump(),
+                "failure_class": failure_class,
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    return destination
+
+
 def run_task(
     profile: str,
     task_path: Path,
@@ -374,15 +405,36 @@ def run_task(
     print(redact(completed.stderr), end="", file=sys.stderr)
     if completed.returncode:
         failure = classify_frontier_failure(completed.stdout + completed.stderr)
-        task_path.with_suffix(".result.json").write_text(
-            FrontierResult(
-                status="blocked" if failure == "FRONTIER_USAGE_LIMIT" else "failed",
-                summary=failure,
-                root_cause=failure,
-                recommended_next_action="return to local MoA or select an authorized profile",
-            ).model_dump_json(indent=2)
+        result = FrontierResult(
+            status="blocked" if failure == "FRONTIER_USAGE_LIMIT" else "failed",
+            summary=failure,
+            root_cause=failure,
+            recommended_next_action="return to local MoA or select an authorized profile",
+        )
+        task_path.with_suffix(".result.json").write_text(result.model_dump_json(indent=2))
+        record_frontier_run(
+            run_dir,
+            task,
+            profile=profile,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            result=result,
+            failure_class=failure,
         )
         raise RuntimeError(failure)
+    result_path = task_path.with_suffix(".result.json")
+    if not result_path.is_file():
+        raise RuntimeError("FRONTIER_PROTOCOL_ERROR")
+    result = FrontierResult.model_validate_json(result_path.read_text())
+    record_frontier_run(
+        run_dir,
+        task,
+        profile=profile,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        result=result,
+        failure_class="FRONTIER_VALIDATION_FAILURE" if result.status != "completed" else None,
+    )
     return 0
 
 

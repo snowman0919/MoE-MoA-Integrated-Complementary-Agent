@@ -107,6 +107,14 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - Primary OAuth smoke on `2026-07-11`: Codex started a `gpt-5.6-sol` High request
   from isolated `frontier/phase8-smoke` worktree. CLI returned its explicit usage
   limit before work began; this is `FRONTIER_USAGE_LIMIT`, not a profile failover.
+- Secondary OAuth smoke first reached Codex schema validation and exposed an invalid
+  `const`-only property in `frontier-result-v1.json`; corrected schemas now include
+  required property types before retrying.
+- Secondary OAuth retry authenticated `gpt-5.6-sol` with High reasoning and returned
+  valid `frontier-result-v1` JSON from `frontier/phase8-smoke`, with no changed files.
+  Status was `blocked`: Codex sandbox bubblewrap could not configure loopback
+  (`RTM_NEWADDR: Operation not permitted`) before task inspection. Recorded as
+  `FRONTIER_VALIDATION_FAILURE`; no profile rotation, merge, or deployment occurred.
 - `uv run pytest -q`: exit `0`; `74 passed`, one third-party TestClient warning.
 - `uv run ruff check gateway/src tests`: exit `0`.
 - `uv run mypy`: exit `0`; `23` source files.
