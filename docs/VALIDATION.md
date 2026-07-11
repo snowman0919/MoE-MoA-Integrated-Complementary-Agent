@@ -224,9 +224,11 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - Post-resolution fixed ten-task benchmark: `scripts/run-mvp-benchmark.sh`
   passed `10/10`, task success rate `1.0`, route distribution `3/6/1`
   fast/standard/escalation, tool calls per successful task `1.2`, and time per
-  successful task `0.0311096` seconds. The bounded improvement evaluation again
-  selected `REPEATED_ACTION` (one fixture) but returned `not_recommended`,
-  `0.0%` reduction, and automatic merge `false`; no candidate was applied.
+  successful task `0.0311096` seconds. Its trace inspection found `10` JSONL
+  files with `24` indexed `failure_classified` events. The bounded improvement
+  evaluation again selected `REPEATED_ACTION` (one fixture) but returned
+  `not_recommended`, `0.0%` reduction, and automatic merge `false`; no candidate
+  was applied.
 
 ## Tailscale
 
