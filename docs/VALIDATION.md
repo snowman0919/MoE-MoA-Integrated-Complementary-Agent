@@ -177,6 +177,15 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `pipefail` false failure from `grep -q` closing its input early.
 - Final read-only resident check: `/readyz` returned `200` with executor,
   planner, and reviewer ready; `MemAvailable` was `23184121856` bytes.
+- Heavy Judge maintenance on `2026-07-11`: Mistral judge loaded in `603.49`
+  seconds with the unchanged `4000000000`-byte KV reservation. vLLM measured
+  `22192` KV tokens and `2.71x` concurrency at `8192` context; profile
+  readiness had `18105536512` available bytes, above the unchanged 16 GiB
+  safety gate. A strict `JudgeVerdict` smoke passed with `accept`, `low` risk,
+  `completion_allowed=true`, zero resolved disagreements, and zero mandatory
+  changes. Judge then stopped and resident was restored; final gateway
+  `/readyz` returned `200` with `23834812` KiB available. No model, unit,
+  headroom, resident-context, or trace setting was changed.
 
 ## Tailscale
 
