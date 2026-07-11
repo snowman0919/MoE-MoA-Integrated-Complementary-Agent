@@ -110,6 +110,10 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - `scripts/run-mvp-benchmark.sh`: exit `0`; `10/10` synthetic fixture tasks
   passed. Input/output token metrics are explicitly unknown (`null`); fixture
   repository identities are recorded in emitted traces.
+- `scripts/validate-opencode-synthetic.sh`: OpenCode-compatible HTTP client
+  covers read-only, one-file, multi-file, failure/recovery, reviewer correction,
+  gateway restart persistence, tool-call identity, usage, and streaming. Physical
+  remote OpenCode remains separately unverified.
 - `scripts/mine-improvements.sh`, `scripts/evaluate-improvement.sh`,
   `scripts/build-training-dataset.sh`, and `scripts/export-agentic-traces.sh`:
   exit `0`.
