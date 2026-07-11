@@ -7,7 +7,7 @@ import pytest
 from dgx_moa.controller import Controller
 from dgx_moa.dataset import build
 from dgx_moa.improvement import cooldown_active, mine, proposal_fingerprint
-from dgx_moa.runtime_status import report, state_counts
+from dgx_moa.runtime_status import minimum_memory, report, state_counts
 from dgx_moa.state import Phase, SessionState, StateStore, validate_failure_record
 from dgx_moa.trace import (
     TraceRecorder,
@@ -262,3 +262,9 @@ def test_runtime_report_reads_model_journals(tmp_path, monkeypatch) -> None:  # 
     monkeypatch.setattr(runtime_status, "command", fake_command)
     monkeypatch.setattr(runtime_status, "memory_available", lambda: 1)
     assert report(tmp_path / "missing.db", tmp_path)["model_backend_failures_24h"] == 2
+
+
+def test_runtime_minimum_memory(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    log = tmp_path / "memory.log"
+    log.write_text("1 30\n2 20\n3 40\n")
+    assert minimum_memory(log) == 20

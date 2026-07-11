@@ -22,6 +22,15 @@ def memory_available() -> int:
     raise RuntimeError("MemAvailable unavailable")
 
 
+def minimum_memory(path: Path) -> int | None:
+    if not path.exists():
+        return None
+    values = [
+        int(line.split()[1]) for line in path.read_text().splitlines() if len(line.split()) >= 2
+    ]
+    return min(values) if values else None
+
+
 def state_counts(path: Path) -> dict[str, int]:
     counts = {"request": 0, "completed": 0, "failed": 0, "blocked": 0}
     if not path.exists():
@@ -126,13 +135,13 @@ def report(state_db: Path, project: Path) -> dict[str, Any]:
         )
         if (project / "data/run/profile-audit.jsonl").exists()
         else 0,
-        "minimum_observed_mem_available_bytes": None,
+        "minimum_observed_mem_available_bytes": minimum_memory(project / "data/run/soak-mem.log"),
         "current_mem_available_bytes": memory_available(),
         "request_count": states["request"],
         "completed_session_count": states["completed"],
         "failed_session_count": states["failed"],
         "blocked_session_count": states["blocked"],
-        "historical_window": "24h where journald retained; minimum memory unavailable",
+        "historical_window": "24h journald; memory since soak log start when available",
     }
 
 
