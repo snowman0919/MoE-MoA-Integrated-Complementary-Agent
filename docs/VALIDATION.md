@@ -163,6 +163,11 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `README_PRESENT`. Gateway credential was piped over SSH only and neither stored
   nor logged. A one-file test was not accepted: its noninteractive OpenCode child
   did not exit, so the test-created PID and temporary fixture were removed.
+- Bounded one-file rerun invoked the Windows `opencode.exe` directly rather than
+  its npm shim. It changed the isolated fixture (`changed=true`) but retained a
+  worker process and provided no final completion within the bounded run; that PID
+  and fixture were removed. This is edit-path evidence only, not a completed
+  one-file scenario.
 - Consolidated `scripts/smoke-test.sh`: exit `0`; session
   `opencode-loop-1783728287`; tool continuation and streaming passed. The
   streaming check captures output before matching `[DONE]`, avoiding a

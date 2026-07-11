@@ -16,7 +16,8 @@ Updated: 2026-07-11
 ## Runtime evidence still required
 
 - Phase 1: synthetic OpenCode-compatible HTTP run covers all six required shapes. Physical
-  remote OpenCode read-only inspection passed from Pocket4; one-file, multi-file, recovery,
+  remote OpenCode read-only inspection passed from Pocket4. The bounded one-file edit path
+  changed its isolated fixture but did not return final completion; multi-file, recovery,
   reviewer-correction, and restart cases still need accepted physical runs.
 - Phase 5: heavy judge has no successful structured-verdict transaction. Previous judge startup
   hit memory headroom protection and restored resident. Repeating without changed capacity would
