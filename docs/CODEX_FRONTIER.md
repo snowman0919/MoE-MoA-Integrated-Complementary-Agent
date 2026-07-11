@@ -23,5 +23,6 @@ The systemd template is disabled by default. An operator starting it must provid
 values fail closed. `DGX_MOA_CODEX_MODEL` may override reviewed default.
 
 Each candidate needs focused tests, benchmark, scope validation, secret scan, local
-review, and human approval. Usage-limit, auth, timeout, protocol, scope, and validation
-failures are explicit trace classes. No remote frontier administration endpoint exists.
+review, and human approval. Candidates touching baseline, evaluator, or benchmark code
+require a previous stable evaluator. Usage-limit, auth, timeout, protocol, scope, and
+validation failures are explicit trace classes. No remote frontier administration endpoint exists.

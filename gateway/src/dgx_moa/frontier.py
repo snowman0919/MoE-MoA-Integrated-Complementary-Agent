@@ -11,7 +11,7 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import yaml
 from pydantic import BaseModel, Field
@@ -22,6 +22,12 @@ from .state import SessionState
 PROFILE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 DEFAULT_PROFILE_ROOT = Path("/home/kotori9/.local/share/dgx-moa/codex-profiles")
 FORBIDDEN_PATHS = (".env", ".env.local", "systemd/", "config/tailscale")
+IMMUTABLE_EVALUATOR_PATHS = (
+    "data/benchmarks/",
+    "gateway/src/dgx_moa/benchmark.py",
+    "gateway/src/dgx_moa/improvement.py",
+    "scripts/evaluate-improvement.sh",
+)
 FRONTIER_FAILURES = frozenset(
     {
         "FRONTIER_AUTH_ERROR",
@@ -82,6 +88,57 @@ class FrontierConfig(BaseModel):
     reasoning_effort: Literal["high"] = "high"
     max_invocations_per_task: int = 1
     max_recursive_cycles: int = 3
+
+
+class FrontierProvider(Protocol):
+    def command(
+        self,
+        task_path: Path,
+        worktree: Path,
+        model: str,
+        reasoning_effort: str,
+        result_schema: Path,
+    ) -> list[str]: ...
+
+    def environment(self) -> dict[str, str]: ...
+
+
+class CodexOAuthProvider:
+    def __init__(self, profile: str, profile_root: str | Path = DEFAULT_PROFILE_ROOT):
+        self.profile = validate_profile_name(profile)
+        self.profile_root = Path(profile_root)
+
+    def command(
+        self,
+        task_path: Path,
+        worktree: Path,
+        model: str,
+        reasoning_effort: str,
+        result_schema: Path,
+    ) -> list[str]:
+        return codex_command(
+            self.profile, task_path, worktree, model, reasoning_effort, result_schema
+        )
+
+    def environment(self) -> dict[str, str]:
+        return os.environ | {"CODEX_HOME": str(profile_home(self.profile, self.profile_root))}
+
+
+class OpenAIAPIProvider:
+    """Reserved provider shape; API-key execution stays disabled by default."""
+
+    def command(
+        self,
+        task_path: Path,
+        worktree: Path,
+        model: str,
+        reasoning_effort: str,
+        result_schema: Path,
+    ) -> list[str]:
+        raise RuntimeError("OpenAI API frontier provider is disabled")
+
+    def environment(self) -> dict[str, str]:
+        raise RuntimeError("OpenAI API frontier provider is disabled")
 
 
 def validate_profile_name(profile: str) -> str:
@@ -224,8 +281,14 @@ def evaluate_frontier_candidate(
     benchmark_passed: bool,
     secret_scan_passed: bool,
     local_review_passed: bool,
+    prior_stable_evaluation: bool = False,
 ) -> dict[str, Any]:
     validate_scope(changed_paths, task.allowed_paths)
+    if (
+        any(path.startswith(IMMUTABLE_EVALUATOR_PATHS) for path in changed_paths)
+        and not prior_stable_evaluation
+    ):
+        raise ValueError("immutable baseline changes require prior stable evaluation")
     accepted = (
         result.status == "completed"
         and focused_tests_passed
@@ -288,13 +351,13 @@ def run_task(
     task = FrontierTask.model_validate_json(task_path.read_text())
     validate_isolated_worktree(task, worktree)
     result_schema = Path(__file__).parents[3] / "schemas" / "frontier-result-v1.json"
-    environment = os.environ | {"CODEX_HOME": str(profile_home(profile))}
+    provider: FrontierProvider = CodexOAuthProvider(profile)
     with profile_lock(profile, run_dir):
         try:
             completed = subprocess.run(
-                codex_command(profile, task_path, worktree, model, reasoning_effort, result_schema),
+                provider.command(task_path, worktree, model, reasoning_effort, result_schema),
                 cwd=worktree,
-                env=environment,
+                env=provider.environment(),
                 timeout=timeout,
                 check=False,
             )

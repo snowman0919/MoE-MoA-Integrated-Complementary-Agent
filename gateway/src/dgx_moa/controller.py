@@ -164,6 +164,14 @@ class Controller:
         return build_frontier_task(state, metadata)
 
     def start_frontier_run(self, state: SessionState, profile: str, task: FrontierTask) -> None:
+        if state.frontier_human_approval_required:
+            self.store.event(
+                state.session_id,
+                "frontier_candidate_awaiting_approval",
+                {"reason": "human_approval"},
+            )
+            self.store.save(state)
+            raise ValueError("frontier human approval required")
         if state.frontier_invocations >= 1:
             self.store.event(state.session_id, "frontier_usage_limited", {"reason": "task_limit"})
             self.store.save(state)
@@ -203,6 +211,7 @@ class Controller:
         benchmark_passed: bool,
         secret_scan_passed: bool,
         local_review_passed: bool,
+        prior_stable_evaluation: bool = False,
     ) -> dict[str, Any]:
         evaluation = evaluate_frontier_candidate(
             result,
@@ -212,6 +221,7 @@ class Controller:
             benchmark_passed=benchmark_passed,
             secret_scan_passed=secret_scan_passed,
             local_review_passed=local_review_passed,
+            prior_stable_evaluation=prior_stable_evaluation,
         )
         state.frontier_human_approval_required = True
         self.store.event(

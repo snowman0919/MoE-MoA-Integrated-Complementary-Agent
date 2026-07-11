@@ -5,6 +5,7 @@ import subprocess
 
 import pytest
 from dgx_moa.frontier import (
+    CodexOAuthProvider,
     FrontierResult,
     FrontierTask,
     build_frontier_task,
@@ -27,6 +28,7 @@ def test_frontier_profile_and_selection(tmp_path) -> None:  # type: ignore[no-un
     with pytest.raises(ValueError):
         validate_profile_name("../secret")
     assert profile_status("primary", tmp_path)["authenticated"] == "no"
+    assert str(tmp_path) not in profile_status("primary", tmp_path).values()
     assert (
         select_frontier_profile(explicit_profile="secondary", primary_profile="primary")
         == "secondary"
@@ -98,6 +100,9 @@ def test_frontier_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
     command = codex_command("primary", config, tmp_path, "gpt-5.6-sol", "high", config)
     assert 'model_reasoning_effort="high"' in command
     assert command[command.index("--model") + 1] == "gpt-5.6-sol"
+    assert CodexOAuthProvider("primary", tmp_path).environment()["CODEX_HOME"] == str(
+        tmp_path / "primary"
+    )
 
 
 def test_frontier_rejects_production_worktree(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -111,6 +116,29 @@ def test_frontier_rejects_production_worktree(tmp_path) -> None:  # type: ignore
     )
     with pytest.raises(ValueError, match="must not be production"):
         validate_isolated_worktree(task, tmp_path)
+
+
+def test_frontier_rejects_immutable_evaluator_change() -> None:
+    task = FrontierTask(
+        task_id="one",
+        objective="x",
+        base_commit="abc",
+        allowed_paths=["data/benchmarks"],
+        acceptance_criteria=[],
+    )
+    result = FrontierResult(
+        status="completed", summary="done", root_cause="x", recommended_next_action="review"
+    )
+    with pytest.raises(ValueError, match="immutable baseline"):
+        evaluate_frontier_candidate(
+            result,
+            changed_paths=["data/benchmarks/mvp-baseline.json"],
+            task=task,
+            focused_tests_passed=True,
+            benchmark_passed=True,
+            secret_scan_passed=True,
+            local_review_passed=True,
+        )
 
 
 def test_frontier_accepts_registered_isolated_worktree(tmp_path) -> None:  # type: ignore[no-untyped-def]

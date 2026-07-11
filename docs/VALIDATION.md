@@ -101,7 +101,9 @@ below. Heavy-judge validation is appended after its first isolated startup.
   a separate OAuth profile runs its smoke test.
   `scripts/codex-profile.sh status` reported `primary` and `secondary` as
   `authenticated=no`, `state=not_configured`; no OAuth profile directory or
-  credential was created. Frontier module/profile/controller tests passed locally.
+  credential was created. Frontier provider, profile, worktree, immutable-baseline,
+  human-approval, and cycle-limit tests passed locally; full suite was
+  `78 passed` with one third-party TestClient warning.
 - `uv run pytest -q`: exit `0`; `74 passed`, one third-party TestClient warning.
 - `uv run ruff check gateway/src tests`: exit `0`.
 - `uv run mypy`: exit `0`; `23` source files.

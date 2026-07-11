@@ -186,5 +186,8 @@ def test_frontier_controller_requires_human_approval(settings, stub_provider: St
     )
     assert evaluation["automatic_merge"] is False
     assert state.frontier_human_approval_required is True
-    with pytest.raises(ValueError, match="invocation limit"):
+    with pytest.raises(ValueError, match="human approval"):
         controller.start_frontier_run(state, profile, task)
+    limited = SessionState(session_id="frontier-cycle", recursive_cycles=3)
+    with pytest.raises(ValueError, match="recursive cycle limit"):
+        controller.start_frontier_run(limited, profile, task)
