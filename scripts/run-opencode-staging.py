@@ -92,6 +92,10 @@ def git(workspace: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+def output_text(value: str | bytes | None) -> str:
+    return value.decode(errors="replace") if isinstance(value, bytes) else value or ""
+
+
 def create_fixture(workspace: Path) -> None:
     workspace.mkdir(parents=True)
     (workspace / "README.md").write_text("staging fixture\n")
@@ -155,6 +159,7 @@ def main() -> None:
     parser.add_argument("--trace-dir", type=Path, required=True)
     parser.add_argument("--config", type=Path, default=Path("config/models.yaml"))
     parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument("--start", type=int, choices=range(1, len(TASKS) + 1), default=1)
     parser.add_argument("--limit", type=int, choices=range(1, len(TASKS) + 1), default=len(TASKS))
     args = parser.parse_args()
     if not os.getenv("DGX_MOA_API_KEY"):
@@ -162,7 +167,7 @@ def main() -> None:
     run_id = time.strftime("%Y%m%d-%H%M%S")
     root = args.output_root / run_id
     rows = []
-    selected = TASKS[: args.limit]
+    selected = TASKS[args.start - 1 :][: args.limit]
     for index, task in enumerate(selected, 1):
         session = f"staging-{run_id}-{index:02d}"
         workspace = root / session / "repo"
@@ -197,8 +202,8 @@ def main() -> None:
             run = subprocess.CompletedProcess(
                 command,
                 124,
-                error.stdout or "",
-                (error.stderr or "") + f"\ntimeout={args.timeout}\n",
+                output_text(error.stdout),
+                output_text(error.stderr) + f"\ntimeout={args.timeout}\n",
             )
         (workspace.parent / "opencode.stdout.jsonl").write_text(run.stdout)
         (workspace.parent / "opencode.stderr.log").write_text(run.stderr)
@@ -217,6 +222,7 @@ def main() -> None:
             if run.returncode == 0 and validation.returncode == 0 and stopped
             else "failed"
         )
+        time.sleep(1)
         finalize = subprocess.run(
             [
                 "uv",

@@ -52,7 +52,7 @@ def main() -> None:
     state.completion_evidence.update(
         dict(item.split("=", 1) for item in args.evidence if "=" in item)
     )
-    state.evaluations.extend(
+    evaluations = [
         {
             "evaluation_id": hashlib.sha256(
                 f"{state.session_id}:{key}:{value}".encode()
@@ -67,7 +67,9 @@ def main() -> None:
             "created_at": now(),
         }
         for key, value in state.completion_evidence.items()
-    )
+    ]
+    existing = {item.get("evaluation_id") for item in state.evaluations}
+    state.evaluations.extend(item for item in evaluations if item["evaluation_id"] not in existing)
     state.training_eligibility = "excluded"
     store.event(args.session_id, "session_ended", {"status": args.status})
     store.save(state)
