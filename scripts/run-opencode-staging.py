@@ -155,13 +155,15 @@ def main() -> None:
     parser.add_argument("--trace-dir", type=Path, required=True)
     parser.add_argument("--config", type=Path, default=Path("config/models.yaml"))
     parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument("--limit", type=int, choices=range(1, len(TASKS) + 1), default=len(TASKS))
     args = parser.parse_args()
     if not os.getenv("DGX_MOA_API_KEY"):
         raise SystemExit("DGX_MOA_API_KEY is required")
     run_id = time.strftime("%Y%m%d-%H%M%S")
     root = args.output_root / run_id
     rows = []
-    for index, task in enumerate(TASKS, 1):
+    selected = TASKS[: args.limit]
+    for index, task in enumerate(selected, 1):
         session = f"staging-{run_id}-{index:02d}"
         workspace = root / session / "repo"
         create_fixture(workspace)
@@ -243,7 +245,7 @@ def main() -> None:
         "sessions": rows,
         "distribution": {
             category: sum(row["category"] == category for row in rows)
-            for category in sorted({task.category for task in TASKS})
+            for category in sorted({task.category for task in selected})
         },
     }
     (root / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")

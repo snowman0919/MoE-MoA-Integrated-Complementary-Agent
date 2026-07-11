@@ -116,6 +116,18 @@ def validate_trace(trace: dict[str, Any]) -> None:
         raise ValueError("unsupported trace schema version")
     if version == "agent-trace-v2":
         validate_provenance(str(trace["runtime_channel"]), str(trace["trace_origin"]))
+        for decision in trace["agent_decisions"]:
+            if decision.get("role") not in {"planner", "executor", "reviewer", "judge", "frontier"}:
+                raise ValueError("invalid decision role")
+        for execution in trace["tool_executions"]:
+            effect = execution.get("filesystem_effect", {})
+            if not set(effect) & {
+                "changed_paths",
+                "created_paths",
+                "deleted_paths",
+                "unknown_effect",
+            }:
+                raise ValueError("invalid filesystem effect")
         for failure in trace["failures"]:
             validate_failure_record(failure)
 

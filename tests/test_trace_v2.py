@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 from dgx_moa.controller import Controller
 from dgx_moa.dataset import build
-from dgx_moa.improvement import cooldown_active, proposal_fingerprint
+from dgx_moa.improvement import cooldown_active, mine, proposal_fingerprint
 from dgx_moa.runtime_status import state_counts
 from dgx_moa.state import Phase, SessionState, StateStore, validate_failure_record
 from dgx_moa.trace import (
@@ -179,6 +179,32 @@ def test_proposal_cooldown_changes_with_material_evidence() -> None:
     changed = proposal_fingerprint("TIMEOUT", 2, {"tasks": 2})
     assert cooldown_active({"proposal_fingerprint": first}, same)
     assert not cooldown_active({"proposal_fingerprint": first}, changed)
+
+
+def test_miner_prioritizes_active_production_v2_trace(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    production = {
+        "schema_version": "agent-trace-v2",
+        "session_id": "production",
+        "runtime_channel": "main",
+        "trace_origin": "production",
+        "final_status": "failed",
+        "failures": [{"failure_class": "PROVIDER", "resolution_status": "active"}],
+    }
+    benchmark = {
+        "schema_version": "agent-trace-v2",
+        "session_id": "benchmark",
+        "runtime_channel": "dev",
+        "trace_origin": "benchmark",
+        "final_status": "failed",
+        "failures": [{"failure_class": "BENCHMARK", "resolution_status": "active"}],
+    }
+    (traces / "traces.jsonl").write_text(
+        json.dumps(benchmark) + "\n" + json.dumps(production) + "\n"
+    )
+    proposal = mine(traces, tmp_path / "proposal.json")
+    assert proposal["evidence"]["failure_class"] == "PROVIDER"
 
 
 def test_runtime_state_counts(tmp_path) -> None:  # type: ignore[no-untyped-def]

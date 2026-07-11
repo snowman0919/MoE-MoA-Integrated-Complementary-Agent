@@ -158,6 +158,7 @@ class Controller:
             },
         }
         state.decisions.append(decision)
+        state.decisions = state.decisions[-self.settings.limits.max_steps :]
         state.last_decision_id = decision_id
         self.store.event(
             state.session_id, "agent_decision_recorded", {"decision_id": decision_id, "role": role}
@@ -398,6 +399,7 @@ class Controller:
                 "filesystem_effect": effect,
             }
             state.tool_executions.append(execution)
+            state.tool_executions = state.tool_executions[-self.settings.limits.max_steps :]
             self.store.event(state.session_id, "tool_execution_recorded", execution)
             state.no_progress_count = 0
             failed = any(
@@ -423,6 +425,7 @@ class Controller:
                             "related_proposal_ids": [],
                         }
                     )
+                    state.failures = state.failures[-self.settings.limits.max_steps :]
                     raise DuplicateFailedCall("identical failed tool call blocked")
                 state.failed_call_fingerprints.append(call_fingerprint)
                 family = failure_family(observation)
@@ -444,6 +447,7 @@ class Controller:
                         "related_proposal_ids": [],
                     }
                 )
+                state.failures = state.failures[-self.settings.limits.max_steps :]
                 if state.failure_families[family] >= 2:
                     state.phase = Phase.REPLANNING
         if state.no_progress_count >= 3:
@@ -492,6 +496,7 @@ class Controller:
                     "created_at": now(),
                 }
             )
+            state.evaluations = state.evaluations[-self.settings.limits.max_steps :]
         self.store.save(state)
 
     def role_context(self, role: str, state: SessionState, observation: str) -> dict[str, Any]:
@@ -701,6 +706,7 @@ class Controller:
                 "created_at": now(),
             }
         )
+        state.evaluations = state.evaluations[-self.settings.limits.max_steps :]
         self.store.save(state)
         return result
 
@@ -761,5 +767,6 @@ class Controller:
                 "created_at": now(),
             }
         )
+        state.evaluations = state.evaluations[-self.settings.limits.max_steps :]
         self.store.save(state)
         return result

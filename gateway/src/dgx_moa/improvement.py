@@ -12,14 +12,24 @@ THRESHOLDS = {
     "max_token_increase": 0.10,
     "max_time_increase": 0.15,
 }
+DEFAULT_EVIDENCE_PRIORITY = {
+    ("main", "production"): 100,
+    ("candidate", "candidate_evaluation"): 60,
+    ("dev", "validation"): 30,
+    ("dev", "benchmark"): 10,
+    ("dev", "diagnostic"): 0,
+}
 
 
 def _read(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(path.read_text()))
 
 
-def statistics(result: dict[str, Any]) -> dict[str, Any]:
+def statistics(
+    result: dict[str, Any], priority: dict[tuple[str, str], int] | None = None
+) -> dict[str, Any]:
     tasks = cast(list[dict[str, Any]], result.get("tasks", []))
+    evidence_priority = priority or DEFAULT_EVIDENCE_PRIORITY
     excluded_statuses = {"resolved", "expected", "synthetic", "false_positive", "superseded"}
     failures = [
         item
@@ -47,6 +57,21 @@ def statistics(result: dict[str, Any]) -> dict[str, Any]:
         "excluded_failure_frequency": {
             item: excluded_failures.count(item) for item in sorted(set(excluded_failures))
         },
+        "failure_priority": {
+            item: sum(
+                evidence_priority.get(
+                    (
+                        str(task.get("runtime_channel", "dev")),
+                        str(task.get("trace_origin", "benchmark")),
+                    ),
+                    0,
+                )
+                for task in tasks
+                if item in task.get("failure_classes", [])
+                and task.get("resolution_status", "active") not in excluded_statuses
+            )
+            for item in sorted(set(failures))
+        },
         "failure_impact_tasks": sum(not task.get("task_success") for task in tasks),
         "token_waste": sum(known_tokens) if len(known_tokens) == len(tasks) else None,
         "time_waste_seconds": sum(float(task["wall_clock_seconds"]) for task in failure_tasks),
@@ -71,6 +96,30 @@ def statistics(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def trace_tasks(directory: Path) -> list[dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for path in sorted(directory.rglob("*.jsonl")):
+        for line in path.read_text().splitlines():
+            if line:
+                trace = json.loads(line)
+                if trace.get("schema_version") == "agent-trace-v2":
+                    latest[str(trace["session_id"])] = trace
+    tasks = []
+    for trace in latest.values():
+        for failure in trace.get("failures", []):
+            tasks.append(
+                {
+                    "task_success": trace.get("final_status") == "completed",
+                    "wall_clock_seconds": 0,
+                    "failure_classes": [failure.get("failure_class", "UNKNOWN")],
+                    "resolution_status": failure.get("resolution_status", "unknown"),
+                    "runtime_channel": trace.get("runtime_channel"),
+                    "trace_origin": trace.get("trace_origin"),
+                }
+            )
+    return tasks
+
+
 def proposal_fingerprint(failure_class: str, affected: int, evidence: dict[str, Any]) -> str:
     payload = json.dumps(
         {"failure_class": failure_class, "affected": affected, "evidence": evidence},
@@ -85,11 +134,13 @@ def cooldown_active(previous: dict[str, Any], fingerprint: str) -> bool:
 
 
 def mine(benchmark: Path, output: Path) -> dict[str, Any]:
-    result = _read(benchmark)
+    result = {"tasks": trace_tasks(benchmark)} if benchmark.is_dir() else _read(benchmark)
     evidence = statistics(result)
     failures = evidence["failure_frequency"]
     failure_class, affected = max(
-        failures.items(), key=lambda item: (item[1], item[0]), default=("NONE", 0)
+        failures.items(),
+        key=lambda item: (evidence["failure_priority"].get(item[0], 0), item[1], item[0]),
+        default=("NONE", 0),
     )
     evidence_summary = {
         "affected_tasks": affected,
@@ -117,10 +168,21 @@ def mine(benchmark: Path, output: Path) -> dict[str, Any]:
         "risk": "low",
         "requires_human_approval": True,
         "proposal_fingerprint": fingerprint,
-        "cooldown_active": cooldown_active(previous, fingerprint),
+        "cooldown_active": affected > 0 and cooldown_active(previous, fingerprint),
         "status": "no_actionable_failure" if affected == 0 else "proposed",
         "priority": {"affected_tasks": affected, "risk": "low", "benchmark_coverage": affected},
     }
+    if affected == 0:
+        proposal.update(
+            {
+                "title": "No actionable failure",
+                "problem": "All observed failures are resolved, expected, or synthetic.",
+                "suspected_layer": "unknown",
+                "proposed_change": None,
+                "acceptance_criteria": [],
+                "requires_human_approval": False,
+            }
+        )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(proposal, indent=2, sort_keys=True) + "\n")
     return proposal

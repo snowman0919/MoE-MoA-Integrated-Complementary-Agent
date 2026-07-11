@@ -1,40 +1,42 @@
 {
-  "acceptance_criteria": [
-    "REPEATED_ACTION frequency decreases by at least 30 percent",
-    "task success rate does not decrease"
-  ],
+  "acceptance_criteria": [],
+  "cooldown_active": false,
   "evidence": {
-    "affected_tasks": 1,
-    "failure_class": "REPEATED_ACTION",
+    "affected_tasks": 0,
+    "failure_class": "NONE",
     "wasted_input_tokens": null,
-    "wasted_seconds": 0.062135
+    "wasted_seconds": 0
   },
   "priority": {
-    "affected_tasks": 1,
-    "benchmark_coverage": 1,
+    "affected_tasks": 0,
+    "benchmark_coverage": 0,
     "risk": "low"
   },
-  "problem": "REPEATED_ACTION appears in 1 benchmark task(s).",
+  "problem": "All observed failures are resolved, expected, or synthetic.",
+  "proposal_fingerprint": "cb6ae42593b91e1ae492b2089f75d3b20eda0b7c917bba3fd17edf2653fa2e89",
   "proposal_id": "IMP-2026-0001",
-  "proposed_change": "Block normalized equivalent failed tool calls before another executor turn.",
-  "requires_human_approval": true,
+  "proposed_change": null,
+  "requires_human_approval": false,
   "risk": "low",
   "schema_version": "improvement-proposal-v1",
   "statistics": {
     "context_overflow_frequency": 0,
-    "failure_frequency": {
+    "excluded_failure_frequency": {
       "NONEXISTENT_PATH": 1,
       "REPEATED_ACTION": 1
     },
+    "failure_frequency": {},
     "failure_impact_tasks": 0,
+    "failure_priority": {},
     "false_completion_rate": 0.0,
     "profile_switch_failure_rate": null,
     "replan_rate": 0.2,
     "review_rejection_rate": 0.1,
     "route_inefficiency": null,
-    "time_waste_seconds": 0.062135,
+    "time_waste_seconds": 0,
     "token_waste": null
   },
-  "suspected_layer": "controller",
-  "title": "Block repeated_action earlier"
+  "status": "no_actionable_failure",
+  "suspected_layer": "unknown",
+  "title": "No actionable failure"
 }

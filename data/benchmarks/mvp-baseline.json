@@ -13,7 +13,7 @@
       "standard": 6
     },
     "task_success_rate": 1.0,
-    "time_per_successful_task": 0.031109599999999998,
+    "time_per_successful_task": 0.0341721,
     "tokens_per_successful_task": null,
     "tool_calls_per_successful_task": 1.2
   },
@@ -38,7 +38,9 @@
       "meaningful_diff_lines": 0,
       "output_tokens": null,
       "replans": 0,
+      "resolution_status": null,
       "reviewer_rejections": 0,
+      "runtime_channel": "dev",
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
       "step_budget": 8,
       "task_id": "analysis",
@@ -46,12 +48,13 @@
       "tests_passed": true,
       "time_budget_seconds": 30,
       "tool_calls": 1,
+      "trace_origin": "benchmark",
       "unnecessary_diff_lines": null,
       "user_request": "Inspect repository",
       "validation_commands": [
         "test -f README.md"
       ],
-      "wall_clock_seconds": 0.019909
+      "wall_clock_seconds": 0.020172
     },
     {
       "acceptance_criteria": [
@@ -73,7 +76,9 @@
       "meaningful_diff_lines": 2,
       "output_tokens": null,
       "replans": 0,
+      "resolution_status": null,
       "reviewer_rejections": 0,
+      "runtime_channel": "dev",
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
       "step_budget": 8,
       "task_id": "bug-one",
@@ -81,12 +86,13 @@
       "tests_passed": true,
       "time_budget_seconds": 30,
       "tool_calls": 1,
+      "trace_origin": "benchmark",
       "unnecessary_diff_lines": null,
       "user_request": "Fix one file",
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.027276
+      "wall_clock_seconds": 0.025097
     },
     {
       "acceptance_criteria": [
@@ -108,7 +114,9 @@
       "meaningful_diff_lines": 2,
       "output_tokens": null,
       "replans": 0,
+      "resolution_status": null,
       "reviewer_rejections": 0,
+      "runtime_channel": "dev",
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
       "step_budget": 8,
       "task_id": "bug-two",
@@ -116,12 +124,13 @@
       "tests_passed": true,
       "time_budget_seconds": 30,
       "tool_calls": 1,
+      "trace_origin": "benchmark",
       "unnecessary_diff_lines": null,
       "user_request": "Fix another one file",
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.03394
+      "wall_clock_seconds": 0.032133
     },
     {
       "acceptance_criteria": [
@@ -143,7 +152,9 @@
       "meaningful_diff_lines": 1,
       "output_tokens": null,
       "replans": 0,
+      "resolution_status": null,
       "reviewer_rejections": 0,
+      "runtime_channel": "dev",
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
       "step_budget": 8,
       "task_id": "regression",
@@ -151,12 +162,13 @@
       "tests_passed": true,
       "time_budget_seconds": 30,
       "tool_calls": 1,
+      "trace_origin": "benchmark",
       "unnecessary_diff_lines": null,
       "user_request": "Add regression test",
       "validation_commands": [
         "python test_app.py"
       ],
-      "wall_clock_seconds": 0.034913
+      "wall_clock_seconds": 0.034213
     },
     {
       "acceptance_criteria": [
@@ -179,7 +191,9 @@
       "meaningful_diff_lines": 4,
       "output_tokens": null,
       "replans": 0,
+      "resolution_status": null,
       "reviewer_rejections": 0,
+      "runtime_channel": "dev",
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
       "step_budget": 8,
       "task_id": "feature-a",
@@ -187,12 +201,13 @@
       "tests_passed": true,
       "time_budget_seconds": 30,
       "tool_calls": 1,
+      "trace_origin": "benchmark",
       "unnecessary_diff_lines": null,
       "user_request": "Add two-file feature",
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.034974
+      "wall_clock_seconds": 0.032502
     },
     {
       "acceptance_criteria": [
@@ -215,7 +230,9 @@
       "meaningful_diff_lines": 4,
       "output_tokens": null,
       "replans": 0,
+      "resolution_status": null,
       "reviewer_rejections": 0,
+      "runtime_channel": "dev",
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
       "step_budget": 8,
       "task_id": "feature-b",
@@ -223,12 +240,13 @@
       "tests_passed": true,
       "time_budget_seconds": 30,
       "tool_calls": 1,
+      "trace_origin": "benchmark",
       "unnecessary_diff_lines": null,
       "user_request": "Add multi-file feature",
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.028655
+      "wall_clock_seconds": 0.038974
     },
     {
       "acceptance_criteria": [
@@ -252,7 +270,9 @@
       "meaningful_diff_lines": 2,
       "output_tokens": null,
       "replans": 1,
+      "resolution_status": "synthetic",
       "reviewer_rejections": 0,
+      "runtime_channel": "dev",
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
       "step_budget": 8,
       "task_id": "missing-path",
@@ -260,12 +280,13 @@
       "tests_passed": true,
       "time_budget_seconds": 30,
       "tool_calls": 2,
+      "trace_origin": "benchmark",
       "unnecessary_diff_lines": null,
       "user_request": "Recover from missing path",
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.029294
+      "wall_clock_seconds": 0.038016
     },
     {
       "acceptance_criteria": [
@@ -289,7 +310,9 @@
       "meaningful_diff_lines": 2,
       "output_tokens": null,
       "replans": 1,
+      "resolution_status": "synthetic",
       "reviewer_rejections": 0,
+      "runtime_channel": "dev",
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
       "step_budget": 8,
       "task_id": "repeat-failure",
@@ -297,12 +320,13 @@
       "tests_passed": true,
       "time_budget_seconds": 30,
       "tool_calls": 2,
+      "trace_origin": "benchmark",
       "unnecessary_diff_lines": null,
       "user_request": "Recover from repeated failure",
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.032841
+      "wall_clock_seconds": 0.045036
     },
     {
       "acceptance_criteria": [
@@ -324,7 +348,9 @@
       "meaningful_diff_lines": 2,
       "output_tokens": null,
       "replans": 0,
+      "resolution_status": null,
       "reviewer_rejections": 0,
+      "runtime_channel": "dev",
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
       "step_budget": 8,
       "task_id": "ambiguous",
@@ -332,12 +358,13 @@
       "tests_passed": true,
       "time_budget_seconds": 30,
       "tool_calls": 1,
+      "trace_origin": "benchmark",
       "unnecessary_diff_lines": null,
       "user_request": "Clarify scope then change",
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.034591
+      "wall_clock_seconds": 0.043689
     },
     {
       "acceptance_criteria": [
@@ -359,7 +386,9 @@
       "meaningful_diff_lines": 2,
       "output_tokens": null,
       "replans": 0,
+      "resolution_status": null,
       "reviewer_rejections": 1,
+      "runtime_channel": "dev",
       "starting_commit": "2c969477b831c69b6ebb56d78ea7eddf6c3b364b",
       "step_budget": 8,
       "task_id": "review-correction",
@@ -367,12 +396,13 @@
       "tests_passed": true,
       "time_budget_seconds": 30,
       "tool_calls": 1,
+      "trace_origin": "benchmark",
       "unnecessary_diff_lines": null,
       "user_request": "Correct reviewer rejection",
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.034703
+      "wall_clock_seconds": 0.031889
     }
   ]
 }
