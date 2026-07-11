@@ -130,6 +130,10 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - `scripts/validate-opencode-loop.sh` against recovered resident services:
   exit `0`; session `opencode-loop-1783701252`; authenticated discovery,
   tool-result continuation, and streaming passed.
+- Repeated resident OpenCode-compatible validation on `2026-07-11`:
+  `scripts/validate-opencode-loop.sh` exit `0`; session
+  `opencode-loop-1783736024`; tool-result continuation and streaming passed.
+  `MemAvailable` immediately after was `22945952 kB`.
 - Consolidated `scripts/smoke-test.sh`: exit `0`; session
   `opencode-loop-1783728287`; tool continuation and streaming passed. The
   streaming check captures output before matching `[DONE]`, avoiding a
