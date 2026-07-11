@@ -186,6 +186,12 @@ below. Heavy-judge validation is appended after its first isolated startup.
   changes. Judge then stopped and resident was restored; final gateway
   `/readyz` returned `200` with `23834812` KiB available. No model, unit,
   headroom, resident-context, or trace setting was changed.
+- Raw SSE protocol capture on `2026-07-11`: real resident gateway normal,
+  tool-call, and tool-result continuation streams each ended `data: [DONE]`
+  followed by HTTP EOF. Their final finish reasons were respectively `stop`,
+  `tool_calls`, and `stop`; no stale `tool_calls` finish reason or post-DONE
+  usage was observed. Artifact: `data/diagnostics/opencode-completion/`
+  `opencode-sse-48850860-c3a6-4a69-a5b2-9234f0758417.json`.
 
 ## Tailscale
 

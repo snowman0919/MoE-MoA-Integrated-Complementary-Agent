@@ -1,0 +1,277 @@
+{
+  "normal": {
+    "session_id": "opencode-sse-48850860-c3a6-4a69-a5b2-9234f0758417",
+    "elapsed_seconds": 16.711,
+    "events": [
+      {
+        "sequence": 1,
+        "type": "response_started",
+        "at": "2026-07-11T23:39:47+0900"
+      },
+      {
+        "sequence": 2,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "content",
+          "role"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 3,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "content"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 4,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "content"
+        ],
+        "finish_reason": "stop"
+      },
+      {
+        "sequence": 5,
+        "type": "done",
+        "at": "2026-07-11T23:40:04+0900"
+      },
+      {
+        "sequence": 6,
+        "type": "eof",
+        "at": "2026-07-11T23:40:04+0900"
+      }
+    ],
+    "finish_reasons": [
+      "stop"
+    ],
+    "tool_calls": [],
+    "connection_closed_at": "2026-07-11T23:40:04+0900"
+  },
+  "tool": {
+    "session_id": "opencode-sse-48850860-c3a6-4a69-a5b2-9234f0758417",
+    "elapsed_seconds": 1.038,
+    "events": [
+      {
+        "sequence": 1,
+        "type": "response_started",
+        "at": "2026-07-11T23:40:04+0900"
+      },
+      {
+        "sequence": 2,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "content",
+          "role"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 3,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "tool_calls"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 4,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "tool_calls"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 5,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "tool_calls"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 6,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "tool_calls"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 7,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "tool_calls"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 8,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "tool_calls"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 9,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "tool_calls"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 10,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "tool_calls"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 11,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "tool_calls"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 12,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "tool_calls"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 13,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "tool_calls"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 14,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "tool_calls"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 15,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [],
+        "finish_reason": "tool_calls"
+      },
+      {
+        "sequence": 16,
+        "type": "done",
+        "at": "2026-07-11T23:40:05+0900"
+      },
+      {
+        "sequence": 17,
+        "type": "eof",
+        "at": "2026-07-11T23:40:05+0900"
+      }
+    ],
+    "finish_reasons": [
+      "tool_calls"
+    ],
+    "tool_calls": [
+      {
+        "id": "chatcmpl-tool-a9d1a1daaaf17530",
+        "name": "read_file",
+        "arguments_sha256": "b327398f75c091685e2fd9e23c407ba3f1c9f78a3e356350737bd73ef0b8ae9b",
+        "arguments": "{\"path\": \"/tmp/dgx-moa-validation.txt\"}"
+      }
+    ],
+    "connection_closed_at": "2026-07-11T23:40:05+0900"
+  },
+  "continuation": {
+    "session_id": "opencode-sse-48850860-c3a6-4a69-a5b2-9234f0758417",
+    "elapsed_seconds": 0.385,
+    "events": [
+      {
+        "sequence": 1,
+        "type": "response_started",
+        "at": "2026-07-11T23:40:05+0900"
+      },
+      {
+        "sequence": 2,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "content",
+          "role"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 3,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "content"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 4,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "content"
+        ],
+        "finish_reason": null
+      },
+      {
+        "sequence": 5,
+        "type": "chunk",
+        "choice_index": 0,
+        "delta_keys": [
+          "content"
+        ],
+        "finish_reason": "stop"
+      },
+      {
+        "sequence": 6,
+        "type": "done",
+        "at": "2026-07-11T23:40:05+0900"
+      },
+      {
+        "sequence": 7,
+        "type": "eof",
+        "at": "2026-07-11T23:40:05+0900"
+      }
+    ],
+    "finish_reasons": [
+      "stop"
+    ],
+    "tool_calls": [],
+    "connection_closed_at": "2026-07-11T23:40:05+0900"
+  }
+}

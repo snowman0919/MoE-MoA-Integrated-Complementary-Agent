@@ -212,7 +212,11 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         )
         assert response.status_code == 200
         assert '"content":"ok"' in response.text
-        assert "data: [DONE]" in response.text
+        events = [line.removeprefix("data: ") for line in response.text.splitlines() if line]
+        assert events[-1] == "[DONE]"
+        final = json.loads(events[-2])
+        assert final["choices"][0]["finish_reason"] == "stop"
+        assert "usage" in final
         trace = json.loads((settings.state_db.parent.parent / "traces/stream.jsonl").read_text())
         assert {event["event_type"] for event in trace["events"]} >= {
             "request_received",
