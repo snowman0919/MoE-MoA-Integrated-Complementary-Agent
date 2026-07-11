@@ -1,0 +1,1089 @@
+{
+  "opencode_version": "1.17.18",
+  "command_shape": "opencode.exe run --format json --auto --dir <isolated-fixture> --model dgx-moa/dgx-moa-agent",
+  "powershell_parent_pid": 27500,
+  "opencode_parent_pid": 31764,
+  "process_snapshots": [
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:22.3057820Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:22.7937574Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:23.2455507Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:23.6964716Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:24.1130647Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:24.5707866Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:25.0100023Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:25.4692355Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:25.8921207Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:26.3403952Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:26.8044893Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:27.2600823Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:27.7149821Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:28.1357964Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:28.5594731Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:28.9887038Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:29.4441021Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:29.8681592Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:30.3114657Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:30.7531546Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:31.1948541Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:31.6544258Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:32.0984284Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:32.5432691Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:32.9608107Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:33.3968922Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:33.8176250Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:34.2607016Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:34.7094084Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:35.1615939Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:35.5944507Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:36.0584122Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:36.4907635Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:36.9299476Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:37.3837907Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:37.8194027Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:38.2622031Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:38.7007839Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:39.1564400Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:39.6057008Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:40.0692625Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:40.5151432Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:40.9642004Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:41.4035973Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:41.8515466Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:42.3121482Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:42.7574949Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:43.1902885Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:43.6233986Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:44.0642133Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:44.5150794Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:44.9326407Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:45.3889901Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:45.8387625Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:46.2825328Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:46.7241718Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:47.1764095Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:47.6285455Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:48.0920896Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:48.5320335Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:48.9827307Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:49.4224068Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:49.8548587Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:50.2824002Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:50.7297178Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:51.1670761Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:51.6272229Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:52.0902721Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:52.5383602Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:52.9724733Z"
+    },
+    {
+      "phase": "before_final_sse",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:53.4180115Z"
+    },
+    {
+      "phase": "after_edit",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:53.8737721Z"
+    },
+    {
+      "phase": "after_edit",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:54.3161334Z"
+    },
+    {
+      "phase": "after_edit",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:54.7516659Z"
+    },
+    {
+      "phase": "after_edit",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:55.1779926Z"
+    },
+    {
+      "phase": "after_edit",
+      "child_processes": [
+        {
+          "name": "conhost.exe",
+          "pid": 13168
+        },
+        {
+          "name": "opencode.exe",
+          "pid": 28508
+        }
+      ],
+      "at": "2026-07-11T15:24:55.6254289Z"
+    },
+    {
+      "phase": "after_edit",
+      "child_processes": [],
+      "at": "2026-07-11T15:24:56.0780902Z"
+    },
+    {
+      "phase": "after_final_sse",
+      "child_processes": [],
+      "at": "2026-07-11T15:24:56.3548957Z"
+    }
+  ],
+  "final_process_state": "exited",
+  "exit_code": 0,
+  "fixture_completion": "DONE",
+  "stdout_tail": "{\"type\":\"step_start\",\"timestamp\":1783783491437,\"sessionID\":\"ses_0ae38680affeM3Rp7QF9V0DnRc\",\"part\":{\"id\":\"prt_f51c80768001ouyRKIgPs3EowB\",\"messageID\":\"msg_f51c7992b001c2EP9B4oyCWEGT\",\"sessionID\":\"ses_0ae38680affeM3Rp7QF9V0DnRc\",\"type\":\"step-start\"}}\r\n{\"type\":\"tool_use\",\"timestamp\":1783783493792,\"sessionID\":\"ses_0ae38680affeM3Rp7QF9V0DnRc\",\"part\":{\"type\":\"tool\",\"tool\":\"write\",\"callID\":\"call_59f3531d25cb488c85d1cb3d\",\"state\":{\"status\":\"completed\",\"input\":{\"content\":\"DONE\",\"filePath\":\"C:\\\\Users\\\\dbsgu\\\\AppData\\\\Local\\\\Temp\\\\opencode-completion-80ebd1d1-3303-4695-be33-33beb6909e07\\\\COMPLETION.txt\"},\"output\":\"Wrote file successfully.\",\"metadata\":{\"diagnostics\":{},\"filepath\":\"C:\\\\Users\\\\dbsgu\\\\AppData\\\\Local\\\\Temp\\\\opencode-completion-80ebd1d1-3303-4695-be33-33beb6909e07\\\\COMPLETION.txt\",\"exists\":false,\"truncated\":false},\"title\":\"Users\\\\dbsgu\\\\AppData\\\\Local\\\\Temp\\\\opencode-completion-80ebd1d1-3303-4695-be33-33beb6909e07\\\\COMPLETION.txt\",\"time\":{\"start\":1783783493768,\"end\":1783783493787}},\"id\":\"prt_f51c8080f001JauWiuQ2Shzhe3\",\"sessionID\":\"ses_0ae38680affeM3Rp7QF9V0DnRc\",\"messageID\":\"msg_f51c7992b001c2EP9B4oyCWEGT\"}}\r\n{\"type\":\"step_finish\",\"timestamp\":1783783493845,\"sessionID\":\"ses_0ae38680affeM3Rp7QF9V0DnRc\",\"part\":{\"id\":\"prt_f51c810bf001duFab48GFlr1Zo\",\"reason\":\"tool-calls\",\"messageID\":\"msg_f51c7992b001c2EP9B4oyCWEGT\",\"sessionID\":\"ses_0ae38680affeM3Rp7QF9V0DnRc\",\"type\":\"step-finish\",\"tokens\":{\"total\":5770,\"input\":5686,\"output\":84,\"reasoning\":0,\"cache\":{\"write\":0,\"read\":0}},\"cost\":0}}\r\n{\"type\":\"step_start\",\"timestamp\":1783783495725,\"sessionID\":\"ses_0ae38680affeM3Rp7QF9V0DnRc\",\"part\":{\"id\":\"prt_f51c81824001IC8ryYCROO0oCk\",\"messageID\":\"msg_f51c810ce001pHoLsdt07RDICy\",\"sessionID\":\"ses_0ae38680affeM3Rp7QF9V0DnRc\",\"type\":\"step-start\"}}\r\n{\"type\":\"text\",\"timestamp\":1783783495819,\"sessionID\":\"ses_0ae38680affeM3Rp7QF9V0DnRc\",\"part\":{\"id\":\"prt_f51c81828001ydH2jAh0JMlHiF\",\"messageID\":\"msg_f51c810ce001pHoLsdt07RDICy\",\"sessionID\":\"ses_0ae38680affeM3Rp7QF9V0DnRc\",\"type\":\"text\",\"text\":\"WORKER_DONE\",\"time\":{\"start\":1783783495720,\"end\":1783783495798}}}\r\n{\"type\":\"step_finish\",\"timestamp\":1783783495819,\"sessionID\":\"ses_0ae38680affeM3Rp7QF9V0DnRc\",\"part\":{\"id\":\"prt_f51c8187c001NLsez2QcuGolHI\",\"reason\":\"stop\",\"messageID\":\"msg_f51c810ce001pHoLsdt07RDICy\",\"sessionID\":\"ses_0ae38680affeM3Rp7QF9V0DnRc\",\"type\":\"step-finish\",\"tokens\":{\"total\":5908,\"input\":5904,\"output\":4,\"reasoning\":0,\"cache\":{\"write\":0,\"read\":0}},\"cost\":0}}\r\n",
+  "stderr_tail": "",
+  "captured_at": "2026-07-11T15:24:57Z",
+  "fixture_removed": true
+}

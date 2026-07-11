@@ -201,6 +201,32 @@ below. Heavy-judge validation is appended after its first isolated startup.
   fixtures were removed. This does not reproduce a gateway protocol or OpenCode
   completion-lifecycle defect. Artifact:
   `data/diagnostics/opencode-completion/opencode-physical-20260711.json`.
+- Completion lifecycle re-validation on `2026-07-12`: after deploy fast-forward
+  and resident restoration, raw gateway normal, tool-call, and continuation SSE
+  streams recorded `stop`, `tool_calls`, and `stop` respectively, each followed
+  by `[DONE]`, HTTP EOF, and a matching `stream_completed` gateway timestamp.
+  Artifact: `data/diagnostics/opencode-completion/`
+  `opencode-sse-f99c217e-cc9a-4885-9446-f39e5b8ce1b9.json`.
+- Bounded physical OpenCode acceptance on `2026-07-12`: Pocket4 OpenCode
+  `1.17.18` ran direct `opencode.exe` with explicit isolated `--dir`; PowerShell
+  parent PID `27500` started run-owned OpenCode PID `31764`. It emitted
+  `tool-calls`, then continuation final `stop` in session
+  `ses_0ae38680affeM3Rp7QF9V0DnRc`, wrote `COMPLETION.txt` as `DONE`, and
+  exited `0`. Child snapshots observed `opencode.exe` and `conhost.exe` during
+  the run; after final SSE the run-owned child list was empty. The fixture and
+  all run-owned processes were removed. Artifact:
+  `data/diagnostics/opencode-completion/`
+  `opencode-physical-5aaa1846-44ba-4868-a978-70d96ab163f3.json`.
+- Final live loop checks on `2026-07-12`: `scripts/validate-opencode-loop.sh`
+  passed session `opencode-loop-1783783547`; `scripts/smoke-test.sh` passed
+  session `opencode-loop-1783783550`; gateway `/readyz` returned `200` with
+  executor, planner, and reviewer ready.
+- Post-resolution fixed ten-task benchmark: `scripts/run-mvp-benchmark.sh`
+  passed `10/10`, task success rate `1.0`, route distribution `3/6/1`
+  fast/standard/escalation, tool calls per successful task `1.2`, and time per
+  successful task `0.0311096` seconds. The bounded improvement evaluation again
+  selected `REPEATED_ACTION` (one fixture) but returned `not_recommended`,
+  `0.0%` reduction, and automatic merge `false`; no candidate was applied.
 
 ## Tailscale
 

@@ -1,6 +1,6 @@
 # State
 
-Updated: 2026-07-11T00:00:00+09:00
+Updated: 2026-07-12T00:24:57+09:00
 
 ## Verified Host
 
@@ -45,7 +45,7 @@ Updated: 2026-07-11T00:00:00+09:00
 - Reviewer and planner remain individually safe before download.
 - Heavy judge `nvidia/Mistral-Medium-3.5-128B-NVFP4`, revision
   `b8c66d2098edd8c9c26bde2b2ff41b5967e111ae`, exact size `95259207898` bytes;
-  final-headroom gate passed and download/verification is in progress.
+  a physical structured-verdict transaction passed, then resident was restored.
 - Selected resident topology: executor + planner + reviewer, all resident.
 - Resident context limits: `16384`, `8192`, `8192`; `max_num_seqs=1`.
 - Resident KV reservations: `500000000`, `750000000`, `750000000` bytes.
@@ -60,17 +60,19 @@ Updated: 2026-07-11T00:00:00+09:00
 - Model ports `8101`, `8102`, `8103`: loopback-only and ready.
 - Gateway health, readiness, non-streaming, streaming, real tool call, and
   SQLite restart persistence passed.
+- Physical OpenCode `1.17.18` now has a frozen bounded one-file completion
+  baseline: tool call, continuation, final `stop`, fixture update, and exit `0`.
 - Docker Compose gateway image built as
   `sha256:2a1f97eb4c54c6b5644621a3ace80ac15b9259410dcbb06cf5702b869fc3742b`.
 - Tailscale Serve and Funnel remain disabled by design.
 
 ## Current Phase
 
-Resident profile recovered after an attempted heavy-judge startup failed its
-headroom gate. Executor, reviewer, and planner are ready again; heavy judge
-does not yet have a valid structured-verdict runtime result. Phase 8 frontier
-foundation is implemented on `dev`; OAuth profiles and a real Sol/High run have
-not been created or claimed.
+Phase 1 physical OpenCode completion is verified. The prior noninteractive
+failure was a harness defect: the fixture was removed or not selected with
+`--dir`, so OpenCode did not load the isolated provider configuration. Phase 8
+frontier foundation remains on `dev`; its bounded candidate comparison is
+`not_recommended` and requires human approval for any future merge.
 
 ## Development Branch Evidence
 

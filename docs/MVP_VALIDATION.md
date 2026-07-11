@@ -12,5 +12,7 @@ checks model discovery, tool-call ID preservation, normalized tool continuation,
 and streaming without executing a real filesystem tool.
 `scripts/smoke-test.sh` is an alias for this check.
 
-Remaining runtime evidence: physical remote OpenCode client and Mistral heavy
-judge startup/rollback. Do not claim either until run against active services.
+Physical remote OpenCode completion and the Mistral heavy-judge transaction are
+recorded against active services in `docs/VALIDATION.md`. The physical OpenCode
+baseline is one isolated file update with tool continuation, final SSE stop,
+and bounded exit; it does not replace the synthetic six-shape suite.
