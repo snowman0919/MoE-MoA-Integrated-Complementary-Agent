@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -321,8 +322,6 @@ def codex_command(
         "--json",
         "--sandbox",
         "workspace-write",
-        "--ask-for-approval",
-        "never",
         "--config",
         f'model_reasoning_effort="{reasoning_effort}"',
         "--output-schema",
@@ -337,6 +336,12 @@ def codex_command(
         + str(task_path)
         + ". Follow allowed_paths and forbidden_actions. Return frontier-result-v1 JSON only.",
     ]
+
+
+def classify_frontier_failure(output: str) -> str:
+    if "usage limit" in output.lower():
+        return "FRONTIER_USAGE_LIMIT"
+    return "FRONTIER_PROTOCOL_ERROR"
 
 
 def run_task(
@@ -360,10 +365,25 @@ def run_task(
                 env=provider.environment(),
                 timeout=timeout,
                 check=False,
+                capture_output=True,
+                text=True,
             )
         except subprocess.TimeoutExpired as error:
             raise RuntimeError("FRONTIER_TIMEOUT") from error
-    return completed.returncode
+    print(redact(completed.stdout), end="")
+    print(redact(completed.stderr), end="", file=sys.stderr)
+    if completed.returncode:
+        failure = classify_frontier_failure(completed.stdout + completed.stderr)
+        task_path.with_suffix(".result.json").write_text(
+            FrontierResult(
+                status="blocked" if failure == "FRONTIER_USAGE_LIMIT" else "failed",
+                summary=failure,
+                root_cause=failure,
+                recommended_next_action="return to local MoA or select an authorized profile",
+            ).model_dump_json(indent=2)
+        )
+        raise RuntimeError(failure)
+    return 0
 
 
 def main() -> None:

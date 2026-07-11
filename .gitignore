@@ -17,4 +17,5 @@ data/state/*-models.json
 data/state/gateway-tool-call.json
 data/state/tailscale-models.json
 models/
+worktrees/
 *.log

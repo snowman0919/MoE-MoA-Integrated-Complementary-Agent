@@ -9,6 +9,7 @@ from dgx_moa.frontier import (
     FrontierResult,
     FrontierTask,
     build_frontier_task,
+    classify_frontier_failure,
     codex_command,
     evaluate_frontier_candidate,
     frontier_eligible,
@@ -56,6 +57,7 @@ def test_frontier_lock_and_eligibility(tmp_path) -> None:  # type: ignore[no-unt
         frontier_eligible(state, {"frontier_requested": True, "frontier_invocations": 1})[0]
         is False
     )
+    assert classify_frontier_failure("You've hit your usage limit") == "FRONTIER_USAGE_LIMIT"
 
     def take_second_lock() -> None:
         with profile_lock("primary", tmp_path):
@@ -100,6 +102,7 @@ def test_frontier_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
     command = codex_command("primary", config, tmp_path, "gpt-5.6-sol", "high", config)
     assert 'model_reasoning_effort="high"' in command
     assert command[command.index("--model") + 1] == "gpt-5.6-sol"
+    assert "--ask-for-approval" not in command
     assert CodexOAuthProvider("primary", tmp_path).environment()["CODEX_HOME"] == str(
         tmp_path / "primary"
     )

@@ -104,6 +104,9 @@ below. Heavy-judge validation is appended after its first isolated startup.
   credential was created. Frontier provider, profile, worktree, immutable-baseline,
   human-approval, and cycle-limit tests passed locally; full suite was
   `78 passed` with one third-party TestClient warning.
+- Primary OAuth smoke on `2026-07-11`: Codex started a `gpt-5.6-sol` High request
+  from isolated `frontier/phase8-smoke` worktree. CLI returned its explicit usage
+  limit before work began; this is `FRONTIER_USAGE_LIMIT`, not a profile failover.
 - `uv run pytest -q`: exit `0`; `74 passed`, one third-party TestClient warning.
 - `uv run ruff check gateway/src tests`: exit `0`.
 - `uv run mypy`: exit `0`; `23` source files.
@@ -145,6 +148,13 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `scripts/validate-opencode-loop.sh` exit `0`; session
   `opencode-loop-1783736024`; tool-result continuation and streaming passed.
   `MemAvailable` immediately after was `22945952 kB`.
+- Physical remote OpenCode read-only validation on `2026-07-11`: SSH alias `win`
+  reached Windows host `Pocket4`, OpenCode `1.17.18`, and tailnet gateway
+  `100.125.239.72:9000`. A temporary read-only project config allowed only
+  `read`, `glob`, and `grep`; OpenCode emitted a real tool event and returned
+  `README_PRESENT`. Gateway credential was piped over SSH only and neither stored
+  nor logged. A one-file test was not accepted: its noninteractive OpenCode child
+  did not exit, so the test-created PID and temporary fixture were removed.
 - Consolidated `scripts/smoke-test.sh`: exit `0`; session
   `opencode-loop-1783728287`; tool continuation and streaming passed. The
   streaming check captures output before matching `[DONE]`, avoiding a
