@@ -8,6 +8,7 @@ reviewer-correction task shapes. Run `scripts/run-mvp-benchmark.sh`.
 For a live authenticated gateway, run `scripts/validate-opencode-loop.sh`; it
 checks model discovery, tool-call ID preservation, normalized tool continuation,
 and streaming without executing a real filesystem tool.
+`scripts/smoke-test.sh` is an alias for this check.
 
 Remaining runtime evidence: physical remote OpenCode client and Mistral heavy
 judge startup/rollback. Do not claim either until run against active services.

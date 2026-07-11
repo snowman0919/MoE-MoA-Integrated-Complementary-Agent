@@ -121,6 +121,10 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - `scripts/validate-opencode-loop.sh` against recovered resident services:
   exit `0`; session `opencode-loop-1783701252`; authenticated discovery,
   tool-result continuation, and streaming passed.
+- Consolidated `scripts/smoke-test.sh`: exit `0`; session
+  `opencode-loop-1783728287`; tool continuation and streaming passed. The
+  streaming check captures output before matching `[DONE]`, avoiding a
+  `pipefail` false failure from `grep -q` closing its input early.
 - Final read-only resident check: `/readyz` returned `200` with executor,
   planner, and reviewer ready; `MemAvailable` was `23184121856` bytes.
 

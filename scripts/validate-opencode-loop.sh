@@ -41,5 +41,6 @@ PY
 done
 curl -fsS -N "${auth[@]}" -H 'Content-Type: application/json' \
   -d '{"model":"dgx-moa-agent","stream":true,"messages":[{"role":"user","content":"Reply READY."}],"metadata":{"target_clear":true,"expected_files":1,"validation_command":"true"}}' \
-  "$base/v1/chat/completions" | grep -q 'data: \[DONE\]'
+  "$base/v1/chat/completions" >"$temporary/stream.out"
+grep -q 'data: \[DONE\]' "$temporary/stream.out"
 printf 'session=%s tool_result_continuation=passed streaming=passed\n' "$session"
