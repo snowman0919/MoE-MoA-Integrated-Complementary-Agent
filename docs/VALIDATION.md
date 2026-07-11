@@ -96,7 +96,8 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - `uv run ruff check gateway/src tests`: exit `0`.
 - `uv run mypy`: exit `0`; `23` source files.
 - `scripts/run-mvp-benchmark.sh`: exit `0`; `10/10` synthetic fixture tasks
-  passed. Input/output token metrics are explicitly unknown (`null`).
+  passed. Input/output token metrics are explicitly unknown (`null`); fixture
+  repository identities are recorded in emitted traces.
 - `scripts/mine-improvements.sh`, `scripts/evaluate-improvement.sh`,
   `scripts/build-training-dataset.sh`, and `scripts/export-agentic-traces.sh`:
   exit `0`.
