@@ -92,7 +92,15 @@ below. Heavy-judge validation is appended after its first isolated startup.
 
 ## Development Branch Validation
 
-- `uv run pytest -q`: exit `0`; `69 passed`, one third-party TestClient warning.
+- Frontier foundation on `dev`: `codex --version` returned `codex-cli 0.144.1`.
+  `codex exec --help` confirmed structured `--json`, `--output-schema`, and
+  `workspace-write` sandbox support; App Server is experimental, so the bounded
+  JSONL runner is selected. The CLI help did not expose a verified GPT-5.6 Sol
+  model identifier; `config/codex-frontier.yaml` deliberately leaves `model: null`.
+  `scripts/codex-profile.sh status` reported `primary` and `secondary` as
+  `authenticated=no`, `state=not_configured`; no OAuth profile directory or
+  credential was created. Frontier module/profile/controller tests passed locally.
+- `uv run pytest -q`: exit `0`; `74 passed`, one third-party TestClient warning.
 - `uv run ruff check gateway/src tests`: exit `0`.
 - `uv run mypy`: exit `0`; `23` source files.
 - `scripts/run-mvp-benchmark.sh`: exit `0`; `10/10` synthetic fixture tasks

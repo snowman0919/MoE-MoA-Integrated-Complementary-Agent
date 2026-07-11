@@ -51,6 +51,9 @@ class SessionState(BaseModel):
     judge_status: str = "not_requested"
     active_profile: str = "resident"
     heavy_switch_count: int = 0
+    frontier_invocations: int = 0
+    recursive_cycles: int = 0
+    frontier_human_approval_required: bool = False
     created_at: str = Field(default_factory=now)
     updated_at: str = Field(default_factory=now)
 

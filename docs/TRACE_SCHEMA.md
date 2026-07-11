@@ -14,3 +14,9 @@ action); unrecognized failures remain `TEST_FAILURE`.
 
 `scripts/export-agentic-traces.sh` exports stable file-order JSONL. Full source,
 authorization headers, and environment secrets are excluded.
+
+Frontier decisions use events `frontier_eligible`, `frontier_profile_selected`,
+`frontier_run_started`, `frontier_run_completed`, `frontier_run_failed`,
+`frontier_usage_limited`, `frontier_candidate_evaluated`,
+`frontier_candidate_rejected`, and `frontier_candidate_awaiting_approval`.
+Events retain profile names and bounded result summaries only, never credentials.

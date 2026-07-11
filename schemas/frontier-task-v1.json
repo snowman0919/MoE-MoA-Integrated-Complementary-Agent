@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "frontier-task-v1",
+  "type": "object",
+  "required": ["schema_version", "task_id", "objective", "repository_identity", "base_commit", "allowed_paths", "acceptance_criteria", "forbidden_actions"],
+  "properties": {"schema_version": {"const": "frontier-task-v1"}, "task_id": {"type": "string"}, "objective": {"type": "string"}, "repository_identity": {"type": "object"}, "base_commit": {"type": "string"}, "allowed_paths": {"type": "array", "items": {"type": "string"}}, "acceptance_criteria": {"type": "array", "items": {"type": "string"}}, "forbidden_actions": {"type": "array", "items": {"type": "string"}}},
+  "additionalProperties": true
+}

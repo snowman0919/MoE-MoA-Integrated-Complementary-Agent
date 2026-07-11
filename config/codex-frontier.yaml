@@ -1,0 +1,11 @@
+# Non-secret operational defaults. Set model only after interactive profile login verifies it.
+provider: codex_oauth
+protocol: codex-exec-jsonl
+codex_version: 0.144.1
+model: null
+reasoning_effort: high
+primary_profile: primary
+allow_auth_failover: false
+max_invocations_per_task: 1
+max_recursive_cycles: 3
+profile_root: /home/kotori9/.local/share/dgx-moa/codex-profiles

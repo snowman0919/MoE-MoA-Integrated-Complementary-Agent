@@ -72,7 +72,7 @@ does not yet have a valid structured-verdict runtime result.
 
 ## Development Branch Evidence
 
-- `codex/goal` adds repository-aware session state, route reasons, normalized
+- `dev` adds repository-aware session state, route reasons, normalized
   tool observations, role-specific bounded contexts, JSONL decision-point traces,
   deterministic fixture benchmarking, and guarded improvement/dataset/adapter tools.
 - The benchmark baseline is synthetic; it does not replace resident runtime or

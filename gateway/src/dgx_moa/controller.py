@@ -7,6 +7,14 @@ from typing import Any
 
 from .compression import compress_messages
 from .config import Settings
+from .frontier import (
+    FrontierResult,
+    FrontierTask,
+    build_frontier_task,
+    evaluate_frontier_candidate,
+    frontier_eligible,
+    select_frontier_profile,
+)
 from .providers import ModelProvider, parse_json_content
 from .routing import ChangeRisk, heavy_eligible, needs_planner, select_route
 from .schemas import JudgeVerdict
@@ -113,6 +121,99 @@ class Controller:
             {"route": state.route, "reasons": state.route_reasons},
         )
         self.store.save(state)
+
+    def frontier_eligible(self, state: SessionState, metadata: dict[str, Any]) -> tuple[bool, str]:
+        metadata = metadata | {"frontier_invocations": state.frontier_invocations}
+        eligible, reason = frontier_eligible(state, metadata)
+        self.store.event(
+            state.session_id,
+            "frontier_eligible",
+            {"eligible": eligible, "reason": reason},
+        )
+        self.store.save(state)
+        return eligible, reason
+
+    def select_frontier_profile(
+        self,
+        state: SessionState,
+        *,
+        explicit_profile: str | None,
+        primary_profile: str | None,
+        primary_auth_failed: bool = False,
+        allow_failover: bool = False,
+        failover_profile: str | None = None,
+    ) -> str | None:
+        profile = select_frontier_profile(
+            explicit_profile=explicit_profile,
+            primary_profile=primary_profile,
+            primary_auth_failed=primary_auth_failed,
+            allow_failover=allow_failover,
+            failover_profile=failover_profile,
+        )
+        self.store.event(
+            state.session_id,
+            "frontier_profile_selected",
+            {"profile": profile, "reason": "explicit_or_configured" if profile else "unavailable"},
+        )
+        self.store.save(state)
+        return profile
+
+    def build_frontier_task(self, state: SessionState, metadata: dict[str, Any]) -> FrontierTask:
+        return build_frontier_task(state, metadata)
+
+    def start_frontier_run(self, state: SessionState, profile: str, task: FrontierTask) -> None:
+        if state.frontier_invocations >= 1:
+            raise ValueError("frontier invocation limit reached")
+        state.frontier_invocations += 1
+        self.store.event(
+            state.session_id,
+            "frontier_run_started",
+            {"profile": profile, "task_id": task.task_id, "base_commit": task.base_commit},
+        )
+        self.store.save(state)
+
+    def collect_frontier_result(
+        self, state: SessionState, result: dict[str, Any]
+    ) -> FrontierResult:
+        parsed = FrontierResult.model_validate(result)
+        event = "frontier_run_completed" if parsed.status == "completed" else "frontier_run_failed"
+        self.store.event(
+            state.session_id, event, {"status": parsed.status, "summary": parsed.summary}
+        )
+        self.store.save(state)
+        return parsed
+
+    def evaluate_frontier_candidate(
+        self,
+        state: SessionState,
+        result: FrontierResult,
+        *,
+        changed_paths: list[str],
+        task: FrontierTask,
+        focused_tests_passed: bool,
+        benchmark_passed: bool,
+        secret_scan_passed: bool,
+        local_review_passed: bool,
+    ) -> dict[str, Any]:
+        evaluation = evaluate_frontier_candidate(
+            result,
+            changed_paths=changed_paths,
+            task=task,
+            focused_tests_passed=focused_tests_passed,
+            benchmark_passed=benchmark_passed,
+            secret_scan_passed=secret_scan_passed,
+            local_review_passed=local_review_passed,
+        )
+        state.frontier_human_approval_required = True
+        self.store.event(
+            state.session_id,
+            "frontier_candidate_awaiting_approval"
+            if evaluation["accepted_for_human_review"]
+            else "frontier_candidate_rejected",
+            evaluation,
+        )
+        self.store.save(state)
+        return evaluation
 
     def _observe(self, state: SessionState, messages: list[dict[str, Any]]) -> None:
         for index, message in enumerate(messages):

@@ -149,3 +149,40 @@ def test_repository_identity_cannot_change_within_session(
     controller.select_route(state, {"repository": {"workspace": "/one", "commit": "a"}})
     with pytest.raises(ValueError, match="repository identity changed"):
         controller.select_route(state, {"repository": {"workspace": "/two", "commit": "b"}})
+
+
+def test_frontier_controller_requires_human_approval(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="frontier", objective="fix", approved_scope=["gateway/src"])
+    assert controller.frontier_eligible(state, {"frontier_requested": True}) == (
+        True,
+        "explicit_request",
+    )
+    profile = controller.select_frontier_profile(
+        state, explicit_profile=None, primary_profile="primary"
+    )
+    assert profile == "primary"
+    task = controller.build_frontier_task(state, {"task_id": "one", "base_commit": "abc"})
+    controller.start_frontier_run(state, profile, task)
+    result = controller.collect_frontier_result(
+        state,
+        {
+            "status": "completed",
+            "summary": "done",
+            "root_cause": "x",
+            "recommended_next_action": "review",
+        },
+    )
+    evaluation = controller.evaluate_frontier_candidate(
+        state,
+        result,
+        changed_paths=[],
+        task=task,
+        focused_tests_passed=True,
+        benchmark_passed=True,
+        secret_scan_passed=True,
+        local_review_passed=True,
+    )
+    assert evaluation["automatic_merge"] is False
+    assert state.frontier_human_approval_required is True

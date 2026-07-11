@@ -1,0 +1,19 @@
+[Unit]
+Description=DGX MoA bounded Codex frontier worker (%i)
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/kotori9/dgx-moa-agent
+Environment=DGX_MOA_CODEX_PROFILE_ROOT=/home/kotori9/.local/share/dgx-moa/codex-profiles
+ExecStart=/home/kotori9/dgx-moa-agent/scripts/run-frontier-codex.sh --profile %i
+TimeoutStartSec=1800
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/kotori9/.local/share/dgx-moa/codex-profiles/%i /home/kotori9/dgx-moa-agent/data/run
+LockPersonality=true
+RestrictSUIDSGID=true
+Restart=on-failure
