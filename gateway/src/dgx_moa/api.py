@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -162,10 +163,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.app.state.traces.record(
                     state, task_id=str(body.metadata.get("task_id", ""))
                 )
+
+                async def stream_response() -> AsyncIterator[bytes]:
+                    completed = False
+                    try:
+                        async for chunk in request.app.state.provider.stream(
+                            "executor", configured.models["executor"], prepared
+                        ):
+                            yield chunk
+                        completed = True
+                    finally:
+                        request.app.state.store.event(
+                            session_id,
+                            "stream_completed" if completed else "stream_aborted",
+                            {},
+                        )
+
                 return StreamingResponse(
-                    request.app.state.provider.stream(
-                        "executor", configured.models["executor"], prepared
-                    ),
+                    stream_response(),
                     media_type="text/event-stream",
                     headers={"X-Session-ID": session_id},
                 )

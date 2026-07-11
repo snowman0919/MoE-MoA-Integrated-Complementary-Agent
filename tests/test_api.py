@@ -217,6 +217,9 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         final = json.loads(events[-2])
         assert final["choices"][0]["finish_reason"] == "stop"
         assert "usage" in final
+        events = client.app.state.store.events("stream")
+        assert events[-1]["event_type"] == "stream_completed"
+        assert events[-1]["created_at"]
         trace = json.loads((settings.state_db.parent.parent / "traces/stream.jsonl").read_text())
         assert {event["event_type"] for event in trace["events"]} >= {
             "request_received",
