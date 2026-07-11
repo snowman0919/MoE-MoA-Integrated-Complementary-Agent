@@ -8,6 +8,7 @@ from dgx_moa.frontier import (
     build_frontier_task,
     evaluate_frontier_candidate,
     frontier_eligible,
+    load_frontier_config,
     profile_lock,
     profile_status,
     select_frontier_profile,
@@ -84,3 +85,9 @@ def test_frontier_task_scope_and_candidate_gate() -> None:
         "human_approval_required": True,
         "reason": "all deterministic gates passed",
     }
+
+
+def test_frontier_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    config = tmp_path / "frontier.yaml"
+    config.write_text("model: gpt-5.6-sol\nreasoning_effort: high\n")
+    assert load_frontier_config(config).model == "gpt-5.6-sol"

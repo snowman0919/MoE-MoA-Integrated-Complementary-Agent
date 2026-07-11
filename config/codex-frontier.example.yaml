@@ -1,8 +1,8 @@
-# Populate `model` only after `codex` login verifies supported model identifier.
+# Official GPT-5.6 Sol identifier. Profile smoke still verifies account entitlement.
 provider: codex_oauth
 protocol: codex-exec-jsonl
 codex_minimum_version: 0.144.0
-model: null
+model: gpt-5.6-sol
 reasoning_effort: high
 primary_profile: primary
 allow_auth_failover: false

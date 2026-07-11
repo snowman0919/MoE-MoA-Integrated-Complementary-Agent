@@ -127,7 +127,9 @@ class Controller:
         eligible, reason = frontier_eligible(state, metadata)
         self.store.event(
             state.session_id,
-            "frontier_eligible",
+            "frontier_usage_limited"
+            if reason == "frontier_invocation_limit"
+            else "frontier_eligible",
             {"eligible": eligible, "reason": reason},
         )
         self.store.save(state)

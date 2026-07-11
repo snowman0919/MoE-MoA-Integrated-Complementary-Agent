@@ -95,8 +95,10 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - Frontier foundation on `dev`: `codex --version` returned `codex-cli 0.144.1`.
   `codex exec --help` confirmed structured `--json`, `--output-schema`, and
   `workspace-write` sandbox support; App Server is experimental, so the bounded
-  JSONL runner is selected. The CLI help did not expose a verified GPT-5.6 Sol
-  model identifier; `config/codex-frontier.yaml` deliberately leaves `model: null`.
+  JSONL runner is selected. Official model documentation identifies GPT-5.6 Sol as
+  `gpt-5.6-sol`; installed Codex configuration confirms
+  `model_reasoning_effort = "high"`. Account entitlement remains unverified until
+  a separate OAuth profile runs its smoke test.
   `scripts/codex-profile.sh status` reported `primary` and `secondary` as
   `authenticated=no`, `state=not_configured`; no OAuth profile directory or
   credential was created. Frontier module/profile/controller tests passed locally.

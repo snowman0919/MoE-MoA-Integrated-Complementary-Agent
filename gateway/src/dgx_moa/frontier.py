@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import yaml
 from pydantic import BaseModel, Field
 
 from .security import redact
@@ -74,6 +75,15 @@ class FrontierResult(BaseModel):
     commit: str | None = None
 
 
+class FrontierConfig(BaseModel):
+    provider: str = "codex_oauth"
+    protocol: str = "codex-exec-jsonl"
+    model: str = "gpt-5.6-sol"
+    reasoning_effort: str = "high"
+    max_invocations_per_task: int = 1
+    max_recursive_cycles: int = 3
+
+
 def validate_profile_name(profile: str) -> str:
     if not PROFILE_NAME.fullmatch(profile):
         raise ValueError("profile name must be lowercase letters, digits, or hyphens")
@@ -93,6 +103,12 @@ def profile_status(profile: str, root: str | Path = DEFAULT_PROFILE_ROOT) -> dic
         "authentication_mode": "oauth",
         "state": "available" if home.is_dir() else "not_configured",
     }
+
+
+def load_frontier_config(path: str | Path = "config/codex-frontier.yaml") -> FrontierConfig:
+    with Path(path).open() as stream:
+        loaded = yaml.safe_load(stream) or {}
+    return FrontierConfig.model_validate(loaded)
 
 
 @contextmanager
@@ -201,7 +217,12 @@ def evaluate_frontier_candidate(
 
 
 def codex_command(
-    profile: str, task_path: Path, worktree: Path, model: str, result_schema: Path
+    profile: str,
+    task_path: Path,
+    worktree: Path,
+    model: str,
+    reasoning_effort: str,
+    result_schema: Path,
 ) -> list[str]:
     if not model.strip():
         raise ValueError("verified Codex model identifier is required")
@@ -213,6 +234,8 @@ def codex_command(
         "workspace-write",
         "--ask-for-approval",
         "never",
+        "--config",
+        f'model_reasoning_effort="{reasoning_effort}"',
         "--output-schema",
         str(result_schema),
         "--output-last-message",
@@ -228,7 +251,13 @@ def codex_command(
 
 
 def run_task(
-    profile: str, task_path: Path, worktree: Path, model: str, timeout: int, run_dir: Path
+    profile: str,
+    task_path: Path,
+    worktree: Path,
+    model: str,
+    reasoning_effort: str,
+    timeout: int,
+    run_dir: Path,
 ) -> int:
     FrontierTask.model_validate_json(task_path.read_text())
     if worktree.resolve() == Path.cwd().resolve():
@@ -238,7 +267,7 @@ def run_task(
     with profile_lock(profile, run_dir):
         try:
             completed = subprocess.run(
-                codex_command(profile, task_path, worktree, model, result_schema),
+                codex_command(profile, task_path, worktree, model, reasoning_effort, result_schema),
                 cwd=worktree,
                 env=environment,
                 timeout=timeout,
@@ -259,19 +288,23 @@ def main() -> None:
     run.add_argument("--profile", required=True)
     run.add_argument("--task", type=Path, required=True)
     run.add_argument("--worktree", type=Path, required=True)
-    run.add_argument("--model", required=True)
+    run.add_argument("--model")
+    run.add_argument("--reasoning-effort")
+    run.add_argument("--config", type=Path, default=Path("config/codex-frontier.yaml"))
     run.add_argument("--timeout", type=int, default=1800)
     run.add_argument("--run-dir", type=Path, default=Path("data/run"))
     arguments = parser.parse_args()
     if arguments.command == "status":
         print(json.dumps(redact(profile_status(arguments.profile, arguments.root)), sort_keys=True))
         return
+    config = load_frontier_config(arguments.config)
     raise SystemExit(
         run_task(
             arguments.profile,
             arguments.task,
             arguments.worktree,
-            arguments.model,
+            arguments.model or config.model,
+            arguments.reasoning_effort or config.reasoning_effort,
             arguments.timeout,
             arguments.run_dir,
         )
