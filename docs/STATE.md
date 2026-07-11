@@ -68,7 +68,9 @@ Updated: 2026-07-11T00:00:00+09:00
 
 Resident profile recovered after an attempted heavy-judge startup failed its
 headroom gate. Executor, reviewer, and planner are ready again; heavy judge
-does not yet have a valid structured-verdict runtime result.
+does not yet have a valid structured-verdict runtime result. Phase 8 frontier
+foundation is implemented on `dev`; OAuth profiles and a real Sol/High run have
+not been created or claimed.
 
 ## Development Branch Evidence
 

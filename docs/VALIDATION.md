@@ -117,6 +117,9 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - `scripts/mine-improvements.sh`, `scripts/evaluate-improvement.sh`,
   `scripts/build-training-dataset.sh`, and `scripts/export-agentic-traces.sh`:
   exit `0`.
+- Re-run on `2026-07-11`: mining produced `IMP-2026-0001`; candidate comparison
+  remained `not_recommended` with automatic merge false. Dataset build emitted
+  10 Silver executor-SFT samples with train/validation/test split `3/5/2`.
 - `systemd-analyze --user verify systemd/*`: exit `0`.
 - Read-only user-service check on `2026-07-11`: gateway `/healthz` returned
   `200` on configured tailnet address `100.125.239.72:9000`; loopback is not
