@@ -173,24 +173,33 @@ def main() -> None:
             json.dumps(project_config(args.base_url, session, task, workspace), indent=2) + "\n"
         )
         started = time.monotonic()
-        run = subprocess.run(
-            [
-                str(args.opencode),
-                "run",
-                "--format",
-                "json",
-                "--auto",
-                "--dir",
-                str(workspace),
-                "--model",
-                "dgx-moa/dgx-moa-agent",
-                task.prompt,
-            ],
-            text=True,
-            capture_output=True,
-            timeout=args.timeout,
-            check=False,
-        )
+        command = [
+            str(args.opencode),
+            "run",
+            "--format",
+            "json",
+            "--auto",
+            "--dir",
+            str(workspace),
+            "--model",
+            "dgx-moa/dgx-moa-agent",
+            task.prompt,
+        ]
+        try:
+            run = subprocess.run(
+                command,
+                text=True,
+                capture_output=True,
+                timeout=args.timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            run = subprocess.CompletedProcess(
+                command,
+                124,
+                error.stdout or "",
+                (error.stderr or "") + f"\ntimeout={args.timeout}\n",
+            )
         (workspace.parent / "opencode.stdout.jsonl").write_text(run.stdout)
         (workspace.parent / "opencode.stderr.log").write_text(run.stderr)
         validation = subprocess.run(
@@ -226,6 +235,8 @@ def main() -> None:
             capture_output=True,
             check=False,
         )
+        if finalize.returncode != 0:
+            status = "failed"
         rows.append(
             {
                 "session_id": session,

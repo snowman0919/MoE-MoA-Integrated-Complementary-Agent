@@ -7,7 +7,7 @@ import pytest
 from dgx_moa.controller import Controller
 from dgx_moa.dataset import build
 from dgx_moa.improvement import cooldown_active, mine, proposal_fingerprint
-from dgx_moa.runtime_status import state_counts
+from dgx_moa.runtime_status import report, state_counts
 from dgx_moa.state import Phase, SessionState, StateStore, validate_failure_record
 from dgx_moa.trace import (
     TraceRecorder,
@@ -218,3 +218,18 @@ def test_runtime_state_counts(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert state_counts(path) == {"request": 1, "completed": 1, "failed": 0, "blocked": 1}
     with sqlite3.connect(path) as database:
         assert database.execute("SELECT count(*) FROM trace_index").fetchone()[0] == 0
+
+
+def test_runtime_report_reads_model_journals(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from dgx_moa import runtime_status
+
+    def fake_command(*args: str) -> str:
+        if "dgx-moa-reviewer.service" in args and args[0] == "journalctl":
+            return "EngineCore failed: CUDA error: out of memory"
+        if args[0] == "systemctl":
+            return "ActiveState=active\nSubState=running\nNRestarts=0\nExecMainStatus=0"
+        return ""
+
+    monkeypatch.setattr(runtime_status, "command", fake_command)
+    monkeypatch.setattr(runtime_status, "memory_available", lambda: 1)
+    assert report(tmp_path / "missing.db", tmp_path)["model_backend_failures_24h"] == 2
