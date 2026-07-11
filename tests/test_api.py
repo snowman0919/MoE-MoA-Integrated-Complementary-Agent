@@ -4,6 +4,7 @@ import json
 from contextlib import contextmanager
 
 import httpx
+import pytest
 from dgx_moa.api import create_app
 from dgx_moa.config import Settings
 from fastapi.testclient import TestClient
@@ -220,7 +221,8 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         events = client.app.state.store.events("stream")
         assert events[-1]["event_type"] == "stream_completed"
         assert events[-1]["created_at"]
-        trace = json.loads((settings.state_db.parent.parent / "traces/stream.jsonl").read_text())
+        trace_path = next((settings.state_db.parent.parent / "traces").rglob("stream.jsonl"))
+        trace = json.loads(trace_path.read_text())
         assert {event["event_type"] for event in trace["events"]} >= {
             "request_received",
             "route_selected",
@@ -289,3 +291,43 @@ def test_timeout_and_http_500_mapping(settings, stub_provider: StubProvider) -> 
             json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
         )
         assert response.status_code == 502
+
+
+def test_secondary_trace_failure_marks_degraded_and_continues(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+
+        def fail_trace(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise OSError("archive unavailable")
+
+        client.app.state.traces.record = fail_trace
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "degraded"},
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
+        )
+        assert response.status_code == 200
+        state = client.app.state.store.get("degraded")
+        assert state and state.observability_degraded
+        assert (
+            client.app.state.store.events("degraded")[-1]["event_type"] == "observability_degraded"
+        )
+
+
+def test_primary_state_failure_fails_closed(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+
+        def fail_state(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise OSError("state unavailable")
+
+        client.app.state.store.save = fail_state
+        with pytest.raises(OSError, match="state unavailable"):
+            client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer test-secret"},
+                json={
+                    "model": "dgx-moa-agent",
+                    "messages": [{"role": "user", "content": "x"}],
+                },
+            )

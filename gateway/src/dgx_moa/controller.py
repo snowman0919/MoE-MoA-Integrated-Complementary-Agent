@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import uuid
 from typing import Any
 
 from .compression import compress_messages
@@ -19,7 +20,8 @@ from .providers import ModelProvider, parse_json_content
 from .routing import ChangeRisk, heavy_eligible, needs_planner, select_route
 from .schemas import JudgeVerdict
 from .security import redact
-from .state import Phase, SessionState, StateStore
+from .state import Phase, SessionState, StateStore, now
+from .trace import training_default, validate_provenance
 from .validation import completion_ready
 
 
@@ -70,7 +72,7 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
     except ValueError:
         parsed = {"stdout": str(content)}
     parsed = parsed if isinstance(parsed, dict) else {"stdout": str(parsed)}
-    return {
+    result = {
         "tool_name": str(parsed.get("tool_name", parsed.get("name", "shell"))),
         "arguments": parsed.get("arguments", {}),
         "stdout": str(parsed.get("stdout", "")),
@@ -79,6 +81,10 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
         "duration_ms": int(parsed.get("duration_ms", 0)),
         "truncated": bool(parsed.get("truncated", False)),
     }
+    for key in ("changed_paths", "created_paths", "deleted_paths"):
+        if isinstance(parsed.get(key), list):
+            result[key] = [str(path) for path in parsed[key]]
+    return result
 
 
 class Controller:
@@ -87,8 +93,82 @@ class Controller:
         self.store = store
         self.provider = provider
 
+    def _record_decision(
+        self,
+        role: str,
+        state: SessionState,
+        structured_decision: dict[str, Any],
+        observation: str,
+    ) -> str:
+        model = self.settings.models.get(role)
+        decision_id = str(uuid.uuid4())
+        facts = state.verified_facts[-8:]
+        decision = {
+            "decision_id": decision_id,
+            "session_id": state.session_id,
+            "task_id": "",
+            "role": role,
+            "model_repository": model.repository if model else "unknown",
+            "model_revision": model.revision if model else "unknown",
+            "adapter_id": str(model.lora_adapter) if model and model.lora_adapter else None,
+            "controller_commit": state.controller_commit,
+            "timestamp": now(),
+            "state_before": {
+                "phase": state.phase,
+                "objective_reference": hashlib.sha256(state.objective.encode()).hexdigest(),
+                "current_plan_step": state.step_count,
+                "acceptance_criterion_ids": [
+                    hashlib.sha256(item.encode()).hexdigest()[:16]
+                    for item in state.acceptance_criteria
+                ],
+                "verified_fact_ids": [
+                    hashlib.sha256(item.encode()).hexdigest()[:16] for item in facts
+                ],
+                "working_set": state.approved_scope,
+                "active_failure_fingerprints": state.failed_call_fingerprints[-8:],
+                "scope_state": state.repository,
+                "previous_decision_ids": [item["decision_id"] for item in state.decisions[-4:]],
+            },
+            "context_manifest": {
+                "context_builder_name": "controller.role_context",
+                "context_builder_version": "2",
+                "configured_context_limit": model.context_length if model else None,
+                "input_tokens": None,
+                "included_fact_ids": [
+                    hashlib.sha256(item.encode()).hexdigest()[:16] for item in facts
+                ],
+                "included_observation_ids": [hashlib.sha256(observation.encode()).hexdigest()[:16]],
+                "included_plan_ids": [str(index) for index, _ in enumerate(state.plan)],
+                "included_file_references": state.approved_scope,
+                "included_diff_references": [],
+                "included_failure_fingerprints": state.failed_call_fingerprints[-8:],
+                "truncated": False,
+                "evicted_item_count": 0,
+                "evicted_item_categories": [],
+                "compression_status": "bounded",
+            },
+            "structured_decision": redact(structured_decision),
+            "outcome": {
+                "status": "pending",
+                "progress_made": False,
+                "state_changed": False,
+                "scope_changed": False,
+                "validation_triggered": False,
+                "next_phase": state.phase,
+            },
+        }
+        state.decisions.append(decision)
+        state.last_decision_id = decision_id
+        self.store.event(
+            state.session_id, "agent_decision_recorded", {"decision_id": decision_id, "role": role}
+        )
+        return decision_id
+
     def session(self, session_id: str, messages: list[dict[str, Any]]) -> SessionState:
-        state = self.store.get(session_id) or SessionState(session_id=session_id)
+        state = self.store.get(session_id)
+        if state is None:
+            state = SessionState(session_id=session_id)
+            self.store.event(session_id, "session_started", {})
         if not state.objective:
             state.objective = next(
                 (
@@ -106,6 +186,19 @@ class Controller:
         return state
 
     def select_route(self, state: SessionState, metadata: dict[str, Any]) -> None:
+        runtime_channel = str(metadata.get("runtime_channel", self.settings.runtime_channel))
+        trace_origin = str(metadata.get("trace_origin", self.settings.trace_origin))
+        validate_provenance(runtime_channel, trace_origin)
+        if state.decisions and (
+            state.runtime_channel != runtime_channel or state.trace_origin != trace_origin
+        ):
+            raise ValueError("session runtime provenance changed")
+        state.runtime_channel = runtime_channel  # type: ignore[assignment]
+        state.trace_origin = trace_origin  # type: ignore[assignment]
+        state.training_eligibility = str(  # type: ignore[assignment]
+            metadata.get("training_eligibility", training_default(runtime_channel, trace_origin))
+        )
+        state.controller_commit = self.settings.controller_commit
         repository = metadata.get("repository")
         if isinstance(repository, dict):
             identity = {str(key): str(value) for key, value in repository.items()}
@@ -125,6 +218,19 @@ class Controller:
     def frontier_eligible(self, state: SessionState, metadata: dict[str, Any]) -> tuple[bool, str]:
         metadata = metadata | {"frontier_invocations": state.frontier_invocations}
         eligible, reason = frontier_eligible(state, metadata)
+        if eligible and not self.settings.frontier_enabled:
+            required = bool(metadata.get("frontier_required"))
+            event = "frontier_required_but_disabled" if required else "frontier_disabled"
+            self.store.event(
+                state.session_id,
+                event,
+                {"reason": self.settings.frontier_disabled_reason, "eligible_reason": reason},
+            )
+            if required:
+                state.phase = Phase.BLOCKED
+                state.final_status = "blocked"
+            self.store.save(state)
+            return False, "FRONTIER_DISABLED"
         self.store.event(
             state.session_id,
             "frontier_usage_limited"
@@ -241,6 +347,11 @@ class Controller:
                 if len(calls) > 1:
                     raise ValueError("executor emitted more than one tool call")
                 state.last_tool_call = calls[0]
+                if state.decisions:
+                    state.decisions[-1]["structured_decision"] = {
+                        "type": "tool_call",
+                        "tool_call": redact(calls[0]),
+                    }
             if message.get("role") != "tool":
                 continue
             result = normalize_tool_result(message)
@@ -258,6 +369,36 @@ class Controller:
                     -self.settings.limits.max_retained_observations :
                 ]
             self.store.event(state.session_id, "tool_result_received", result)
+            call = state.last_tool_call or {}
+            function = call.get("function") or {}
+            arguments = function.get("arguments", "{}")
+            effect: dict[str, Any] = {
+                key: result[key]
+                for key in ("changed_paths", "created_paths", "deleted_paths")
+                if key in result
+            } or {"unknown_effect": True}
+            execution = {
+                "tool_execution_id": str(uuid.uuid4()),
+                "tool_call_id": str(message.get("tool_call_id", "")),
+                "decision_id": state.last_decision_id or "unknown",
+                "session_id": state.session_id,
+                "tool_name": str(function.get("name", result["tool_name"])),
+                "normalized_arguments": redact(arguments),
+                "argument_fingerprint": fingerprint(call),
+                "started_at": "legacy_unavailable",
+                "ended_at": now(),
+                "duration_ms": result["duration_ms"],
+                "exit_code": result["exit_code"],
+                "stdout_bytes": len(result["stdout"].encode()),
+                "stderr_bytes": len(result["stderr"].encode()),
+                "stdout_summary": result["stdout"][:500],
+                "stderr_summary": result["stderr"][:500],
+                "truncated": result["truncated"],
+                "failure_class": None,
+                "filesystem_effect": effect,
+            }
+            state.tool_executions.append(execution)
+            self.store.event(state.session_id, "tool_execution_recorded", execution)
             state.no_progress_count = 0
             failed = any(
                 marker in observation.lower() for marker in ("error", "failed", "exception")
@@ -270,6 +411,18 @@ class Controller:
                         "failure_classified",
                         {"class": "REPEATED_ACTION", "fingerprint": call_fingerprint},
                     )
+                    state.failures.append(
+                        {
+                            "failure_class": "REPEATED_ACTION",
+                            "suspected_layer": "controller",
+                            "resolution_status": "active",
+                            "root_cause_summary": "normalized failed action repeated",
+                            "resolution_evidence": [],
+                            "resolved_at": None,
+                            "resolving_commit": None,
+                            "related_proposal_ids": [],
+                        }
+                    )
                     raise DuplicateFailedCall("identical failed tool call blocked")
                 state.failed_call_fingerprints.append(call_fingerprint)
                 family = failure_family(observation)
@@ -278,6 +431,18 @@ class Controller:
                     state.session_id,
                     "failure_classified",
                     {"class": classify_failure(observation), "fingerprint": family},
+                )
+                state.failures.append(
+                    {
+                        "failure_class": classify_failure(observation),
+                        "suspected_layer": "executor",
+                        "resolution_status": "active",
+                        "root_cause_summary": "tool execution failed",
+                        "resolution_evidence": [],
+                        "resolved_at": None,
+                        "resolving_commit": None,
+                        "related_proposal_ids": [],
+                    }
                 )
                 if state.failure_families[family] >= 2:
                     state.phase = Phase.REPLANNING
@@ -311,7 +476,22 @@ class Controller:
             state.phase = Phase.AWAITING_HEAVY_JUDGE
         elif completion_ready(state):
             state.phase = Phase.COMPLETED
+            state.final_status = "completed"
             self.store.event(state.session_id, "task_completed", state.completion_evidence)
+            state.evaluations.append(
+                {
+                    "evaluation_id": str(uuid.uuid4()),
+                    "target_type": "task",
+                    "target_id": state.session_id,
+                    "evaluator_type": "deterministic",
+                    "evaluator_model": None,
+                    "evaluator_revision": None,
+                    "result": "passed",
+                    "evidence_references": list(state.completion_evidence.values()),
+                    "requirement_ids": list(state.completion_evidence),
+                    "created_at": now(),
+                }
+            )
         self.store.save(state)
 
     def role_context(self, role: str, state: SessionState, observation: str) -> dict[str, Any]:
@@ -414,6 +594,9 @@ class Controller:
                     },
                 },
             }
+            self._record_decision(
+                "planner", state, {"type": "plan_request"}, "New or invalidated task"
+            )
             planner = await self.provider.complete(
                 "planner", self.settings.models["planner"], planner_request
             )
@@ -434,6 +617,9 @@ class Controller:
             self.store.event(state.session_id, "plan_created", {"steps": len(state.plan)})
         state.phase = Phase.EXECUTING
         state.step_count += 1
+        self._record_decision(
+            "executor", state, {"type": "next_step_request"}, "Proceed from verified state"
+        )
         self.store.event(state.session_id, "tool_call_requested", {"step": state.step_count})
         self.store.save(state)
         body = request.copy()
@@ -490,6 +676,9 @@ class Controller:
                 },
             },
         }
+        decision_id = self._record_decision(
+            "reviewer", state, {"type": "review_request"}, observation
+        )
         response = await self.provider.complete(
             "reviewer", self.settings.models["reviewer"], request
         )
@@ -498,6 +687,21 @@ class Controller:
         state.phase = Phase.CORRECTION if state.review_status != "approved" else Phase.EXECUTING
         self.store.save(state)
         self.store.event(state.session_id, "review_completed", result)
+        state.evaluations.append(
+            {
+                "evaluation_id": str(uuid.uuid4()),
+                "target_type": "decision",
+                "target_id": decision_id,
+                "evaluator_type": "reviewer",
+                "evaluator_model": self.settings.models["reviewer"].repository,
+                "evaluator_revision": self.settings.models["reviewer"].revision,
+                "result": result,
+                "evidence_references": [],
+                "requirement_ids": [],
+                "created_at": now(),
+            }
+        )
+        self.store.save(state)
         return result
 
     async def judge(self, state: SessionState, observation: str) -> dict[str, Any]:
@@ -526,6 +730,7 @@ class Controller:
                 "json_schema": {"name": "judge_verdict", "strict": True, "schema": schema},
             },
         }
+        decision_id = self._record_decision("judge", state, {"type": "judge_request"}, observation)
         response = await self.provider.complete("judge", self.settings.models["judge"], request)
         verdict = JudgeVerdict.model_validate(parse_json_content(response))
         result = verdict.model_dump()
@@ -533,11 +738,28 @@ class Controller:
         state.heavy_switch_count += 1
         if verdict.verdict == "blocked":
             state.phase = Phase.BLOCKED
+            state.final_status = "blocked"
             self.store.event(state.session_id, "task_blocked", {"reason": "judge_blocked"})
         elif verdict.verdict == "accept" and verdict.completion_allowed:
             state.phase = Phase.COMPLETED
+            state.final_status = "completed"
         else:
             state.phase = Phase.CORRECTION
         self.store.save(state)
         self.store.event(state.session_id, "judge_completed", result)
+        state.evaluations.append(
+            {
+                "evaluation_id": str(uuid.uuid4()),
+                "target_type": "decision",
+                "target_id": decision_id,
+                "evaluator_type": "mistral",
+                "evaluator_model": self.settings.models["judge"].repository,
+                "evaluator_revision": self.settings.models["judge"].revision,
+                "result": result,
+                "evidence_references": [],
+                "requirement_ids": [],
+                "created_at": now(),
+            }
+        )
+        self.store.save(state)
         return result

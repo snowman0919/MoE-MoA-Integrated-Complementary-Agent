@@ -152,6 +152,7 @@ def test_repository_identity_cannot_change_within_session(
 
 
 def test_frontier_controller_requires_human_approval(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    settings.frontier_enabled = True
     store = StateStore(settings.state_db)
     controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
     state = SessionState(session_id="frontier", objective="fix", approved_scope=["gateway/src"])
@@ -191,3 +192,22 @@ def test_frontier_controller_requires_human_approval(settings, stub_provider: St
     limited = SessionState(session_id="frontier-cycle", recursive_cycles=3)
     with pytest.raises(ValueError, match="recursive cycle limit"):
         controller.start_frontier_run(limited, profile, task)
+
+
+def test_frontier_disabled_records_optional_and_required_paths(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    optional = SessionState(session_id="optional")
+    assert controller.frontier_eligible(optional, {"frontier_requested": True}) == (
+        False,
+        "FRONTIER_DISABLED",
+    )
+    assert store.events("optional")[-1]["event_type"] == "frontier_disabled"
+    required = SessionState(session_id="required")
+    assert controller.frontier_eligible(
+        required, {"frontier_requested": True, "frontier_required": True}
+    ) == (False, "FRONTIER_DISABLED")
+    assert required.phase == Phase.BLOCKED
+    assert store.events("required")[-1]["event_type"] == "frontier_required_but_disabled"

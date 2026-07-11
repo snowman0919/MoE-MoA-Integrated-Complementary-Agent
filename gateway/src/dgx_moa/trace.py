@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import argparse
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .config import ModelConfig
 from .security import redact
-from .state import SessionState, StateStore
+from .state import SessionState, StateStore, validate_failure_record
 
-TRACE_FIELDS = frozenset(
+LEGACY_TRACE_FIELDS = frozenset(
     {
         "schema_version",
         "session_id",
@@ -32,14 +34,100 @@ TRACE_FIELDS = frozenset(
         "human_correction",
     }
 )
+TRACE_FIELDS = LEGACY_TRACE_FIELDS | frozenset(
+    {
+        "runtime_channel",
+        "trace_origin",
+        "repository_identity",
+        "starting_branch",
+        "starting_commit",
+        "ending_branch",
+        "ending_commit",
+        "dirty_state_start",
+        "dirty_state_end",
+        "controller_commit",
+        "gateway_version",
+        "vllm_version",
+        "adapter_identifiers",
+        "started_at",
+        "ended_at",
+        "training_eligibility",
+        "observability_status",
+        "observability_degraded",
+        "agent_decisions",
+        "tool_executions",
+        "evaluations",
+        "failures",
+    }
+)
+
+LIST_FIELDS = {"events", "agent_decisions", "tool_executions", "evaluations", "failures"}
+DICT_FIELDS = {
+    "workspace_identity",
+    "repository_identity",
+    "selected_route",
+    "model_revisions",
+    "context_configuration",
+    "adapter_identifiers",
+    "completion_evidence",
+    "metrics",
+    "tool_schema",
+    "assistant_tool_call",
+    "tool_observation",
+    "failure_classification",
+    "review_outcome",
+}
+
+
+def training_default(runtime_channel: str, trace_origin: str) -> str:
+    if trace_origin in {"validation", "diagnostic"}:
+        return "excluded"
+    if trace_origin == "benchmark":
+        return "eligible"
+    if trace_origin in {"production", "candidate_evaluation"}:
+        return "requires_review"
+    return "local_only" if runtime_channel != "main" else "requires_review"
+
+
+def validate_provenance(runtime_channel: str, trace_origin: str) -> None:
+    if runtime_channel not in {"main", "dev", "candidate"}:
+        raise ValueError("invalid runtime_channel")
+    if trace_origin not in {
+        "production",
+        "benchmark",
+        "validation",
+        "diagnostic",
+        "candidate_evaluation",
+    }:
+        raise ValueError("invalid trace_origin")
+    if trace_origin == "production" and runtime_channel != "main":
+        raise ValueError("production trace requires main runtime")
+    if trace_origin == "candidate_evaluation" and runtime_channel != "candidate":
+        raise ValueError("candidate_evaluation trace requires candidate runtime")
 
 
 def validate_trace(trace: dict[str, Any]) -> None:
-    missing = TRACE_FIELDS - trace.keys()
+    version = trace.get("schema_version")
+    required = LEGACY_TRACE_FIELDS if version == "agent-trace-v1" else TRACE_FIELDS
+    missing = required - trace.keys()
     if missing:
         raise ValueError(f"trace fields missing: {', '.join(sorted(missing))}")
-    if trace["schema_version"] != "agent-trace-v1":
+    if version not in {"agent-trace-v1", "agent-trace-v2"}:
         raise ValueError("unsupported trace schema version")
+    if version == "agent-trace-v2":
+        validate_provenance(str(trace["runtime_channel"]), str(trace["trace_origin"]))
+        for failure in trace["failures"]:
+            validate_failure_record(failure)
+
+
+def final_status(state: SessionState) -> str:
+    if state.final_status:
+        return state.final_status
+    if state.phase.value == "completed":
+        return "completed"
+    if state.phase.value == "blocked":
+        return "blocked"
+    return "degraded"
 
 
 def trace_record(
@@ -50,26 +138,54 @@ def trace_record(
     metrics: dict[str, Any] | None = None,
     models: dict[str, ModelConfig] | None = None,
 ) -> dict[str, Any]:
-    """Build bounded decision-point trace, never a source or transcript archive."""
+    """Build bounded trajectory evidence; never source or hidden-reasoning archives."""
+    validate_provenance(state.runtime_channel, state.trace_origin)
     latest = state.tool_results[-1] if state.tool_results else {}
+    repository = state.repository
+    ending = state.ending_repository
     return {
-        "schema_version": "agent-trace-v1",
+        "schema_version": "agent-trace-v2",
         "session_id": state.session_id,
         "task_id": task_id,
-        "workspace_identity": state.repository,
+        "runtime_channel": state.runtime_channel,
+        "trace_origin": state.trace_origin,
+        "workspace_identity": repository,
+        "repository_identity": repository,
         "objective": state.objective,
+        "starting_branch": repository.get("current_branch", "unknown"),
+        "starting_commit": repository.get("current_commit", "unknown"),
+        "ending_branch": ending.get("current_branch", "unknown"),
+        "ending_commit": ending.get("current_commit", "unknown"),
+        "dirty_state_start": repository.get("dirty_status", "unknown"),
+        "dirty_state_end": ending.get("dirty_status", "unknown"),
+        "controller_commit": state.controller_commit,
+        "gateway_version": state.gateway_version,
+        "vllm_version": "unknown",
         "selected_route": {"route": state.route, "reasons": state.route_reasons},
         "model_revisions": {
             role: {"repository": model.repository, "revision": model.revision}
+            for role, model in (models or {}).items()
+        },
+        "adapter_identifiers": {
+            role: str(model.lora_adapter) if model.lora_adapter else None
             for role, model in (models or {}).items()
         },
         "context_configuration": {
             role: {"context_length": model.context_length, "max_num_seqs": model.max_num_seqs}
             for role, model in (models or {}).items()
         },
+        "started_at": state.created_at,
+        "ended_at": state.updated_at if final_status(state) != "degraded" else None,
         "events": events or [],
-        "final_status": state.phase,
+        "agent_decisions": state.decisions,
+        "tool_executions": state.tool_executions,
+        "evaluations": state.evaluations,
+        "failures": state.failures,
+        "final_status": final_status(state),
         "completion_evidence": state.completion_evidence,
+        "training_eligibility": state.training_eligibility,
+        "observability_status": state.observability_status,
+        "observability_degraded": state.observability_degraded,
         "metrics": metrics or {},
         "verified_state": state.verified_facts[-8:],
         "planner_output": state.plan,
@@ -83,10 +199,24 @@ def trace_record(
 
 
 def export_trace(path: str | Path, trace: dict[str, Any]) -> None:
-    output = {
-        field: redact(trace.get(field, "agent-trace-v1" if field == "schema_version" else None))
-        for field in TRACE_FIELDS
+    version = str(trace.get("schema_version", "agent-trace-v2"))
+    fields = LEGACY_TRACE_FIELDS if version == "agent-trace-v1" else TRACE_FIELDS
+    output = {}
+    defaults = {
+        "runtime_channel": "dev",
+        "trace_origin": "validation",
+        "training_eligibility": "excluded",
+        "observability_status": "ok",
+        "observability_degraded": False,
+        "final_status": "degraded",
     }
+    for field in fields:
+        default: Any = defaults.get(
+            field, [] if field in LIST_FIELDS else {} if field in DICT_FIELDS else None
+        )
+        if field == "schema_version":
+            default = version
+        output[field] = redact(trace.get(field, default))
     validate_trace(output)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -105,7 +235,14 @@ class TraceRecorder:
     def record(
         self, state: SessionState, *, task_id: str = "", metrics: dict[str, Any] | None = None
     ) -> Path:
-        path = self.directory / f"{state.session_id}.jsonl"
+        date = datetime.now(UTC).date().isoformat()
+        path = (
+            self.directory
+            / state.runtime_channel
+            / state.trace_origin
+            / date
+            / f"{state.session_id}.jsonl"
+        )
         export_trace(
             path,
             trace_record(
@@ -116,4 +253,97 @@ class TraceRecorder:
                 models=self.models,
             ),
         )
+        self.store.index_trace(state.session_id, path, state.runtime_channel, state.trace_origin)
         return path
+
+
+def trace_missing(trace: dict[str, Any]) -> list[str]:
+    if trace.get("schema_version") == "agent-trace-v1":
+        return ["legacy_v1"]
+    missing = [field for field in TRACE_FIELDS if field not in trace]
+    for field in (
+        "session_id",
+        "runtime_channel",
+        "trace_origin",
+        "workspace_identity",
+        "controller_commit",
+        "selected_route",
+        "agent_decisions",
+        "final_status",
+        "training_eligibility",
+        "observability_status",
+    ):
+        if not trace.get(field):
+            missing.append(field)
+    if trace.get("final_status") == "completed" and not trace.get("completion_evidence"):
+        missing.append("completion_evidence")
+    if trace.get("final_status") in {
+        "completed",
+        "failed",
+        "blocked",
+        "cancelled",
+    } and not trace.get("ended_at"):
+        missing.append("ended_at")
+    for index, decision in enumerate(trace.get("agent_decisions", [])):
+        for field in ("decision_id", "role", "context_manifest", "structured_decision", "outcome"):
+            if not decision.get(field):
+                missing.append(f"agent_decisions[{index}].{field}")
+    for index, execution in enumerate(trace.get("tool_executions", [])):
+        for field in ("tool_execution_id", "tool_call_id", "decision_id", "argument_fingerprint"):
+            if not execution.get(field):
+                missing.append(f"tool_executions[{index}].{field}")
+    return sorted(set(missing))
+
+
+def audit_traces(directory: str | Path) -> dict[str, Any]:
+    latest: dict[str, dict[str, Any]] = {}
+    for path in sorted(Path(directory).rglob("*.jsonl")):
+        for line in path.read_text().splitlines():
+            if line:
+                trace = json.loads(line)
+                latest[str(trace.get("session_id") or f"legacy:{path}:{len(latest)}")] = trace
+    traces = list(latest.values())
+    missing_by_path: dict[str, int] = {}
+    missing_events: dict[str, int] = {}
+    incomplete = 0
+    legacy = 0
+    for trace in traces:
+        missing = trace_missing(trace)
+        legacy += int(missing == ["legacy_v1"])
+        trace_incomplete = bool(missing)
+        for missing_path in missing:
+            missing_by_path[missing_path] = missing_by_path.get(missing_path, 0) + 1
+        if trace.get("schema_version") == "agent-trace-v2":
+            event_types = {event.get("event_type") for event in trace.get("events", [])}
+            for event_type in ("session_started", "route_selected", "session_ended"):
+                if event_type not in event_types:
+                    trace_incomplete = True
+                    missing_events[event_type] = missing_events.get(event_type, 0) + 1
+        incomplete += int(trace_incomplete)
+    total = len(traces)
+    complete = total - incomplete
+    return {
+        "schema_version": "trace-completeness-v2",
+        "total_sessions": total,
+        "complete_sessions": complete,
+        "incomplete_sessions": incomplete,
+        "legacy_sessions": legacy,
+        "mandatory_field_completeness_percent": round(100 * complete / total, 2) if total else 0.0,
+        "missing_fields": dict(sorted(missing_by_path.items())),
+        "missing_event_counts_by_type": dict(sorted(missing_events.items())),
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("command", choices=("audit",))
+    parser.add_argument("path", type=Path)
+    args = parser.parse_args()
+    report = audit_traces(args.path)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    if report["incomplete_sessions"]:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

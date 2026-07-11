@@ -161,9 +161,14 @@ def _run_task(
             route=task.expected_route,
             route_reasons=["fixed_benchmark_route"],
             phase=Phase.COMPLETED,
+            final_status="completed",
+            runtime_channel="dev",
+            trace_origin="benchmark",
+            training_eligibility="eligible",
             acceptance_criteria=list(task.validation_commands),
             completion_evidence={command: "exit 0" for command in task.validation_commands},
             review_status="approved",
+            controller_commit="benchmark",
         )
         failures = []
         replans = 0
@@ -174,6 +179,35 @@ def _run_task(
             failures, replans = ["REPEATED_ACTION"], 1
         elif task.task_id == "review-correction":
             reviewer_rejections = 1
+        decision_id = f"benchmark-decision-{task.task_id}"
+        state.decisions = [
+            {
+                "decision_id": decision_id,
+                "role": "executor",
+                "context_manifest": {"context_builder_name": "benchmark", "version": "2"},
+                "structured_decision": {"type": "fixture_action"},
+                "outcome": {"status": "success"},
+            }
+        ]
+        state.tool_executions = [
+            {
+                "tool_execution_id": f"benchmark-tool-{task.task_id}",
+                "tool_call_id": f"benchmark-call-{task.task_id}",
+                "decision_id": decision_id,
+                "argument_fingerprint": task.task_id,
+                "filesystem_effect": {"changed_paths": list(task.allowed_paths)},
+            }
+        ]
+        state.failures = [
+            {
+                "failure_class": failure,
+                "suspected_layer": "harness",
+                "resolution_status": "synthetic",
+                "root_cause_summary": "fixed benchmark injection",
+                "resolution_evidence": [task.task_id],
+            }
+            for failure in failures
+        ]
         if task.task_id != "analysis":
             for name in task.allowed_paths:
                 content = (
@@ -190,8 +224,15 @@ def _run_task(
         changed = subprocess.check_output(["git", "diff", "--numstat"], cwd=root, text=True).strip()
         store = StateStore(root / "state.db")
         store.save(state)
+        store.event(task.task_id, "session_started", {})
+        store.event(
+            task.task_id,
+            "route_selected",
+            {"route": task.expected_route, "reasons": ["fixed_benchmark_route"]},
+        )
         for failure in failures:
             store.event(task.task_id, "failure_classified", {"class": failure})
+        store.event(task.task_id, "session_ended", {"status": "completed"})
         TraceRecorder(trace_dir, store, models).record(
             state,
             task_id=task.task_id,
@@ -230,6 +271,9 @@ def _run_task(
         "meaningful_diff_lines": changed_lines,
         "unnecessary_diff_lines": None,
         "failure_classes": failures,
+        "resolution_status": "synthetic" if failures else None,
+        "runtime_channel": "dev",
+        "trace_origin": "benchmark",
     }
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -19,13 +20,33 @@ def _read(path: Path) -> dict[str, Any]:
 
 def statistics(result: dict[str, Any]) -> dict[str, Any]:
     tasks = cast(list[dict[str, Any]], result.get("tasks", []))
-    failures = [item for task in tasks for item in task.get("failure_classes", [])]
+    excluded_statuses = {"resolved", "expected", "synthetic", "false_positive", "superseded"}
+    failures = [
+        item
+        for task in tasks
+        if task.get("resolution_status", "active") not in excluded_statuses
+        for item in task.get("failure_classes", [])
+    ]
+    excluded_failures = [
+        item
+        for task in tasks
+        if task.get("resolution_status") in excluded_statuses
+        for item in task.get("failure_classes", [])
+    ]
     known_tokens = [
         int(task["input_tokens"]) for task in tasks if isinstance(task.get("input_tokens"), int)
     ]
-    failure_tasks = [task for task in tasks if task.get("failure_classes")]
+    failure_tasks = [
+        task
+        for task in tasks
+        if task.get("failure_classes")
+        and task.get("resolution_status", "active") not in excluded_statuses
+    ]
     return {
         "failure_frequency": {item: failures.count(item) for item in sorted(set(failures))},
+        "excluded_failure_frequency": {
+            item: excluded_failures.count(item) for item in sorted(set(excluded_failures))
+        },
         "failure_impact_tasks": sum(not task.get("task_success") for task in tasks),
         "token_waste": sum(known_tokens) if len(known_tokens) == len(tasks) else None,
         "time_waste_seconds": sum(float(task["wall_clock_seconds"]) for task in failure_tasks),
@@ -50,6 +71,19 @@ def statistics(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def proposal_fingerprint(failure_class: str, affected: int, evidence: dict[str, Any]) -> str:
+    payload = json.dumps(
+        {"failure_class": failure_class, "affected": affected, "evidence": evidence},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def cooldown_active(previous: dict[str, Any], fingerprint: str) -> bool:
+    return bool(previous) and previous.get("proposal_fingerprint") == fingerprint
+
+
 def mine(benchmark: Path, output: Path) -> dict[str, Any]:
     result = _read(benchmark)
     evidence = statistics(result)
@@ -57,17 +91,20 @@ def mine(benchmark: Path, output: Path) -> dict[str, Any]:
     failure_class, affected = max(
         failures.items(), key=lambda item: (item[1], item[0]), default=("NONE", 0)
     )
+    evidence_summary = {
+        "affected_tasks": affected,
+        "failure_class": failure_class,
+        "wasted_input_tokens": evidence["token_waste"],
+        "wasted_seconds": evidence["time_waste_seconds"],
+    }
+    fingerprint = proposal_fingerprint(failure_class, affected, evidence_summary)
+    previous = _read(output) if output.is_file() else {}
     proposal = {
         "schema_version": "improvement-proposal-v1",
         "proposal_id": "IMP-2026-0001",
         "title": f"Block {failure_class.lower()} earlier",
         "problem": f"{failure_class} appears in {affected} benchmark task(s).",
-        "evidence": {
-            "affected_tasks": affected,
-            "failure_class": failure_class,
-            "wasted_input_tokens": evidence["token_waste"],
-            "wasted_seconds": evidence["time_waste_seconds"],
-        },
+        "evidence": evidence_summary,
         "statistics": evidence,
         "suspected_layer": "controller",
         "proposed_change": (
@@ -79,6 +116,9 @@ def mine(benchmark: Path, output: Path) -> dict[str, Any]:
         ],
         "risk": "low",
         "requires_human_approval": True,
+        "proposal_fingerprint": fingerprint,
+        "cooldown_active": cooldown_active(previous, fingerprint),
+        "status": "no_actionable_failure" if affected == 0 else "proposed",
         "priority": {"affected_tasks": affected, "risk": "low", "benchmark_coverage": affected},
     }
     output.parent.mkdir(parents=True, exist_ok=True)

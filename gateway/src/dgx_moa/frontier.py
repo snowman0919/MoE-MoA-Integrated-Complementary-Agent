@@ -84,6 +84,14 @@ class FrontierResult(BaseModel):
 
 class FrontierConfig(BaseModel):
     provider: str = "codex_oauth"
+    connected: bool = True
+    enabled: bool = False
+    disabled_reason: Literal[
+        "configuration_disabled",
+        "host_sandbox_capability_blocked",
+        "oauth_unavailable",
+        "usage_limited",
+    ] = "host_sandbox_capability_blocked"
     protocol: str = "codex-exec-jsonl"
     model: str = "gpt-5.6-sol"
     reasoning_effort: Literal["high"] = "high"

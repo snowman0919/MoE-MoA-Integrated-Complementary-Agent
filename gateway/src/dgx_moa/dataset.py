@@ -65,9 +65,17 @@ def build(
     allowed_tiers = tiers or DEFAULT_TIERS
     examples: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for path in sorted(trace_dir.glob("*.jsonl")):
+    legacy_excluded = 0
+    ineligible_excluded = 0
+    for path in sorted(trace_dir.rglob("*.jsonl")):
         for line in path.read_text().splitlines():
             trace = json.loads(line)
+            if trace.get("schema_version") != "agent-trace-v2":
+                legacy_excluded += 1
+                continue
+            if trace.get("training_eligibility") != "eligible":
+                ineligible_excluded += 1
+                continue
             tier = quality_tier(trace)
             if tier not in allowed_tiers:
                 continue
@@ -113,6 +121,8 @@ def build(
             for split in ("train", "validation", "test")
         },
         "maximum_characters": maximum_characters,
+        "legacy_excluded": legacy_excluded,
+        "ineligible_excluded": ineligible_excluded,
     }
     manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

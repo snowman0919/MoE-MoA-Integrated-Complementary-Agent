@@ -7,6 +7,11 @@ gateway:
   bind_port: 9000
   state_db: data/state/gateway.db
   run_dir: data/run
+  runtime_channel: dev
+  trace_origin: validation
+  controller_commit: unknown
+  frontier_enabled: false
+  frontier_disabled_reason: host_sandbox_capability_blocked
   limits:
     max_tool_output_characters: 20000
     max_retained_observations: 30

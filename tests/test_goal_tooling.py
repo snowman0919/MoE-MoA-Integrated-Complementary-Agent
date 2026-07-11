@@ -47,6 +47,7 @@ def test_dataset_and_adapter_promotion_guard(tmp_path) -> None:  # type: ignore[
     traces.mkdir()
     trace = json.dumps(
         {
+            "schema_version": "agent-trace-v2",
             "session_id": "one",
             "objective": "x",
             "final_status": "completed",
@@ -54,6 +55,7 @@ def test_dataset_and_adapter_promotion_guard(tmp_path) -> None:  # type: ignore[
             "verified_state": [],
             "tool_observation": {},
             "assistant_tool_call": {},
+            "training_eligibility": "eligible",
         }
     )
     (traces / "one.jsonl").write_text(trace + "\n" + trace + "\n")

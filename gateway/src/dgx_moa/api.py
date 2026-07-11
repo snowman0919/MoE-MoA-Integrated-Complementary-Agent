@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from collections.abc import AsyncIterator
@@ -45,6 +46,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
 
     app = FastAPI(title="DGX MoA Agent", version="0.1.0", lifespan=lifespan)
+
+    def record_trace_safely(request: Request, state: Any, task_id: str) -> None:
+        try:
+            request.app.state.traces.record(state, task_id=task_id)
+        except OSError as error:
+            state.observability_degraded = True
+            state.observability_status = "degraded"
+            request.app.state.store.event(
+                state.session_id,
+                "observability_degraded",
+                {"component": "trace_archive", "error": type(error).__name__},
+            )
+            request.app.state.store.save(state)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -129,6 +143,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         body: ChatRequest,
         request: Request,
         x_session_id: str | None = Header(default=None),
+        x_runtime_channel: str | None = Header(default=None),
+        x_trace_origin: str | None = Header(default=None),
+        x_task_id: str | None = Header(default=None),
+        x_workspace_path: str | None = Header(default=None),
+        x_workspace_id: str | None = Header(default=None),
+        x_repository_branch: str | None = Header(default=None),
+        x_repository_commit: str | None = Header(default=None),
+        x_dirty_state: str | None = Header(default=None),
     ) -> Response:
         profile_state = request.app.state.profiles.current()
         current_profile = profile_state["active_profile"]
@@ -148,36 +170,73 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "executor is not configured")
         session_id = x_session_id or str(body.metadata.get("session_id") or uuid.uuid4())
         raw = body.model_dump(exclude_none=True)
+        if x_runtime_channel:
+            raw["metadata"]["runtime_channel"] = x_runtime_channel
+        if x_trace_origin:
+            raw["metadata"]["trace_origin"] = x_trace_origin
+        if x_task_id:
+            raw["metadata"]["task_id"] = x_task_id
+        if x_workspace_path:
+            raw["metadata"]["repository"] = {
+                "workspace_path": x_workspace_path,
+                "workspace_identifier": x_workspace_id or x_workspace_path,
+                "current_branch": x_repository_branch or "unknown",
+                "current_commit": x_repository_commit or "unknown",
+                "dirty_status": x_dirty_state or "unknown",
+            }
+        task_id = str(raw["metadata"].get("task_id", ""))
         try:
             state = request.app.state.controller.session(session_id, raw["messages"])
             request.app.state.store.event(
                 session_id,
                 "request_received",
-                {"stream": body.stream, "task_id": str(body.metadata.get("task_id", ""))},
+                {"stream": body.stream, "task_id": task_id},
             )
             request.app.state.controller.select_route(state, body.metadata)
             if body.metadata.get("no_progress"):
                 request.app.state.controller.note_no_progress(state)
             prepared = await request.app.state.controller.prepare_executor(state, raw)
             if body.stream:
-                request.app.state.traces.record(
-                    state, task_id=str(body.metadata.get("task_id", ""))
-                )
 
                 async def stream_response() -> AsyncIterator[bytes]:
                     completed = False
+                    observed = bytearray()
                     try:
                         async for chunk in request.app.state.provider.stream(
                             "executor", configured.models["executor"], prepared
                         ):
+                            if len(observed) < 1_000_000:
+                                observed.extend(chunk[: 1_000_000 - len(observed)])
                             yield chunk
                         completed = True
                     finally:
+                        finishes: list[str] = []
+                        for line in observed.decode(errors="replace").splitlines():
+                            if not line.startswith("data: {"):
+                                continue
+                            payload = json.loads(line[6:])
+                            reason = (payload.get("choices") or [{}])[0].get("finish_reason")
+                            if reason:
+                                finishes.append(str(reason))
+                        if state.decisions:
+                            state.decisions[-1]["outcome"] = {
+                                "status": "success" if completed else "failure",
+                                "progress_made": bool(finishes),
+                                "state_changed": False,
+                                "scope_changed": False,
+                                "validation_triggered": False,
+                                "next_phase": state.phase,
+                            }
+                        request.app.state.store.event(
+                            session_id, "assistant_stream_finished", {"finish_reasons": finishes}
+                        )
                         request.app.state.store.event(
                             session_id,
                             "stream_completed" if completed else "stream_aborted",
                             {},
                         )
+                        request.app.state.store.save(state)
+                        record_trace_safely(request, state, task_id)
 
                 return StreamingResponse(
                     stream_response(),
@@ -188,10 +247,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "executor", configured.models["executor"], prepared
             )
             validate_assistant_response(response)
+            if state.decisions:
+                state.decisions[-1]["structured_decision"] = response.get("choices", [{}])[0].get(
+                    "message", {}
+                )
+                state.decisions[-1]["outcome"] = {
+                    "status": "success",
+                    "progress_made": True,
+                    "state_changed": False,
+                    "scope_changed": False,
+                    "validation_triggered": bool(body.metadata.get("executor_complete")),
+                    "next_phase": state.phase,
+                }
             if body.metadata.get("executor_complete") and "reviewer" in configured.models:
                 await request.app.state.controller.review(state, str(response))
                 request.app.state.controller.apply_metadata(state, body.metadata)
-            request.app.state.traces.record(state, task_id=str(body.metadata.get("task_id", "")))
+            request.app.state.store.save(state)
+            record_trace_safely(request, state, task_id)
             return JSONResponse(response, headers={"X-Session-ID": session_id})
         except DuplicateFailedCall as error:
             raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
