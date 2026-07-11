@@ -192,6 +192,15 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `tool_calls`, and `stop`; no stale `tool_calls` finish reason or post-DONE
   usage was observed. Artifact: `data/diagnostics/opencode-completion/`
   `opencode-sse-48850860-c3a6-4a69-a5b2-9234f0758417.json`.
+- Physical OpenCode completion differential on `2026-07-11`: direct Windows
+  `opencode.exe` `1.17.18` invocation with an explicit isolated `--dir` completed
+  the one-file scenario against both the resident gateway and a temporary
+  loopback-only fake server. Both runs emitted `write`, `tool-calls`, continuation
+  text `WORKER_DONE`, final `stop`, created `COMPLETION.txt` with `DONE`, and
+  exited `0`. The fake B server was stopped and all temporary processes and
+  fixtures were removed. This does not reproduce a gateway protocol or OpenCode
+  completion-lifecycle defect. Artifact:
+  `data/diagnostics/opencode-completion/opencode-physical-20260711.json`.
 
 ## Tailscale
 
