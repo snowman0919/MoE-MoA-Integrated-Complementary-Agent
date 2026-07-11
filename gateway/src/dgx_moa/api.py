@@ -262,6 +262,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if body.metadata.get("executor_complete") and "reviewer" in configured.models:
                 await request.app.state.controller.review(state, str(response))
                 request.app.state.controller.apply_metadata(state, body.metadata)
+            finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+            request.app.state.store.event(
+                session_id,
+                "assistant_stream_finished",
+                {"finish_reasons": [finish_reason] if finish_reason else []},
+            )
             request.app.state.store.save(state)
             record_trace_safely(request, state, task_id)
             return JSONResponse(response, headers={"X-Session-ID": session_id})

@@ -23,6 +23,7 @@ from .conftest import StubProvider
 def complete_state() -> SessionState:
     state = SessionState(
         session_id="complete",
+        task_id="task",
         objective="ship",
         repository={
             "workspace_identifier": "repo",
@@ -37,16 +38,25 @@ def complete_state() -> SessionState:
         },
         runtime_channel="main",
         trace_origin="production",
+        route_reasons=["production request"],
         training_eligibility="requires_review",
         phase=Phase.COMPLETED,
         final_status="completed",
         completion_evidence={"tests": "exit 0"},
         controller_commit="abc",
+        vllm_version="0.22.1",
     )
     state.decisions = [
         {
             "decision_id": "decision",
+            "session_id": "complete",
+            "task_id": "task",
             "role": "executor",
+            "model_repository": "test/executor",
+            "model_revision": "abc",
+            "controller_commit": "abc",
+            "timestamp": state.created_at,
+            "state_before": {"phase": "completed"},
             "context_manifest": {"context_builder_name": "controller", "version": "2"},
             "structured_decision": {"type": "tool_call"},
             "outcome": {"status": "success"},
@@ -57,7 +67,20 @@ def complete_state() -> SessionState:
             "tool_execution_id": "execution",
             "tool_call_id": "call",
             "decision_id": "decision",
+            "session_id": "complete",
+            "tool_name": "write",
+            "normalized_arguments": {"path": "x"},
             "argument_fingerprint": "fingerprint",
+            "started_at": state.created_at,
+            "ended_at": state.created_at,
+            "duration_ms": 1,
+            "exit_code": 0,
+            "stdout_bytes": 2,
+            "stderr_bytes": 0,
+            "stdout_summary": "ok",
+            "stderr_summary": "",
+            "truncated": False,
+            "failure_class": None,
             "filesystem_effect": {"changed_paths": ["x"]},
         }
     ]
@@ -94,6 +117,7 @@ def test_v2_provenance_training_and_schema() -> None:
     assert trace["agent_decisions"][0]["context_manifest"]
     assert trace["tool_executions"][0]["decision_id"] == "decision"
     assert trace["evaluations"][0]["target_id"] == "complete"
+    assert trace["vllm_version"] == "0.22.1"
 
 
 def test_failure_record_values_are_strict() -> None:
@@ -104,13 +128,18 @@ def test_failure_record_values_are_strict() -> None:
         validate_failure_record({"suspected_layer": "executor", "resolution_status": "gone"})
 
 
-def test_partition_index_and_completeness(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_partition_index_and_completeness(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]
     store = StateStore(tmp_path / "state.db")
     state = complete_state()
     store.save(state)
-    for event in ("session_started", "route_selected", "session_ended"):
+    for event in (
+        "session_started",
+        "route_selected",
+        "assistant_stream_finished",
+        "session_ended",
+    ):
         store.event(state.session_id, event, {})
-    path = TraceRecorder(tmp_path / "traces", store).record(state)
+    path = TraceRecorder(tmp_path / "traces", store, settings.models).record(state)
     assert path.parts[-4:-2] == ("main", "production")
     report = audit_traces(tmp_path / "traces")
     assert report["mandatory_field_completeness_percent"] == 100.0

@@ -83,6 +83,7 @@ class SessionState(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     session_id: str
+    task_id: str = ""
     objective: str = ""
     repository: dict[str, str] = Field(default_factory=dict)
     route: str = "standard"
@@ -117,6 +118,7 @@ class SessionState(BaseModel):
     observability_degraded: bool = False
     controller_commit: str = "unknown"
     gateway_version: str = "0.1.0"
+    vllm_version: str = "unknown"
     decisions: list[dict[str, Any]] = Field(default_factory=list)
     tool_executions: list[dict[str, Any]] = Field(default_factory=list)
     evaluations: list[dict[str, Any]] = Field(default_factory=list)

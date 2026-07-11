@@ -10,6 +10,7 @@ gateway:
   runtime_channel: dev
   trace_origin: validation
   controller_commit: unknown
+  vllm_version: 0.22.1
   frontier_enabled: false
   frontier_disabled_reason: host_sandbox_capability_blocked
   limits:

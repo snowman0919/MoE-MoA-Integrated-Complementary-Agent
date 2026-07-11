@@ -158,7 +158,7 @@ def trace_record(
     return {
         "schema_version": "agent-trace-v2",
         "session_id": state.session_id,
-        "task_id": task_id,
+        "task_id": task_id or state.task_id,
         "runtime_channel": state.runtime_channel,
         "trace_origin": state.trace_origin,
         "workspace_identity": repository,
@@ -172,7 +172,7 @@ def trace_record(
         "dirty_state_end": ending.get("dirty_status", "unknown"),
         "controller_commit": state.controller_commit,
         "gateway_version": state.gateway_version,
-        "vllm_version": "unknown",
+        "vllm_version": state.vllm_version,
         "selected_route": {"route": state.route, "reasons": state.route_reasons},
         "model_revisions": {
             role: {"repository": model.repository, "revision": model.revision}
@@ -275,20 +275,32 @@ def trace_missing(trace: dict[str, Any]) -> list[str]:
     missing = [field for field in TRACE_FIELDS if field not in trace]
     for field in (
         "session_id",
+        "task_id",
         "runtime_channel",
         "trace_origin",
         "workspace_identity",
         "controller_commit",
+        "gateway_version",
+        "vllm_version",
+        "model_revisions",
+        "context_configuration",
         "selected_route",
         "agent_decisions",
         "final_status",
         "training_eligibility",
         "observability_status",
     ):
-        if not trace.get(field):
+        if not trace.get(field) or trace.get(field) == "unknown":
             missing.append(field)
+    route = trace.get("selected_route", {})
+    if not route.get("route"):
+        missing.append("selected_route.route")
+    if not route.get("reasons"):
+        missing.append("selected_route.reasons")
     if trace.get("final_status") == "completed" and not trace.get("completion_evidence"):
         missing.append("completion_evidence")
+    if trace.get("final_status") == "completed" and not trace.get("evaluations"):
+        missing.append("evaluations")
     if trace.get("final_status") in {
         "completed",
         "failed",
@@ -297,12 +309,44 @@ def trace_missing(trace: dict[str, Any]) -> list[str]:
     } and not trace.get("ended_at"):
         missing.append("ended_at")
     for index, decision in enumerate(trace.get("agent_decisions", [])):
-        for field in ("decision_id", "role", "context_manifest", "structured_decision", "outcome"):
-            if not decision.get(field):
+        for field in (
+            "decision_id",
+            "session_id",
+            "task_id",
+            "role",
+            "model_repository",
+            "model_revision",
+            "controller_commit",
+            "timestamp",
+            "state_before",
+            "context_manifest",
+            "structured_decision",
+            "outcome",
+        ):
+            if field not in decision or decision[field] in (None, "", "unknown"):
                 missing.append(f"agent_decisions[{index}].{field}")
     for index, execution in enumerate(trace.get("tool_executions", [])):
-        for field in ("tool_execution_id", "tool_call_id", "decision_id", "argument_fingerprint"):
-            if not execution.get(field):
+        for field in (
+            "tool_execution_id",
+            "tool_call_id",
+            "decision_id",
+            "session_id",
+            "tool_name",
+            "normalized_arguments",
+            "argument_fingerprint",
+            "started_at",
+            "ended_at",
+            "duration_ms",
+            "exit_code",
+            "stdout_bytes",
+            "stderr_bytes",
+            "stdout_summary",
+            "stderr_summary",
+            "truncated",
+            "failure_class",
+            "filesystem_effect",
+        ):
+            if field not in execution:
                 missing.append(f"tool_executions[{index}].{field}")
     return sorted(set(missing))
 
@@ -331,6 +375,14 @@ def audit_traces(directory: str | Path) -> dict[str, Any]:
                 if event_type not in event_types:
                     trace_incomplete = True
                     missing_events[event_type] = missing_events.get(event_type, 0) + 1
+            if (
+                trace.get("final_status") == "completed"
+                and "assistant_stream_finished" not in event_types
+            ):
+                trace_incomplete = True
+                missing_events["assistant_stream_finished"] = (
+                    missing_events.get("assistant_stream_finished", 0) + 1
+                )
         incomplete += int(trace_incomplete)
     total = len(traces)
     complete = total - incomplete

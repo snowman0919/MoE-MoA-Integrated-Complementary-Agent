@@ -106,7 +106,7 @@ class Controller:
         decision = {
             "decision_id": decision_id,
             "session_id": state.session_id,
-            "task_id": "",
+            "task_id": state.task_id,
             "role": role,
             "model_repository": model.repository if model else "unknown",
             "model_revision": model.revision if model else "unknown",
@@ -200,6 +200,11 @@ class Controller:
             metadata.get("training_eligibility", training_default(runtime_channel, trace_origin))
         )
         state.controller_commit = self.settings.controller_commit
+        state.vllm_version = self.settings.vllm_version
+        task_id = str(metadata.get("task_id", state.task_id))
+        if state.task_id and state.task_id != task_id:
+            raise ValueError("session task identity changed")
+        state.task_id = task_id
         repository = metadata.get("repository")
         if isinstance(repository, dict):
             identity = {str(key): str(value) for key, value in repository.items()}

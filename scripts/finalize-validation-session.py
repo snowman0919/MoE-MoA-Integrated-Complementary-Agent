@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 from pathlib import Path
 
 from dgx_moa.config import load_settings
-from dgx_moa.state import Phase, StateStore
+from dgx_moa.state import Phase, StateStore, now
 from dgx_moa.trace import TraceRecorder
 
 
@@ -50,6 +51,22 @@ def main() -> None:
     state.ending_repository = ending_repository(args.workspace)
     state.completion_evidence.update(
         dict(item.split("=", 1) for item in args.evidence if "=" in item)
+    )
+    state.evaluations.extend(
+        {
+            "evaluation_id": hashlib.sha256(
+                f"{state.session_id}:{key}:{value}".encode()
+            ).hexdigest()[:24],
+            "target_type": "task",
+            "target_id": state.task_id or state.session_id,
+            "evaluator_type": "deterministic",
+            "evaluator_model": None,
+            "result": "passed" if "exit 0" in value else "failed",
+            "evidence_references": [value],
+            "requirement_ids": [key],
+            "created_at": now(),
+        }
+        for key, value in state.completion_evidence.items()
     )
     state.training_eligibility = "excluded"
     store.event(args.session_id, "session_ended", {"status": args.status})

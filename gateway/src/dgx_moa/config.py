@@ -71,6 +71,7 @@ class Settings(BaseModel):
     runtime_channel: str = "dev"
     trace_origin: str = "validation"
     controller_commit: str = "unknown"
+    vllm_version: str = "unknown"
     frontier_enabled: bool = False
     frontier_disabled_reason: str = "host_sandbox_capability_blocked"
     models: dict[str, ModelConfig] = Field(default_factory=dict)
@@ -123,6 +124,9 @@ def load_settings(path: str | Path | None = None) -> Settings:
     )
     gateway["controller_commit"] = os.getenv(
         "DGX_MOA_CONTROLLER_COMMIT", gateway.get("controller_commit", "unknown")
+    )
+    gateway["vllm_version"] = os.getenv(
+        "DGX_MOA_VLLM_VERSION", gateway.get("vllm_version", "unknown")
     )
     gateway["frontier_enabled"] = os.getenv(
         "DGX_MOA_FRONTIER_ENABLED", gateway.get("frontier_enabled", False)

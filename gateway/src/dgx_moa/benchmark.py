@@ -149,6 +149,7 @@ def _run_task(
         ).strip()
         state = SessionState(
             session_id=task.task_id,
+            task_id=task.task_id,
             objective=task.request,
             repository={
                 "workspace_path": str(root),
@@ -169,6 +170,7 @@ def _run_task(
             completion_evidence={command: "exit 0" for command in task.validation_commands},
             review_status="approved",
             controller_commit="benchmark",
+            vllm_version="0.22.1",
         )
         failures = []
         replans = 0
@@ -183,8 +185,31 @@ def _run_task(
         state.decisions = [
             {
                 "decision_id": decision_id,
+                "session_id": task.task_id,
+                "task_id": task.task_id,
                 "role": "executor",
-                "context_manifest": {"context_builder_name": "benchmark", "version": "2"},
+                "model_repository": models["executor"].repository,
+                "model_revision": models["executor"].revision,
+                "adapter_id": None,
+                "controller_commit": "benchmark",
+                "timestamp": state.created_at,
+                "state_before": {"phase": "completed", "synthetic": True},
+                "context_manifest": {
+                    "context_builder_name": "benchmark",
+                    "context_builder_version": "2",
+                    "configured_context_limit": models["executor"].context_length,
+                    "input_tokens": None,
+                    "included_fact_ids": [],
+                    "included_observation_ids": [],
+                    "included_plan_ids": [],
+                    "included_file_references": list(task.allowed_paths),
+                    "included_diff_references": [],
+                    "included_failure_fingerprints": [],
+                    "truncated": False,
+                    "evicted_item_count": 0,
+                    "evicted_item_categories": [],
+                    "compression_status": "synthetic",
+                },
                 "structured_decision": {"type": "fixture_action"},
                 "outcome": {"status": "success"},
             }
@@ -194,9 +219,36 @@ def _run_task(
                 "tool_execution_id": f"benchmark-tool-{task.task_id}",
                 "tool_call_id": f"benchmark-call-{task.task_id}",
                 "decision_id": decision_id,
+                "session_id": task.task_id,
+                "tool_name": "benchmark_fixture",
+                "normalized_arguments": {"task_id": task.task_id},
                 "argument_fingerprint": task.task_id,
+                "started_at": state.created_at,
+                "ended_at": state.created_at,
+                "duration_ms": 0,
+                "exit_code": 0,
+                "stdout_bytes": 0,
+                "stderr_bytes": 0,
+                "stdout_summary": "synthetic benchmark action",
+                "stderr_summary": "",
+                "truncated": False,
+                "failure_class": None,
                 "filesystem_effect": {"changed_paths": list(task.allowed_paths)},
             }
+        ]
+        state.evaluations = [
+            {
+                "evaluation_id": f"benchmark-evaluation-{task.task_id}-{index}",
+                "target_type": "task",
+                "target_id": task.task_id,
+                "evaluator_type": "deterministic",
+                "evaluator_model": None,
+                "result": "passed",
+                "evidence_references": [command],
+                "requirement_ids": [str(index)],
+                "created_at": state.created_at,
+            }
+            for index, command in enumerate(task.validation_commands)
         ]
         state.failures = [
             {
@@ -233,6 +285,11 @@ def _run_task(
         for failure in failures:
             store.event(task.task_id, "failure_classified", {"class": failure})
         store.event(task.task_id, "session_ended", {"status": "completed"})
+        store.event(
+            task.task_id,
+            "assistant_stream_finished",
+            {"finish_reasons": ["synthetic_benchmark"]},
+        )
         TraceRecorder(trace_dir, store, models).record(
             state,
             task_id=task.task_id,
