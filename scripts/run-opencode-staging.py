@@ -202,6 +202,12 @@ def main() -> None:
             )
         (workspace.parent / "opencode.stdout.jsonl").write_text(run.stdout)
         (workspace.parent / "opencode.stderr.log").write_text(run.stderr)
+        gateway_session = session
+        for line in run.stdout.splitlines():
+            try:
+                gateway_session = str(json.loads(line).get("sessionID") or gateway_session)
+            except json.JSONDecodeError:
+                continue
         validation = subprocess.run(
             task.validation, cwd=workspace, shell=True, text=True, capture_output=True, check=False
         )
@@ -217,7 +223,7 @@ def main() -> None:
                 "run",
                 "python",
                 "scripts/finalize-validation-session.py",
-                session,
+                gateway_session,
                 "--status",
                 status,
                 "--workspace",
@@ -239,7 +245,8 @@ def main() -> None:
             status = "failed"
         rows.append(
             {
-                "session_id": session,
+                "session_id": gateway_session,
+                "harness_session_id": session,
                 "task_id": task.task_id,
                 "category": task.category,
                 "status": status,
