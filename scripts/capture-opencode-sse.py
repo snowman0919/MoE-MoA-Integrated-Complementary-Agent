@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import sqlite3
 import time
 import uuid
 from pathlib import Path
@@ -106,10 +107,27 @@ def expect(result: dict[str, Any], finish: str) -> None:
         raise RuntimeError(f"expected final finish_reason={finish}, got {result['finish_reasons']}")
 
 
+def completion_events(state_db: Path, session: str) -> list[dict[str, Any]]:
+    if not state_db.exists():
+        return []
+    with sqlite3.connect(state_db) as database:
+        rows = database.execute(
+            "SELECT event_type, created_at FROM events WHERE session_id = ? "
+            "AND event_type IN ('stream_completed', 'stream_aborted') ORDER BY rowid",
+            (session,),
+        ).fetchall()
+    return [{"event_type": event_type, "created_at": created_at} for event_type, created_at in rows]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default=os.getenv("DGX_MOA_BASE_URL"))
     parser.add_argument("--output-dir", default="data/diagnostics/opencode-completion")
+    parser.add_argument(
+        "--state-db",
+        type=Path,
+        default=Path(os.getenv("DGX_MOA_STATE_DB", "data/state/gateway.db")),
+    )
     parser.add_argument("--timeout", type=float, default=120)
     args = parser.parse_args()
     token = os.getenv("DGX_MOA_API_KEY")
@@ -194,8 +212,20 @@ def main() -> None:
             },
         )
         expect(continuation, "stop")
+    gateway_events = completion_events(args.state_db, session)
+    if [event["event_type"] for event in gateway_events] != ["stream_completed"] * 3:
+        raise RuntimeError(f"expected three gateway stream completions, got {gateway_events}")
     output.write_text(
-        json.dumps({"normal": normal, "tool": tool, "continuation": continuation}, indent=2) + "\n"
+        json.dumps(
+            {
+                "normal": normal,
+                "tool": tool,
+                "continuation": continuation,
+                "gateway_completion_events": gateway_events,
+            },
+            indent=2,
+        )
+        + "\n"
     )
     for name, result in (("normal", normal), ("tool", tool), ("continuation", continuation)):
         print(
