@@ -41,6 +41,37 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert stub_provider.calls == ["planner", "executor"]
 
 
+def test_request_headers_set_trace_identity(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    headers = {
+        "Authorization": "Bearer test-secret",
+        "X-Session-ID": "header-identity",
+        "X-Runtime-Channel": "dev",
+        "X-Trace-Origin": "validation",
+        "X-Task-ID": "task-1",
+        "X-Workspace-Path": "/tmp/repo",
+        "X-Workspace-ID": "repo",
+        "X-Repository-Branch": "dev",
+        "X-Repository-Commit": "abc",
+        "X-Dirty-State": "clean",
+    }
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "work"}]},
+        )
+        assert response.status_code == 200
+        state = client.app.state.store.get("header-identity")
+        assert state and state.task_id == "task-1"
+        assert state.repository == {
+            "workspace_path": "/tmp/repo",
+            "workspace_identifier": "repo",
+            "current_branch": "dev",
+            "current_commit": "abc",
+            "dirty_status": "clean",
+        }
+
+
 def test_tool_result_continuation_uses_same_session(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 

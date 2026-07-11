@@ -192,7 +192,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "request_received",
                 {"stream": body.stream, "task_id": task_id},
             )
-            request.app.state.controller.select_route(state, body.metadata)
+            request.app.state.controller.select_route(state, raw["metadata"])
             if body.metadata.get("no_progress"):
                 request.app.state.controller.note_no_progress(state)
             prepared = await request.app.state.controller.prepare_executor(state, raw)
