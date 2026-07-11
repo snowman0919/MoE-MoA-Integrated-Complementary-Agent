@@ -13,7 +13,7 @@
       "standard": 6
     },
     "task_success_rate": 1.0,
-    "time_per_successful_task": 0.0295796,
+    "time_per_successful_task": 0.0280906,
     "tokens_per_successful_task": null,
     "tool_calls_per_successful_task": 1.2
   },
@@ -51,7 +51,7 @@
       "validation_commands": [
         "test -f README.md"
       ],
-      "wall_clock_seconds": 0.052421
+      "wall_clock_seconds": 0.015988
     },
     {
       "acceptance_criteria": [
@@ -86,7 +86,7 @@
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.026183
+      "wall_clock_seconds": 0.023177
     },
     {
       "acceptance_criteria": [
@@ -121,7 +121,7 @@
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.024073
+      "wall_clock_seconds": 0.02245
     },
     {
       "acceptance_criteria": [
@@ -156,7 +156,7 @@
       "validation_commands": [
         "python test_app.py"
       ],
-      "wall_clock_seconds": 0.021653
+      "wall_clock_seconds": 0.029889
     },
     {
       "acceptance_criteria": [
@@ -192,7 +192,7 @@
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.029631
+      "wall_clock_seconds": 0.022771
     },
     {
       "acceptance_criteria": [
@@ -228,7 +228,7 @@
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.026659
+      "wall_clock_seconds": 0.034275
     },
     {
       "acceptance_criteria": [
@@ -265,7 +265,7 @@
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.024265
+      "wall_clock_seconds": 0.025862
     },
     {
       "acceptance_criteria": [
@@ -302,7 +302,7 @@
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.029919
+      "wall_clock_seconds": 0.037712
     },
     {
       "acceptance_criteria": [
@@ -337,7 +337,7 @@
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.032404
+      "wall_clock_seconds": 0.030754
     },
     {
       "acceptance_criteria": [
@@ -372,7 +372,7 @@
       "validation_commands": [
         "python app.py"
       ],
-      "wall_clock_seconds": 0.028588
+      "wall_clock_seconds": 0.038028
     }
   ]
 }

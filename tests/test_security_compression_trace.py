@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from dgx_moa.compression import compress_messages, compress_text
 from dgx_moa.config import Limits, ModelConfig
 from dgx_moa.security import redact
 from dgx_moa.state import SessionState
-from dgx_moa.trace import TRACE_FIELDS, export_trace, trace_record
+from dgx_moa.trace import TRACE_FIELDS, export_trace, trace_record, validate_trace
 
 
 def test_redaction_and_compression(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -52,3 +53,10 @@ def test_trace_contains_model_revision_and_context(tmp_path) -> None:  # type: i
         "executor": {"repository": "test/executor", "revision": "abc"}
     }
     assert trace["context_configuration"]["executor"]["context_length"] == 1024
+
+
+def test_trace_schema_rejects_wrong_version() -> None:
+    trace = {field: None for field in TRACE_FIELDS}
+    trace["schema_version"] = "wrong"
+    with pytest.raises(ValueError, match="unsupported trace schema version"):
+        validate_trace(trace)

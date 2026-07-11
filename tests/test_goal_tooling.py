@@ -4,7 +4,7 @@ import json
 
 import pytest
 from dgx_moa.adapters import register
-from dgx_moa.benchmark import TASKS, summarize
+from dgx_moa.benchmark import TASKS, benchmark_models, summarize
 from dgx_moa.dataset import build, quality_tier
 from dgx_moa.improvement import compare, mine, statistics
 
@@ -35,6 +35,7 @@ def test_benchmark_shape_and_improvement_tools(tmp_path) -> None:  # type: ignor
     assert proposal["proposal_id"] == "IMP-2026-0001"
     assert proposal["statistics"]["failure_frequency"] == {"REPEATED_ACTION": 1}
     assert statistics({"tasks": []})["replan_rate"] == 0
+    assert benchmark_models(tmp_path / "missing.yaml") == {}
     candidate = tmp_path / "candidate.json"
     candidate.write_text(json.dumps({"summary": summarize([])}))
     verdict = compare(benchmark, candidate, tmp_path / "comparison.json")

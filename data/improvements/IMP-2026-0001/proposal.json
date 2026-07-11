@@ -7,7 +7,7 @@
     "affected_tasks": 1,
     "failure_class": "REPEATED_ACTION",
     "wasted_input_tokens": null,
-    "wasted_seconds": 0.054183999999999996
+    "wasted_seconds": 0.063574
   },
   "priority": {
     "affected_tasks": 1,
@@ -32,7 +32,7 @@
     "replan_rate": 0.2,
     "review_rejection_rate": 0.1,
     "route_inefficiency": null,
-    "time_waste_seconds": 0.054183999999999996,
+    "time_waste_seconds": 0.063574,
     "token_waste": null
   },
   "suspected_layer": "controller",

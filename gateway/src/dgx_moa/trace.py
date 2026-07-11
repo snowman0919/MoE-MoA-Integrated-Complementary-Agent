@@ -34,6 +34,14 @@ TRACE_FIELDS = frozenset(
 )
 
 
+def validate_trace(trace: dict[str, Any]) -> None:
+    missing = TRACE_FIELDS - trace.keys()
+    if missing:
+        raise ValueError(f"trace fields missing: {', '.join(sorted(missing))}")
+    if trace["schema_version"] != "agent-trace-v1":
+        raise ValueError("unsupported trace schema version")
+
+
 def trace_record(
     state: SessionState,
     *,
@@ -75,7 +83,11 @@ def trace_record(
 
 
 def export_trace(path: str | Path, trace: dict[str, Any]) -> None:
-    output = {field: redact(trace.get(field)) for field in TRACE_FIELDS}
+    output = {
+        field: redact(trace.get(field, "agent-trace-v1" if field == "schema_version" else None))
+        for field in TRACE_FIELDS
+    }
+    validate_trace(output)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("a") as stream:

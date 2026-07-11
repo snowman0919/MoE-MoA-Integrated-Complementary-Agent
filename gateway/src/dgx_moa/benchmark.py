@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from .config import ModelConfig
 from .state import Phase, SessionState, StateStore
 from .trace import TraceRecorder
 
@@ -125,7 +128,18 @@ def _fixture(path: Path) -> None:
     )
 
 
-def _run_task(task: BenchmarkTask, trace_dir: Path) -> dict[str, Any]:
+def benchmark_models(config_path: Path = Path("config/models.yaml")) -> dict[str, ModelConfig]:
+    if not config_path.is_file():
+        return {}
+    raw = yaml.safe_load(config_path.read_text()) or {}
+    return {
+        role: ModelConfig.model_validate(model) for role, model in raw.get("models", {}).items()
+    }
+
+
+def _run_task(
+    task: BenchmarkTask, trace_dir: Path, models: dict[str, ModelConfig]
+) -> dict[str, Any]:
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix=f"dgx-moa-{task.task_id}-") as temporary:
         root = Path(temporary)
@@ -176,7 +190,7 @@ def _run_task(task: BenchmarkTask, trace_dir: Path) -> dict[str, Any]:
         store.save(state)
         for failure in failures:
             store.event(task.task_id, "failure_classified", {"class": failure})
-        TraceRecorder(trace_dir, store).record(
+        TraceRecorder(trace_dir, store, models).record(
             state,
             task_id=task.task_id,
             metrics={"tool_calls": 1 + replans, "input_tokens": None, "output_tokens": None},
@@ -245,7 +259,8 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def run(output: Path, trace_dir: Path) -> dict[str, Any]:
-    rows = [_run_task(task, trace_dir) for task in TASKS]
+    models = benchmark_models()
+    rows = [_run_task(task, trace_dir, models) for task in TASKS]
     result = {"schema_version": "mvp-benchmark-v1", "tasks": rows, "summary": summarize(rows)}
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")

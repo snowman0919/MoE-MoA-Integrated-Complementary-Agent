@@ -92,7 +92,7 @@ below. Heavy-judge validation is appended after its first isolated startup.
 
 ## Development Branch Validation
 
-- `uv run pytest -q`: exit `0`; `67 passed`, one third-party TestClient warning.
+- `uv run pytest -q`: exit `0`; `68 passed`, one third-party TestClient warning.
 - `uv run ruff check gateway/src tests`: exit `0`.
 - `uv run mypy`: exit `0`; `23` source files.
 - `scripts/run-mvp-benchmark.sh`: exit `0`; `10/10` synthetic fixture tasks
