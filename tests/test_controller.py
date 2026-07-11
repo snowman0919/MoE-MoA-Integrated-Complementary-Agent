@@ -186,3 +186,5 @@ def test_frontier_controller_requires_human_approval(settings, stub_provider: St
     )
     assert evaluation["automatic_merge"] is False
     assert state.frontier_human_approval_required is True
+    with pytest.raises(ValueError, match="invocation limit"):
+        controller.start_frontier_run(state, profile, task)

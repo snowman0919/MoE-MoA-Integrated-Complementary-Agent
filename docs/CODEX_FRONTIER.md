@@ -13,8 +13,10 @@ are owner-only and credentials are neither read nor logged by project code.
 
 `scripts/run-frontier-codex.sh` requires explicit profile, task, worktree, model, and
 uses `codex exec --json --sandbox workspace-write`. It has one nonblocking lock per
-profile, rejects production worktree, requires a verified model ID, and never rotates
-accounts, pushes, merges, deploys, or changes systemd/network/config secrets.
+profile, accepts only a Git worktree registered by production repository on a
+`frontier/` or `auto/frontier/` branch, and never rotates accounts, pushes, merges,
+deploys, or changes systemd/network/config secrets. Session state enforces one
+frontier invocation and at most three recursive cycles.
 
 The systemd template is disabled by default. An operator starting it must provide
 `DGX_MOA_FRONTIER_TASK` and `DGX_MOA_FRONTIER_WORKTREE` for that one run; absent

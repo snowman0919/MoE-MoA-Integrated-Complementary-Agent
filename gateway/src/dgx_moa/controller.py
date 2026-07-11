@@ -165,8 +165,15 @@ class Controller:
 
     def start_frontier_run(self, state: SessionState, profile: str, task: FrontierTask) -> None:
         if state.frontier_invocations >= 1:
+            self.store.event(state.session_id, "frontier_usage_limited", {"reason": "task_limit"})
+            self.store.save(state)
             raise ValueError("frontier invocation limit reached")
+        if state.recursive_cycles >= 3:
+            self.store.event(state.session_id, "frontier_usage_limited", {"reason": "cycle_limit"})
+            self.store.save(state)
+            raise ValueError("frontier recursive cycle limit reached")
         state.frontier_invocations += 1
+        state.recursive_cycles += 1
         self.store.event(
             state.session_id,
             "frontier_run_started",

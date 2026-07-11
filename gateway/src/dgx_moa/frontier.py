@@ -11,7 +11,7 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -79,7 +79,7 @@ class FrontierConfig(BaseModel):
     provider: str = "codex_oauth"
     protocol: str = "codex-exec-jsonl"
     model: str = "gpt-5.6-sol"
-    reasoning_effort: str = "high"
+    reasoning_effort: Literal["high"] = "high"
     max_invocations_per_task: int = 1
     max_recursive_cycles: int = 3
 
@@ -189,6 +189,32 @@ def validate_scope(changes: list[str], allowed_paths: list[str]) -> None:
             raise ValueError(f"FRONTIER_SCOPE_VIOLATION: {path}")
 
 
+def validate_isolated_worktree(task: FrontierTask, worktree: Path) -> None:
+    workspace = task.repository_identity.get("workspace_path")
+    if not workspace:
+        raise ValueError("frontier task lacks production workspace identity")
+    production = Path(workspace).resolve()
+    target = worktree.resolve()
+    if target == production:
+        raise ValueError("frontier worktree must not be production working tree")
+    listing = subprocess.run(
+        ["git", "-C", str(production), "worktree", "list", "--porcelain"],
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout
+    if f"worktree {target}\n" not in listing:
+        raise ValueError("frontier worktree is not registered by production repository")
+    branch = subprocess.run(
+        ["git", "-C", str(target), "branch", "--show-current"],
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout.strip()
+    if not (branch.startswith("frontier/") or branch.startswith("auto/frontier/")):
+        raise ValueError("frontier worktree branch is not isolated")
+
+
 def evaluate_frontier_candidate(
     result: FrontierResult,
     *,
@@ -259,9 +285,8 @@ def run_task(
     timeout: int,
     run_dir: Path,
 ) -> int:
-    FrontierTask.model_validate_json(task_path.read_text())
-    if worktree.resolve() == Path.cwd().resolve():
-        raise ValueError("frontier worktree must not be production working tree")
+    task = FrontierTask.model_validate_json(task_path.read_text())
+    validate_isolated_worktree(task, worktree)
     result_schema = Path(__file__).parents[3] / "schemas" / "frontier-result-v1.json"
     environment = os.environ | {"CODEX_HOME": str(profile_home(profile))}
     with profile_lock(profile, run_dir):

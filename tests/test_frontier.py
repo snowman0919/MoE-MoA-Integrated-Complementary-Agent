@@ -5,6 +5,7 @@ import json
 import pytest
 from dgx_moa.frontier import (
     FrontierResult,
+    FrontierTask,
     build_frontier_task,
     evaluate_frontier_candidate,
     frontier_eligible,
@@ -12,6 +13,7 @@ from dgx_moa.frontier import (
     profile_lock,
     profile_status,
     select_frontier_profile,
+    validate_isolated_worktree,
     validate_profile_name,
     validate_scope,
 )
@@ -91,3 +93,16 @@ def test_frontier_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
     config = tmp_path / "frontier.yaml"
     config.write_text("model: gpt-5.6-sol\nreasoning_effort: high\n")
     assert load_frontier_config(config).model == "gpt-5.6-sol"
+
+
+def test_frontier_rejects_production_worktree(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    task = FrontierTask(
+        task_id="one",
+        objective="x",
+        repository_identity={"workspace_path": str(tmp_path)},
+        base_commit="abc",
+        allowed_paths=["gateway"],
+        acceptance_criteria=[],
+    )
+    with pytest.raises(ValueError, match="must not be production"):
+        validate_isolated_worktree(task, tmp_path)
