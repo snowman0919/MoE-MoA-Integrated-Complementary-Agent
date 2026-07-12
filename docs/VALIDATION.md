@@ -456,6 +456,26 @@ below. Heavy-judge validation is appended after its first isolated startup.
   to `10737418240` bytes (10 GiB). The 65,536-context candidate is retested
   under that floor; kernel OOM or a lower measured value remains a rejection.
 
+### 65,536-context 10-GiB-floor retry rejection
+
+- On 2026-07-13, candidate `41bfba1` started all four resident roles at
+  `65536`: executor `67121`, reviewer `67383`, planner `83740`, and
+  VibeThinker reasoner `66448` GPU-KV tokens (each at least `65536`). The
+  post-start guards recorded, in role order, `67721474048`, `46267162624`,
+  `22638268416`, and `12540280832` available host-memory bytes. The initial
+  full start therefore passed the explicit `10737418240`-byte floor.
+- A required dependency recycle exposed an unstable result: the reviewer's
+  first CUDA initialization returned `torch.AcceleratorError: CUDA error: out
+  of memory` and systemd retried it successfully, but the reasoner's next
+  post-start guard measured `10208575488` bytes, below the 10-GiB floor by
+  `528842752` bytes. Its guard stopped the service before accepting the
+  profile. No kernel panic, host restart, or host-OOM event was observed;
+  direct kernel-log access was unavailable to the unprivileged service user.
+- The candidate is rejected because it cannot consistently meet the approved
+  10-GiB guard. It was not merged or deployed. The production worktree was
+  returned to `main`; baseline resident recovery is in progress. This is a
+  capacity/safety validation result, not a benchmark.
+
 ### OpenCode title-history recovery
 
 - OpenCode can send its automatic title prompt after the work-message history.
