@@ -105,6 +105,24 @@ def test_no_progress_and_step_budget(settings, stub_provider: StubProvider) -> N
         controller.session("y", [{"role": "user", "content": "x"}])
 
 
+def test_title_state_is_recovered_for_work_messages(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    store.save(
+        SessionState(session_id="legacy", objective="Generate a title for this conversation:")
+    )
+    messages = [
+        {"role": "user", "content": "Create AGENTS.md"},
+        {"role": "assistant", "content": "old title"},
+    ]
+
+    state = controller.session("legacy", messages)
+
+    assert state.objective == "Create AGENTS.md"
+    assert messages == [{"role": "user", "content": "Create AGENTS.md"}]
+    assert store.events("legacy")[-1]["event_type"] == "title_state_recovered"
+
+
 @pytest.mark.asyncio
 async def test_planner_and_reviewer_routing(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     store = StateStore(settings.state_db)

@@ -143,6 +143,7 @@ def test_title_request_does_not_set_the_work_session_objective(
             json={
                 "model": "dgx-moa-agent",
                 "messages": [
+                    {"role": "user", "content": "Create AGENTS.md"},
                     {"role": "user", "content": "Generate a title for this conversation:\n"}
                 ],
             },
