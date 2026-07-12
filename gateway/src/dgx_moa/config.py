@@ -49,7 +49,7 @@ class ModelConfig(BaseModel):
     base_url: str
     served_name: str
     destination: Path
-    context_length: int
+    context_length: int = Field(ge=65_536)
     max_num_seqs: int = 1
     quantization: str | None = None
     tool_call_parser: str | None = None

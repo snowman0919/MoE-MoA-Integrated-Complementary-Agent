@@ -6,14 +6,21 @@ import os
 
 from .config import load_settings, parse_bool
 
-PORTS = {"executor": 8101, "planner": 8102, "reviewer": 8103, "judge": 8110}
+PORTS = {"executor": 8101, "planner": 8102, "reviewer": 8103, "reasoner": 8104, "judge": 8110}
 KV_CACHE = {
-    "executor": 500_000_000,
-    "planner": 750_000_000,
-    "reviewer": 750_000_000,
-    "judge": 4_000_000_000,
+    "executor": 2_000_000_000,
+    "planner": 1_000_000_000,
+    "reviewer": 6_000_000_000,
+    "reasoner": 2_500_000_000,
+    "judge": 12_000_000_000,
 }
-GPU_UTILIZATION = {"executor": 0.50, "planner": 0.25, "reviewer": 0.25, "judge": 0.85}
+GPU_UTILIZATION = {
+    "executor": 0.50,
+    "planner": 0.25,
+    "reviewer": 0.25,
+    "reasoner": 0.10,
+    "judge": 0.85,
+}
 
 
 def role_environment(role: str, name: str, default: str | int | float) -> str:

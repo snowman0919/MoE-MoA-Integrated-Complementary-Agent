@@ -20,3 +20,10 @@ def test_role_kv_cache_environment(settings, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr("dgx_moa.serve.load_settings", lambda: settings)
     arguments = command("judge")
     assert arguments[arguments.index("--kv-cache-memory-bytes") + 1] == "750000000"
+
+
+def test_reasoner_uses_loopback_64k_context(settings, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr("dgx_moa.serve.load_settings", lambda: settings)
+    arguments = command("reasoner")
+    assert arguments[arguments.index("--port") + 1] == "8104"
+    assert arguments[arguments.index("--max-model-len") + 1] == "65536"

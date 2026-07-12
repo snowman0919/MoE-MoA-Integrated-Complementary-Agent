@@ -12,6 +12,7 @@ def test_required_systemd_units_exist() -> None:
         "dgx-moa-executor.service",
         "dgx-moa-planner.service",
         "dgx-moa-reviewer.service",
+        "dgx-moa-reasoner.service",
         "dgx-moa-judge.service",
         "dgx-moa-resident.target",
         "dgx-moa-judge.target",
@@ -27,12 +28,13 @@ def test_targets_and_services_are_mutually_exclusive() -> None:
     judge = (SYSTEMD / "dgx-moa-judge.service").read_text()
     assert "Conflicts=dgx-moa-judge.target" in resident
     assert "Conflicts=dgx-moa-resident.target" in judge_target
-    for role in ("executor", "planner", "reviewer"):
+    for role in ("executor", "planner", "reviewer", "reasoner"):
         service = (SYSTEMD / f"dgx-moa-{role}.service").read_text()
         assert "Conflicts=dgx-moa-judge.service dgx-moa-judge.target" in service
         assert f"dgx-moa-{role}.service" in judge
     assert "After=dgx-moa-executor.service" in (SYSTEMD / "dgx-moa-reviewer.service").read_text()
     assert "After=dgx-moa-reviewer.service" in (SYSTEMD / "dgx-moa-planner.service").read_text()
+    assert "After=dgx-moa-planner.service" in (SYSTEMD / "dgx-moa-reasoner.service").read_text()
 
 
 def test_unit_environment_and_hardening() -> None:

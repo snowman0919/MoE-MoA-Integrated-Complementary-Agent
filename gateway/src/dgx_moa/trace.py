@@ -117,7 +117,14 @@ def validate_trace(trace: dict[str, Any]) -> None:
     if version == "agent-trace-v2":
         validate_provenance(str(trace["runtime_channel"]), str(trace["trace_origin"]))
         for decision in trace["agent_decisions"]:
-            if decision.get("role") not in {"planner", "executor", "reviewer", "judge", "frontier"}:
+            if decision.get("role") not in {
+                "planner",
+                "executor",
+                "reviewer",
+                "reasoner",
+                "judge",
+                "frontier",
+            }:
                 raise ValueError("invalid decision role")
         for execution in trace["tool_executions"]:
             effect = execution.get("filesystem_effect", {})

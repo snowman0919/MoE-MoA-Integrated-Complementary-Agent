@@ -416,6 +416,26 @@ below. Heavy-judge validation is appended after its first isolated startup.
   requirement; planner then started successfully and `/readyz` returned `200`.
 - An authenticated Hermes-compatible OpenAI streaming request without a custom
   session header returned content chunks, `finish_reason=stop`, and `[DONE]`.
+- Live read-only routing audit on 2026-07-12: no configured or locally present
+  model matched `VibeThinker` or `Hermes`. The resident 21,562 MiB GPU process
+  was the planner, `cyankiwi/Nemotron-Cascade-2-30B-A3B-AWQ-4bit`; the executor
+  and reviewer used 47,009 MiB and 19,753 MiB respectively. Since the current
+  resident startup, 34 planner requests returned HTTP 200, while 3 executor
+  requests returned HTTP 200 and 30 returned HTTP 400. Every inspected session
+  selected the standard route and recorded planner then executor; reviewer had
+  no chat-completion request. The executor failures measured 15,385 prompt
+  tokens plus the configured 1,000 output tokens, exceeding its 16,384-token
+  limit. This is an operational observation, not a benchmark.
+
+### VibeThinker reasoner integration preparation
+
+- On 2026-07-12, the development worktree downloaded and verified
+  `WeiboAI/VibeThinker-3B@77bd2cced09193c8b9a59a32bd8577bbd1f3e01c` at
+  `/home/kotori9/models/dgx-moa/reasoner`: two safetensors shards,
+  `6188996125` bytes, valid tokenizer/chat template, and no incomplete files.
+  This is a model-integrity check only; the production services were not
+  restarted and no resident 65,536-context readiness or capacity result is
+  claimed.
 
 ### OpenCode title-history recovery
 
