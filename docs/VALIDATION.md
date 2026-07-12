@@ -425,3 +425,11 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - Production sequence `title-history-1783851856` confirmed that a trailing title
   prompt now uses only `:title` state while `Create AGENTS.md` remains the work
   objective. All resident roles and `/readyz` were active after deployment.
+
+### Codex multi-agent activation
+
+- On 2026-07-13, interactive OAuth re-login was followed by separate read-only
+  `primary` and `secondary` Codex calls using `gpt-5.6-sol`. Both returned an
+  agent message of `READY` and a JSON `turn.completed` event. The profile test
+  now requires that completion event, so an expired token cannot be reported
+  as healthy. No sandbox or systemd hardening was weakened.

@@ -57,9 +57,10 @@ Updated: 2026-07-12T13:00:43+09:00
 - Heavy Judge remains validated with its unchanged model, `4000000000`-byte KV
   reservation, 8192 context, structured accept verdict, and resident restoration.
   It was not rerun because Judge code/configuration did not change.
-- Frontier Codex is connected but disabled:
-  `DGX_MOA_FRONTIER_ENABLED=false`, reason
-  `host_sandbox_capability_blocked`. No AppArmor or sandbox weakening occurred.
+- Frontier Codex is enabled through independent OAuth profiles (`primary` and
+  `secondary`). Invoke either with `scripts/codex-profile.sh test <profile>`
+  or the existing `dgx-moa-codex-frontier@<profile>.service` template; its
+  read-only sandbox and systemd hardening remain unchanged.
 
 ## Known limitations
 
