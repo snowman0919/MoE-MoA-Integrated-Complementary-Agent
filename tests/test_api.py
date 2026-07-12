@@ -261,6 +261,27 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         }
 
 
+def test_streaming_upstream_error_returns_bad_gateway(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    async def rejected(role, model, request):  # type: ignore[no-untyped-def]
+        response = httpx.Response(400, request=httpx.Request("POST", model.base_url))
+        raise httpx.HTTPStatusError("context overflow", request=response.request, response=response)
+
+    stub_provider.stream = rejected  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "stream": True,
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        assert response.status_code == 502
+
+
 def test_api_validation(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(

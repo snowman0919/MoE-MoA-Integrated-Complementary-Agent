@@ -351,3 +351,19 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `0`, fixture validation exited `0`, and finalization exited `0`.
 - `uv run pytest -q`: `98 passed`, one upstream Starlette/httpx deprecation
   warning. Ruff format/check and MyPy passed.
+
+### Context overflow regression
+
+- OpenCode `1.17.18` session `ses_0ab2dda76ffeKbk9p2yiJ2SSmY` exposed the
+  executor limit: at least `15385` input plus `1000` requested output tokens
+  exceeded the configured `16384` context. The streaming gateway had already
+  returned HTTP `200`, so the upstream `400` surfaced as a connection reset.
+- The gateway now bounds structured tool content and reused stdout/stderr across
+  the retained window, and opens the upstream stream before returning HTTP
+  headers. Successful stdout containing words such as `failed` is no longer
+  classified as a failed action.
+- OpenCode session `ses_0ab28024effe7ILeEx30RyB72q` read eight 353-line files,
+  then completed the same conversation with `CONTEXT_DONE`, `12426` input and
+  `22` output tokens, `finish_reason=stop`, and HTTP `200` without a reset.
+- `uv run pytest -q`: `102 passed`, one upstream Starlette/httpx deprecation
+  warning. Ruff format/check and MyPy passed.

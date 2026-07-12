@@ -25,14 +25,16 @@ def compress_text(text: str, limits: Limits) -> str:
 def compress_messages(messages: list[dict[str, Any]], limits: Limits) -> list[dict[str, Any]]:
     compressed: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for message in messages[-limits.max_retained_observations :]:
+    retained = messages[-limits.max_retained_observations :]
+    tool_count = sum(message.get("role") == "tool" for message in retained)
+    tool_budget = limits.max_tool_output_characters // max(1, tool_count)
+    for message in retained:
         item = redact(message.copy())
-        if item.get("role") == "tool" and isinstance(item.get("content"), str):
-            content = item["content"]
-            try:
-                json.loads(content)
-            except ValueError:
-                item["content"] = compress_text(content, limits)
+        if item.get("role") == "tool":
+            content = item.get("content", "")
+            if not isinstance(content, str):
+                content = json.dumps(content, ensure_ascii=False, default=str)
+            item["content"] = compress_text(content, limits)[:tool_budget]
         fingerprint = json.dumps(item, sort_keys=True, default=str)
         if fingerprint in seen:
             continue

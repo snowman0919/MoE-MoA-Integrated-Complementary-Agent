@@ -22,6 +22,10 @@ def test_redaction_and_compression(tmp_path) -> None:  # type: ignore[no-untyped
     payload = '{"tool_call":{"arguments":{"path":"x"}}}'
     messages = compress_messages([{"role": "tool", "content": payload}], limits)
     assert messages[0]["content"] == payload
+    structured = [{"type": "text", "text": "x" * 200}]
+    messages = compress_messages([{"role": "tool", "content": structured}], limits)
+    assert isinstance(messages[0]["content"], str)
+    assert len(messages[0]["content"]) <= 80
 
 
 def test_trace_schema_and_secret_redaction(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -36,6 +40,13 @@ def test_repeated_messages_are_deduplicated() -> None:
     limits = Limits(max_retained_observations=3)
     messages = [{"role": "tool", "content": "same"}] * 2
     assert len(compress_messages(messages, limits)) == 1
+
+
+def test_tool_outputs_share_the_compression_budget() -> None:
+    limits = Limits(max_tool_output_characters=80)
+    messages = [{"role": "tool", "content": character * 100} for character in ("a", "b", "c", "d")]
+    compressed = compress_messages(messages, limits)
+    assert sum(len(message["content"]) for message in compressed) <= 80
 
 
 def test_trace_contains_model_revision_and_context(tmp_path) -> None:  # type: ignore[no-untyped-def]

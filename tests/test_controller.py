@@ -64,6 +64,27 @@ def test_parallel_tool_results_match_their_calls(settings, stub_provider: StubPr
     assert [execution["tool_name"] for execution in state.tool_executions] == ["read", "glob"]
 
 
+def test_tool_results_are_bounded_before_context_reuse(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.limits.max_tool_output_characters = 80
+    state = SessionState(session_id="bounded")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    controller._observe(state, tool_messages("large", "x" * 1_000))
+
+    assert len(state.tool_results[0]["stdout"]) <= 80
+
+
+def test_successful_output_can_describe_failures(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    state = SessionState(session_id="failure-doc")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    controller._observe(state, tool_messages("read", "tests failed before the fix"))
+
+    assert state.failed_call_fingerprints == []
+
+
 def test_failure_classification() -> None:
     assert classify_failure("No such file or directory") == "NONEXISTENT_PATH"
     assert classify_failure("SyntaxError: invalid syntax") == "SYNTAX_ERROR"
