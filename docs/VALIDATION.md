@@ -401,3 +401,8 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `physical-title-isolation:title` with the title objective and
   `physical-title-isolation` with `Create AGENTS.md`; the title response stopped
   normally. The staging process was then stopped and its temporary state removed.
+- After PR `#6` merged, production `main@eeb4484` was restarted and resident
+  readiness returned `200`. The authenticated production sequence
+  `production-title-isolation-1783844401` recorded the title objective only in
+  its `:title` state and `Create AGENTS.md` in the work state; both requests
+  returned HTTP `200`.
