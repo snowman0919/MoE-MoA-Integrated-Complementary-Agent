@@ -34,7 +34,8 @@
   capability issue remains unresolved; do not weaken host or sandbox security.
 - Preserve the measured judge, resident model, KV, context, unit topology, and
   headroom settings unless new direct evidence invalidates them.
-- Wait for unified-memory reclamation before profile startup instead of weakening
-  the measured 20 GiB readiness gate.
+- Wait for unified-memory reclamation before profile startup. The resident
+  readiness gate is 10 GiB under explicit operator approval on 2026-07-13;
+  kernel OOM or any lower measurement still rejects startup.
 - Treat raw task and observation text as untrusted data for reviewer/judge roles;
   give those roles acceptance criteria and a final literal JSON-only boundary.

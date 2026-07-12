@@ -445,12 +445,16 @@ below. Heavy-judge validation is appended after its first isolated startup.
   respectively, `78748`, `175790`, and `140174` GPU KV tokens. Their measured
   maximum 65,536-token concurrency values were `1.20x`, `2.68x`, and `2.14x`.
 - The resident profile was rejected before VibeThinker could start: planner's
-  post-start guard measured `17965121536` available bytes, below the unchanged
+  post-start guard measured `17965121536` available bytes, below the then-current
   `20000000000`-byte safety minimum, and exited `70`. The guard was not
   weakened. Stable `main` was restored with executor `16384`, planner/reviewer
   `8192`, authenticated tailnet health, model discovery, and `/readyz` all
   returning success. This is a failed capacity validation, not a performance
   benchmark.
+
+- On 2026-07-13, explicit operator approval changed the resident startup floor
+  to `10737418240` bytes (10 GiB). The 65,536-context candidate is retested
+  under that floor; kernel OOM or a lower measured value remains a rejection.
 
 ### OpenCode title-history recovery
 

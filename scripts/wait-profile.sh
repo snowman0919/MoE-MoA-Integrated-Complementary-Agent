@@ -3,7 +3,7 @@ set -Eeuo pipefail
 profile=${1:?resident or judge required}
 timeout=${2:-1200}
 case "$profile" in
-  resident) ports=(8101 8102 8103 8104); minimum=20000000000 ;;
+  resident) ports=(8101 8102 8103 8104); minimum=10737418240 ;;
   judge) ports=(8110); minimum=17179869184 ;;
   *) exit 64 ;;
 esac

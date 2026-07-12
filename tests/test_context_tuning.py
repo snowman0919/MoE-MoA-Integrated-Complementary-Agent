@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dgx_moa.context_tuning import (
+    HEADROOM,
     candidate_vectors,
     next_larger_rejection,
     parse_vllm_capacity,
@@ -8,6 +9,10 @@ from dgx_moa.context_tuning import (
     stable,
     weighted_context_score,
 )
+
+
+def test_resident_headroom_is_10_gib() -> None:
+    assert HEADROOM["resident"] == 10 * 1024**3
 
 
 def result(contexts, *, headroom=30 * 1024**3, failure=None):  # type: ignore[no-untyped-def]
@@ -56,8 +61,8 @@ def test_headroom_and_next_larger_rejection() -> None:
     selected = result({"executor": 24576, "planner": 8192, "reviewer": 8192, "reasoner": 8192})
     rejected = result(
         {"executor": 32768, "planner": 8192, "reviewer": 8192, "reasoner": 8192},
-        headroom=19 * 1024**3,
-        failure="headroom below 20 GiB",
+        headroom=9 * 1024**3,
+        failure="headroom below 10 GiB",
     )
     assert stable(selected)
     assert not stable(rejected)

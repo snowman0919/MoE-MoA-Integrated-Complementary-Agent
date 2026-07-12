@@ -9,7 +9,7 @@ completion validation, and mutually exclusive resident/judge profiles.
 
 - Expose only `dgx-moa-agent` through authenticated OpenAI-compatible HTTP.
 - Bind model servers to loopback and expose only the authenticated gateway on tailnet TCP.
-- Keep at least 20 GB unified-memory headroom.
+- Keep at least 10 GiB unified-memory headroom.
 - Validate models independently before claiming runtime support.
 - Preserve streaming, tool calls, usage, and durable session state.
 - Prevent duplicate failed actions and require review evidence before completion.

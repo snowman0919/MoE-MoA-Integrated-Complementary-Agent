@@ -2,10 +2,10 @@
 set -Eeuo pipefail
 role=${1:?role required}
 case "$role" in
-  executor) port=8101; minimum=20000000000 ;;
-  planner) port=8102; minimum=20000000000 ;;
-  reviewer) port=8103; minimum=20000000000 ;;
-  reasoner) port=8104; minimum=20000000000 ;;
+  executor) port=8101; minimum=10737418240 ;;
+  planner) port=8102; minimum=10737418240 ;;
+  reviewer) port=8103; minimum=10737418240 ;;
+  reasoner) port=8104; minimum=10737418240 ;;
   judge) port=8110; minimum=17179869184 ;;
   *) exit 64 ;;
 esac

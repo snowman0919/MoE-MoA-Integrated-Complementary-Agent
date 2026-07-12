@@ -45,8 +45,8 @@ Updated: 2026-07-12T13:00:43+09:00
 
 - Bounded soak: `26867` seconds (`7h 27m 47s`), 5370 memory samples.
 - Minimum observed `MemAvailable`: `20783300608` bytes; maximum
-  `123198304256` bytes. This is above the unchanged decimal 20 GB requirement;
-  startup uses the stricter 20 GiB gate.
+  `123198304256` bytes. Resident startup uses the operator-approved 10 GiB
+  (`10737418240` bytes) gate as of 2026-07-13.
 - Soak exercised real OpenCode requests, idle intervals, gateway and resident
   restarts, tool continuation, review, explicit block, and trace archival.
 - SQLite state errors: 0. Trace archive errors/degradations: 0.
