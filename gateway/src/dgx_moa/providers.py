@@ -40,15 +40,28 @@ class ModelProvider:
     ) -> AsyncIterator[bytes]:
         body = self.body(role, model, request)
         body["stream"] = True
-        async with (
-            httpx.AsyncClient(timeout=self.timeout) as client,
-            client.stream(
-                "POST", f"{model.base_url.rstrip('/')}/v1/chat/completions", json=body
-            ) as response,
-        ):
+        client = httpx.AsyncClient(timeout=self.timeout)
+        try:
+            response = await client.send(
+                client.build_request(
+                    "POST", f"{model.base_url.rstrip('/')}/v1/chat/completions", json=body
+                ),
+                stream=True,
+            )
             response.raise_for_status()
-            async for chunk in response.aiter_bytes():
-                yield chunk
+        except Exception:
+            await client.aclose()
+            raise
+
+        async def chunks() -> AsyncIterator[bytes]:
+            try:
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+            finally:
+                await response.aclose()
+                await client.aclose()
+
+        return chunks()
 
 
 def response_message(response: dict[str, Any]) -> dict[str, Any]:

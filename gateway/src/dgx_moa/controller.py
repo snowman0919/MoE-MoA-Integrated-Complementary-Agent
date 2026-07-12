@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import uuid
 from typing import Any
 
-from .compression import compress_messages
+from .compression import compress_messages, compress_text
 from .config import Settings
 from .frontier import (
     FrontierResult,
@@ -361,6 +360,8 @@ class Controller:
             if message.get("role") != "tool":
                 continue
             result = normalize_tool_result(message)
+            for key in ("stdout", "stderr"):
+                result[key] = compress_text(result[key], self.settings.limits)
             observation = json.dumps(result, sort_keys=True)
             fact = f"tool:{message.get('tool_call_id', index)} {observation}"
             if fact in state.verified_facts:
@@ -409,9 +410,9 @@ class Controller:
             state.tool_executions = state.tool_executions[-self.settings.limits.max_steps :]
             self.store.event(state.session_id, "tool_execution_recorded", execution)
             state.no_progress_count = 0
-            failed = any(
-                marker in observation.lower() for marker in ("error", "failed", "exception")
-            ) or bool(re.search(r'(?i)(?:"exit_code"\s*:\s*|exit code\s+)[1-9]\d*', observation))
+            failed = result["exit_code"] != 0 or any(
+                marker in result["stderr"].lower() for marker in ("error", "failed", "exception")
+            )
             if failed and call:
                 call_fingerprint = fingerprint(call)
                 if call_fingerprint in state.failed_call_fingerprints:

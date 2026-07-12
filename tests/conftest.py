@@ -92,12 +92,16 @@ class StubProvider:
         self, role: str, model: ModelConfig, request: dict[str, Any]
     ) -> AsyncIterator[bytes]:
         self.calls.append(role)
-        yield b'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":null}]}\n\n'
-        yield (
-            b'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
-            b'"usage":{"total_tokens":1}}\n\n'
-        )
-        yield b"data: [DONE]\n\n"
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield b'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":null}]}\n\n'
+            yield (
+                b'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
+                b'"usage":{"total_tokens":1}}\n\n'
+            )
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
 
 
 @pytest.fixture

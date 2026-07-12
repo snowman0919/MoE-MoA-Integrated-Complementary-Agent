@@ -14,8 +14,8 @@ gateway:
   frontier_enabled: false
   frontier_disabled_reason: host_sandbox_capability_blocked
   limits:
-    max_tool_output_characters: 20000
-    max_retained_observations: 30
+    max_tool_output_characters: 1000
+    max_retained_observations: 12
     max_error_lines: 40
     max_diff_summary_lines: 100
     planner_tokens: 1500

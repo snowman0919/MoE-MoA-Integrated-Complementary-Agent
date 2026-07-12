@@ -197,14 +197,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.app.state.controller.note_no_progress(state)
             prepared = await request.app.state.controller.prepare_executor(state, raw)
             if body.stream:
+                upstream = await request.app.state.provider.stream(
+                    "executor", configured.models["executor"], prepared
+                )
 
                 async def stream_response() -> AsyncIterator[bytes]:
                     completed = False
                     observed = bytearray()
                     try:
-                        async for chunk in request.app.state.provider.stream(
-                            "executor", configured.models["executor"], prepared
-                        ):
+                        async for chunk in upstream:
                             if len(observed) < 1_000_000:
                                 observed.extend(chunk[: 1_000_000 - len(observed)])
                             yield chunk
