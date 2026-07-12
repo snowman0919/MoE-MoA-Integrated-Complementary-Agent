@@ -10,7 +10,7 @@ PORTS = {"executor": 8101, "planner": 8102, "reviewer": 8103, "reasoner": 8104, 
 KV_CACHE = {
     "executor": 2_000_000_000,
     "planner": 1_000_000_000,
-    "reviewer": 6_000_000_000,
+    "reviewer": 2_500_000_000,
     "reasoner": 2_500_000_000,
     "judge": 12_000_000_000,
 }

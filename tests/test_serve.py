@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from dgx_moa.serve import command, role_bool_environment, role_context_length
+from dgx_moa.serve import KV_CACHE, command, role_bool_environment, role_context_length
 
 
 def test_role_boolean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -27,6 +27,10 @@ def test_reasoner_uses_loopback_64k_context(settings, monkeypatch: pytest.Monkey
     arguments = command("reasoner")
     assert arguments[arguments.index("--port") + 1] == "8104"
     assert arguments[arguments.index("--max-model-len") + 1] == "65536"
+
+
+def test_reviewer_uses_calibrated_kv_reservation() -> None:
+    assert KV_CACHE["reviewer"] == 2_500_000_000
 
 
 def test_context_environment_cannot_lower_configured_minimum(
