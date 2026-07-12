@@ -37,6 +37,33 @@ def test_duplicate_failed_call_ignores_call_id(settings, stub_provider: StubProv
     )
 
 
+def test_parallel_tool_results_match_their_calls(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    calls = [
+        {
+            "id": "first",
+            "type": "function",
+            "function": {"name": "read", "arguments": '{"path":"missing"}'},
+        },
+        {
+            "id": "second",
+            "type": "function",
+            "function": {"name": "glob", "arguments": '{"pattern":"*"}'},
+        },
+    ]
+    messages = [
+        {"role": "assistant", "tool_calls": calls},
+        {"role": "tool", "tool_call_id": "first", "content": '{"exit_code":1}'},
+        {"role": "tool", "tool_call_id": "second", "content": '{"exit_code":0}'},
+    ]
+    state = SessionState(session_id="parallel")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    controller._observe(state, messages)
+
+    assert state.failed_call_fingerprints == [fingerprint(calls[0])]
+    assert [execution["tool_name"] for execution in state.tool_executions] == ["read", "glob"]
+
+
 def test_failure_classification() -> None:
     assert classify_failure("No such file or directory") == "NONEXISTENT_PATH"
     assert classify_failure("SyntaxError: invalid syntax") == "SYNTAX_ERROR"

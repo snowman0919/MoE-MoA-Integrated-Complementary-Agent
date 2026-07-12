@@ -291,6 +291,32 @@ def test_malformed_tool_call_returns_bad_gateway(settings, stub_provider: StubPr
         assert response.json()["detail"] == "malformed tool arguments"
 
 
+def test_multiple_tool_calls_are_preserved(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def multiple(role, model, request):  # type: ignore[no-untyped-def]
+        response = await original(role, model, request)
+        if role == "executor":
+            response["choices"][0]["message"]["tool_calls"].append(
+                {
+                    "id": "call-second",
+                    "type": "function",
+                    "function": {"name": "glob", "arguments": '{"pattern":"*"}'},
+                }
+            )
+        return response
+
+    stub_provider.complete = multiple  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
+        )
+        assert response.status_code == 200
+        assert len(response.json()["choices"][0]["message"]["tool_calls"]) == 2
+
+
 def test_timeout_and_http_500_mapping(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 

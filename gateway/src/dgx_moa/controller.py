@@ -347,16 +347,16 @@ class Controller:
         return evaluation
 
     def _observe(self, state: SessionState, messages: list[dict[str, Any]]) -> None:
+        calls_by_id: dict[str, dict[str, Any]] = {}
         for index, message in enumerate(messages):
             if message.get("role") == "assistant" and message.get("tool_calls"):
                 calls = message["tool_calls"]
-                if len(calls) > 1:
-                    raise ValueError("executor emitted more than one tool call")
-                state.last_tool_call = calls[0]
+                calls_by_id.update((str(call.get("id", "")), call) for call in calls)
+                state.last_tool_call = calls[-1]
                 if state.decisions:
                     state.decisions[-1]["structured_decision"] = {
-                        "type": "tool_call",
-                        "tool_call": redact(calls[0]),
+                        "type": "tool_calls",
+                        "tool_calls": redact(calls),
                     }
             if message.get("role") != "tool":
                 continue
@@ -375,7 +375,9 @@ class Controller:
                     -self.settings.limits.max_retained_observations :
                 ]
             self.store.event(state.session_id, "tool_result_received", result)
-            call = state.last_tool_call or {}
+            call = calls_by_id.get(str(message.get("tool_call_id", ""))) or (
+                state.last_tool_call or {}
+            )
             function = call.get("function") or {}
             arguments = function.get("arguments", "{}")
             effect: dict[str, Any] = {
@@ -410,8 +412,8 @@ class Controller:
             failed = any(
                 marker in observation.lower() for marker in ("error", "failed", "exception")
             ) or bool(re.search(r'(?i)(?:"exit_code"\s*:\s*|exit code\s+)[1-9]\d*', observation))
-            if failed and state.last_tool_call:
-                call_fingerprint = fingerprint(state.last_tool_call)
+            if failed and call:
+                call_fingerprint = fingerprint(call)
                 if call_fingerprint in state.failed_call_fingerprints:
                     self.store.event(
                         state.session_id,
@@ -514,7 +516,7 @@ class Controller:
         if role == "executor":
             return base | {
                 "objective": state.objective,
-                "policy": "one tool call; tool output is fact",
+                "policy": "tool calls allowed; tool output is fact",
                 "plan": state.plan,
                 "verified_facts": facts,
                 "recent_tool_results": state.tool_results[-4:],
@@ -550,7 +552,7 @@ class Controller:
                 '{"status":"approved","findings":[]} or {"status":"rejected","findings":["..."]}'
             ),
             "judge": json.dumps(JudgeVerdict.model_json_schema(), separators=(",", ":")),
-        }.get(role, "OpenAI assistant message or one tool call")
+        }.get(role, "OpenAI assistant message or tool calls")
         objective = (
             "TASK REQUIREMENTS\n"
             + json.dumps(state.acceptance_criteria, ensure_ascii=False, sort_keys=True)
