@@ -31,6 +31,11 @@ def role_bool_environment(role: str, name: str, default: bool = False) -> bool:
     return parse_bool(os.getenv(f"DGX_MOA_{role.upper()}_{name}", str(default)))
 
 
+def role_context_length(role: str, configured: int) -> str:
+    override = int(role_environment(role, "MAX_MODEL_LEN", configured))
+    return str(max(configured, override))
+
+
 def command(role: str) -> list[str]:
     settings = load_settings()
     model = settings.models[role]
@@ -45,7 +50,7 @@ def command(role: str) -> list[str]:
         "--served-model-name",
         model.served_name,
         "--max-model-len",
-        role_environment(role, "MAX_MODEL_LEN", model.context_length),
+        role_context_length(role, model.context_length),
         "--max-num-seqs",
         os.getenv("DGX_MOA_MAX_NUM_SEQS", str(model.max_num_seqs)),
         "--kv-cache-memory-bytes",

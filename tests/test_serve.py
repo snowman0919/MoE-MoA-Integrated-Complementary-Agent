@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from dgx_moa.serve import command, role_bool_environment
+from dgx_moa.serve import command, role_bool_environment, role_context_length
 
 
 def test_role_boolean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -27,3 +27,10 @@ def test_reasoner_uses_loopback_64k_context(settings, monkeypatch: pytest.Monkey
     arguments = command("reasoner")
     assert arguments[arguments.index("--port") + 1] == "8104"
     assert arguments[arguments.index("--max-model-len") + 1] == "65536"
+
+
+def test_context_environment_cannot_lower_configured_minimum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DGX_MOA_EXECUTOR_MAX_MODEL_LEN", "16384")
+    assert role_context_length("executor", 65536) == "65536"

@@ -230,7 +230,10 @@ def run_trial(profile: str) -> dict[str, Any]:
     settings = load_settings()
     roles = ("executor", "planner", "reviewer", "reasoner") if profile == "resident" else ("judge",)
     contexts = {
-        role: int(os.getenv(f"DGX_MOA_{role.upper()}_MAX_MODEL_LEN", model.context_length))
+        role: max(
+            model.context_length,
+            int(os.getenv(f"DGX_MOA_{role.upper()}_MAX_MODEL_LEN", model.context_length)),
+        )
         for role, model in settings.models.items()
         if role in roles
     }
