@@ -367,3 +367,17 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `22` output tokens, `finish_reason=stop`, and HTTP `200` without a reset.
 - `uv run pytest -q`: `102 passed`, one upstream Starlette/httpx deprecation
   warning. Ruff format/check and MyPy passed.
+
+### Runtime context calibration
+
+- Executor candidates `24576/750000000`, `20480/600000000`, and
+  `18432/525000000` each had enough measured KV tokens but failed the required
+  three-cycle resident startup criterion when reviewer or planner CUDA context
+  allocation returned OOM. The stable selection remains `16384/500000000`.
+- Runtime `main@d8b4708` was cleanly restarted with the selected baseline. All
+  resident roles became ready with `23362560000` bytes available; executor
+  five-request and near-limit probes passed in `5.863` seconds.
+- OpenCode `1.17.18` continued large-history session
+  `ses_0ab28024effe7ILeEx30RyB72q` against the deployed gateway and returned
+  `RUNTIME_DONE`, `12636` input and `23` output tokens, `finish_reason=stop`,
+  and HTTP `200`.
