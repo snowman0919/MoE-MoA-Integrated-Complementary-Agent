@@ -254,14 +254,14 @@ def test_runtime_report_reads_model_journals(tmp_path, monkeypatch) -> None:  # 
 
     def fake_command(*args: str) -> str:
         if "dgx-moa-reviewer.service" in args and args[0] == "journalctl":
-            return "EngineCore failed: CUDA error: out of memory"
+            return "EngineCore failed to start: CUDA error: out of memory"
         if args[0] == "systemctl":
             return "ActiveState=active\nSubState=running\nNRestarts=0\nExecMainStatus=0"
         return ""
 
     monkeypatch.setattr(runtime_status, "command", fake_command)
     monkeypatch.setattr(runtime_status, "memory_available", lambda: 1)
-    assert report(tmp_path / "missing.db", tmp_path)["model_backend_failures_24h"] == 2
+    assert report(tmp_path / "missing.db", tmp_path)["model_backend_failures_24h"] == 1
 
 
 def test_runtime_minimum_memory(tmp_path) -> None:  # type: ignore[no-untyped-def]

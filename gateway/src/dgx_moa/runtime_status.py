@@ -124,7 +124,7 @@ def report(state_db: Path, project: Path) -> dict[str, Any]:
         ),
         "gateway_5xx_count_24h": len(re.findall(r'HTTP/1\.1" 5\d\d', journal)),
         "model_backend_failures_24h": len(
-            re.findall(r"CUDA error|EngineCore failed|model backend", model_journal, re.I)
+            re.findall(r"EngineCore failed to start|model backend", model_journal, re.I)
         ),
         "sqlite_state_errors": event_count(state_db, "state_persistence_failed"),
         "trace_archive_errors": event_count(state_db, "observability_degraded"),
