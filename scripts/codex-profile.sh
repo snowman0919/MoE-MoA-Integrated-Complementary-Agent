@@ -37,6 +37,12 @@ case $action in
     valid_profile "$profile" || exit 64
     show_status "$profile"
     [[ ${DGX_MOA_CODEX_MODEL:-} ]] || { echo 'DGX_MOA_CODEX_MODEL required' >&2; exit 64; }
-    CODEX_HOME="$root/$profile" codex exec --ephemeral --json --sandbox read-only --ask-for-approval never --model "$DGX_MOA_CODEX_MODEL" 'Reply READY.' ;;
+    output=$(mktemp)
+    trap 'rm -f "$output"' EXIT
+    if ! CODEX_HOME="$root/$profile" codex exec --ephemeral --json --sandbox read-only --model "$DGX_MOA_CODEX_MODEL" 'Reply READY.' | tee "$output"; then
+      echo "profile=$profile test_failed" >&2
+      exit 1
+    fi
+    rg -q '"type":"turn.completed"' "$output" || { echo "profile=$profile test_failed" >&2; exit 1; } ;;
   *) exit 64 ;;
 esac

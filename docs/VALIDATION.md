@@ -476,6 +476,18 @@ below. Heavy-judge validation is appended after its first isolated startup.
   returned to `main`; baseline resident recovery is in progress. This is a
   capacity/safety validation result, not a benchmark.
 
+### Codex multi-agent activation check
+
+- On 2026-07-13, `primary` and `secondary` Codex OAuth profiles were present
+  and the installed CLI was `0.144.1`. The profile test was updated for that
+  CLI by removing its unsupported `--ask-for-approval` argument and requiring
+  a JSON `turn.completed` event.
+- Both real read-only test invocations returned HTTP `401` with
+  `token_invalidated` / revoked refresh-token errors. No task was accepted or
+  changed. Frontier configuration is enabled and retains independent profile
+  workers, but interactive OAuth re-login is required before either agent is
+  usable.
+
 ### OpenCode title-history recovery
 
 - OpenCode can send its automatic title prompt after the work-message history.

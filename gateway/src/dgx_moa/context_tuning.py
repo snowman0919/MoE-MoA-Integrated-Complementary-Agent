@@ -22,7 +22,7 @@ CONTEXT_CANDIDATES = {
     "reasoner": [8192, 12288, 16384, 24576, 32768, 49152, 65536],
     "judge": [8192, 16384, 24576, 32768, 49152, 65536, 98304, 131072],
 }
-HEADROOM = {"resident": 10 * 1024**3, "judge": 16 * 1024**3}
+HEADROOM = {"resident": 5 * 1024**3, "judge": 16 * 1024**3}
 PORTS = {"executor": 8101, "planner": 8102, "reviewer": 8103, "reasoner": 8104, "judge": 8110}
 
 

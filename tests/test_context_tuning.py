@@ -11,8 +11,8 @@ from dgx_moa.context_tuning import (
 )
 
 
-def test_resident_headroom_is_10_gib() -> None:
-    assert HEADROOM["resident"] == 10 * 1024**3
+def test_resident_headroom_is_5_gib() -> None:
+    assert HEADROOM["resident"] == 5 * 1024**3
 
 
 def result(contexts, *, headroom=30 * 1024**3, failure=None):  # type: ignore[no-untyped-def]
@@ -61,8 +61,8 @@ def test_headroom_and_next_larger_rejection() -> None:
     selected = result({"executor": 24576, "planner": 8192, "reviewer": 8192, "reasoner": 8192})
     rejected = result(
         {"executor": 32768, "planner": 8192, "reviewer": 8192, "reasoner": 8192},
-        headroom=9 * 1024**3,
-        failure="headroom below 10 GiB",
+        headroom=4 * 1024**3,
+        failure="headroom below 5 GiB",
     )
     assert stable(selected)
     assert not stable(rejected)
