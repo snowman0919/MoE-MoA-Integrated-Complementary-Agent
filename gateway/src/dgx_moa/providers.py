@@ -67,8 +67,6 @@ def parse_json_content(response: dict[str, Any]) -> dict[str, Any]:
 def validate_assistant_response(response: dict[str, Any]) -> None:
     message = response_message(response)
     calls = message.get("tool_calls") or []
-    if len(calls) > 1:
-        raise ValueError("executor emitted more than one tool call")
     for call in calls:
         if not call.get("id"):
             raise ValueError("tool call ID missing")

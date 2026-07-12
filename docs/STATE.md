@@ -7,12 +7,11 @@ Updated: 2026-07-12T13:00:43+09:00
 - `main` is the reviewed production target and stable recursive control plane.
 - `dev` is the integration branch; recursive experiments must use isolated
   `auto/<layer>/<proposal-id>` worktrees created from `dev`.
-- The validation deployment is `/home/kotori9/dgx-moa-agent` on `dev`. Its live
-  gateway process loaded controller commit `8156678c4974ac7517bf59c97b7b6058fa0cc209`;
-  later review-boundary and reporting changes are in the pulled worktree and will
-  load at the next controlled deployment restart.
-- Draft PR #2 is the existing `dev` -> `main` promotion path. No merge or main
-  deployment has occurred.
+- The production runtime worktree is `/home/kotori9/dgx-moa-agent` on `main`.
+  Development stays in `/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent`
+  on `dev`.
+- Promotion remains `dev` -> reviewed PR -> `main` fast-forward pull -> controlled
+  gateway restart. Runtime services never execute from the development worktree.
 
 ## Runtime
 
