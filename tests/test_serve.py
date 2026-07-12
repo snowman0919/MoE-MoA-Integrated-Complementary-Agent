@@ -30,7 +30,13 @@ def test_reasoner_uses_loopback_64k_context(settings, monkeypatch: pytest.Monkey
 
 
 def test_reviewer_uses_calibrated_kv_reservation() -> None:
-    assert KV_CACHE["reviewer"] == 2_500_000_000
+    assert KV_CACHE == {
+        "executor": 1_700_000_000,
+        "planner": 600_000_000,
+        "reviewer": 2_300_000_000,
+        "reasoner": 2_450_000_000,
+        "judge": 12_000_000_000,
+    }
 
 
 def test_context_environment_cannot_lower_configured_minimum(
