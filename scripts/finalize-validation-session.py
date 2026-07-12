@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 from dgx_moa.config import load_settings
-from dgx_moa.state import Phase, StateStore, now
+from dgx_moa.state import RESOLUTION_STATUSES, SUSPECTED_LAYERS, Phase, StateStore, now
 from dgx_moa.trace import TraceRecorder
 
 
@@ -38,6 +38,12 @@ def main() -> None:
     )
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--evidence", action="append", default=[])
+    parser.add_argument("--failure-class")
+    parser.add_argument("--suspected-layer", choices=sorted(SUSPECTED_LAYERS), default="unknown")
+    parser.add_argument(
+        "--resolution-status", choices=sorted(RESOLUTION_STATUSES), default="unknown"
+    )
+    parser.add_argument("--root-cause", default="unclassified validation failure")
     parser.add_argument("--state-db", type=Path, required=True)
     parser.add_argument("--trace-dir", type=Path, required=True)
     parser.add_argument("--config", type=Path, default=Path("config/models.yaml"))
@@ -70,6 +76,19 @@ def main() -> None:
     ]
     existing = {item.get("evaluation_id") for item in state.evaluations}
     state.evaluations.extend(item for item in evaluations if item["evaluation_id"] not in existing)
+    if args.failure_class:
+        failure = {
+            "failure_class": args.failure_class,
+            "suspected_layer": args.suspected_layer,
+            "resolution_status": args.resolution_status,
+            "root_cause_summary": args.root_cause,
+            "resolution_evidence": [],
+            "resolved_at": None,
+            "resolving_commit": None,
+            "related_proposal_ids": [],
+        }
+        if failure not in state.failures:
+            state.failures.append(failure)
     state.training_eligibility = "excluded"
     store.event(args.session_id, "session_ended", {"status": args.status})
     store.save(state)

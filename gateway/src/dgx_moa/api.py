@@ -260,7 +260,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "next_phase": state.phase,
                 }
             if body.metadata.get("executor_complete") and "reviewer" in configured.models:
-                await request.app.state.controller.review(state, str(response))
+                choice = response.get("choices", [{}])[0]
+                review_observation = json.dumps(
+                    {
+                        "assistant_message": choice.get("message", {}),
+                        "finish_reason": choice.get("finish_reason"),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )[:4000]
+                await request.app.state.controller.review(state, review_observation)
                 request.app.state.controller.apply_metadata(state, body.metadata)
             finish_reason = response.get("choices", [{}])[0].get("finish_reason")
             request.app.state.store.event(
