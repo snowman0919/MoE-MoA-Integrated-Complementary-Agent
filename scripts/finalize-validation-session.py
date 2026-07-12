@@ -44,6 +44,8 @@ def main() -> None:
         "--resolution-status", choices=sorted(RESOLUTION_STATUSES), default="unknown"
     )
     parser.add_argument("--root-cause", default="unclassified validation failure")
+    parser.add_argument("--resolution-evidence", action="append", default=[])
+    parser.add_argument("--resolving-commit")
     parser.add_argument("--state-db", type=Path, required=True)
     parser.add_argument("--trace-dir", type=Path, required=True)
     parser.add_argument("--config", type=Path, default=Path("config/models.yaml"))
@@ -82,9 +84,9 @@ def main() -> None:
             "suspected_layer": args.suspected_layer,
             "resolution_status": args.resolution_status,
             "root_cause_summary": args.root_cause,
-            "resolution_evidence": [],
-            "resolved_at": None,
-            "resolving_commit": None,
+            "resolution_evidence": args.resolution_evidence,
+            "resolved_at": now() if args.resolution_status == "resolved" else None,
+            "resolving_commit": args.resolving_commit,
             "related_proposal_ids": [],
         }
         if failure not in state.failures:
