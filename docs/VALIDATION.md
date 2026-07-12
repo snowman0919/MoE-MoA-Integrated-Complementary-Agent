@@ -345,5 +345,9 @@ below. Heavy-judge validation is appended after its first isolated startup.
 
 - Gateway regression tests preserve two valid executor tool calls and attribute
   each tool result to its matching call ID.
+- OpenCode `1.17.18` session `ses_0ab465307ffetVHiBQf40HnwFn` completed against
+  the updated gateway with two `read` calls in one assistant message. Gateway
+  state recorded one structured decision containing both calls; OpenCode exited
+  `0`, fixture validation exited `0`, and finalization exited `0`.
 - `uv run pytest -q`: `98 passed`, one upstream Starlette/httpx deprecation
   warning. Ruff format/check and MyPy passed.
