@@ -1,83 +1,71 @@
 # State
 
-Updated: 2026-07-12T00:24:57+09:00
+Updated: 2026-07-12T13:00:43+09:00
 
-## Verified Host
+## Branch and deployment
 
-- Host: `kodex9-thinkstation` (`kodex9-thinkstation.tailda041a.ts.net`)
-- Platform: Lenovo ThinkStation PGX, NVIDIA GB10, compute capability `12.1`
-- OS: Ubuntu `24.04.4 LTS`; kernel `6.17.0-1021-nvidia`; `aarch64`
-- CPU: 20 cores; 10 Cortex-X925 and 10 Cortex-A725
-- Unified memory: `128452014080` bytes total; `121050546176` bytes available
-- Swap: `17179865088` bytes total; `14845390848` bytes free
-- Driver: `580.159.03`; CUDA runtime/SDK: `13.0` / `13.0.3`
-- Root/home filesystem: ext4; `320534515712` bytes available
-- Docker: `29.2.1`, Compose `v5.0.2`, GPU smoke test passed
-- Tailscale: `1.98.4`, logged in, backend `Running`, direct tailnet TCP configured
-- Tailscale IP: `100.125.239.72`
-- Host vLLM: `0.22.1`; PyTorch `2.11.0`; Transformers `5.8.1`
-- Hugging Face CLI: `1.17.0`; authenticated as `snowman0919`
-- Existing caches: `~106G` Hugging Face, `~65G` under `~/models`
-- Existing production-model target: absent
-- User systemd: available but degraded; passwordless sudo unavailable
-- Ports `8101`, `8102`, `8103`, `8110`, and `9000`: free
+- `main` is the reviewed production target and stable recursive control plane.
+- `dev` is the integration branch; recursive experiments must use isolated
+  `auto/<layer>/<proposal-id>` worktrees created from `dev`.
+- The validation deployment is `/home/kotori9/dgx-moa-agent` on `dev`. Its live
+  gateway process loaded controller commit `8156678c4974ac7517bf59c97b7b6058fa0cc209`;
+  later review-boundary and reporting changes are in the pulled worktree and will
+  load at the next controlled deployment restart.
+- Draft PR #2 is the existing `dev` -> `main` promotion path. No merge or main
+  deployment has occurred.
 
-## Safety Findings
+## Runtime
 
-- NVIDIA-SMI reports unified GPU memory as `Not Supported`; use host available memory.
-- Existing Docker containers and model caches are unrelated and remain untouched.
-- Local image `docker/model-runner:latest-vllm-cuda` is llama.cpp `b9592`, not vLLM.
-- Disk allows cautious downloads, but four large checkpoints may exceed safe capacity.
+- Gateway: authenticated direct tailnet TCP at `100.125.239.72:9000`.
+- Model endpoints: loopback-only executor `8101`, planner `8102`, reviewer `8103`.
+- Resident target and profile are ready; executor, planner, and reviewer are active.
+- Context limits remain executor `16384`, planner `8192`, reviewer `8192`.
+- KV reservations, model selection, unit topology, and memory gates are unchanged.
+- A configurable 10-second prestart memory-settle delay prevents reloads from
+  racing unified-memory reclamation. The final resident restoration passed.
+- Local OpenCode `1.17.18` is active in tmux session `dgx-opencode`, working in
+  the `dev` repository with provider `dgx-moa/dgx-moa-agent`.
 
-## Model Progress
+## Validation baseline
 
-- Executor `RedHatAI/Qwen3-Coder-Next-NVFP4` revision
-  `27a8f16f463b9a13c91c332c40cf93e09717347e`: downloaded, structurally
-  verified, loaded, completion passed, tool call passed, stopped cleanly.
-- Reviewer `CohereLabs/North-Mini-Code-1.0-w4a16` revision
-  `1e55f4aa327aba4c0b7a1da0d0f24626d3af5c90`: downloaded, structurally
-  verified, loaded, strict JSON review passed, stopped cleanly.
-- Planner `cyankiwi/Nemotron-Cascade-2-30B-A3B-AWQ-4bit` revision
-  `49cee6bbed2edd4e2d305d948ac443714a2ab242`: downloaded, structurally
-  verified, loaded, strict JSON plan passed, stopped cleanly.
-- Global four-model conservative storage preflight: unsafe; required
-  `341791321430` bytes with `320384012288` bytes free.
-- Reviewer and planner remain individually safe before download.
-- Heavy judge `nvidia/Mistral-Medium-3.5-128B-NVFP4`, revision
-  `b8c66d2098edd8c9c26bde2b2ff41b5967e111ae`, exact size `95259207898` bytes;
-  a physical structured-verdict transaction passed, then resident was restored.
-- Selected resident topology: executor + planner + reviewer, all resident.
-- Resident context limits: `16384`, `8192`, `8192`; `max_num_seqs=1`.
-- Resident KV reservations: `500000000`, `750000000`, `750000000` bytes.
-- Measured resident available-memory headroom: `25148334080` bytes.
-- Total downloaded model directory usage: `87764024323` bytes.
-- Remaining filesystem capacity: `230613487616` bytes.
+- Automated suite: `96 passed`; Ruff format/check, MyPy, shell syntax, and
+  systemd unit verification pass.
+- Fixed synthetic benchmark: `10/10`, success rate `1.0`, routes `3/6/1`
+  fast/standard/escalation, tool calls per success `1.2`.
+- Required real OpenCode staging: 10 sessions covering read `3`, small edit `3`,
+  multi-file `2`, failure recovery `1`, bounded engineering `1`.
+- Required-session outcomes: 6 completed and 4 explicitly failed on bounded
+  timeout/validation. One earlier calibration failure is retained.
+- Staging trajectories: 11/11 complete; review/blocked validation trajectories:
+  2/2 complete; applicable mandatory trace completeness is `100%`.
+- Updated reviewer boundary passed a full in-process API run against the real
+  planner, executor, and reviewer: HTTP 200, structured rejection, phase
+  `correction`, completion blocked.
 
-## Deployment
+## Stability evidence
 
-- User service `dgx-moa-gateway.service`: active; gateway on tailnet bind
-  `100.125.239.72:9000`.
-- Model ports `8101`, `8102`, `8103`: loopback-only and ready.
-- Gateway health, readiness, non-streaming, streaming, real tool call, and
-  SQLite restart persistence passed.
-- Physical OpenCode `1.17.18` now has a frozen bounded one-file completion
-  baseline: tool call, continuation, final `stop`, fixture update, and exit `0`.
-- Docker Compose gateway image built as
-  `sha256:2a1f97eb4c54c6b5644621a3ace80ac15b9259410dcbb06cf5702b869fc3742b`.
-- Tailscale Serve and Funnel remain disabled by design.
+- Bounded soak: `26867` seconds (`7h 27m 47s`), 5370 memory samples.
+- Minimum observed `MemAvailable`: `20783300608` bytes; maximum
+  `123198304256` bytes. This is above the unchanged decimal 20 GB requirement;
+  startup uses the stricter 20 GiB gate.
+- Soak exercised real OpenCode requests, idle intervals, gateway and resident
+  restarts, tool continuation, review, explicit block, and trace archival.
+- SQLite state errors: 0. Trace archive errors/degradations: 0.
+- This is not a 24-hour stability result; 24-hour observation remains pending.
 
-## Current Phase
+## Heavy Judge and Frontier
 
-Phase 1 physical OpenCode completion is verified. The prior noninteractive
-failure was a harness defect: the fixture was removed or not selected with
-`--dir`, so OpenCode did not load the isolated provider configuration. Phase 8
-frontier foundation remains on `dev`; its bounded candidate comparison is
-`not_recommended` and requires human approval for any future merge.
+- Heavy Judge remains validated with its unchanged model, `4000000000`-byte KV
+  reservation, 8192 context, structured accept verdict, and resident restoration.
+  It was not rerun because Judge code/configuration did not change.
+- Frontier Codex is connected but disabled:
+  `DGX_MOA_FRONTIER_ENABLED=false`, reason
+  `host_sandbox_capability_blocked`. No AppArmor or sandbox weakening occurred.
 
-## Development Branch Evidence
+## Known limitations
 
-- `dev` adds repository-aware session state, route reasons, normalized
-  tool observations, role-specific bounded contexts, JSONL decision-point traces,
-  deterministic fixture benchmarking, and guarded improvement/dataset/adapter tools.
-- The benchmark baseline is synthetic; it does not replace resident runtime or
-  physical remote OpenCode validation.
+- Multi-file and bounded-engineering staging tasks exceeded the 180-second
+  harness bound; their failed traces are retained for later analysis.
+- The 7.5-hour soak includes classified startup rollback incidents before the
+  memory-settle fix; the final resident state is healthy with no active loop.
+- Promotion still requires human review of PR #2 and a later main deployment.

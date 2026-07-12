@@ -236,3 +236,103 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - Blocker: `Serve is not enabled on your tailnet.`
 - Enable URL: `https://login.tailscale.com/f/serve?node=ngaf9Ptc8f11CNTRL`.
 - Funnel was never enabled or used.
+
+## Production Baseline Stabilization — 2026-07-12
+
+- Starting `dev` commit: `5760c6bab0c48766441e6245e13401b69569bfb8`.
+- Logging semantics v2 adds strict runtime provenance, durable session
+  trajectories, linked agent decisions/tool executions/evaluations, typed failure
+  attribution and resolution, explicit training eligibility, date-partitioned
+  JSONL, SQLite trace indexing, and primary/secondary persistence policy tests.
+- Legacy v1 remains readable and classified `legacy`; it is excluded from
+  completeness claims and automatic training export.
+- Final automated run before documentation: `96 passed`, one upstream
+  Starlette/httpx deprecation warning. Ruff format/check and MyPy passed.
+- Fixed synthetic benchmark passed `10/10`, task success `1.0`, routes
+  fast/standard/escalation `3/6/1`, tool calls per success `1.2`. Its ten v2
+  traces audited `10/10`, `100%`, with no missing fields or lifecycle events.
+- Improvement mining excluded the benchmark's synthetic injected failures and
+  returned `no_actionable_failure`; no candidate cycle was started.
+
+### Real OpenCode staging
+
+- Local OpenCode `1.17.18` ran against the direct tailnet gateway using disposable
+  Git fixtures. The required ten-session distribution was read/repository analysis
+  `3`, small edit `3`, multi-file `2`, failure recovery `1`, and bounded engineering
+  `1`.
+- Required-session outcomes were 6 completed and 4 failed. The failed read,
+  two multi-file tasks, and bounded-engineering task reached the explicit
+  180-second harness bound and/or failed fixture validation; none was deleted or
+  reclassified as successful.
+- An earlier calibration task completed in OpenCode but failed harness finalization
+  because OpenCode supplied its own `ses_*` gateway ID. The failure was retained;
+  the harness now discovers that real ID from OpenCode JSONL. A stream-finalizer
+  race and bytes-on-timeout path were also fixed and regression-tested.
+- Validation partitions audited 11/11 staging/calibration sessions and 2/2
+  review/blocked sessions at `100%` applicable mandatory completeness, including
+  completed, failed, and blocked terminal records.
+- Controlled no-progress session `blocked-soak-1783826633` returned HTTP
+  `200`, `200`, then `502`; it was finalized `blocked` with expected
+  `NO_PROGRESS` attribution so it cannot pollute active mining.
+
+### Review and runtime behavior
+
+- A real reviewer flow first returned HTTP `502` because North followed raw task
+  or observation text (`READY`) rather than the structured verdict schema. The
+  diagnostic failure was preserved with context attribution and resolving commit.
+- The fixed prompt removes raw objectives from reviewer/judge contexts and ends
+  with a literal JSON-only output boundary. Exact real-model replay returned
+  `{"status":"approved","findings":[]}`. A full updated FastAPI path using the
+  real planner, executor, and reviewer returned HTTP `200`, a structured rejected
+  verdict, phase `correction`, and blocked completion. Its trace audited `1/1`,
+  `100%`.
+- Controlled resident restart exposed reviewer CUDA initialization failures and a
+  planner readiness sample below the unchanged 20 GiB startup gate. Rollback was
+  preserved. A configurable 10-second unified-memory settle delay was added;
+  clean prestart measured `123138887680` bytes and the final resident restoration
+  succeeded without changing models, KV, contexts, units, or headroom criteria.
+- Gateway was failure-restarted to load validation code; SQLite continuation state
+  remained available. The final resident target/profile is ready and gateway
+  `/readyz` returns `200`.
+
+### Bounded soak
+
+- Memory monitor window: epoch `1783799804` through `1783826671`, duration
+  `26867` seconds (`7h 27m 47s`), `5370` samples.
+- Minimum observed `MemAvailable`: `20783300608` bytes; maximum:
+  `123198304256` bytes.
+- The window covered actual OpenCode work, idle periods, gateway restart,
+  resident restart and rollback/recovery, real tool continuation, review flow,
+  one explicit block, and trace archive reads/writes.
+- SQLite state errors: `0`; trace archive errors: `0`; observability degradation:
+  `0`. Startup/backend and profile rollback incidents remain visible in journald
+  and runtime status rather than being erased.
+- This is a bounded soak, not a 24-hour stability claim. The 24-hour observation
+  state is pending.
+
+### Deferred physical checks
+
+- Heavy Judge was not reloaded: Judge code, model, KV reservation, context, and
+  profile architecture did not change; the prior physical structured-verdict and
+  resident-restoration evidence remains authoritative.
+- Pocket4 physical completion was not rerun: OpenAI serialization and tool-result
+  continuation behavior did not change; the prior OpenCode `1.17.18` completion
+  baseline remains authoritative.
+- Frontier remains connected but disabled for the recorded host bubblewrap
+  capability failure. No AppArmor, networking, sandbox, or OAuth rotation change
+  was made.
+
+### Final command pass
+
+- `uv run pytest -q`: `96 passed`, one upstream deprecation warning.
+- `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy`,
+  `systemd-analyze --user verify systemd/*`, and shell syntax checks: exit `0`.
+- `scripts/validate-opencode-loop.sh`: session `opencode-loop-1783828819`,
+  tool continuation and streaming passed.
+- `scripts/smoke-test.sh`: session `opencode-loop-1783828822`, tool continuation
+  and streaming passed.
+- Final fixed benchmark: `10/10`, success `1.0`, routes `3/6/1`, tool calls per
+  success `1.2`, time per success `0.0420419` seconds; trace audit `10/10`, `100%`.
+- Final direct tailnet `/healthz`, `/readyz`, and authenticated `/v1/models`
+  passed; only `dgx-moa-agent` is exposed. Resident target/profile and all three
+  role services are ready. tmux `dgx-opencode` remains active on OpenCode `1.17.18`.

@@ -7,7 +7,8 @@ Updated: 2026-07-12
 - Phase 2: fixed ten-task benchmark and baseline artifacts; synthetic run passes 10/10.
 - Phase 3: deterministic fast, standard, and escalation routing is controller-enforced.
 - Phase 4: role-specific bounded contexts and observation compression are tested.
-- Phase 6: versioned JSONL traces, SQLite event index, redaction, and export are tested.
+- Phase 6: v2 decision trajectories, SQLite trace index, redaction, completeness
+  audit, explicit training eligibility, and legacy-v1 exclusion are tested.
 - Phase 7: one isolated controller candidate was evaluated as `not_recommended`; no merge,
   promotion, or further recursive cycle occurred. Dataset build produced 10 Silver samples.
 - Phase 8 foundation: OAuth profile separation, locking, Sol/High JSONL command, worktree
@@ -21,8 +22,8 @@ Updated: 2026-07-12
 
 - Phase 8: both OAuth profiles are authenticated. Primary returned its explicit usage limit;
   secondary produced a valid Sol/High structured result from an isolated worktree but was blocked
-  before inspection by local bubblewrap loopback setup. Repairing that sandbox is required before
-  a completed frontier candidate can be evaluated.
+  before inspection by local bubblewrap loopback setup. Frontier remains connected but disabled;
+  a minimal sandbox capability repair is required before candidate evaluation, not production use.
 
 No item in this file authorizes deployment, merge, adapter promotion, external upload, paid job,
 or security/systemd/network change.

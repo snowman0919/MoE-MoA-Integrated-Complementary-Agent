@@ -31,8 +31,9 @@ scripts/stop-judge.sh
 ```
 
 Profile changes use systemd targets and `data/run/profile.lock`, stop the old
-profile first, check readiness and memory headroom, then record state. Failed
-judge starts roll back to resident.
+profile first, wait `DGX_MOA_MEMORY_SETTLE_SECONDS` for unified-memory reclaim,
+check readiness and memory headroom, then record state. Failed starts roll back
+to the previous resident profile.
 
 ```bash
 systemctl --user start dgx-moa-resident.target
