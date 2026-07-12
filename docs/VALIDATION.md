@@ -381,3 +381,23 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `ses_0ab28024effe7ILeEx30RyB72q` against the deployed gateway and returned
   `RUNTIME_DONE`, `12636` input and `23` output tokens, `finish_reason=stop`,
   and HTTP `200`.
+
+### OpenCode title-request isolation
+
+- OpenCode session `ses_0aab526deffeBz5wMjmBm3MPmd` first sent the automatic
+  `Generate a title for this conversation` request with the work session ID.
+  Gateway state consequently retained that title request as the objective, and
+  later work requests stopped after title-oriented tool loops despite HTTP `200`
+  and `finish_reason=stop`.
+- Title requests now use an internal `<session-id>:title` state key while the
+  client continues to receive its original session ID. The API regression sends
+  a title request followed by `Create AGENTS.md` with the same client session ID
+  and verifies their objectives remain isolated.
+- `uv run pytest`: `103 passed`, one upstream Starlette/httpx deprecation
+  warning. `uv run ruff check gateway/src tests` and `git diff --check` passed.
+- A temporary loopback staging gateway using the resident executor received a
+  title request and then `Create AGENTS.md` with client session
+  `physical-title-isolation`. Its SQLite state recorded
+  `physical-title-isolation:title` with the title objective and
+  `physical-title-isolation` with `Create AGENTS.md`; the title response stopped
+  normally. The staging process was then stopped and its temporary state removed.
