@@ -336,3 +336,7 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - Final direct tailnet `/healthz`, `/readyz`, and authenticated `/v1/models`
   passed; only `dgx-moa-agent` is exposed. Resident target/profile and all three
   role services are ready. tmux `dgx-opencode` remains active on OpenCode `1.17.18`.
+- Post-finalizer regression: `opencode-loop-1783829101` and
+  `opencode-loop-1783829104` both passed continuation and streaming; their main
+  and stream sessions finalized completed. The full July 12 validation partition
+  then audited `10/10`, `100%`, with zero missing fields or events.
