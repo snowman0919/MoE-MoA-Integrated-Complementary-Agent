@@ -416,3 +416,12 @@ below. Heavy-judge validation is appended after its first isolated startup.
   requirement; planner then started successfully and `/readyz` returned `200`.
 - An authenticated Hermes-compatible OpenAI streaming request without a custom
   session header returned content chunks, `finish_reason=stop`, and `[DONE]`.
+
+### OpenCode title-history recovery
+
+- OpenCode can send its automatic title prompt after the work-message history.
+  The former single-user-message detection stored that title as the work-session
+  objective, causing the model to complete a title and exit its loop.
+- Production sequence `title-history-1783851856` confirmed that a trailing title
+  prompt now uses only `:title` state while `Create AGENTS.md` remains the work
+  objective. All resident roles and `/readyz` were active after deployment.
