@@ -24,6 +24,18 @@ from .state import StateStore
 from .trace import TraceRecorder
 
 
+def is_session_title_request(messages: list[dict[str, Any]]) -> bool:
+    """Keep OpenCode's automatic title request out of the work-session state."""
+    user_messages = [
+        str(message.get("content", "")).strip()
+        for message in messages
+        if message.get("role") == "user"
+    ]
+    return len(user_messages) == 1 and user_messages[0].lower().startswith(
+        "generate a title for this conversation"
+    )
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     configured = settings or get_settings()
     auth = auth_dependency(configured)
@@ -185,10 +197,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "dirty_status": x_dirty_state or "unknown",
             }
         task_id = str(raw["metadata"].get("task_id", ""))
+        state_session_id = (
+            f"{session_id}:title" if is_session_title_request(raw["messages"]) else session_id
+        )
         try:
-            state = request.app.state.controller.session(session_id, raw["messages"])
+            state = request.app.state.controller.session(state_session_id, raw["messages"])
             request.app.state.store.event(
-                session_id,
+                state_session_id,
                 "request_received",
                 {"stream": body.stream, "task_id": task_id},
             )
@@ -229,10 +244,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 "next_phase": state.phase,
                             }
                         request.app.state.store.event(
-                            session_id, "assistant_stream_finished", {"finish_reasons": finishes}
+                            state_session_id,
+                            "assistant_stream_finished",
+                            {"finish_reasons": finishes},
                         )
                         request.app.state.store.event(
-                            session_id,
+                            state_session_id,
                             "stream_completed" if completed else "stream_aborted",
                             {},
                         )
@@ -274,7 +291,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request.app.state.controller.apply_metadata(state, body.metadata)
             finish_reason = response.get("choices", [{}])[0].get("finish_reason")
             request.app.state.store.event(
-                session_id,
+                state_session_id,
                 "assistant_stream_finished",
                 {"finish_reasons": [finish_reason] if finish_reason else []},
             )

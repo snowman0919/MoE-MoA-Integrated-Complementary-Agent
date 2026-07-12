@@ -132,6 +132,38 @@ def test_tool_result_continuation_uses_same_session(settings, stub_provider: Stu
         ]
 
 
+def test_title_request_does_not_set_the_work_session_objective(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    headers = {"Authorization": "Bearer test-secret", "X-Session-ID": "shared-session"}
+    with client_with_stub(settings, stub_provider) as client:
+        title = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [
+                    {"role": "user", "content": "Generate a title for this conversation:\n"}
+                ],
+            },
+        )
+        work = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "Create AGENTS.md"}],
+            },
+        )
+
+        assert title.status_code == 200
+        assert work.status_code == 200
+        title_state = client.app.state.store.get("shared-session:title")
+        work_state = client.app.state.store.get("shared-session")
+        assert title_state and title_state.objective.startswith("Generate a title")
+        assert work_state and work_state.objective == "Create AGENTS.md"
+
+
 def test_auth_enabled_invalid_key_returns_401(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     with client_with_stub(settings, stub_provider) as client:
         response = client.get("/v1/models", headers={"Authorization": "Bearer definitely-wrong"})
