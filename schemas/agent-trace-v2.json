@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-trace-v2",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "session_id",
+    "runtime_channel",
+    "trace_origin",
+    "workspace_identity",
+    "controller_commit",
+    "selected_route",
+    "agent_decisions",
+    "tool_executions",
+    "evaluations",
+    "failures",
+    "final_status",
+    "completion_evidence",
+    "training_eligibility",
+    "observability_status"
+  ],
+  "properties": {
+    "schema_version": {"const": "agent-trace-v2"},
+    "session_id": {"type": "string", "minLength": 1},
+    "runtime_channel": {"enum": ["main", "dev", "candidate"]},
+    "trace_origin": {
+      "enum": ["production", "benchmark", "validation", "diagnostic", "candidate_evaluation"]
+    },
+    "final_status": {"enum": ["completed", "failed", "blocked", "cancelled", "degraded"]},
+    "training_eligibility": {"enum": ["eligible", "local_only", "requires_review", "excluded"]},
+    "observability_status": {"enum": ["ok", "degraded"]},
+    "observability_degraded": {"type": "boolean"},
+    "workspace_identity": {"type": "object"},
+    "controller_commit": {"type": "string"},
+    "selected_route": {"type": "object"},
+    "agent_decisions": {"type": "array", "items": {"type": "object"}},
+    "tool_executions": {"type": "array", "items": {"type": "object"}},
+    "evaluations": {"type": "array", "items": {"type": "object"}},
+    "failures": {"type": "array", "items": {"type": "object"}},
+    "completion_evidence": {"type": "object"}
+  },
+  "additionalProperties": true
+}

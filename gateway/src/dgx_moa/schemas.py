@@ -33,7 +33,7 @@ class ChatRequest(BaseModel):
 
 class ProfileResponse(BaseModel):
     active_profile: Literal["resident", "judge", "stopped"]
-    status: Literal["ready", "transitioning", "failed", "stopped"]
+    status: Literal["ready", "transitioning", "failed", "degraded", "stopped"]
     updated_at: str
     from_profile: str | None = Field(default=None, alias="from")
     to: str | None = None

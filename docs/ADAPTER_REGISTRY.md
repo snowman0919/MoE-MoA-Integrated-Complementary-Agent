@@ -1,0 +1,9 @@
+# Adapter registry
+
+`scripts/register-adapter.sh` validates candidate metadata then writes it below
+`~/models/adapters/<role>/`. Status `approved` is rejected: promotion and current
+symlink changes are manual-only. Mistral heavy judge is never a registry target.
+
+`scripts/evaluate-adapter.sh METADATA BASELINE CANDIDATE OUTPUT` compares fixed
+benchmark artifacts only for `candidate`, `testing`, or `canary` metadata. It
+never starts a model, changes a symlink, or promotes an adapter.

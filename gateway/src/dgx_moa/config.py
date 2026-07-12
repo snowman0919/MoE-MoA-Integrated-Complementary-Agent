@@ -68,10 +68,16 @@ class Settings(BaseModel):
     admin_api_enabled: bool = False
     state_db: Path = Path("data/state/gateway.db")
     run_dir: Path = Path("data/run")
+    runtime_channel: str = "dev"
+    trace_origin: str = "validation"
+    controller_commit: str = "unknown"
+    vllm_version: str = "unknown"
+    frontier_enabled: bool = False
+    frontier_disabled_reason: str = "host_sandbox_capability_blocked"
     models: dict[str, ModelConfig] = Field(default_factory=dict)
     limits: Limits = Field(default_factory=Limits)
 
-    @field_validator("auth_enabled", "admin_api_enabled", mode="before")
+    @field_validator("auth_enabled", "admin_api_enabled", "frontier_enabled", mode="before")
     @classmethod
     def validate_boolean(cls, value: Any) -> bool:
         return parse_bool(value)
@@ -109,6 +115,25 @@ def load_settings(path: str | Path | None = None) -> Settings:
     gateway["bind_port"] = os.getenv("DGX_MOA_BIND_PORT", gateway.get("bind_port", 9000))
     gateway["state_db"] = os.getenv(
         "DGX_MOA_STATE_DB", gateway.get("state_db", "data/state/gateway.db")
+    )
+    gateway["runtime_channel"] = os.getenv(
+        "DGX_MOA_RUNTIME_CHANNEL", gateway.get("runtime_channel", "dev")
+    )
+    gateway["trace_origin"] = os.getenv(
+        "DGX_MOA_TRACE_ORIGIN", gateway.get("trace_origin", "validation")
+    )
+    gateway["controller_commit"] = os.getenv(
+        "DGX_MOA_CONTROLLER_COMMIT", gateway.get("controller_commit", "unknown")
+    )
+    gateway["vllm_version"] = os.getenv(
+        "DGX_MOA_VLLM_VERSION", gateway.get("vllm_version", "unknown")
+    )
+    gateway["frontier_enabled"] = os.getenv(
+        "DGX_MOA_FRONTIER_ENABLED", gateway.get("frontier_enabled", False)
+    )
+    gateway["frontier_disabled_reason"] = os.getenv(
+        "DGX_MOA_FRONTIER_DISABLED_REASON",
+        gateway.get("frontier_disabled_reason", "host_sandbox_capability_blocked"),
     )
     return Settings.model_validate(gateway)
 

@@ -53,7 +53,7 @@ class ProfileManager:
 
     def failed(self, target: str, error: str) -> dict[str, str]:
         state = self.current()
-        state.update({"status": "failed", "to": target, "error": error[:500]})
+        state.update({"status": "degraded", "to": target, "error": error[:500]})
         return self._write(state)
 
     @staticmethod

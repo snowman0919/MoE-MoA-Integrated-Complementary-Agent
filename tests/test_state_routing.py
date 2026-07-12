@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dgx_moa.routing import ChangeRisk, heavy_eligible, needs_planner, needs_reviewer
+from dgx_moa.routing import ChangeRisk, heavy_eligible, needs_planner, needs_reviewer, select_route
 from dgx_moa.state import Phase, SessionState, StateStore
 from dgx_moa.validation import completion_ready, missing_evidence
 
@@ -29,3 +29,11 @@ def test_deterministic_routing_and_completion() -> None:
     assert completion_ready(state)
     state.heavy_switch_count = 1
     assert not heavy_eligible(state, ChangeRisk(explicit=True))
+
+
+def test_route_selection_has_machine_reasons() -> None:
+    assert select_route(
+        {"target_clear": True, "expected_files": 1, "validation_command": "pytest"}
+    ) == ("fast", ["clear_limited_validated_change"])
+    route, reasons = select_route({"authentication": True})
+    assert route == "escalation" and reasons == ["authentication"]

@@ -16,6 +16,7 @@ def test_required_systemd_units_exist() -> None:
         "dgx-moa-resident.target",
         "dgx-moa-judge.target",
         "dgx-moa.target",
+        "dgx-moa-codex-frontier@.service",
     }
     assert required == {path.name for path in SYSTEMD.iterdir()}
 
@@ -35,10 +36,11 @@ def test_targets_and_services_are_mutually_exclusive() -> None:
 
 
 def test_unit_environment_and_hardening() -> None:
-    for path in SYSTEMD.glob("*.service"):
+    for path in SYSTEMD.glob("dgx-moa-*.service"):
         unit = path.read_text()
-        assert "EnvironmentFile=/home/kotori9/dgx-moa-agent/.env" in unit
-        assert "EnvironmentFile=-/home/kotori9/dgx-moa-agent/.env.local" in unit
+        if "codex-frontier" not in path.name:
+            assert "EnvironmentFile=/home/kotori9/dgx-moa-agent/.env" in unit
+            assert "EnvironmentFile=-/home/kotori9/dgx-moa-agent/.env.local" in unit
         assert "NoNewPrivileges=true" in unit
         assert "PrivateTmp=true" in unit
         assert "ProtectSystem=strict" in unit
@@ -58,3 +60,10 @@ def test_profile_switch_uses_systemd_and_lock() -> None:
     assert "scripts/stop-model.sh" not in script
     assert "pkill" not in script
     assert "rollback" in script
+
+
+def test_frontier_unit_has_no_repository_credentials() -> None:
+    unit = (SYSTEMD / "dgx-moa-codex-frontier@.service").read_text()
+    assert "EnvironmentFile=" not in unit
+    assert "CODEX_HOME" not in unit
+    assert "ExecStart=" in unit and "%i" in unit

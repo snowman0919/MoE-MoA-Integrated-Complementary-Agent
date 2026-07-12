@@ -26,11 +26,7 @@ PORTS = {"executor": 8101, "planner": 8102, "reviewer": 8103, "judge": 8110}
 
 
 def weighted_context_score(contexts: dict[str, int]) -> float:
-    return (
-        0.65 * contexts["executor"]
-        + 0.20 * contexts["planner"]
-        + 0.15 * contexts["reviewer"]
-    )
+    return 0.65 * contexts["executor"] + 0.20 * contexts["planner"] + 0.15 * contexts["reviewer"]
 
 
 def candidate_vectors(profile: str, native_limits: dict[str, int]) -> list[dict[str, int]]:
@@ -235,9 +231,7 @@ def run_trial(profile: str) -> dict[str, Any]:
     started = int(time.time())
     available_samples = []
     for _ in range(3):
-        subprocess.run(
-            ["systemctl", "--user", "restart", f"dgx-moa-{profile}.target"], check=True
-        )
+        subprocess.run(["systemctl", "--user", "restart", f"dgx-moa-{profile}.target"], check=True)
         subprocess.run(["scripts/wait-profile.sh", profile, "3600"], check=True)
         available_samples.append(mem_available())
     result: dict[str, Any] = {

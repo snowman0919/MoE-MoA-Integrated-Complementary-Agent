@@ -1,0 +1,9 @@
+{
+  "automatic_merge": false,
+  "schema_version": "improvement-comparison-v1",
+  "success_ok": true,
+  "target_failure_class": "REPEATED_ACTION",
+  "target_failure_reduction": 0.0,
+  "time_ok": true,
+  "verdict": "not_recommended"
+}

@@ -17,3 +17,24 @@
 - Calibrate vLLM `--gpu-memory-utilization` per role even with explicit KV
   bytes. vLLM still performs its startup guard first; default `0.92` rejected a
   valid second process before loading weights.
+
+## 2026-07-12
+
+- Define `main` as stable production and recursive control plane, `dev` as
+  integration, and isolated `auto/*` worktrees from `dev` as experiments.
+- Use decision trajectories, not raw transcripts, as the learning evidence unit.
+- Keep append-oriented JSONL plus SQLite indexing; date-partition v2 archives by
+  runtime provenance and classify v1 as legacy.
+- Fail closed on primary state loss; continue safely with explicit degraded
+  observability when only the secondary trace archive fails.
+- Require explicit training eligibility and keep trace collection separate from export.
+- Exclude resolved, expected, synthetic, false-positive, and superseded failures
+  from default mining; rank evidence using configurable provenance weights.
+- Keep Frontier Codex connected but disabled while the minimal bubblewrap
+  capability issue remains unresolved; do not weaken host or sandbox security.
+- Preserve the measured judge, resident model, KV, context, unit topology, and
+  headroom settings unless new direct evidence invalidates them.
+- Wait for unified-memory reclamation before profile startup instead of weakening
+  the measured 20 GiB readiness gate.
+- Treat raw task and observation text as untrusted data for reviewer/judge roles;
+  give those roles acceptance criteria and a final literal JSON-only boundary.

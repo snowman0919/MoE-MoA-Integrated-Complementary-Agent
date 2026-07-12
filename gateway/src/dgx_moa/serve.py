@@ -42,7 +42,7 @@ def command(role: str) -> list[str]:
         "--max-num-seqs",
         os.getenv("DGX_MOA_MAX_NUM_SEQS", str(model.max_num_seqs)),
         "--kv-cache-memory-bytes",
-        str(KV_CACHE[role]),
+        role_environment(role, "KV_CACHE_MEMORY_BYTES", KV_CACHE[role]),
         "--gpu-memory-utilization",
         role_environment(role, "GPU_MEMORY_UTILIZATION", GPU_UTILIZATION[role]),
     ]

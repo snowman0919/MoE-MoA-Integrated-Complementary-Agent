@@ -1,0 +1,9 @@
+base_model: RedHatAI/Qwen3-Coder-Next-NVFP4
+strict: false
+adapter: lora
+sequence_len: 4096
+micro_batch_size: 1
+gradient_accumulation_steps: 16
+learning_rate: 0.0001
+num_epochs: 1
+output_dir: /workspace/adapters/executor-candidate

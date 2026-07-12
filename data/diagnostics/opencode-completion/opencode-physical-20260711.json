@@ -1,0 +1,22 @@
+{
+  "captured_at": "2026-07-11T15:04:52Z",
+  "target": "Pocket4 via SSH alias win",
+  "opencode_version": "1.17.18",
+  "command_shape": "opencode.exe run --format json --auto --dir <isolated-fixture> --model <provider/model>",
+  "gateway_a": {
+    "provider": "dgx-moa/dgx-moa-agent",
+    "session_id": "ses_0ae4ffea4ffeO2mXNJ50qluuYE",
+    "events": ["tool_use:write", "step_finish:tool-calls", "text:WORKER_DONE", "step_finish:stop"],
+    "completion_file": "DONE",
+    "exit_code": 0
+  },
+  "loopback_fake_b": {
+    "provider": "fake/fake-agent",
+    "base_url": "http://127.0.0.1:18765/v1",
+    "session_id": "ses_0ae4a48a2ffeA135MNC9knZbSn",
+    "events": ["tool_use:write", "step_finish:tool-calls", "text:WORKER_DONE", "step_finish:stop"],
+    "completion_file": "DONE",
+    "exit_code": 0
+  },
+  "verdict": "The same OpenCode tool-call, continuation, final-stop, and exit lifecycle passed against both gateway A and loopback fake B. No protocol or OpenCode completion-lifecycle defect was reproduced."
+}

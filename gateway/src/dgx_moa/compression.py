@@ -24,6 +24,7 @@ def compress_text(text: str, limits: Limits) -> str:
 
 def compress_messages(messages: list[dict[str, Any]], limits: Limits) -> list[dict[str, Any]]:
     compressed: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for message in messages[-limits.max_retained_observations :]:
         item = redact(message.copy())
         if item.get("role") == "tool" and isinstance(item.get("content"), str):
@@ -32,5 +33,9 @@ def compress_messages(messages: list[dict[str, Any]], limits: Limits) -> list[di
                 json.loads(content)
             except ValueError:
                 item["content"] = compress_text(content, limits)
+        fingerprint = json.dumps(item, sort_keys=True, default=str)
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
         compressed.append(item)
     return compressed

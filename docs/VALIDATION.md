@@ -90,9 +90,253 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - Final `scripts/verify-models.sh executor reviewer planner`: all verified.
 - Final incomplete-file scan under model root: zero files.
 
+## Development Branch Validation
+
+- Frontier foundation on `dev`: `codex --version` returned `codex-cli 0.144.1`.
+  `codex exec --help` confirmed structured `--json`, `--output-schema`, and
+  `workspace-write` sandbox support; App Server is experimental, so the bounded
+  JSONL runner is selected. Official model documentation identifies GPT-5.6 Sol as
+  `gpt-5.6-sol`; installed Codex configuration confirms
+  `model_reasoning_effort = "high"`. Account entitlement remains unverified until
+  a separate OAuth profile runs its smoke test.
+  `scripts/codex-profile.sh status` reported `primary` and `secondary` as
+  `authenticated=no`, `state=not_configured`; no OAuth profile directory or
+  credential was created. Frontier provider, profile, worktree, immutable-baseline,
+  human-approval, and cycle-limit tests passed locally; full suite was
+  `78 passed` with one third-party TestClient warning.
+- Primary OAuth smoke on `2026-07-11`: Codex started a `gpt-5.6-sol` High request
+  from isolated `frontier/phase8-smoke` worktree. CLI returned its explicit usage
+  limit before work began; this is `FRONTIER_USAGE_LIMIT`, not a profile failover.
+- Secondary OAuth smoke first reached Codex schema validation and exposed an invalid
+  `const`-only property in `frontier-result-v1.json`; corrected schemas now include
+  required property types before retrying.
+- Secondary OAuth retry authenticated `gpt-5.6-sol` with High reasoning and returned
+  valid `frontier-result-v1` JSON from `frontier/phase8-smoke`, with no changed files.
+  Status was `blocked`: Codex sandbox bubblewrap could not configure loopback
+  (`RTM_NEWADDR: Operation not permitted`) before task inspection. Recorded as
+  `FRONTIER_VALIDATION_FAILURE`; no profile rotation, merge, or deployment occurred.
+- `uv run pytest -q`: exit `0`; `74 passed`, one third-party TestClient warning.
+- `uv run ruff check gateway/src tests`: exit `0`.
+- `uv run mypy`: exit `0`; `23` source files.
+- `scripts/run-mvp-benchmark.sh`: exit `0`; `10/10` synthetic fixture tasks
+  passed. Input/output token metrics are explicitly unknown (`null`); fixture
+  repository identities are recorded in emitted traces.
+- `scripts/validate-opencode-synthetic.sh`: OpenCode-compatible HTTP client
+  covers read-only, one-file, multi-file, failure/recovery, reviewer correction,
+  gateway restart persistence, tool-call identity, usage, and streaming. Physical
+  remote OpenCode remains separately unverified.
+- `scripts/mine-improvements.sh`, `scripts/evaluate-improvement.sh`,
+  `scripts/build-training-dataset.sh`, and `scripts/export-agentic-traces.sh`:
+  exit `0`.
+- Re-run on `2026-07-11`: mining produced `IMP-2026-0001`; candidate comparison
+  remained `not_recommended` with automatic merge false. Dataset build emitted
+  10 Silver executor-SFT samples with train/validation/test split `3/5/2`.
+- `systemd-analyze --user verify systemd/*`: exit `0`.
+- Read-only user-service check on `2026-07-11`: gateway `/healthz` returned
+  `200` on configured tailnet address `100.125.239.72:9000`; loopback is not
+  configured for this gateway. `/readyz` returned `503` because profile state
+  was `failed` after judge startup hit the 16 GiB headroom gate (`exit 70`).
+  Rollback completed without intervention: executor, reviewer, and planner
+  returned ready; gateway `/readyz` returned `200`; available memory was
+  `23037333504` bytes.
+- Real gateway read-only request, session `runtime-readonly-1783700774`:
+  HTTP `200`, response `READY`, usage `356` prompt / `2` completion / `358`
+  total tokens.
+- Real tool continuation, session `runtime-tool-1783700822`: first HTTP `200`
+  response preserved tool ID `chatcmpl-tool-a8fafd00dce4b44d` for
+  `read_file("/tmp/dgx-moa-validation.txt")`, usage `678` prompt / `35`
+  completion / `713` total. A normalized synthetic tool observation continued
+  in the same session with HTTP `200`, no additional tool call, and
+  `{"output":"validation fixture"}`; usage `629` prompt / `7` completion /
+  `636` total tokens.
+- `scripts/validate-opencode-loop.sh` against recovered resident services:
+  exit `0`; session `opencode-loop-1783701252`; authenticated discovery,
+  tool-result continuation, and streaming passed.
+- Repeated resident OpenCode-compatible validation on `2026-07-11`:
+  `scripts/validate-opencode-loop.sh` exit `0`; session
+  `opencode-loop-1783736024`; tool-result continuation and streaming passed.
+  `MemAvailable` immediately after was `22945952 kB`.
+- Physical remote OpenCode read-only validation on `2026-07-11`: SSH alias `win`
+  reached Windows host `Pocket4`, OpenCode `1.17.18`, and tailnet gateway
+  `100.125.239.72:9000`. A temporary read-only project config allowed only
+  `read`, `glob`, and `grep`; OpenCode emitted a real tool event and returned
+  `README_PRESENT`. Gateway credential was piped over SSH only and neither stored
+  nor logged. A one-file test was not accepted: its noninteractive OpenCode child
+  did not exit, so the test-created PID and temporary fixture were removed.
+- Bounded one-file rerun invoked the Windows `opencode.exe` directly rather than
+  its npm shim. It changed the isolated fixture (`changed=true`) but retained a
+  worker process and provided no final completion within the bounded run; that PID
+  and fixture were removed. This is edit-path evidence only, not a completed
+  one-file scenario.
+- OpenCode `serve`/`run --attach` diagnostic: a loopback-only server reached
+  readiness on Pocket4, but the attach client exited without submitting the task
+  or changing the fixture. Server, temporary config, and fixture were removed.
+- Consolidated `scripts/smoke-test.sh`: exit `0`; session
+  `opencode-loop-1783728287`; tool continuation and streaming passed. The
+  streaming check captures output before matching `[DONE]`, avoiding a
+  `pipefail` false failure from `grep -q` closing its input early.
+- Final read-only resident check: `/readyz` returned `200` with executor,
+  planner, and reviewer ready; `MemAvailable` was `23184121856` bytes.
+- Heavy Judge maintenance on `2026-07-11`: Mistral judge loaded in `603.49`
+  seconds with the unchanged `4000000000`-byte KV reservation. vLLM measured
+  `22192` KV tokens and `2.71x` concurrency at `8192` context; profile
+  readiness had `18105536512` available bytes, above the unchanged 16 GiB
+  safety gate. A strict `JudgeVerdict` smoke passed with `accept`, `low` risk,
+  `completion_allowed=true`, zero resolved disagreements, and zero mandatory
+  changes. Judge then stopped and resident was restored; final gateway
+  `/readyz` returned `200` with `23834812` KiB available. No model, unit,
+  headroom, resident-context, or trace setting was changed.
+- Raw SSE protocol capture on `2026-07-11`: real resident gateway normal,
+  tool-call, and tool-result continuation streams each ended `data: [DONE]`
+  followed by HTTP EOF. Their final finish reasons were respectively `stop`,
+  `tool_calls`, and `stop`; no stale `tool_calls` finish reason or post-DONE
+  usage was observed. Artifact: `data/diagnostics/opencode-completion/`
+  `opencode-sse-48850860-c3a6-4a69-a5b2-9234f0758417.json`.
+- Physical OpenCode completion differential on `2026-07-11`: direct Windows
+  `opencode.exe` `1.17.18` invocation with an explicit isolated `--dir` completed
+  the one-file scenario against both the resident gateway and a temporary
+  loopback-only fake server. Both runs emitted `write`, `tool-calls`, continuation
+  text `WORKER_DONE`, final `stop`, created `COMPLETION.txt` with `DONE`, and
+  exited `0`. The fake B server was stopped and all temporary processes and
+  fixtures were removed. This does not reproduce a gateway protocol or OpenCode
+  completion-lifecycle defect. Artifact:
+  `data/diagnostics/opencode-completion/opencode-physical-20260711.json`.
+- Completion lifecycle re-validation on `2026-07-12`: after deploy fast-forward
+  and resident restoration, raw gateway normal, tool-call, and continuation SSE
+  streams recorded `stop`, `tool_calls`, and `stop` respectively, each followed
+  by `[DONE]`, HTTP EOF, and a matching `stream_completed` gateway timestamp.
+  Artifact: `data/diagnostics/opencode-completion/`
+  `opencode-sse-d656ffdc-ca38-4340-b9eb-d2b79445ae4f.json`.
+- Bounded physical OpenCode acceptance on `2026-07-12`: Pocket4 OpenCode
+  `1.17.18` ran direct `opencode.exe` with explicit isolated `--dir`; PowerShell
+  parent PID `3544` started run-owned OpenCode PID `35868`. It emitted
+  `tool-calls`, then continuation final `stop` in session
+  `ses_0ae328bf5ffeCrrWy7hFprQjIN`, wrote `COMPLETION.txt` as `DONE`, and
+  exited `0`. Child snapshots observed `opencode.exe` and `conhost.exe` during
+  the run; after final SSE the run-owned child list was empty. The fixture and
+  all run-owned processes were removed. Artifact:
+  `data/diagnostics/opencode-completion/`
+  `opencode-physical-59a5d08a-e1d0-4b56-aacf-53801cb86471.json`.
+- Final live loop checks on `2026-07-12`: `scripts/validate-opencode-loop.sh`
+  passed session `opencode-loop-1783783547`; `scripts/smoke-test.sh` passed
+  session `opencode-loop-1783783550`; gateway `/readyz` returned `200` with
+  executor, planner, and reviewer ready.
+- Post-resolution fixed ten-task benchmark: `scripts/run-mvp-benchmark.sh`
+  passed `10/10`, task success rate `1.0`, route distribution `3/6/1`
+  fast/standard/escalation, tool calls per successful task `1.2`, and time per
+  successful task `0.0311096` seconds. Its trace inspection found `10` JSONL
+  files with `24` indexed `failure_classified` events. The bounded improvement
+  evaluation again selected `REPEATED_ACTION` (one fixture) but returned
+  `not_recommended`, `0.0%` reduction, and automatic merge `false`; no candidate
+  was applied.
+
 ## Tailscale
 
 - Attempted `tailscale serve --bg http://127.0.0.1:9000`.
 - Blocker: `Serve is not enabled on your tailnet.`
 - Enable URL: `https://login.tailscale.com/f/serve?node=ngaf9Ptc8f11CNTRL`.
 - Funnel was never enabled or used.
+
+## Production Baseline Stabilization — 2026-07-12
+
+- Starting `dev` commit: `5760c6bab0c48766441e6245e13401b69569bfb8`.
+- Logging semantics v2 adds strict runtime provenance, durable session
+  trajectories, linked agent decisions/tool executions/evaluations, typed failure
+  attribution and resolution, explicit training eligibility, date-partitioned
+  JSONL, SQLite trace indexing, and primary/secondary persistence policy tests.
+- Legacy v1 remains readable and classified `legacy`; it is excluded from
+  completeness claims and automatic training export.
+- Final automated run before documentation: `96 passed`, one upstream
+  Starlette/httpx deprecation warning. Ruff format/check and MyPy passed.
+- Fixed synthetic benchmark passed `10/10`, task success `1.0`, routes
+  fast/standard/escalation `3/6/1`, tool calls per success `1.2`. Its ten v2
+  traces audited `10/10`, `100%`, with no missing fields or lifecycle events.
+- Improvement mining excluded the benchmark's synthetic injected failures and
+  returned `no_actionable_failure`; no candidate cycle was started.
+
+### Real OpenCode staging
+
+- Local OpenCode `1.17.18` ran against the direct tailnet gateway using disposable
+  Git fixtures. The required ten-session distribution was read/repository analysis
+  `3`, small edit `3`, multi-file `2`, failure recovery `1`, and bounded engineering
+  `1`.
+- Required-session outcomes were 6 completed and 4 failed. The failed read,
+  two multi-file tasks, and bounded-engineering task reached the explicit
+  180-second harness bound and/or failed fixture validation; none was deleted or
+  reclassified as successful.
+- An earlier calibration task completed in OpenCode but failed harness finalization
+  because OpenCode supplied its own `ses_*` gateway ID. The failure was retained;
+  the harness now discovers that real ID from OpenCode JSONL. A stream-finalizer
+  race and bytes-on-timeout path were also fixed and regression-tested.
+- Validation partitions audited 11/11 staging/calibration sessions and 2/2
+  review/blocked sessions at `100%` applicable mandatory completeness, including
+  completed, failed, and blocked terminal records.
+- Controlled no-progress session `blocked-soak-1783826633` returned HTTP
+  `200`, `200`, then `502`; it was finalized `blocked` with expected
+  `NO_PROGRESS` attribution so it cannot pollute active mining.
+
+### Review and runtime behavior
+
+- A real reviewer flow first returned HTTP `502` because North followed raw task
+  or observation text (`READY`) rather than the structured verdict schema. The
+  diagnostic failure was preserved with context attribution and resolving commit.
+- The fixed prompt removes raw objectives from reviewer/judge contexts and ends
+  with a literal JSON-only output boundary. Exact real-model replay returned
+  `{"status":"approved","findings":[]}`. A full updated FastAPI path using the
+  real planner, executor, and reviewer returned HTTP `200`, a structured rejected
+  verdict, phase `correction`, and blocked completion. Its trace audited `1/1`,
+  `100%`.
+- Controlled resident restart exposed reviewer CUDA initialization failures and a
+  planner readiness sample below the unchanged 20 GiB startup gate. Rollback was
+  preserved. A configurable 10-second unified-memory settle delay was added;
+  clean prestart measured `123138887680` bytes and the final resident restoration
+  succeeded without changing models, KV, contexts, units, or headroom criteria.
+- Gateway was failure-restarted to load validation code; SQLite continuation state
+  remained available. The final resident target/profile is ready and gateway
+  `/readyz` returns `200`.
+
+### Bounded soak
+
+- Memory monitor window: epoch `1783799804` through `1783826671`, duration
+  `26867` seconds (`7h 27m 47s`), `5370` samples.
+- Minimum observed `MemAvailable`: `20783300608` bytes; maximum:
+  `123198304256` bytes.
+- The window covered actual OpenCode work, idle periods, gateway restart,
+  resident restart and rollback/recovery, real tool continuation, review flow,
+  one explicit block, and trace archive reads/writes.
+- SQLite state errors: `0`; trace archive errors: `0`; observability degradation:
+  `0`. Startup/backend and profile rollback incidents remain visible in journald
+  and runtime status rather than being erased.
+- This is a bounded soak, not a 24-hour stability claim. The 24-hour observation
+  state is pending.
+
+### Deferred physical checks
+
+- Heavy Judge was not reloaded: Judge code, model, KV reservation, context, and
+  profile architecture did not change; the prior physical structured-verdict and
+  resident-restoration evidence remains authoritative.
+- Pocket4 physical completion was not rerun: OpenAI serialization and tool-result
+  continuation behavior did not change; the prior OpenCode `1.17.18` completion
+  baseline remains authoritative.
+- Frontier remains connected but disabled for the recorded host bubblewrap
+  capability failure. No AppArmor, networking, sandbox, or OAuth rotation change
+  was made.
+
+### Final command pass
+
+- `uv run pytest -q`: `96 passed`, one upstream deprecation warning.
+- `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy`,
+  `systemd-analyze --user verify systemd/*`, and shell syntax checks: exit `0`.
+- `scripts/validate-opencode-loop.sh`: session `opencode-loop-1783828819`,
+  tool continuation and streaming passed.
+- `scripts/smoke-test.sh`: session `opencode-loop-1783828822`, tool continuation
+  and streaming passed.
+- Final fixed benchmark: `10/10`, success `1.0`, routes `3/6/1`, tool calls per
+  success `1.2`, time per success `0.0420419` seconds; trace audit `10/10`, `100%`.
+- Final direct tailnet `/healthz`, `/readyz`, and authenticated `/v1/models`
+  passed; only `dgx-moa-agent` is exposed. Resident target/profile and all three
+  role services are ready. tmux `dgx-opencode` remains active on OpenCode `1.17.18`.
+- Post-finalizer regression: `opencode-loop-1783829101` and
+  `opencode-loop-1783829104` both passed continuation and streaming; their main
+  and stream sessions finalized completed. The full July 12 validation partition
+  then audited `10/10`, `100%`, with zero missing fields or events.

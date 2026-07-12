@@ -12,6 +12,7 @@ fi
 target=$requested
 [[ $target != restore ]] || target=resident
 runtime_dir=${XDG_RUNTIME_DIR:-/run/user/$UID}/dgx-moa
+memory_settle_seconds=${DGX_MOA_MEMORY_SETTLE_SECONDS:-10}
 mkdir -p "$runtime_dir" data/run
 exec 9>"$runtime_dir/profile.lock"
 flock -n 9 || { echo 'profile switch already active' >&2; exit 75; }
@@ -32,6 +33,7 @@ rollback() {
   uv run python -m dgx_moa.profiles failed "$target" >/dev/null
   systemctl --user stop "dgx-moa-$target.target" || true
   scripts/verify-profile-stopped.sh "$target" || true
+  sleep "$memory_settle_seconds"
   if [[ $current == resident || $target == judge ]]; then
     if systemctl --user start dgx-moa-resident.target && scripts/wait-profile.sh resident; then
       uv run python -m dgx_moa.profiles ready resident >/dev/null
@@ -54,6 +56,7 @@ else
   systemctl --user stop dgx-moa-judge.target || rollback $?
   scripts/verify-profile-stopped.sh judge || rollback $?
 fi
+sleep "$memory_settle_seconds"
 available=$(awk '/MemAvailable:/ {print $2 * 1024}' /proc/meminfo)
 echo "profile=$target prestart_available_bytes=$available"
 systemctl --user start "dgx-moa-$target.target" || rollback $?

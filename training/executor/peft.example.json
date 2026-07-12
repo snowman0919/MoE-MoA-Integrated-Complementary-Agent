@@ -1,0 +1,1 @@
+{"peft_type":"LORA","r":16,"lora_alpha":32,"lora_dropout":0.05,"target_modules":"VERIFY_ON_EXTERNAL_HARDWARE"}

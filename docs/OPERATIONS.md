@@ -9,8 +9,17 @@ journalctl --user -u dgx-moa-gateway.service -f
 scripts/healthcheck.sh
 ```
 
-Gateway binds only `127.0.0.1:9000`. Model servers bind only ports `8101`,
-`8102`, `8103`, and `8110` on loopback.
+Gateway binds the configured tailnet address on port `9000`. Model servers bind
+only ports `8101`, `8102`, `8103`, and `8110` on loopback.
+
+```bash
+scripts/runtime-status.sh
+scripts/audit-trace-completeness.sh data/traces
+```
+
+Runtime status reports service state/restarts, recent gateway/model failures,
+SQLite session counts, profile rollback events, and measured current memory.
+Unknown measurements remain explicit; they are not inferred.
 
 ## Profiles
 
@@ -22,8 +31,9 @@ scripts/stop-judge.sh
 ```
 
 Profile changes use systemd targets and `data/run/profile.lock`, stop the old
-profile first, check readiness and memory headroom, then record state. Failed
-judge starts roll back to resident.
+profile first, wait `DGX_MOA_MEMORY_SETTLE_SECONDS` for unified-memory reclaim,
+check readiness and memory headroom, then record state. Failed starts roll back
+to the previous resident profile.
 
 ```bash
 systemctl --user start dgx-moa-resident.target
@@ -47,6 +57,15 @@ Tailscale Serve or Funnel; tailnet ACLs and bearer auth remain administrator-con
 Set `DGX_MOA_API_KEY` on the client, then copy
 `config/opencode.example.json` into the OpenCode configuration directory.
 Configuration is identical on macOS and Linux; only environment setup differs.
+
+For a persistent local client UI, start OpenCode in a named tmux session:
+
+```bash
+tmux new-session -d -s dgx-opencode -c "$PWD" "$HOME/.opencode/bin/opencode"
+tmux attach -t dgx-opencode
+```
+
+Keep the API key in the process environment; do not write it into project config.
 
 With auth enabled:
 
@@ -73,3 +92,8 @@ Downloads are pinned, resumable, lock-protected, and never remove unrelated cach
 To use a prepared executor LoRA, set `models.executor.lora_adapter` to its local
 path. Omit it for the validated original post-trained checkpoint. This project
 does not train adapters.
+
+Production deployment is a fast-forward/pull of reviewed `main` into
+`/home/kotori9/dgx-moa-agent`, followed by proportional checks. `dev` may be
+deployed there only as an explicitly identified validation runtime; its traces
+must use `runtime_channel=dev` and must never be labeled production.

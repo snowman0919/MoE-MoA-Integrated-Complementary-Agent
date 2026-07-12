@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "training-example-v1",
+  "type": "object",
+  "required": ["schema_version", "type", "quality_tier", "split", "prompt", "chosen"],
+  "properties": {"schema_version": {"const": "training-example-v1"}, "quality_tier": {"enum": ["Gold", "Silver", "Bronze", "Negative", "Unknown"]}, "split": {"enum": ["train", "validation", "test"]}}
+}
