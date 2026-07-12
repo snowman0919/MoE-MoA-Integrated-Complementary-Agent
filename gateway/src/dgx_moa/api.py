@@ -24,16 +24,14 @@ from .state import StateStore
 from .trace import TraceRecorder
 
 
-def is_session_title_request(messages: list[dict[str, Any]]) -> bool:
-    """Keep OpenCode's automatic title request out of the work-session state."""
-    user_messages = [
-        str(message.get("content", "")).strip()
-        for message in messages
-        if message.get("role") == "user"
-    ]
-    return len(user_messages) == 1 and user_messages[0].lower().startswith(
-        "generate a title for this conversation"
-    )
+def title_request_index(messages: list[dict[str, Any]]) -> int | None:
+    """Return OpenCode's trailing automatic title prompt, if present."""
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get("role") == "user":
+            content = str(message.get("content", "")).strip().lower()
+            return index if content.startswith("generate a title for this conversation") else None
+    return None
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -197,9 +195,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "dirty_status": x_dirty_state or "unknown",
             }
         task_id = str(raw["metadata"].get("task_id", ""))
-        state_session_id = (
-            f"{session_id}:title" if is_session_title_request(raw["messages"]) else session_id
-        )
+        title_index = title_request_index(raw["messages"])
+        if title_index is not None:
+            state_session_id = f"{session_id}:title"
+            raw["messages"] = [raw["messages"][title_index]]
+        else:
+            state_session_id = session_id
         try:
             state = request.app.state.controller.session(state_session_id, raw["messages"])
             request.app.state.store.event(

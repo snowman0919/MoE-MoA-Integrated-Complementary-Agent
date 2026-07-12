@@ -169,6 +169,17 @@ class Controller:
         if state is None:
             state = SessionState(session_id=session_id)
             self.store.event(session_id, "session_started", {})
+        if state.objective.lower().startswith("generate a title for this conversation"):
+            for message in messages:
+                if message.get("role") != "user":
+                    continue
+                objective = str(message.get("content", ""))
+                if objective.strip().lower().startswith("generate a title for this conversation"):
+                    continue
+                state = SessionState(session_id=session_id, objective=objective)
+                messages[:] = [message]
+                self.store.event(session_id, "title_state_recovered", {})
+                break
         if not state.objective:
             state.objective = next(
                 (
