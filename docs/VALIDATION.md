@@ -406,3 +406,13 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `production-title-isolation-1783844401` recorded the title objective only in
   its `:title` state and `Create AGENTS.md` in the work state; both requests
   returned HTTP `200`.
+
+### Resident guard recovery and Hermes compatibility
+
+- On 2026-07-12, planner completed model startup but its post-start guard
+  rejected `21415972864` available bytes against a `21474836480`-byte threshold.
+  The planner stopped and OpenCode received gateway `502` responses. PR `#8`
+  aligned role and resident guards with the documented `20000000000`-byte
+  requirement; planner then started successfully and `/readyz` returned `200`.
+- An authenticated Hermes-compatible OpenAI streaming request without a custom
+  session header returned content chunks, `finish_reason=stop`, and `[DONE]`.
