@@ -19,6 +19,8 @@ Updated: 2026-07-13T12:52:29+09:00
 - Model endpoints: loopback-only executor `8101`, planner `8102`, reviewer `8103`.
 - Resident target and profile are ready; executor, planner, and reviewer are active.
 - Context limits are executor, planner, and reviewer `65536`.
+- Final streaming responses are buffered through the reviewer before their
+  original SSE chunks are released; tool-call streams bypass review.
 - KV reservations, model selection, unit topology, and memory gates are unchanged.
 - A configurable 10-second prestart memory-settle delay prevents reloads from
   racing unified-memory reclamation. The final resident restoration passed.

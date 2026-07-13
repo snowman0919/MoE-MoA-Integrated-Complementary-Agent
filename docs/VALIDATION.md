@@ -526,3 +526,13 @@ below. Heavy-judge validation is appended after its first isolated startup.
   request returned HTTP `200`, `finish_reason=stop`, advertised `65536`, and
   persisted the latest context-analysis request as its objective. Its measured
   decision roles were planner then executor.
+- The first streaming-review candidate invoked reviewer EngineCore PID `1459380`
+  but passed raw SSE as evidence; the reviewer exhausted its structured response
+  path and recorded `review_failed: ValueError`. The executor stream still ended
+  normally. Passing only the reconstructed assistant content removed that noise.
+- The corrected physical streaming request returned HTTP `200`, preserved
+  `STREAM_REVIEW_OK` and `[DONE]` in its 1,484-byte SSE response, and recorded
+  planner, executor, then reviewer decisions followed by `review_completed` and
+  `stream_completed`. The reviewer rejected this synthetic response with the
+  route's three missing-metadata findings; this validates invocation and protocol
+  completion, not review quality.
