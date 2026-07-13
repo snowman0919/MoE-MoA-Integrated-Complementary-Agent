@@ -416,6 +416,91 @@ below. Heavy-judge validation is appended after its first isolated startup.
   requirement; planner then started successfully and `/readyz` returned `200`.
 - An authenticated Hermes-compatible OpenAI streaming request without a custom
   session header returned content chunks, `finish_reason=stop`, and `[DONE]`.
+- Live read-only routing audit on 2026-07-12: no configured or locally present
+  model matched `VibeThinker` or `Hermes`. The resident 21,562 MiB GPU process
+  was the planner, `cyankiwi/Nemotron-Cascade-2-30B-A3B-AWQ-4bit`; the executor
+  and reviewer used 47,009 MiB and 19,753 MiB respectively. Since the current
+  resident startup, 34 planner requests returned HTTP 200, while 3 executor
+  requests returned HTTP 200 and 30 returned HTTP 400. Every inspected session
+  selected the standard route and recorded planner then executor; reviewer had
+  no chat-completion request. The executor failures measured 15,385 prompt
+  tokens plus the configured 1,000 output tokens, exceeding its 16,384-token
+  limit. This is an operational observation, not a benchmark.
+
+### VibeThinker reasoner integration preparation
+
+- On 2026-07-12, the development worktree downloaded and verified
+  `WeiboAI/VibeThinker-3B@77bd2cced09193c8b9a59a32bd8577bbd1f3e01c` at
+  `/home/kotori9/models/dgx-moa/reasoner`: two safetensors shards,
+  `6188996125` bytes, valid tokenizer/chat template, and no incomplete files.
+  This is a model-integrity check only; the production services were not
+  restarted and no resident 65,536-context readiness or capacity result is
+  claimed.
+
+### 65,536-context resident candidate rejection
+
+- On 2026-07-12, candidate `9929115` ran from the production runtime worktree
+  with `runtime_channel=dev` and `trace_origin=validation`; it was not merged.
+  Executor, reviewer, and planner each started at `65536` and reported,
+  respectively, `78748`, `175790`, and `140174` GPU KV tokens. Their measured
+  maximum 65,536-token concurrency values were `1.20x`, `2.68x`, and `2.14x`.
+- The resident profile was rejected before VibeThinker could start: planner's
+  post-start guard measured `17965121536` available bytes, below the then-current
+  `20000000000`-byte safety minimum, and exited `70`. The guard was not
+  weakened. Stable `main` was restored with executor `16384`, planner/reviewer
+  `8192`, authenticated tailnet health, model discovery, and `/readyz` all
+  returning success. This is a failed capacity validation, not a performance
+  benchmark.
+
+- On 2026-07-13, explicit operator approval changed the resident startup floor
+  to `10737418240` bytes (10 GiB). The 65,536-context candidate is retested
+  under that floor; kernel OOM or a lower measured value remains a rejection.
+
+### 65,536-context 10-GiB-floor retry rejection
+
+- On 2026-07-13, candidate `41bfba1` started all four resident roles at
+  `65536`: executor `67121`, reviewer `67383`, planner `83740`, and
+  VibeThinker reasoner `66448` GPU-KV tokens (each at least `65536`). The
+  post-start guards recorded, in role order, `67721474048`, `46267162624`,
+  `22638268416`, and `12540280832` available host-memory bytes. The initial
+  full start therefore passed the explicit `10737418240`-byte floor.
+- A required dependency recycle exposed an unstable result: the reviewer's
+  first CUDA initialization returned `torch.AcceleratorError: CUDA error: out
+  of memory` and systemd retried it successfully, but the reasoner's next
+  post-start guard measured `10208575488` bytes, below the 10-GiB floor by
+  `528842752` bytes. Its guard stopped the service before accepting the
+  profile. No kernel panic, host restart, or host-OOM event was observed;
+  direct kernel-log access was unavailable to the unprivileged service user.
+- The candidate is rejected because it cannot consistently meet the approved
+  10-GiB guard. It was not merged or deployed. The production worktree was
+  returned to `main`; baseline resident recovery is in progress. This is a
+  capacity/safety validation result, not a benchmark.
+
+### Codex multi-agent activation check
+
+- On 2026-07-13, `primary` and `secondary` Codex OAuth profiles were present
+  and the installed CLI was `0.144.1`. The profile test was updated for that
+  CLI by removing its unsupported `--ask-for-approval` argument and requiring
+  a JSON `turn.completed` event.
+- Both real read-only test invocations returned HTTP `401` with
+  `token_invalidated` / revoked refresh-token errors. No task was accepted or
+  changed. Frontier configuration is enabled and retains independent profile
+  workers, but interactive OAuth re-login is required before either agent is
+  usable.
+
+### 64K three-role resident validation
+
+- On 2026-07-13, candidate `4b2fe2b` excluded VibeThinker from the resident
+  target while retaining it as an optional configured model. Executor,
+  reviewer, and planner started at `65536` and reported `67121`, `67383`, and
+  `83740` GPU-KV tokens. Their post-start host-memory measurements were
+  `68723949568`, `42841587712`, and `18525147136` bytes, above the approved
+  5-GiB floor.
+- The authenticated gateway request `resident64k-no-reasoner-*` returned HTTP
+  `200` and `finish_reason=stop`. Its decision events were planner then
+  executor; no `reasoner_completed` event was written. The reviewer required
+  one systemd CUDA-OOM retry before becoming ready; no kernel panic or host-OOM
+  event was observed.
 
 ### OpenCode title-history recovery
 

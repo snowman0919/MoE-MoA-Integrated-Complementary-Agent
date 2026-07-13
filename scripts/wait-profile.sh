@@ -3,7 +3,7 @@ set -Eeuo pipefail
 profile=${1:?resident or judge required}
 timeout=${2:-1200}
 case "$profile" in
-  resident) ports=(8101 8102 8103); minimum=20000000000 ;;
+  resident) ports=(8101 8102 8103); minimum=5368709120 ;;
   judge) ports=(8110); minimum=17179869184 ;;
   *) exit 64 ;;
 esac
@@ -22,7 +22,7 @@ while :; do
     echo "profile=$profile ready available_bytes=$available"
     exit 0
   fi
-  for role in executor planner reviewer judge; do
+  for role in executor planner reviewer reasoner judge; do
     if [[ "$(systemctl --user show "dgx-moa-$role.service" -p ExecMainStatus --value 2>/dev/null || true)" == 1 ]]; then
       echo "profile=$profile service_failed=dgx-moa-$role.service" >&2
       exit 1

@@ -1,8 +1,9 @@
 [Unit]
-Description=DGX MoA Mistral heavy judge
-PartOf=dgx-moa-judge.target
-Before=dgx-moa-judge.target
-Conflicts=dgx-moa-executor.service dgx-moa-planner.service dgx-moa-reviewer.service dgx-moa-reasoner.service dgx-moa-resident.target
+Description=DGX MoA VibeThinker reasoner
+PartOf=dgx-moa-resident.target
+Before=dgx-moa-resident.target
+After=dgx-moa-planner.service
+Conflicts=dgx-moa-judge.service dgx-moa-judge.target
 StartLimitIntervalSec=600
 StartLimitBurst=3
 
@@ -16,12 +17,13 @@ Environment=VLLM_BIN=/home/kotori9/.pyenv/shims/vllm
 Environment=XDG_CACHE_HOME=/home/kotori9/.cache
 Environment=MAX_JOBS=1
 Environment=CMAKE_BUILD_PARALLEL_LEVEL=1
-ExecStart=/home/kotori9/dgx-moa-agent/.venv/bin/python -m dgx_moa.serve judge
-ExecStartPost=/home/kotori9/dgx-moa-agent/scripts/wait-model.sh judge
+ExecStart=/home/kotori9/dgx-moa-agent/.venv/bin/python -m dgx_moa.serve reasoner
+ExecStartPre=/home/kotori9/dgx-moa-agent/scripts/wait-model.sh planner
+ExecStartPost=/home/kotori9/dgx-moa-agent/scripts/wait-model.sh reasoner
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=3600
-TimeoutStopSec=300
+TimeoutStopSec=180
 KillSignal=SIGTERM
 SuccessExitStatus=0 143
 NoNewPrivileges=true

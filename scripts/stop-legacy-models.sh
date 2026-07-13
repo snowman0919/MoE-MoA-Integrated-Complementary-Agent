@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
-for role in planner reviewer executor judge; do
+for role in reasoner planner reviewer executor judge; do
   pidfile="data/run/$role.pid"
   [[ -s $pidfile ]] || continue
   pid=$(cat "$pidfile")
@@ -11,4 +11,3 @@ for role in planner reviewer executor judge; do
   fi
   rm -f "$pidfile"
 done
-

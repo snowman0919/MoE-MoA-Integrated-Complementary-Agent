@@ -57,13 +57,13 @@ def test_trace_contains_model_revision_and_context(tmp_path) -> None:  # type: i
         base_url="http://127.0.0.1:8101",
         served_name="executor",
         destination=tmp_path / "executor",
-        context_length=1024,
+        context_length=65536,
     )
     trace = trace_record(SessionState(session_id="trace"), models={"executor": model})
     assert trace["model_revisions"] == {
         "executor": {"repository": "test/executor", "revision": "abc"}
     }
-    assert trace["context_configuration"]["executor"]["context_length"] == 1024
+    assert trace["context_configuration"]["executor"]["context_length"] == 65536
 
 
 def test_trace_schema_rejects_wrong_version() -> None:

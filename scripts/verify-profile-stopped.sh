@@ -19,4 +19,3 @@ while :; do
   (( SECONDS < deadline )) || { echo "profile=$profile stop verification timeout" >&2; exit 1; }
   sleep 2
 done
-

@@ -45,8 +45,9 @@ Updated: 2026-07-12T13:00:43+09:00
 
 - Bounded soak: `26867` seconds (`7h 27m 47s`), 5370 memory samples.
 - Minimum observed `MemAvailable`: `20783300608` bytes; maximum
-  `123198304256` bytes. This is above the unchanged decimal 20 GB requirement;
-  startup uses the stricter 20 GiB gate.
+  `123198304256` bytes. Resident startup uses the operator-approved 5 GiB
+  (`5368709120` bytes) gate as of 2026-07-13. The 64K resident profile runs
+  executor, reviewer, and planner; VibeThinker remains optional and stopped.
 - Soak exercised real OpenCode requests, idle intervals, gateway and resident
   restarts, tool continuation, review, explicit block, and trace archival.
 - SQLite state errors: 0. Trace archive errors/degradations: 0.
@@ -57,10 +58,12 @@ Updated: 2026-07-12T13:00:43+09:00
 - Heavy Judge remains validated with its unchanged model, `4000000000`-byte KV
   reservation, 8192 context, structured accept verdict, and resident restoration.
   It was not rerun because Judge code/configuration did not change.
-- Frontier Codex is enabled through independent OAuth profiles (`primary` and
-  `secondary`). Invoke either with `scripts/codex-profile.sh test <profile>`
-  or the existing `dgx-moa-codex-frontier@<profile>.service` template; its
-  read-only sandbox and systemd hardening remain unchanged.
+- Frontier Codex is enabled through separate OAuth profiles (`primary` and
+  `secondary`). Each can be invoked independently with
+  `scripts/codex-profile.sh test <profile>` or the existing
+  `dgx-moa-codex-frontier@<profile>.service` template; its read-only sandbox
+  and systemd hardening remain unchanged. Both profiles returned a verified
+  `turn.completed` event after interactive re-login on 2026-07-13.
 
 ## Known limitations
 

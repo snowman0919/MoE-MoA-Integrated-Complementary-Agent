@@ -6,4 +6,3 @@ Conflicts=dgx-moa-judge.target
 
 [Install]
 WantedBy=default.target
-

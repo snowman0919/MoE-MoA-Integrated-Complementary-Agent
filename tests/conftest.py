@@ -19,12 +19,13 @@ def settings(tmp_path: Path) -> Settings:
             base_url=f"http://127.0.0.1:{port}",
             served_name=role,
             destination=tmp_path / role,
-            context_length=1024,
+            context_length=65536,
         )
         for role, port in {
             "executor": 8101,
             "planner": 8102,
             "reviewer": 8103,
+            "reasoner": 8104,
             "judge": 8110,
         }.items()
     }
@@ -50,6 +51,8 @@ class StubProvider:
             )
         elif role == "reviewer":
             content = json.dumps({"status": "approved", "findings": []})
+        elif role == "reasoner":
+            content = "Use the verified task facts and keep the next action focused."
         elif role == "judge":
             content = json.dumps(
                 {

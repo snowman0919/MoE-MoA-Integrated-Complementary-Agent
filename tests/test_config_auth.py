@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from dgx_moa.config import Settings, load_settings, parse_bool
+from dgx_moa.config import ModelConfig, Settings, load_settings, parse_bool
 from pydantic import ValidationError
 
 
@@ -48,3 +48,16 @@ def test_bind_environment_overrides(monkeypatch, tmp_path: Path) -> None:
     settings = load_settings(config)
     assert settings.bind_host == "100.64.1.2"
     assert settings.bind_port == 9100
+
+
+def test_model_context_requires_64k(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="greater than or equal to 65536"):
+        ModelConfig(
+            repository="test/model",
+            revision="abc",
+            classification="test",
+            base_url="http://127.0.0.1:8104",
+            served_name="test",
+            destination=tmp_path / "model",
+            context_length=65_535,
+        )

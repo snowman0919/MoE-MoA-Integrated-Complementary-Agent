@@ -38,7 +38,7 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         call = response.json()["choices"][0]["message"]["tool_calls"][0]
         assert call["id"] == "call-preserved"
         assert response.json()["usage"]["total_tokens"] == 3
-        assert stub_provider.calls == ["planner", "executor"]
+        assert stub_provider.calls == ["reasoner", "planner", "executor"]
 
 
 def test_request_headers_set_trace_identity(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -144,7 +144,7 @@ def test_title_request_does_not_set_the_work_session_objective(
                 "model": "dgx-moa-agent",
                 "messages": [
                     {"role": "user", "content": "Create AGENTS.md"},
-                    {"role": "user", "content": "Generate a title for this conversation:\n"}
+                    {"role": "user", "content": "Generate a title for this conversation:\n"},
                 ],
             },
         )
@@ -224,6 +224,7 @@ def test_profile_aware_readiness(settings, stub_provider: StubProvider, monkeypa
                 "executor": "ready",
                 "planner": "ready",
                 "reviewer": "ready",
+                "reasoner": "ready",
                 "judge": "stopped",
             },
             "auth_enabled": True,

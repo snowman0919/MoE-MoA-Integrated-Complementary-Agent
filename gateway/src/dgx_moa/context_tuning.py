@@ -19,14 +19,20 @@ CONTEXT_CANDIDATES = {
     "executor": [16384, 24576, 32768, 40960, 49152, 65536, 81920, 98304, 131072],
     "planner": [8192, 12288, 16384, 24576, 32768, 49152, 65536],
     "reviewer": [8192, 12288, 16384, 24576, 32768, 49152, 65536],
+    "reasoner": [8192, 12288, 16384, 24576, 32768, 49152, 65536],
     "judge": [8192, 16384, 24576, 32768, 49152, 65536, 98304, 131072],
 }
-HEADROOM = {"resident": 20 * 1024**3, "judge": 16 * 1024**3}
-PORTS = {"executor": 8101, "planner": 8102, "reviewer": 8103, "judge": 8110}
+HEADROOM = {"resident": 5 * 1024**3, "judge": 16 * 1024**3}
+PORTS = {"executor": 8101, "planner": 8102, "reviewer": 8103, "reasoner": 8104, "judge": 8110}
 
 
 def weighted_context_score(contexts: dict[str, int]) -> float:
-    return 0.65 * contexts["executor"] + 0.20 * contexts["planner"] + 0.15 * contexts["reviewer"]
+    return (
+        0.60 * contexts["executor"]
+        + 0.20 * contexts["planner"]
+        + 0.15 * contexts["reviewer"]
+        + 0.05 * contexts["reasoner"]
+    )
 
 
 def candidate_vectors(profile: str, native_limits: dict[str, int]) -> list[dict[str, int]]:
@@ -40,11 +46,11 @@ def candidate_vectors(profile: str, native_limits: dict[str, int]) -> list[dict[
         raise ValueError("profile must be resident or judge")
     values = [
         [value for value in CONTEXT_CANDIDATES[role] if value <= native_limits[role]]
-        for role in ("executor", "planner", "reviewer")
+        for role in ("executor", "planner", "reviewer", "reasoner")
     ]
     candidates = [
-        {"executor": executor, "planner": planner, "reviewer": reviewer}
-        for executor, planner, reviewer in product(*values)
+        {"executor": executor, "planner": planner, "reviewer": reviewer, "reasoner": reasoner}
+        for executor, planner, reviewer, reasoner in product(*values)
     ]
     return sorted(candidates, key=weighted_context_score)
 
@@ -222,9 +228,12 @@ def journal(unit: str, since: int) -> str:
 
 def run_trial(profile: str) -> dict[str, Any]:
     settings = load_settings()
-    roles = ("executor", "planner", "reviewer") if profile == "resident" else ("judge",)
+    roles = ("executor", "planner", "reviewer", "reasoner") if profile == "resident" else ("judge",)
     contexts = {
-        role: int(os.getenv(f"DGX_MOA_{role.upper()}_MAX_MODEL_LEN", model.context_length))
+        role: max(
+            model.context_length,
+            int(os.getenv(f"DGX_MOA_{role.upper()}_MAX_MODEL_LEN", model.context_length)),
+        )
         for role, model in settings.models.items()
         if role in roles
     }

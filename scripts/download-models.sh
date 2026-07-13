@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 mkdir -p data/run data/state
 exec 9>data/run/download.lock
 flock -n 9 || { echo 'another model download is active' >&2; exit 75; }
-roles=("${@:-executor reviewer planner judge}")
+roles=("${@:-executor reviewer planner reasoner judge}")
 failures=0
 for role in ${roles[*]}; do
   echo "role=$role state=preflight"

@@ -6,14 +6,21 @@ import os
 
 from .config import load_settings, parse_bool
 
-PORTS = {"executor": 8101, "planner": 8102, "reviewer": 8103, "judge": 8110}
+PORTS = {"executor": 8101, "planner": 8102, "reviewer": 8103, "reasoner": 8104, "judge": 8110}
 KV_CACHE = {
-    "executor": 500_000_000,
-    "planner": 750_000_000,
-    "reviewer": 750_000_000,
-    "judge": 4_000_000_000,
+    "executor": 1_700_000_000,
+    "planner": 600_000_000,
+    "reviewer": 2_300_000_000,
+    "reasoner": 2_450_000_000,
+    "judge": 12_000_000_000,
 }
-GPU_UTILIZATION = {"executor": 0.50, "planner": 0.25, "reviewer": 0.25, "judge": 0.85}
+GPU_UTILIZATION = {
+    "executor": 0.50,
+    "planner": 0.25,
+    "reviewer": 0.25,
+    "reasoner": 0.10,
+    "judge": 0.85,
+}
 
 
 def role_environment(role: str, name: str, default: str | int | float) -> str:
@@ -22,6 +29,11 @@ def role_environment(role: str, name: str, default: str | int | float) -> str:
 
 def role_bool_environment(role: str, name: str, default: bool = False) -> bool:
     return parse_bool(os.getenv(f"DGX_MOA_{role.upper()}_{name}", str(default)))
+
+
+def role_context_length(role: str, configured: int) -> str:
+    override = int(role_environment(role, "MAX_MODEL_LEN", configured))
+    return str(max(configured, override))
 
 
 def command(role: str) -> list[str]:
@@ -38,7 +50,7 @@ def command(role: str) -> list[str]:
         "--served-model-name",
         model.served_name,
         "--max-model-len",
-        role_environment(role, "MAX_MODEL_LEN", model.context_length),
+        role_context_length(role, model.context_length),
         "--max-num-seqs",
         os.getenv("DGX_MOA_MAX_NUM_SEQS", str(model.max_num_seqs)),
         "--kv-cache-memory-bytes",

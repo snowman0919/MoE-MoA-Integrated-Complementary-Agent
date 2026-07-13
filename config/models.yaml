@@ -32,7 +32,7 @@ models:
     base_url: http://127.0.0.1:8101
     served_name: dgx-moa-executor
     destination: /home/kotori9/models/dgx-moa/executor
-    context_length: 16384
+    context_length: 65536
     max_num_seqs: 1
     quantization: compressed-tensors
     tool_call_parser: qwen3_coder
@@ -45,7 +45,7 @@ models:
     base_url: http://127.0.0.1:8102
     served_name: dgx-moa-planner
     destination: /home/kotori9/models/dgx-moa/planner
-    context_length: 8192
+    context_length: 65536
     max_num_seqs: 1
     quantization: compressed-tensors
     reasoning_parser: nemotron_v3
@@ -58,7 +58,7 @@ models:
     base_url: http://127.0.0.1:8103
     served_name: dgx-moa-reviewer
     destination: /home/kotori9/models/dgx-moa/reviewer
-    context_length: 8192
+    context_length: 65536
     max_num_seqs: 1
     quantization: compressed-tensors
     tool_call_parser: cohere_command4
@@ -72,8 +72,19 @@ models:
     base_url: http://127.0.0.1:8110
     served_name: dgx-moa-judge
     destination: /home/kotori9/models/dgx-moa/judge
-    context_length: 8192
+    context_length: 65536
     max_num_seqs: 1
     quantization: modelopt_fp4
     trust_remote_code: true
+    required: false
+  reasoner:
+    repository: WeiboAI/VibeThinker-3B
+    revision: 77bd2cced09193c8b9a59a32bd8577bbd1f3e01c
+    classification: community-maintained
+    base_url: http://127.0.0.1:8104
+    served_name: dgx-moa-reasoner
+    destination: /home/kotori9/models/dgx-moa/reasoner
+    context_length: 65536
+    max_num_seqs: 1
+    trust_remote_code: false
     required: false

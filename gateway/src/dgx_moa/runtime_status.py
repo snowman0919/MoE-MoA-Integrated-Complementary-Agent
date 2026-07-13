@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-SERVICES = ("gateway", "executor", "planner", "reviewer", "judge")
+SERVICES = ("gateway", "executor", "planner", "reviewer", "reasoner", "judge")
 
 
 def command(*args: str) -> str:
@@ -111,7 +111,7 @@ def report(state_db: Path, project: Path) -> dict[str, Any]:
             "-o",
             "cat",
         )
-        for role in ("executor", "planner", "reviewer", "judge")
+        for role in ("executor", "planner", "reviewer", "reasoner", "judge")
     )
     states = state_counts(state_db)
     services = {role: service_status(role) for role in SERVICES}
