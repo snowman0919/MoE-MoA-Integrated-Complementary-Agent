@@ -224,21 +224,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 async def stream_response() -> AsyncIterator[bytes]:
                     completed = False
                     observed = bytearray()
+                    chunks: list[bytes] = []
+                    finishes: list[str] = []
+                    assistant_content: list[str] = []
                     try:
                         async for chunk in upstream:
                             if len(observed) < 1_000_000:
                                 observed.extend(chunk[: 1_000_000 - len(observed)])
-                            yield chunk
+                            chunks.append(chunk)
                         completed = True
-                    finally:
-                        finishes: list[str] = []
                         for line in observed.decode(errors="replace").splitlines():
                             if not line.startswith("data: {"):
                                 continue
                             payload = json.loads(line[6:])
-                            reason = (payload.get("choices") or [{}])[0].get("finish_reason")
+                            choice = (payload.get("choices") or [{}])[0]
+                            content = (choice.get("delta") or {}).get("content")
+                            if isinstance(content, str):
+                                assistant_content.append(content)
+                            reason = choice.get("finish_reason")
                             if reason:
                                 finishes.append(str(reason))
+                        if "stop" in finishes and "reviewer" in configured.models:
+                            try:
+                                await request.app.state.controller.review(
+                                    state,
+                                    json.dumps(
+                                        {"assistant_content": "".join(assistant_content)},
+                                        ensure_ascii=False,
+                                    )[:4000],
+                                )
+                            except (httpx.HTTPError, ValueError) as error:
+                                state.review_status = "failed"
+                                request.app.state.store.event(
+                                    state_session_id,
+                                    "review_failed",
+                                    {"error": type(error).__name__},
+                                )
+                        for chunk in chunks:
+                            yield chunk
+                    finally:
                         if state.decisions:
                             state.decisions[-1]["outcome"] = {
                                 "status": "success" if completed else "failure",
@@ -282,7 +306,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "validation_triggered": bool(body.metadata.get("executor_complete")),
                     "next_phase": state.phase,
                 }
-            if body.metadata.get("executor_complete") and "reviewer" in configured.models:
+            finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+            if (
+                body.metadata.get("executor_complete") or finish_reason == "stop"
+            ) and "reviewer" in configured.models:
                 choice = response.get("choices", [{}])[0]
                 review_observation = json.dumps(
                     {
@@ -294,7 +321,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )[:4000]
                 await request.app.state.controller.review(state, review_observation)
                 request.app.state.controller.apply_metadata(state, body.metadata)
-            finish_reason = response.get("choices", [{}])[0].get("finish_reason")
             request.app.state.store.event(
                 state_session_id,
                 "assistant_stream_finished",
