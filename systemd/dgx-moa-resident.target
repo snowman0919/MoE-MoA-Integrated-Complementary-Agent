@@ -1,7 +1,7 @@
 [Unit]
 Description=DGX MoA resident profile
-Requires=dgx-moa-gateway.service dgx-moa-executor.service dgx-moa-planner.service dgx-moa-reviewer.service dgx-moa-reasoner.service
-After=dgx-moa-gateway.service dgx-moa-executor.service dgx-moa-planner.service dgx-moa-reviewer.service dgx-moa-reasoner.service dgx-moa-judge.target
+Requires=dgx-moa-gateway.service dgx-moa-executor.service dgx-moa-planner.service dgx-moa-reviewer.service
+After=dgx-moa-gateway.service dgx-moa-executor.service dgx-moa-planner.service dgx-moa-reviewer.service dgx-moa-judge.target
 Conflicts=dgx-moa-judge.target
 
 [Install]

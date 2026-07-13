@@ -88,7 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status_code=503,
             )
         roles = {
-            "resident": ("executor", "planner", "reviewer", "reasoner"),
+            "resident": ("executor", "planner", "reviewer"),
             "judge": ("judge",),
         }.get(current, ())
         if not roles:
