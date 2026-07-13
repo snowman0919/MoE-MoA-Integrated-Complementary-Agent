@@ -1,6 +1,6 @@
 # State
 
-Updated: 2026-07-12T13:00:43+09:00
+Updated: 2026-07-13T12:52:29+09:00
 
 ## Branch and deployment
 
@@ -18,7 +18,7 @@ Updated: 2026-07-12T13:00:43+09:00
 - Gateway: authenticated direct tailnet TCP at `100.125.239.72:9000`.
 - Model endpoints: loopback-only executor `8101`, planner `8102`, reviewer `8103`.
 - Resident target and profile are ready; executor, planner, and reviewer are active.
-- Context limits remain executor `16384`, planner `8192`, reviewer `8192`.
+- Context limits are executor, planner, and reviewer `65536`.
 - KV reservations, model selection, unit topology, and memory gates are unchanged.
 - A configurable 10-second prestart memory-settle delay prevents reloads from
   racing unified-memory reclamation. The final resident restoration passed.

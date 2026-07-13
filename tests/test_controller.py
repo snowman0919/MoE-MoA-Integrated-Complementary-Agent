@@ -123,6 +123,20 @@ def test_title_state_is_recovered_for_work_messages(settings, stub_provider: Stu
     assert store.events("legacy")[-1]["event_type"] == "title_state_recovered"
 
 
+def test_new_session_uses_latest_user_message(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session(
+        "latest-objective",
+        [
+            {"role": "user", "content": "old task"},
+            {"role": "assistant", "content": "done"},
+            {"role": "user", "content": "current task"},
+        ],
+    )
+
+    assert state.objective == "current task"
+
+
 @pytest.mark.asyncio
 async def test_planner_and_reviewer_routing(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     store = StateStore(settings.state_db)

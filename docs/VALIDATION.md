@@ -518,3 +518,19 @@ below. Heavy-judge validation is appended after its first isolated startup.
   agent message of `READY` and a JSON `turn.completed` event. The profile test
   now requires that completion event, so an expired token cannot be reported
   as healthy. No sandbox or systemd hardening was weakened.
+
+### Hermes current-objective and context discovery regression
+
+- A live Telegram turn on 2026-07-13 sent 124 history messages without a stable
+  gateway session header. The gateway created a new state for each provider
+  call and selected the oldest user message, `모델 변경완료`, as every objective.
+  Hermes made at least 24 provider calls in that turn and issued three unrelated
+  model-change clarification calls. The reviewer endpoint received zero chat
+  completions during the observed streaming turn.
+- The gateway model-discovery response omitted a context field, so Hermes logged
+  a 256,000-token fallback despite the deployed 65,536-token limit.
+- `uv run pytest -q` passed `110` tests; Ruff and MyPy passed. A loopback staging
+  request containing an old model-change message and the latest context-analysis
+  request returned HTTP `200`, `finish_reason=stop`, advertised `65536`, and
+  persisted the latest context-analysis request as its objective. Its measured
+  decision roles were planner then executor.

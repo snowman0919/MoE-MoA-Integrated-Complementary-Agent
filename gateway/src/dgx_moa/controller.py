@@ -184,7 +184,7 @@ class Controller:
             state.objective = next(
                 (
                     str(message.get("content", ""))
-                    for message in messages
+                    for message in reversed(messages)
                     if message["role"] == "user"
                 ),
                 "",
