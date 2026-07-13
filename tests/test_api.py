@@ -28,6 +28,7 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         headers = {"Authorization": "Bearer test-secret", "X-Session-ID": "session-1"}
         models = client.get("/v1/models", headers=headers).json()
         assert models["data"][0]["id"] == "dgx-moa-agent"
+        assert models["data"][0]["context_length"] == 65536
         response = client.post(
             "/v1/chat/completions",
             headers=headers,

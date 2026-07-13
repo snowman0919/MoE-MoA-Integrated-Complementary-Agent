@@ -145,6 +145,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "object": "model",
                     "created": 0,
                     "owned_by": "local",
+                    "context_length": min(
+                        model.context_length for model in configured.models.values()
+                    ),
                 }
             ],
         }
