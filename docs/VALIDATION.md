@@ -536,3 +536,8 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `stream_completed`. The reviewer rejected this synthetic response with the
   route's three missing-metadata findings; this validates invocation and protocol
   completion, not review quality.
+- Production session `production-stream-review-1783915400` then recorded
+  planner, executor, and reviewer decisions, an approved reviewer result with no
+  findings, `finish_reason=stop`, and `stream_completed`. Resident readiness was
+  HTTP `200` with executor, planner, and reviewer ready; reasoner and judge stayed
+  stopped.
