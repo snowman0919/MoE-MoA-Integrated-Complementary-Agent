@@ -488,6 +488,20 @@ below. Heavy-judge validation is appended after its first isolated startup.
   workers, but interactive OAuth re-login is required before either agent is
   usable.
 
+### 64K three-role resident validation
+
+- On 2026-07-13, candidate `4b2fe2b` excluded VibeThinker from the resident
+  target while retaining it as an optional configured model. Executor,
+  reviewer, and planner started at `65536` and reported `67121`, `67383`, and
+  `83740` GPU-KV tokens. Their post-start host-memory measurements were
+  `68723949568`, `42841587712`, and `18525147136` bytes, above the approved
+  5-GiB floor.
+- The authenticated gateway request `resident64k-no-reasoner-*` returned HTTP
+  `200` and `finish_reason=stop`. Its decision events were planner then
+  executor; no `reasoner_completed` event was written. The reviewer required
+  one systemd CUDA-OOM retry before becoming ready; no kernel panic or host-OOM
+  event was observed.
+
 ### OpenCode title-history recovery
 
 - OpenCode can send its automatic title prompt after the work-message history.

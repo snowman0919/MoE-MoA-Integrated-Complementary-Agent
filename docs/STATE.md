@@ -45,8 +45,9 @@ Updated: 2026-07-12T13:00:43+09:00
 
 - Bounded soak: `26867` seconds (`7h 27m 47s`), 5370 memory samples.
 - Minimum observed `MemAvailable`: `20783300608` bytes; maximum
-  `123198304256` bytes. Resident startup uses the operator-approved 10 GiB
-  (`10737418240` bytes) gate as of 2026-07-13.
+  `123198304256` bytes. Resident startup uses the operator-approved 5 GiB
+  (`5368709120` bytes) gate as of 2026-07-13. The 64K resident profile runs
+  executor, reviewer, and planner; VibeThinker remains optional and stopped.
 - Soak exercised real OpenCode requests, idle intervals, gateway and resident
   restarts, tool continuation, review, explicit block, and trace archival.
 - SQLite state errors: 0. Trace archive errors/degradations: 0.
