@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -29,6 +30,7 @@ from .routing import (
 from .schemas import ChatRequest, ProfileResponse
 from .security import admin_dependency, auth_dependency
 from .state import StateStore
+from .streaming import StreamObservation, forward_sse
 from .trace import TraceRecorder
 
 
@@ -55,6 +57,10 @@ def title_request_index(messages: list[dict[str, Any]]) -> int | None:
             content = str(message.get("content", "")).strip().lower()
             return index if content.startswith("generate a title for this conversation") else None
     return None
+
+
+def elapsed_ms(started: float) -> float:
+    return round((time.monotonic() - started) * 1000, 3)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -223,6 +229,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         x_repository_commit: str | None = Header(default=None),
         x_dirty_state: str | None = Header(default=None),
     ) -> Response:
+        accepted = time.monotonic()
         profile_state = request.app.state.profiles.current()
         current_profile = profile_state["active_profile"]
         if current_profile == "judge" or profile_state["status"] in {
@@ -287,53 +294,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 upstream = await request.app.state.provider.stream(
                     "executor", configured.models["executor"], prepared
                 )
+                observation = StreamObservation(configured.limits.max_stream_capture_bytes)
 
                 async def stream_response() -> AsyncIterator[bytes]:
                     completed = False
-                    observed = bytearray()
-                    chunks: list[bytes] = []
-                    finishes: list[str] = []
-                    assistant_content: list[str] = []
                     try:
-                        async for chunk in upstream:
-                            if len(observed) < 1_000_000:
-                                observed.extend(chunk[: 1_000_000 - len(observed)])
-                            chunks.append(chunk)
-                        completed = True
-                        for line in observed.decode(errors="replace").splitlines():
-                            if not line.startswith("data: {"):
-                                continue
-                            payload = json.loads(line[6:])
-                            choice = (payload.get("choices") or [{}])[0]
-                            content = (choice.get("delta") or {}).get("content")
-                            if isinstance(content, str):
-                                assistant_content.append(content)
-                            reason = choice.get("finish_reason")
-                            if reason:
-                                finishes.append(str(reason))
-                        if "stop" in finishes and "reviewer" in state.roles_required:
-                            try:
-                                await request.app.state.controller.review(
-                                    state,
-                                    json.dumps(
-                                        {"assistant_content": "".join(assistant_content)},
-                                        ensure_ascii=False,
-                                    )[:4000],
-                                )
-                            except (httpx.HTTPError, ValueError) as error:
-                                state.review_status = "failed"
-                                request.app.state.store.event(
-                                    state_session_id,
-                                    "review_failed",
-                                    {"error": type(error).__name__},
-                                )
-                        for chunk in chunks:
+                        async for chunk in forward_sse(
+                            upstream,
+                            observation,
+                            max_event_bytes=configured.limits.max_sse_event_bytes,
+                        ):
+                            if "first_downstream_byte" not in state.timings_ms:
+                                state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
                             yield chunk
+                        completed = True
+                        state.finish_reasons = observation.finish_reasons
+                        state.truncated = "length" in observation.finish_reasons
+                        if "reviewer" in state.roles_required:
+                            state.review_deferred = True
+                            state.review_status = "deferred"
+                    except asyncio.CancelledError:
+                        state.final_status = "cancelled"
+                        raise
                     finally:
                         if state.decisions:
                             state.decisions[-1]["outcome"] = {
                                 "status": "success" if completed else "failure",
-                                "progress_made": bool(finishes),
+                                "progress_made": bool(observation.finish_reasons),
                                 "state_changed": False,
                                 "scope_changed": False,
                                 "validation_triggered": False,
@@ -342,7 +329,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         request.app.state.store.event(
                             state_session_id,
                             "assistant_stream_finished",
-                            {"finish_reasons": finishes},
+                            {"finish_reasons": observation.finish_reasons},
                         )
                         request.app.state.store.event(
                             state_session_id,

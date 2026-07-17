@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import contextmanager
 
@@ -7,6 +8,9 @@ import httpx
 import pytest
 from dgx_moa.api import create_app
 from dgx_moa.config import Settings
+from dgx_moa.schemas import ChatRequest
+from fastapi import Request
+from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 from .conftest import StubProvider
@@ -19,6 +23,15 @@ def client_with_stub(settings, stub_provider: StubProvider):  # type: ignore[no-
         app.state.provider = stub_provider
         app.state.controller.provider = stub_provider
         yield client
+
+
+def chat_endpoint(app):  # type: ignore[no-untyped-def]
+    return next(
+        route.endpoint
+        for route in app.routes
+        if getattr(route, "path", None) == "/v1/chat/completions"
+        and "POST" in getattr(route, "methods", set())
+    )
 
 
 def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -491,6 +504,122 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
             "route_selected",
             "tool_call_requested",
         }
+
+
+@pytest.mark.asyncio
+async def test_streaming_api_forwards_before_upstream_completion_and_defers_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    release = asyncio.Event()
+    first_event = b'data: {"choices":[{"delta":{"content":"now"}}]}\n\n'
+
+    async def delayed(role, model, request):  # type: ignore[no-untyped-def]
+        stub_provider.calls.append(role)
+        stub_provider.requests.append(request)
+
+        async def upstream():  # type: ignore[no-untyped-def]
+            yield first_event
+            await release.wait()
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return upstream()
+
+    stub_provider.stream = delayed  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await chat_endpoint(app)(
+            ChatRequest(
+                model="dgx-moa-orchestrated",
+                stream=True,
+                messages=[{"role": "user", "content": "orchestrate"}],
+                metadata={"session_id": "immediate-stream"},
+            ),
+            Request({"type": "http", "app": app}),
+            x_session_id=None,
+            x_runtime_channel=None,
+            x_trace_origin=None,
+            x_task_id=None,
+            x_workspace_path=None,
+            x_workspace_id=None,
+            x_repository_branch=None,
+            x_repository_commit=None,
+            x_dirty_state=None,
+        )
+        assert isinstance(response, StreamingResponse)
+
+        first = await asyncio.wait_for(anext(response.body_iterator), timeout=1)
+        assert first == first_event
+        assert not release.is_set()
+        assert stub_provider.calls == ["planner", "executor"]
+
+        release.set()
+        remaining = b"".join([chunk async for chunk in response.body_iterator])
+        assert remaining.count(b"data: [DONE]") == 1
+        assert stub_provider.calls == ["planner", "executor"]
+        state = app.state.store.get("immediate-stream")
+        assert state and state.review_deferred
+        assert state.review_status == "deferred"
+        assert "first_downstream_byte" in state.timings_ms
+
+
+@pytest.mark.asyncio
+async def test_streaming_api_persists_cancellation_and_closes_upstream(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    blocked = asyncio.Event()
+    closed = asyncio.Event()
+
+    async def delayed(role, model, request):  # type: ignore[no-untyped-def]
+        stub_provider.calls.append(role)
+
+        async def upstream():  # type: ignore[no-untyped-def]
+            try:
+                yield b"data: first\n\n"
+                await blocked.wait()
+            finally:
+                closed.set()
+
+        return upstream()
+
+    stub_provider.stream = delayed  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await chat_endpoint(app)(
+            ChatRequest(
+                model="dgx-moa-agent",
+                stream=True,
+                messages=[{"role": "user", "content": "work"}],
+                metadata={"session_id": "cancelled-stream"},
+            ),
+            Request({"type": "http", "app": app}),
+            x_session_id=None,
+            x_runtime_channel=None,
+            x_trace_origin=None,
+            x_task_id=None,
+            x_workspace_path=None,
+            x_workspace_id=None,
+            x_repository_branch=None,
+            x_repository_commit=None,
+            x_dirty_state=None,
+        )
+        assert isinstance(response, StreamingResponse)
+        assert await anext(response.body_iterator) == b"data: first\n\n"
+
+        pending = asyncio.create_task(anext(response.body_iterator))
+        await asyncio.sleep(0)
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        await asyncio.wait_for(closed.wait(), timeout=1)
+
+        state = app.state.store.get("cancelled-stream")
+        assert state and state.final_status == "cancelled"
+        assert app.state.store.events("cancelled-stream")[-1]["event_type"] == "stream_aborted"
 
 
 def test_streaming_upstream_400_returns_invalid_request(
