@@ -6,7 +6,7 @@ import os
 import time
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -298,15 +298,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
                 async def stream_response() -> AsyncIterator[bytes]:
                     completed = False
+                    forwarder = forward_sse(
+                        upstream,
+                        observation,
+                        max_event_bytes=configured.limits.max_sse_event_bytes,
+                    )
                     try:
-                        async for chunk in forward_sse(
-                            upstream,
-                            observation,
-                            max_event_bytes=configured.limits.max_sse_event_bytes,
-                        ):
-                            if "first_downstream_byte" not in state.timings_ms:
-                                state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
-                            yield chunk
+                        async with aclosing(forwarder):
+                            async for chunk in forwarder:
+                                if "first_downstream_byte" not in state.timings_ms:
+                                    state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                                yield chunk
                         completed = True
                         state.finish_reasons = observation.finish_reasons
                         state.truncated = "length" in observation.finish_reasons

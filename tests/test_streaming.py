@@ -68,6 +68,56 @@ async def test_duplicate_done_events_are_filtered() -> None:
 
 
 @pytest.mark.asyncio
+async def test_first_done_stops_before_blocking_upstream_and_closes_it() -> None:
+    read_past_done = False
+    closed = asyncio.Event()
+
+    async def upstream() -> AsyncIterator[bytes]:
+        nonlocal read_past_done
+        try:
+            yield b"data: [DONE]\n\n"
+            read_past_done = True
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+
+    stream = forward_sse(
+        upstream(), StreamObservation(max_capture_bytes=1000), max_event_bytes=1000
+    )
+    assert await anext(stream) == b"data: [DONE]\n\n"
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(stream), timeout=1)
+
+    assert not read_past_done
+    assert closed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_first_done_stops_before_later_upstream_error_and_closes_it() -> None:
+    read_past_done = False
+    closed = asyncio.Event()
+
+    async def upstream() -> AsyncIterator[bytes]:
+        nonlocal read_past_done
+        try:
+            yield b"data: [DONE]\n\n"
+            read_past_done = True
+            raise RuntimeError("after terminal event")
+        finally:
+            closed.set()
+
+    stream = forward_sse(
+        upstream(), StreamObservation(max_capture_bytes=1000), max_event_bytes=1000
+    )
+    assert await anext(stream) == b"data: [DONE]\n\n"
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+
+    assert not read_past_done
+    assert closed.is_set()
+
+
+@pytest.mark.asyncio
 async def test_missing_done_is_synthesized_on_clean_eof() -> None:
     content = b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
     observation = StreamObservation(max_capture_bytes=1000)

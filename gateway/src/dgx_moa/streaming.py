@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, field
 
 
@@ -52,7 +52,7 @@ async def forward_sse(
     observation: StreamObservation,
     *,
     max_event_bytes: int,
-) -> AsyncIterator[bytes]:
+) -> AsyncGenerator[bytes, None]:
     buffer = bytearray()
     try:
         async for chunk in upstream:
@@ -66,9 +66,10 @@ async def forward_sse(
                 del buffer[:event_size]
                 observation.observe(event)
                 if _is_done(event):
-                    if observation.done_seen:
-                        continue
-                    observation.done_seen = True
+                    if not observation.done_seen:
+                        observation.done_seen = True
+                        yield event
+                    return
                 yield event
             if len(buffer) > max_event_bytes:
                 raise ValueError(f"SSE event exceeds {max_event_bytes} bytes")

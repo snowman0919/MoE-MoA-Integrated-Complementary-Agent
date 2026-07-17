@@ -9,6 +9,7 @@ import pytest
 from dgx_moa.api import create_app
 from dgx_moa.config import Settings
 from dgx_moa.schemas import ChatRequest
+from dgx_moa.streaming import forward_sse as unclosed_forward_sse
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
@@ -620,6 +621,68 @@ async def test_streaming_api_persists_cancellation_and_closes_upstream(
         state = app.state.store.get("cancelled-stream")
         assert state and state.final_status == "cancelled"
         assert app.state.store.events("cancelled-stream")[-1]["event_type"] == "stream_aborted"
+
+
+@pytest.mark.asyncio
+async def test_streaming_api_consumer_close_closes_upstream_and_persists_abort(
+    settings, stub_provider: StubProvider, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    closed = asyncio.Event()
+    retained_forwarders = []
+
+    def retain_forwarder(*args, **kwargs):  # type: ignore[no-untyped-def]
+        forwarder = unclosed_forward_sse(*args, **kwargs)
+        retained_forwarders.append(forwarder)
+        return forwarder
+
+    monkeypatch.setattr("dgx_moa.api.forward_sse", retain_forwarder)
+
+    async def upstream():  # type: ignore[no-untyped-def]
+        try:
+            yield b"data: first\n\n"
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+
+    upstream_iterator = upstream()
+
+    async def delayed(role, model, request):  # type: ignore[no-untyped-def]
+        stub_provider.calls.append(role)
+        return upstream_iterator
+
+    stub_provider.stream = delayed  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await chat_endpoint(app)(
+            ChatRequest(
+                model="dgx-moa-agent",
+                stream=True,
+                messages=[{"role": "user", "content": "work"}],
+                metadata={"session_id": "closed-stream"},
+            ),
+            Request({"type": "http", "app": app}),
+            x_session_id=None,
+            x_runtime_channel=None,
+            x_trace_origin=None,
+            x_task_id=None,
+            x_workspace_path=None,
+            x_workspace_id=None,
+            x_repository_branch=None,
+            x_repository_commit=None,
+            x_dirty_state=None,
+        )
+        assert isinstance(response, StreamingResponse)
+        assert await anext(response.body_iterator) == b"data: first\n\n"
+
+        await response.body_iterator.aclose()
+        await asyncio.wait_for(closed.wait(), timeout=1)
+
+        state = app.state.store.get("closed-stream")
+        assert state
+        assert state.decisions[-1]["outcome"]["status"] == "failure"
+        assert app.state.store.events("closed-stream")[-1]["event_type"] == "stream_aborted"
 
 
 def test_streaming_upstream_400_returns_invalid_request(
