@@ -143,7 +143,9 @@ async def test_planner_and_reviewer_routing(settings, stub_provider: StubProvide
     controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
     state = controller.session("x", [{"role": "user", "content": "nontrivial task"}])
     await controller.prepare_executor(
-        state, {"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]}
+        state,
+        {"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
+        ("planner", "executor"),
     )
     assert state.plan and state.phase == Phase.EXECUTING
     result = await controller.review(state, "diff")
@@ -169,7 +171,9 @@ async def test_planner_retries_one_malformed_structured_response(  # type: ignor
     stub_provider.complete = malformed_then_valid  # type: ignore[method-assign]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
     state = controller.session("retry-plan", [{"role": "user", "content": "nontrivial task"}])
-    await controller.prepare_executor(state, {"model": "dgx-moa-agent", "messages": []})
+    await controller.prepare_executor(
+        state, {"model": "dgx-moa-agent", "messages": []}, ("planner", "executor")
+    )
     assert calls == 2
     assert state.plan == [{"step": "change"}]
 
@@ -306,3 +310,12 @@ def test_reviewer_prompt_uses_requirements_not_raw_objective(settings, stub_prov
     assert prompt.endswith(
         '{"status":"approved","findings":[]} or {"status":"rejected","findings":["..."]}'
     )
+
+
+def test_executor_prompt_does_not_force_json(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    prompt = controller.prompt_sandwich(
+        "executor", SessionState(session_id="executor", objective="answer"), "", "Answer"
+    )
+    assert "Return one JSON object only" not in prompt
+    assert "Use native OpenAI tool calls" in prompt

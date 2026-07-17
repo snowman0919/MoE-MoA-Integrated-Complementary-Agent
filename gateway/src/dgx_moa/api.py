@@ -18,6 +18,13 @@ from .config import Settings, get_settings
 from .controller import Controller, DuplicateFailedCall
 from .profiles import ProfileManager
 from .providers import ModelProvider, validate_assistant_response
+from .routing import (
+    MODEL_MODES,
+    classify_request,
+    required_roles,
+    resolve_runtime_mode,
+    review_fails_closed,
+)
 from .schemas import ChatRequest, ProfileResponse
 from .security import admin_dependency, auth_dependency
 from .state import StateStore
@@ -141,14 +148,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "object": "list",
             "data": [
                 {
-                    "id": configured.model_name,
+                    "id": alias,
                     "object": "model",
                     "created": 0,
                     "owned_by": "local",
-                    "context_length": min(
-                        model.context_length for model in configured.models.values()
-                    ),
+                    "context_length": 65_536,
                 }
+                for alias in MODEL_MODES
             ],
         }
 
@@ -178,8 +184,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "coding requests unavailable during heavy-judge profile",
                 headers={"Retry-After": "30"},
             )
-        if body.model != configured.model_name:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown model")
+        try:
+            mode = resolve_runtime_mode(body.model, configured.model_name)
+        except ValueError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown model") from error
         if "executor" not in configured.models:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "executor is not configured")
         session_id = x_session_id or str(body.metadata.get("session_id") or uuid.uuid4())
@@ -215,7 +223,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request.app.state.controller.select_route(state, raw["metadata"])
             if body.metadata.get("no_progress"):
                 request.app.state.controller.note_no_progress(state)
-            prepared = await request.app.state.controller.prepare_executor(state, raw)
+            request_class = classify_request(
+                mode, raw["messages"], raw.get("tools"), raw["metadata"]
+            )
+            roles = required_roles(mode, request_class)
+            state.runtime_mode = mode
+            state.request_class = request_class
+            state.roles_required = list(roles)
+            state.review_fail_closed = review_fails_closed(request_class)
+            prepared = await request.app.state.controller.prepare_executor(state, raw, roles)
             if body.stream:
                 upstream = await request.app.state.provider.stream(
                     "executor", configured.models["executor"], prepared
@@ -244,7 +260,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             reason = choice.get("finish_reason")
                             if reason:
                                 finishes.append(str(reason))
-                        if "stop" in finishes and "reviewer" in configured.models:
+                        if "stop" in finishes and "reviewer" in state.roles_required:
                             try:
                                 await request.app.state.controller.review(
                                     state,
@@ -309,7 +325,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             finish_reason = response.get("choices", [{}])[0].get("finish_reason")
             if (
                 body.metadata.get("executor_complete") or finish_reason == "stop"
-            ) and "reviewer" in configured.models:
+            ) and "reviewer" in state.roles_required:
                 choice = response.get("choices", [{}])[0]
                 review_observation = json.dumps(
                     {

@@ -27,8 +27,12 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert client.get("/v1/models").status_code == 401
         headers = {"Authorization": "Bearer test-secret", "X-Session-ID": "session-1"}
         models = client.get("/v1/models", headers=headers).json()
-        assert models["data"][0]["id"] == "dgx-moa-agent"
-        assert models["data"][0]["context_length"] == 65536
+        assert [model["id"] for model in models["data"]] == [
+            "dgx-moa-chat",
+            "dgx-moa-agent",
+            "dgx-moa-orchestrated",
+        ]
+        assert all(model["context_length"] == 65536 for model in models["data"])
         response = client.post(
             "/v1/chat/completions",
             headers=headers,
@@ -39,7 +43,78 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         call = response.json()["choices"][0]["message"]["tool_calls"][0]
         assert call["id"] == "call-preserved"
         assert response.json()["usage"]["total_tokens"] == 3
-        assert stub_provider.calls == ["reasoner", "planner", "executor"]
+        assert stub_provider.calls == ["executor"]
+
+
+@pytest.mark.parametrize("model", ["dgx-moa-chat", "dgx-moa-agent"])
+def test_direct_modes_are_executor_only(settings, stub_provider: StubProvider, model: str) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "hello"}],
+                "metadata": {"authentication": True},
+            },
+        )
+    assert response.status_code == 200
+    assert stub_provider.calls == ["executor"]
+
+
+def test_chat_returns_normal_assistant_content(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    async def natural(role, model, request):  # type: ignore[no-untyped-def]
+        stub_provider.calls.append(role)
+        return {
+            "id": "chatcmpl-natural",
+            "model": "dgx-moa-executor",
+            "created": 123,
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "Hello from executor."},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 4, "total_tokens": 6},
+        }
+
+    stub_provider.complete = natural  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-chat",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+    assert response.json()["choices"][0] == {
+        "message": {"role": "assistant", "content": "Hello from executor."},
+        "finish_reason": "stop",
+    }
+    assert response.json()["id"] == "chatcmpl-natural"
+    assert response.json()["created"] == 123
+    assert response.json()["model"] == "dgx-moa-executor"
+    assert response.json()["usage"] == {
+        "prompt_tokens": 2,
+        "completion_tokens": 4,
+        "total_tokens": 6,
+    }
+
+
+def test_orchestrated_mode_uses_policy_roles(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "change four files"}],
+                "metadata": {"expected_files": 4},
+            },
+        )
+    assert response.status_code == 200
+    assert stub_provider.calls == ["planner", "executor"]
 
 
 def test_request_headers_set_trace_identity(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -286,8 +361,8 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         assert "usage" in final
         events = client.app.state.store.events("stream")
         assert events[-1]["event_type"] == "stream_completed"
-        assert "reviewer" in stub_provider.calls
-        assert any(event["event_type"] == "review_completed" for event in events)
+        assert stub_provider.calls == ["executor"]
+        assert not any(event["event_type"] == "review_completed" for event in events)
         assert events[-1]["created_at"]
         trace_path = next((settings.state_db.parent.parent / "traces").rglob("stream.jsonl"))
         trace = json.loads(trace_path.read_text())
