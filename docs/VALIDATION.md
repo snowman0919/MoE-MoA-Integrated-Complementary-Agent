@@ -541,3 +541,45 @@ below. Heavy-judge validation is appended after its first isolated startup.
   findings, `finish_reason=stop`, and `stream_completed`. Resident readiness was
   HTTP `200` with executor, planner, and reviewer ready; reasoner and judge stayed
   stopped.
+
+### Phase-one physical streaming-buffer baseline
+
+- On 2026-07-18, clean development commit `0b83e18` was measured against the
+  read-only production reference `c2a9af0`. Installed versions were vLLM
+  `0.22.1`, OpenCode `1.17.18`, and Hermes Agent `0.18.2`. Production gateway,
+  executor, planner, and reviewer user services were all inactive and their
+  ports were unbound before the isolated run.
+- Controlled foreground model processes used loopback ports `8101`, `8102`, and
+  `8103`. The isolated gateway used `127.0.0.1:19000`, SQLite path
+  `/tmp/dgx-moa-phase1.6roKBd/state/gateway.db`, trace root
+  `/tmp/dgx-moa-phase1.6roKBd/traces`, and run root
+  `/tmp/dgx-moa-phase1.6roKBd/data/run`. No production service or production
+  worktree was changed.
+- The first foreground model launch failed before model loading because the
+  shared settings validator required a gateway API key. The retry used a new
+  isolated validation credential supplied only through the process environment;
+  no credential was written or recorded.
+- The executor's default FlashInfer-CUTLASS path began a first-run SM121a build
+  containing 96 object targets. After 9 targets, that diagnostic process was
+  stopped because the kernel build was unrelated to gateway buffering. The same
+  physical executor model was restarted with vLLM's supported `MARLIN` MoE
+  backend, already exercised by the reviewer runtime. Its model load took
+  `245.521061` seconds. This override is diagnostic evidence, not a production
+  backend selection.
+- One authenticated streaming request asked for twenty numbered lines with
+  `max_tokens=1000`. Monotonic timestamps in nanoseconds were request accepted
+  `1230195082686135`, planner start `1230195118466714`, planner complete
+  `1230219591415785`, executor start `1230219596688357`, executor first byte
+  `1230221185713404`, executor complete `1230228218239311`, reviewer start
+  `1230228225083613`, reviewer complete `1230262583974904`, downstream first
+  byte `1230262588265733`, and downstream completion `1230262595932885`.
+- Derived durations were planner `24.472949071` seconds, executor first-byte
+  latency `1.589025047` seconds, executor total `8.621550954` seconds, reviewer
+  `34.358891291` seconds, and downstream first-byte latency `67.505579598`
+  seconds from request acceptance. The downstream first byte followed the
+  executor first byte by `41.402552329` seconds and followed reviewer completion
+  by only `0.004290829` seconds. This proves full executor buffering behind the
+  reviewer.
+- Final client status was HTTP `200`; the response contained `62174` SSE bytes
+  and exactly one `[DONE]`. This is a defect reproduction and timing baseline,
+  not a throughput or quality benchmark.
