@@ -48,6 +48,8 @@ class ModelProvider:
                 ),
                 stream=True,
             )
+            if response.is_error:
+                await response.aread()
             response.raise_for_status()
         except Exception:
             await client.aclose()

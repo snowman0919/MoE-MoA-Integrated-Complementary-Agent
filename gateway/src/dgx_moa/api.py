@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .config import Settings, get_settings
@@ -29,6 +30,21 @@ from .schemas import ChatRequest, ProfileResponse
 from .security import admin_dependency, auth_dependency
 from .state import StateStore
 from .trace import TraceRecorder
+
+
+def error_response(
+    status_code: int,
+    message: str,
+    error_type: str,
+    code: str,
+    param: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    return JSONResponse(
+        {"error": {"message": message, "type": error_type, "code": code, "param": param}},
+        status_code=status_code,
+        headers=headers,
+    )
 
 
 def title_request_index(messages: list[dict[str, Any]]) -> int | None:
@@ -63,6 +79,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
 
     app = FastAPI(title="DGX MoA Agent", version="0.1.0", lifespan=lifespan)
+
+    @app.exception_handler(HTTPException)
+    async def handle_http_exception(request: Request, error: HTTPException) -> JSONResponse:
+        if error.status_code == status.HTTP_401_UNAUTHORIZED:
+            error_type, code, param = "authentication_error", "invalid_api_key", None
+        elif error.status_code == status.HTTP_404_NOT_FOUND and error.detail == "unknown model":
+            error_type, code, param = "invalid_request_error", "model_not_found", "model"
+        elif error.status_code < 500:
+            error_type, code, param = "invalid_request_error", "invalid_request", None
+        else:
+            error_type, code, param = "backend_error", "backend_error", None
+        return error_response(
+            error.status_code,
+            str(error.detail),
+            error_type,
+            code,
+            param,
+            dict(error.headers) if error.headers else None,
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(
+        request: Request, error: RequestValidationError
+    ) -> JSONResponse:
+        first = error.errors()[0]
+        message = str(first.get("msg", "invalid request")).removeprefix("Value error, ")
+        location = first.get("loc", ())
+        param = str(location[-1]) if len(location) > 1 else None
+        return error_response(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            message,
+            "invalid_request_error",
+            "invalid_request",
+            param,
+        )
 
     def record_trace_safely(request: Request, state: Any, task_id: str) -> None:
         try:
@@ -348,9 +399,69 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except DuplicateFailedCall as error:
             raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
         except httpx.TimeoutException as error:
-            raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, str(error)) from error
-        except (httpx.HTTPError, ValueError) as error:
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error)) from error
+            stage = {
+                "planning": "planner",
+                "reviewing": "reviewer",
+                "heavy_review": "judge",
+            }.get(state.phase.value, "executor")
+            return error_response(
+                status.HTTP_504_GATEWAY_TIMEOUT,
+                str(error),
+                "timeout_error",
+                f"{stage}_timeout",
+            )
+        except httpx.HTTPStatusError as error:
+            try:
+                payload = error.response.json()
+            except (ValueError, httpx.StreamError):
+                payload = None
+            upstream_error = payload.get("error") if isinstance(payload, dict) else None
+            if (
+                isinstance(upstream_error, dict)
+                and isinstance(upstream_error.get("message"), str)
+                and isinstance(upstream_error.get("type"), str)
+                and isinstance(upstream_error.get("code"), str)
+                and (
+                    upstream_error.get("param") is None
+                    or isinstance(upstream_error["param"], str)
+                )
+            ):
+                return JSONResponse(payload, status_code=error.response.status_code)
+            if error.response.status_code < 500:
+                return error_response(
+                    error.response.status_code,
+                    str(error),
+                    "invalid_request_error",
+                    "invalid_request",
+                )
+            return error_response(
+                status.HTTP_502_BAD_GATEWAY,
+                str(error),
+                "backend_error",
+                "backend_error",
+            )
+        except httpx.HTTPError as error:
+            return error_response(
+                status.HTTP_502_BAD_GATEWAY,
+                str(error),
+                "backend_error",
+                "backend_error",
+            )
+        except ValueError as error:
+            if str(error) == "max_tokens exceeds server maximum 16384":
+                return error_response(
+                    status.HTTP_400_BAD_REQUEST,
+                    str(error),
+                    "invalid_request_error",
+                    "invalid_request",
+                    "max_tokens",
+                )
+            return error_response(
+                status.HTTP_502_BAD_GATEWAY,
+                str(error),
+                "backend_error",
+                "backend_error",
+            )
 
     @app.get("/admin/profile", response_model=ProfileResponse, dependencies=[Depends(admin_auth)])
     async def profile(request: Request) -> dict[str, str]:

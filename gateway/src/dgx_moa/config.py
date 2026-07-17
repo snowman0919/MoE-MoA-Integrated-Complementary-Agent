@@ -36,9 +36,12 @@ class Limits(BaseModel):
     max_error_lines: int = 40
     max_diff_summary_lines: int = 100
     planner_tokens: int = 1_500
-    executor_tokens: int = 1_000
+    executor_tokens: int = 4_096
+    executor_max_tokens: int = 16_384
     reviewer_tokens: int = 1_500
     judge_tokens: int = 2_500
+    max_stream_capture_bytes: int = 1_000_000
+    max_sse_event_bytes: int = 1_000_000
     max_steps: int = 100
 
 

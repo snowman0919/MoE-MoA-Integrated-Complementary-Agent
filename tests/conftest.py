@@ -40,11 +40,13 @@ def settings(tmp_path: Path) -> Settings:
 class StubProvider:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.requests: list[dict[str, Any]] = []
 
     async def complete(
         self, role: str, model: ModelConfig, request: dict[str, Any]
     ) -> dict[str, Any]:
         self.calls.append(role)
+        self.requests.append(request)
         if role == "planner":
             content = json.dumps(
                 {"plan": [{"step": "change"}], "acceptance_criteria": ["tests pass"]}
@@ -95,6 +97,7 @@ class StubProvider:
         self, role: str, model: ModelConfig, request: dict[str, Any]
     ) -> AsyncIterator[bytes]:
         self.calls.append(role)
+        self.requests.append(request)
 
         async def chunks() -> AsyncIterator[bytes]:
             yield b'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":null}]}\n\n'

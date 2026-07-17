@@ -701,10 +701,10 @@ class Controller:
             },
         )
         body["messages"] = messages
-        body["max_tokens"] = min(
-            int(body.get("max_tokens") or self.settings.limits.executor_tokens),
-            self.settings.limits.executor_tokens,
-        )
+        requested_tokens = int(body.get("max_tokens") or self.settings.limits.executor_tokens)
+        if requested_tokens > self.settings.limits.executor_max_tokens:
+            raise ValueError("max_tokens exceeds server maximum 16384")
+        body["max_tokens"] = requested_tokens
         return body
 
     async def review(self, state: SessionState, observation: str) -> dict[str, Any]:

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import pytest
-
 from dgx_moa.routing import (
+    ChangeRisk,
     classify_request,
+    heavy_eligible,
+    needs_planner,
+    needs_reviewer,
     required_roles,
     resolve_runtime_mode,
     review_fails_closed,
+    select_route,
 )
-from dgx_moa.routing import ChangeRisk, heavy_eligible, needs_planner, needs_reviewer, select_route
 from dgx_moa.state import Phase, SessionState, StateStore
 from dgx_moa.validation import completion_ready, missing_evidence
 

@@ -19,9 +19,12 @@ gateway:
     max_error_lines: 40
     max_diff_summary_lines: 100
     planner_tokens: 1500
-    executor_tokens: 1000
+    executor_tokens: 4096
+    executor_max_tokens: 16384
     reviewer_tokens: 1500
     judge_tokens: 2500
+    max_stream_capture_bytes: 1000000
+    max_sse_event_bytes: 1000000
     max_steps: 100
 
 models:

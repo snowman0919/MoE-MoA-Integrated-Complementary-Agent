@@ -46,6 +46,126 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert stub_provider.calls == ["executor"]
 
 
+def test_executor_request_fields_are_preserved(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "work"}],
+                "tools": tools,
+                "tool_choice": "required",
+                "parallel_tool_calls": False,
+                "temperature": 0.2,
+                "top_p": 0.8,
+                "max_tokens": 4096,
+                "stop": ["END"],
+                "stream": True,
+                "stream_options": {"include_usage": True},
+                "response_format": {"type": "text"},
+                "seed": 7,
+            },
+        )
+
+    assert response.status_code == 200
+    expected = {
+        "tools": tools,
+        "tool_choice": "required",
+        "temperature": 0.2,
+        "top_p": 0.8,
+        "max_tokens": 4096,
+        "stop": ["END"],
+        "parallel_tool_calls": False,
+        "stream_options": {"include_usage": True},
+        "response_format": {"type": "text"},
+        "seed": 7,
+    }
+    assert expected.items() <= stub_provider.requests[-1].items()
+
+
+def test_default_executor_output_budget_is_4096(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert stub_provider.requests[-1]["max_tokens"] == 4096
+
+
+def test_excessive_executor_output_budget_is_rejected(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "work"}],
+                "max_tokens": 16_385,
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == {
+        "message": "max_tokens exceeds server maximum 16384",
+        "type": "invalid_request_error",
+        "code": "invalid_request",
+        "param": "max_tokens",
+    }
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"tool_choice": "required"}, "tool_choice requires tools"),
+        ({"parallel_tool_calls": False}, "parallel_tool_calls requires tools"),
+        (
+            {"stream_options": {"include_usage": True}},
+            "stream_options requires stream=true",
+        ),
+    ],
+)
+def test_invalid_request_field_combinations_return_typed_validation_errors(
+    settings,
+    stub_provider: StubProvider,
+    fields: dict[str, object],
+    message: str,
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "work"}],
+                **fields,
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["message"] == message
+    assert response.json()["error"]["type"] == "invalid_request_error"
+    assert response.json()["error"]["code"] == "invalid_request"
+
+
 @pytest.mark.parametrize("model", ["dgx-moa-chat", "dgx-moa-agent"])
 def test_direct_modes_are_executor_only(settings, stub_provider: StubProvider, model: str) -> None:  # type: ignore[no-untyped-def]
     with client_with_stub(settings, stub_provider) as client:
@@ -373,7 +493,7 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         }
 
 
-def test_streaming_upstream_error_returns_bad_gateway(
+def test_streaming_upstream_400_returns_invalid_request(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
     async def rejected(role, model, request):  # type: ignore[no-untyped-def]
@@ -391,7 +511,9 @@ def test_streaming_upstream_error_returns_bad_gateway(
                 "messages": [{"role": "user", "content": "work"}],
             },
         )
-        assert response.status_code == 502
+        assert response.status_code == 400
+        assert response.json()["error"]["type"] == "invalid_request_error"
+        assert response.json()["error"]["code"] == "invalid_request"
 
 
 def test_api_validation(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -402,6 +524,46 @@ def test_api_validation(settings, stub_provider: StubProvider) -> None:  # type:
             json={"model": "wrong", "messages": [{"role": "user", "content": "x"}]},
         )
         assert response.status_code == 404
+        assert response.json() == {
+            "error": {
+                "message": "unknown model",
+                "type": "invalid_request_error",
+                "code": "model_not_found",
+                "param": "model",
+            }
+        }
+
+
+def test_upstream_openai_400_envelope_and_status_are_preserved(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    upstream_error = {
+        "error": {
+            "message": "Unsupported parameter: seed",
+            "type": "invalid_request_error",
+            "code": "unsupported_parameter",
+            "param": "seed",
+        }
+    }
+
+    async def rejected(role, model, request):  # type: ignore[no-untyped-def]
+        response = httpx.Response(
+            400,
+            json=upstream_error,
+            request=httpx.Request("POST", model.base_url),
+        )
+        raise httpx.HTTPStatusError("bad request", request=response.request, response=response)
+
+    stub_provider.complete = rejected  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
+        )
+
+    assert response.status_code == 400
+    assert response.json() == upstream_error
 
 
 def test_malformed_tool_call_returns_bad_gateway(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -421,7 +583,12 @@ def test_malformed_tool_call_returns_bad_gateway(settings, stub_provider: StubPr
             json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
         )
         assert response.status_code == 502
-        assert response.json()["detail"] == "malformed tool arguments"
+        assert response.json()["error"] == {
+            "message": "malformed tool arguments",
+            "type": "backend_error",
+            "code": "backend_error",
+            "param": None,
+        }
 
 
 def test_multiple_tool_calls_are_preserved(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -466,6 +633,12 @@ def test_timeout_and_http_500_mapping(settings, stub_provider: StubProvider) -> 
             json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
         )
         assert response.status_code == 504
+        assert response.json()["error"] == {
+            "message": "timed out",
+            "type": "timeout_error",
+            "code": "executor_timeout",
+            "param": None,
+        }
 
     async def server_error(role, model, request):  # type: ignore[no-untyped-def]
         if role == "executor":
@@ -481,6 +654,8 @@ def test_timeout_and_http_500_mapping(settings, stub_provider: StubProvider) -> 
             json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
         )
         assert response.status_code == 502
+        assert response.json()["error"]["type"] == "backend_error"
+        assert response.json()["error"]["code"] == "backend_error"
 
 
 def test_secondary_trace_failure_marks_degraded_and_continues(
