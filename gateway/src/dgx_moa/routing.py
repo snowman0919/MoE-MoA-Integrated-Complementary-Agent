@@ -33,11 +33,11 @@ HIGH_RISK_FIELDS = (
 
 
 def resolve_runtime_mode(model: str, configured_name: str) -> RuntimeMode:
-    aliases = MODEL_MODES | {configured_name: "agent"}
-    try:
-        return aliases[model]
-    except KeyError as error:
-        raise ValueError("unknown model") from error
+    if model in MODEL_MODES:
+        return MODEL_MODES[model]
+    if model == configured_name:
+        return "agent"
+    raise ValueError("unknown model")
 
 
 def classify_request(

@@ -59,6 +59,17 @@ def test_public_model_aliases(model: str, mode: str) -> None:
     assert resolve_runtime_mode(model, "dgx-moa-agent") == mode
 
 
+@pytest.mark.parametrize(
+    ("model", "mode"),
+    [
+        ("dgx-moa-chat", "chat"),
+        ("dgx-moa-orchestrated", "orchestrated"),
+    ],
+)
+def test_configured_name_cannot_override_public_model_alias(model: str, mode: str) -> None:
+    assert resolve_runtime_mode(model, model) == mode
+
+
 def test_unknown_model_is_rejected() -> None:
     with pytest.raises(ValueError, match="unknown model"):
         resolve_runtime_mode("missing", "dgx-moa-agent")
