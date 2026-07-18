@@ -310,18 +310,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                     state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
                                 yield chunk
                         completed = True
-                        state.finish_reasons = observation.finish_reasons
-                        state.truncated = "length" in observation.finish_reasons
-                        if "reviewer" in state.roles_required:
-                            state.review_deferred = True
-                            state.review_status = "deferred"
                     except asyncio.CancelledError:
-                        state.final_status = "cancelled"
+                        if not observation.done_seen:
+                            state.final_status = "cancelled"
                         raise
                     finally:
+                        terminal = completed or observation.done_seen
+                        state.finish_reasons = observation.finish_reasons
+                        state.truncated = "length" in observation.finish_reasons
+                        if terminal and "reviewer" in state.roles_required:
+                            state.review_deferred = True
+                            state.review_status = "deferred"
                         if state.decisions:
                             state.decisions[-1]["outcome"] = {
-                                "status": "success" if completed else "failure",
+                                "status": "success" if terminal else "failure",
                                 "progress_made": bool(observation.finish_reasons),
                                 "state_changed": False,
                                 "scope_changed": False,
@@ -335,7 +337,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         )
                         request.app.state.store.event(
                             state_session_id,
-                            "stream_completed" if completed else "stream_aborted",
+                            "stream_completed" if terminal else "stream_aborted",
                             {},
                         )
                         request.app.state.store.save(state)

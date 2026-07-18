@@ -685,6 +685,65 @@ async def test_streaming_api_consumer_close_closes_upstream_and_persists_abort(
         assert app.state.store.events("closed-stream")[-1]["event_type"] == "stream_aborted"
 
 
+@pytest.mark.asyncio
+async def test_streaming_api_close_after_done_persists_terminal_success(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    closed = asyncio.Event()
+    stop = b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+    done = b"data: [DONE]\n\n"
+
+    async def upstream():  # type: ignore[no-untyped-def]
+        try:
+            yield stop
+            yield done
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+
+    async def delayed(role, model, request):  # type: ignore[no-untyped-def]
+        stub_provider.calls.append(role)
+        return upstream()
+
+    stub_provider.stream = delayed  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await chat_endpoint(app)(
+            ChatRequest(
+                model="dgx-moa-orchestrated",
+                stream=True,
+                messages=[{"role": "user", "content": "orchestrate"}],
+                metadata={"session_id": "terminal-close"},
+            ),
+            Request({"type": "http", "app": app}),
+            x_session_id=None,
+            x_runtime_channel=None,
+            x_trace_origin=None,
+            x_task_id=None,
+            x_workspace_path=None,
+            x_workspace_id=None,
+            x_repository_branch=None,
+            x_repository_commit=None,
+            x_dirty_state=None,
+        )
+        assert isinstance(response, StreamingResponse)
+        assert await anext(response.body_iterator) == stop
+        assert await anext(response.body_iterator) == done
+
+        await response.body_iterator.aclose()
+        await asyncio.wait_for(closed.wait(), timeout=1)
+
+        state = app.state.store.get("terminal-close")
+        assert state
+        assert state.finish_reasons == ["stop"]
+        assert state.review_deferred
+        assert state.review_status == "deferred"
+        assert state.decisions[-1]["outcome"]["status"] == "success"
+        assert app.state.store.events("terminal-close")[-1]["event_type"] == "stream_completed"
+
+
 def test_streaming_upstream_400_returns_invalid_request(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
