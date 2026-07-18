@@ -408,7 +408,8 @@ def test_fake_driver_is_exact_role_only() -> None:
 
     driver.start("executor")
     assert driver.status("executor") == "active"
-    assert driver.progress("executor") == ("one", "two")
+    cursor = driver.capture_progress_cursor("executor")
+    assert driver.progress("executor", cursor) == ("one", "two")
     driver.stop("executor")
     assert driver.status("executor") == "inactive"
     with pytest.raises(module.UnknownRoleError):
@@ -423,7 +424,12 @@ def test_systemd_driver_uses_only_exact_argument_vectors(
 
     def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append((args, kwargs))
-        stdout = "active\nrunning\n" if "show" in args else "one\ntwo\nthree\nfour\n"
+        if "show" in args:
+            stdout = "active\nrunning\n"
+        elif "--show-cursor" in args:
+            stdout = "-- cursor: s=exact123;i=4\n"
+        else:
+            stdout = "one\ntwo\nthree\nfour\n"
         return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
@@ -434,7 +440,8 @@ def test_systemd_driver_uses_only_exact_argument_vectors(
     assert driver.status("executor") == "active"
     driver.start("executor")
     driver.stop("executor")
-    assert driver.progress("executor") == ("two", "three", "four")
+    cursor = driver.capture_progress_cursor("executor")
+    assert driver.progress("executor", cursor) == ("two", "three", "four")
 
     assert [args for args, _ in calls] == [
         [
@@ -455,7 +462,19 @@ def test_systemd_driver_uses_only_exact_argument_vectors(
             "dgx-moa-dev-executor.service",
             "--no-pager",
             "-n",
+            "0",
+            "--show-cursor",
+        ],
+        [
+            "journalctl",
+            "--user",
+            "-u",
+            "dgx-moa-dev-executor.service",
+            "--no-pager",
+            "-n",
             "3",
+            "--after-cursor",
+            "s=exact123;i=4",
             "--output=cat",
         ],
     ]
@@ -466,7 +485,109 @@ def test_systemd_driver_uses_only_exact_argument_vectors(
     assert all("shell" not in kwargs for _, kwargs in calls)
 
 
-@pytest.mark.parametrize("method", ["status", "start", "stop", "progress"])
+def test_systemd_progress_is_scoped_to_a_valid_bounded_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = lifecycle()
+    calls: list[list[str]] = []
+    cursor = "s=abc123;i=4;b=def456"
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if "--show-cursor" in args:
+            stdout = f"-- cursor: {cursor}\n"
+        elif "--after-cursor" in args:
+            stdout = "Loading safetensors checkpoint shards: 2/4\n"
+        else:
+            raise AssertionError(args)
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    driver = module.SystemdLifecycleDriver(
+        {"executor": "dgx-moa-dev-executor.service"}, journal_lines=3
+    )
+
+    captured = driver.capture_progress_cursor("executor")
+    lines = driver.progress("executor", captured)
+    progress = module.parse_load_progress(lines)
+
+    assert captured == cursor
+    assert progress.state == "loading_weights"
+    assert progress.weight_load_percent == 50.0
+    assert calls == [
+        [
+            "journalctl",
+            "--user",
+            "-u",
+            "dgx-moa-dev-executor.service",
+            "--no-pager",
+            "-n",
+            "0",
+            "--show-cursor",
+        ],
+        [
+            "journalctl",
+            "--user",
+            "-u",
+            "dgx-moa-dev-executor.service",
+            "--no-pager",
+            "-n",
+            "3",
+            "--after-cursor",
+            cursor,
+            "--output=cat",
+        ],
+    ]
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "",
+        "-- cursor: unsafe cursor\n",
+        "-- cursor: " + "x" * 1_025 + "\n",
+        "-- cursor: one\n-- cursor: two\n",
+    ],
+)
+def test_systemd_driver_rejects_malformed_progress_cursor(
+    monkeypatch: pytest.MonkeyPatch, output: str
+) -> None:
+    module = lifecycle()
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0, stdout=output, stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    driver = module.SystemdLifecycleDriver({"executor": "dgx-moa-dev-executor.service"})
+
+    with pytest.raises(module.LifecycleDriverError) as raised:
+        driver.capture_progress_cursor("executor")
+    assert raised.value.operation == "cursor"
+    assert raised.value.kind == "malformed_output"
+
+
+def test_systemd_driver_rejects_unsafe_supplied_cursor_without_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = lifecycle()
+    calls: list[object] = []
+
+    def fake_run(*args: object, **kwargs: object) -> None:
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    driver = module.SystemdLifecycleDriver({"executor": "dgx-moa-dev-executor.service"})
+
+    with pytest.raises(module.LifecycleDriverError) as raised:
+        driver.progress("executor", "unsafe cursor")
+    assert raised.value.operation == "progress"
+    assert raised.value.kind == "malformed_output"
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "method", ["status", "start", "stop", "capture_progress_cursor", "progress"]
+)
 def test_systemd_driver_rejects_unknown_roles_without_running(
     monkeypatch: pytest.MonkeyPatch, method: str
 ) -> None:
@@ -480,11 +601,14 @@ def test_systemd_driver_rejects_unknown_roles_without_running(
     driver = module.SystemdLifecycleDriver({"executor": "dgx-moa-dev-executor.service"})
 
     with pytest.raises(module.UnknownRoleError):
-        getattr(driver, method)("planner")
+        if method == "progress":
+            driver.progress("planner", "s=safe")
+        else:
+            getattr(driver, method)("planner")
     assert calls == []
 
 
-@pytest.mark.parametrize("operation", ["status", "start", "stop", "progress"])
+@pytest.mark.parametrize("operation", ["status", "start", "stop", "cursor", "progress"])
 def test_systemd_driver_converts_timeout_to_safe_typed_error(
     monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
@@ -497,7 +621,12 @@ def test_systemd_driver_converts_timeout_to_safe_typed_error(
     driver = module.SystemdLifecycleDriver({"executor": "dgx-moa-dev-executor.service"})
 
     with pytest.raises(module.LifecycleDriverError) as raised:
-        getattr(driver, operation)("executor")
+        if operation == "cursor":
+            driver.capture_progress_cursor("executor")
+        elif operation == "progress":
+            driver.progress("executor", "s=safe")
+        else:
+            getattr(driver, operation)("executor")
     assert raised.value.kind == "timeout"
     assert raised.value.operation == operation
     assert "systemctl" not in str(raised.value)
@@ -515,7 +644,7 @@ def test_systemd_driver_converts_timeout_to_safe_typed_error(
         assert secret not in formatted
 
 
-@pytest.mark.parametrize("operation", ["status", "start", "stop", "progress"])
+@pytest.mark.parametrize("operation", ["status", "start", "stop", "cursor", "progress"])
 def test_systemd_driver_converts_nonzero_to_safe_typed_error(
     monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
@@ -528,7 +657,12 @@ def test_systemd_driver_converts_nonzero_to_safe_typed_error(
     driver = module.SystemdLifecycleDriver({"executor": "dgx-moa-dev-executor.service"})
 
     with pytest.raises(module.LifecycleDriverError) as raised:
-        getattr(driver, operation)("executor")
+        if operation == "cursor":
+            driver.capture_progress_cursor("executor")
+        elif operation == "progress":
+            driver.progress("executor", "s=safe")
+        else:
+            getattr(driver, operation)("executor")
     assert raised.value.kind == "command_failed"
     assert raised.value.operation == operation
     assert "secret" not in str(raised.value)
@@ -671,6 +805,70 @@ def test_progress_parser_never_regresses_from_warmup_to_engine_initialization() 
     assert progress.weight_load_percent == 100.0
 
 
+@pytest.mark.parametrize(
+    "lines",
+    [(), ("Loading model weights: 5/0 bytes", "checkpoint shards: invalid")],
+)
+def test_unavailable_progress_preserves_prior_measurement(lines: tuple[str, ...]) -> None:
+    module = lifecycle()
+
+    progress = module.parse_load_progress(
+        lines,
+        previous_percent=60.0,
+        previous_quality="measured_shards",
+    )
+
+    assert progress.state == "loading_weights"
+    assert progress.weight_load_percent == 60.0
+    assert progress.progress_quality == "measured_shards"
+
+
+@pytest.mark.asyncio
+async def test_coordinator_preserves_prior_progress_when_new_logs_are_invalid(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    blocked = asyncio.Event()
+    sleep_calls = 0
+    store = module.LifecycleStore(tmp_path / "preserve-progress.db", ("executor",))
+    driver = module.FakeLifecycleDriver(
+        {"executor": "inactive"},
+        progress={"executor": ("Loading safetensors checkpoint shards: 3/5",)},
+    )
+
+    async def health_probe(role: str) -> bool:
+        return False
+
+    async def sleeper(seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            driver._progress["executor"] = ("checkpoint shards: invalid",)
+            return
+        await blocked.wait()
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=health_probe,
+        timeout_seconds=10.0,
+        poll_seconds=0.25,
+        clock=lambda: 100.0,
+        sleeper=sleeper,
+    )
+
+    await coordinator.ensure_ready("executor")
+    for _ in range(100):
+        if sleep_calls == 2:
+            break
+        await asyncio.sleep(0)
+    record = store.get("executor")
+
+    assert record.progress_value == 60.0
+    assert record.progress_quality == "measured_shards"
+    await coordinator.close()
+
+
 @pytest.mark.asyncio
 async def test_twenty_concurrent_cold_checks_share_one_load(
     tmp_path: Path,
@@ -754,20 +952,31 @@ async def test_start_failure_allows_only_one_bounded_manual_retry(
     first = await coordinator.ensure_ready("executor")
     await coordinator._tasks["executor"]
     first_failure = store.get("executor")
+    first_refreshed = await coordinator.ensure_ready("executor")
     second = await coordinator.ensure_ready("executor")
     await coordinator._tasks["executor"]
     second_failure = store.get("executor")
+    second_refreshed = await coordinator.ensure_ready("executor")
     blocked = await coordinator.ensure_ready("executor")
 
     assert first.load_triggered is True
     assert first_failure.failure_class == failure_class
     assert first_failure.retry_count == 1
+    assert first_refreshed.record == first_failure
+    assert first_refreshed.load_triggered is False
     assert second.load_triggered is True
     assert second_failure.failure_class == failure_class
     assert second_failure.retry_count == module.MAX_LOAD_RETRIES
+    assert second_refreshed.record == second_failure
+    assert second_refreshed.load_triggered is False
     assert blocked.load_triggered is False
     assert blocked.record.state == "failed"
-    assert driver.calls == [("start", "executor"), ("start", "executor")]
+    assert driver.calls == [
+        ("cursor", "executor"),
+        ("start", "executor"),
+        ("cursor", "executor"),
+        ("start", "executor"),
+    ]
     await coordinator.close()
 
 
@@ -809,7 +1018,11 @@ async def test_inactive_or_failed_service_gets_a_typed_failure(
     assert failure.state == "failed"
     assert failure.failure_class == f"service_{service_status}"
     assert failure.retry_count == 1
-    assert driver.calls == [("start", "executor"), ("status", "executor")]
+    assert driver.calls == [
+        ("cursor", "executor"),
+        ("start", "executor"),
+        ("status", "executor"),
+    ]
     await coordinator.close()
 
 
@@ -848,6 +1061,48 @@ async def test_health_timeout_is_typed_and_does_not_auto_retry(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("shards", "expected_quality"),
+    [("1/4", "estimated"), ("4/4", "measured_shards")],
+)
+async def test_health_ready_only_preserves_a_measured_complete_quality(
+    tmp_path: Path, shards: str, expected_quality: str
+) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / f"ready-{shards.replace('/', '-')}.db", ("executor",))
+    driver = module.FakeLifecycleDriver(
+        {"executor": "inactive"},
+        progress={"executor": (f"Loading safetensors checkpoint shards: {shards}",)},
+    )
+
+    async def health_probe(role: str) -> bool:
+        assert role == "executor"
+        return True
+
+    async def reject_sleep(seconds: float) -> None:
+        raise AssertionError(f"healthy load slept for {seconds}")
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=health_probe,
+        timeout_seconds=10.0,
+        poll_seconds=0.25,
+        clock=lambda: 100.0,
+        sleeper=reject_sleep,
+    )
+
+    await coordinator.ensure_ready("executor")
+    await coordinator._tasks["executor"]
+    ready = store.get("executor")
+
+    assert ready.state == "ready"
+    assert ready.progress_value == 100.0
+    assert ready.progress_quality == expected_quality
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
 async def test_outer_model_load_deadline_is_distinct_from_health_timeout(
     tmp_path: Path,
 ) -> None:
@@ -879,4 +1134,160 @@ async def test_outer_model_load_deadline_is_distinct_from_health_timeout(
     assert failure.failure_class == "load_timeout"
     assert failure.retry_count == 1
     assert driver.calls.count(("start", "executor")) == 1
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("completed_state", ["ready", "failed"])
+async def test_done_load_task_refreshes_state_before_returning(
+    tmp_path: Path, completed_state: str
+) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / f"race-{completed_state}.db", ("executor",))
+    stale = reach(
+        store,
+        "executor",
+        "warming_up" if completed_state == "ready" else "load_queued",
+    )
+    if completed_state == "ready":
+        current = store.transition("executor", "ready", expected_transition_id=stale.transition_id)
+    else:
+        current = store.transition(
+            "executor",
+            "failed",
+            expected_transition_id=stale.transition_id,
+            failure_class="health_timeout",
+            retry_count=1,
+        )
+    driver = module.FakeLifecycleDriver({"executor": "active"})
+
+    async def reject_health(role: str) -> bool:
+        raise AssertionError(f"completed task probed health for {role}")
+
+    async def reject_sleep(seconds: float) -> None:
+        raise AssertionError(f"completed task slept for {seconds}")
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=reject_health,
+        timeout_seconds=10.0,
+        poll_seconds=0.25,
+        clock=lambda: 100.0,
+        sleeper=reject_sleep,
+    )
+    task = asyncio.create_task(asyncio.sleep(0))
+    await task
+    coordinator._tasks["executor"] = task
+    real_get = store.get
+    reads = 0
+
+    def stale_then_current(role: str):  # type: ignore[no-untyped-def]
+        nonlocal reads
+        reads += 1
+        return stale if reads == 1 else real_get(role)
+
+    store.get = stale_then_current  # type: ignore[method-assign]
+
+    check = await coordinator.ensure_ready("executor")
+
+    assert check.record == current
+    assert check.load_triggered is False
+    assert reads == 2
+    assert coordinator._tasks == {}
+    assert driver.calls == []
+
+
+@pytest.mark.asyncio
+async def test_done_task_exception_is_retrieved_even_when_failure_persistence_raises(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+
+    class FailingStartDriver(module.FakeLifecycleDriver):
+        def start(self, role: str) -> None:
+            self._require_role(role)
+            self.calls.append(("start", role))
+            raise module.LifecycleDriverError("start", "command_failed")
+
+    store = module.LifecycleStore(tmp_path / "task-error.db", ("executor",))
+    driver = FailingStartDriver({"executor": "inactive"})
+
+    async def reject_health(role: str) -> bool:
+        raise AssertionError(f"failed start probed health for {role}")
+
+    async def reject_sleep(seconds: float) -> None:
+        raise AssertionError(f"failed start slept for {seconds}")
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=reject_health,
+        timeout_seconds=10.0,
+        poll_seconds=0.25,
+        clock=lambda: 100.0,
+        sleeper=reject_sleep,
+    )
+
+    def fail_persistence(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("failure persistence unavailable")
+
+    coordinator._fail = fail_persistence  # type: ignore[method-assign]
+    await coordinator.ensure_ready("executor")
+    task = coordinator._tasks["executor"]
+    while not task.done():
+        await asyncio.sleep(0)
+
+    try:
+        check = await coordinator.ensure_ready("executor")
+        retrieved = not task._log_traceback
+    finally:
+        if task._log_traceback:
+            task.exception()
+
+    assert retrieved
+    assert check.record == store.get("executor")
+    assert check.load_triggered is False
+    assert coordinator._tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_load_scopes_progress_immediately_before_start_without_persisting_cursor(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    cursor = "s=sentinel123;i=1;b=abc"
+    blocked = asyncio.Event()
+    store = module.LifecycleStore(tmp_path / "cursor.db", ("executor",))
+    driver = module.FakeLifecycleDriver(
+        {"executor": "inactive"},
+        progress={"executor": ("Loading safetensors checkpoint shards: 1/2",)},
+        cursors={"executor": cursor},
+    )
+
+    async def health_probe(role: str) -> bool:
+        return False
+
+    async def sleeper(seconds: float) -> None:
+        await blocked.wait()
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=health_probe,
+        timeout_seconds=10.0,
+        poll_seconds=0.25,
+        clock=lambda: 100.0,
+        sleeper=sleeper,
+    )
+
+    await coordinator.ensure_ready("executor")
+    for _ in range(100):
+        if ("progress", "executor") in driver.calls:
+            break
+        await asyncio.sleep(0.001)
+
+    assert driver.calls[:2] == [("cursor", "executor"), ("start", "executor")]
+    assert driver.progress_cursors == [("executor", cursor)]
+    assert cursor.encode() not in store.path.read_bytes()
     await coordinator.close()

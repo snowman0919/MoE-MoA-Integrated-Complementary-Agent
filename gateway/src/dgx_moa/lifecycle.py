@@ -28,13 +28,15 @@ LifecycleState = Literal[
     "failed",
 ]
 DriverStatus = Literal["active", "inactive", "failed"]
-DriverOperation = Literal["status", "start", "stop", "progress"]
+DriverOperation = Literal["status", "start", "stop", "cursor", "progress"]
 DriverErrorKind = Literal["timeout", "command_failed", "malformed_output"]
 ProgressQuality = Literal["measured_bytes", "measured_shards", "estimated", "unavailable"]
 
 MAX_PROGRESS_LINES = 1_000
 MAX_PROGRESS_LINE_CHARACTERS = 2_000
+MAX_JOURNAL_CURSOR_CHARACTERS = 1_024
 MAX_LOAD_RETRIES = 2
+JOURNAL_CURSOR = re.compile(r"[A-Za-z0-9_.:;=+-]+")
 BYTE_PROGRESS = re.compile(
     r"(?P<loaded>\d+(?:\.\d+)?)\s*/\s*(?P<total>\d+(?:\.\d+)?)\s*bytes?\b",
     re.IGNORECASE,
@@ -119,7 +121,10 @@ def _reported_percent(match: re.Match[str]) -> float | None:
 
 
 def parse_load_progress(
-    lines: Sequence[str], *, previous_percent: float | None = None
+    lines: Sequence[str],
+    *,
+    previous_percent: float | None = None,
+    previous_quality: ProgressQuality | None = None,
 ) -> LoadProgress:
     bytes_percent: float | None = None
     shards_percent: float | None = None
@@ -154,8 +159,9 @@ def parse_load_progress(
         if shards_percent is not None
         else "unavailable"
     )
-    if measured is not None and previous_percent is not None:
-        measured = max(measured, previous_percent)
+    if previous_percent is not None and (measured is None or previous_percent > measured):
+        measured = previous_percent
+        quality = previous_quality or (quality if quality != "unavailable" else "estimated")
     return LoadProgress(
         state="loading_weights",
         weight_load_percent=measured,
@@ -200,7 +206,9 @@ class LifecycleDriver(Protocol):
 
     def stop(self, role: str) -> None: ...
 
-    def progress(self, role: str) -> tuple[str, ...]: ...
+    def capture_progress_cursor(self, role: str) -> str: ...
+
+    def progress(self, role: str, cursor: str) -> tuple[str, ...]: ...
 
 
 COLUMNS = tuple(LifecycleRecord.model_fields)
@@ -455,7 +463,13 @@ class LifecycleCoordinator:
             task = self._tasks.get(role)
             if task is not None and task.done():
                 self._tasks.pop(role)
-                task = None
+                try:
+                    task.result()
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
+                return LoadCheck(record=self.store.get(role))
             if record.state == "ready" or task is not None:
                 return LoadCheck(record=record)
             if record.state not in {"cold", "failed"} or record.retry_count >= MAX_LOAD_RETRIES:
@@ -493,6 +507,7 @@ class LifecycleCoordinator:
             "process_starting",
             expected_transition_id=transition_id,
         )
+        cursor = await asyncio.to_thread(self.driver.capture_progress_cursor, role)
         await asyncio.to_thread(self.driver.start, role)
         while True:
             driver_status = await asyncio.to_thread(self.driver.status, role)
@@ -507,8 +522,12 @@ class LifecycleCoordinator:
                     expected_transition_id=record.transition_id,
                     progress_quality="unavailable",
                 )
-            lines = await asyncio.to_thread(self.driver.progress, role)
-            progress = parse_load_progress(lines, previous_percent=record.progress_value)
+            lines = await asyncio.to_thread(self.driver.progress, role, cursor)
+            progress = parse_load_progress(
+                lines,
+                previous_percent=record.progress_value,
+                previous_quality=record.progress_quality,
+            )
             if progress.state == "initializing_engine" and record.state == "loading_weights":
                 record = self.store.transition(
                     role,
@@ -563,7 +582,8 @@ class LifecycleCoordinator:
             if healthy:
                 ready_quality: ProgressQuality = (
                     record.progress_quality
-                    if record.progress_quality in {"measured_bytes", "measured_shards"}
+                    if record.progress_value == 100.0
+                    and record.progress_quality in {"measured_bytes", "measured_shards"}
                     else "estimated"
                 )
                 if record.state == "loading_weights":
@@ -626,10 +646,13 @@ class FakeLifecycleDriver:
         statuses: Mapping[str, DriverStatus],
         *,
         progress: Mapping[str, tuple[str, ...]] | None = None,
+        cursors: Mapping[str, str] | None = None,
     ):
         self._statuses = dict(statuses)
         self._progress = dict(progress or {})
+        self._cursors = {role: (cursors or {}).get(role, f"s=fake_{role}") for role in statuses}
         self.calls: list[tuple[DriverOperation, str]] = []
+        self.progress_cursors: list[tuple[str, str]] = []
 
     def _require_role(self, role: str) -> None:
         if role not in self._statuses:
@@ -650,9 +673,15 @@ class FakeLifecycleDriver:
         self.calls.append(("stop", role))
         self._statuses[role] = "inactive"
 
-    def progress(self, role: str) -> tuple[str, ...]:
+    def capture_progress_cursor(self, role: str) -> str:
+        self._require_role(role)
+        self.calls.append(("cursor", role))
+        return self._cursors[role]
+
+    def progress(self, role: str, cursor: str) -> tuple[str, ...]:
         self._require_role(role)
         self.calls.append(("progress", role))
+        self.progress_cursors.append((role, cursor))
         return self._progress.get(role, ())
 
 
@@ -734,7 +763,39 @@ class SystemdLifecycleDriver:
         args = ["systemctl", "--user", "stop", self._unit(role)]
         self._run("stop", args)
 
-    def progress(self, role: str) -> tuple[str, ...]:
+    @staticmethod
+    def _valid_cursor(cursor: str) -> bool:
+        return (
+            0 < len(cursor) <= MAX_JOURNAL_CURSOR_CHARACTERS
+            and JOURNAL_CURSOR.fullmatch(cursor) is not None
+        )
+
+    def capture_progress_cursor(self, role: str) -> str:
+        output = self._run(
+            "cursor",
+            [
+                "journalctl",
+                "--user",
+                "-u",
+                self._unit(role),
+                "--no-pager",
+                "-n",
+                "0",
+                "--show-cursor",
+            ],
+        )
+        lines = output.splitlines()
+        prefix = "-- cursor: "
+        if len(lines) != 1 or not lines[0].startswith(prefix):
+            raise LifecycleDriverError("cursor", "malformed_output")
+        cursor = lines[0][len(prefix) :]
+        if not self._valid_cursor(cursor):
+            raise LifecycleDriverError("cursor", "malformed_output")
+        return cursor
+
+    def progress(self, role: str, cursor: str) -> tuple[str, ...]:
+        if not self._valid_cursor(cursor):
+            raise LifecycleDriverError("progress", "malformed_output")
         output = self._run(
             "progress",
             [
@@ -745,6 +806,8 @@ class SystemdLifecycleDriver:
                 "--no-pager",
                 "-n",
                 str(self._journal_lines),
+                "--after-cursor",
+                cursor,
                 "--output=cat",
             ],
         )

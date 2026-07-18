@@ -307,7 +307,6 @@ def create_app(
             },
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             headers={
-                "Retry-After": "30",
                 "X-DGX-MOA-Model-State": state_value,
                 "X-DGX-MOA-Weight-Load-Percent": (
                     "unavailable"
@@ -651,7 +650,6 @@ def create_app(
             finalize_request(
                 "model_unavailable",
                 "failed",
-                retryable_failure_class="backend_error",
             )
             unavailable_role = unmanaged_role
             if unavailable_role is None:

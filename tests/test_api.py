@@ -511,6 +511,7 @@ async def test_managed_request_rejects_an_unmapped_required_role_honestly(
         usage = assert_usage(app, "failed")
 
     assert response.status_code == 503
+    assert "retry-after" not in response.headers
     assert response.headers["X-DGX-MOA-Model-State"] == "unmanaged"
     assert response.headers["X-DGX-MOA-Weight-Load-Percent"] == "unavailable"
     payload = json.loads(response.body)
@@ -526,7 +527,7 @@ async def test_managed_request_rejects_an_unmapped_required_role_honestly(
     }
     assert usage.model_state == "cold"
     assert usage.load_triggered is False
-    assert usage.retryable_failure_class == "backend_error"
+    assert usage.retryable_failure_class is None
     assert driver.calls == []
     assert stub_provider.calls == []
 
@@ -578,6 +579,7 @@ async def test_retry_exhaustion_returns_non_loading_model_failure(
         usage = assert_usage(app, "failed")
 
     assert response.status_code == 503
+    assert "retry-after" not in response.headers
     assert response.headers["X-DGX-MOA-Model-State"] == "failed"
     payload = json.loads(response.body)
     assert payload["error"]["type"] == "model_unavailable"
@@ -588,7 +590,7 @@ async def test_retry_exhaustion_returns_non_loading_model_failure(
     assert "SENTINEL_FAILURE_DETAIL" not in json.dumps(payload)
     assert usage.model_state == "cold"
     assert usage.load_triggered is False
-    assert usage.retryable_failure_class == "backend_error"
+    assert usage.retryable_failure_class is None
     assert driver.calls == []
     assert stub_provider.calls == []
 
