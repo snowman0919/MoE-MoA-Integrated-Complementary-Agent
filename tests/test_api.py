@@ -1079,6 +1079,84 @@ async def test_streaming_api_persists_cancellation_and_closes_upstream(
 
 
 @pytest.mark.asyncio
+async def test_streaming_api_first_byte_cancellation_persists_terminal_evidence(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    first_byte_waiting = asyncio.Event()
+
+    class BlockingStream(httpx.AsyncByteStream):
+        async def __aiter__(self):  # type: ignore[no-untyped-def]
+            first_byte_waiting.set()
+            await asyncio.Event().wait()
+            yield b"data: [DONE]\n\n"
+
+    responses: list[httpx.Response] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        response = httpx.Response(200, stream=BlockingStream(), request=request)
+        responses.append(response)
+        return response
+
+    transport = httpx.MockTransport(respond)
+    clients: list[httpx.AsyncClient] = []
+    async_client = httpx.AsyncClient
+
+    def client(**kwargs):  # type: ignore[no-untyped-def]
+        created = async_client(transport=transport, **kwargs)
+        clients.append(created)
+        return created
+
+    monkeypatch.setattr("dgx_moa.providers.httpx.AsyncClient", client)
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        pending = asyncio.create_task(
+            chat_endpoint(app)(
+                ChatRequest(
+                    model="dgx-moa-agent",
+                    stream=True,
+                    messages=[{"role": "user", "content": "work"}],
+                    metadata={"session_id": "first-byte-cancelled"},
+                ),
+                Request({"type": "http", "app": app}),
+                x_session_id=None,
+                x_runtime_channel=None,
+                x_trace_origin=None,
+                x_task_id=None,
+                x_workspace_path=None,
+                x_workspace_id=None,
+                x_repository_branch=None,
+                x_repository_commit=None,
+                x_dirty_state=None,
+            )
+        )
+        await asyncio.wait_for(first_byte_waiting.wait(), timeout=1)
+
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+
+        assert responses[0].is_closed
+        assert clients[0].is_closed
+        state = app.state.store.get("first-byte-cancelled")
+        events = app.state.store.events("first-byte-cancelled")
+
+    assert state and state.final_status == "cancelled"
+    assert sum(event["event_type"] == "stream_aborted" for event in events) == 1
+    timing_events = [event for event in events if event["event_type"] == "request_timing"]
+    assert len(timing_events) == 1
+    payload = timing_events[0]["payload"]
+    assert payload["stage_status"]["executor_first_byte"] == "cancelled"
+    assert "first_downstream_byte" not in payload["timings_ms"]
+    trace_path = next(
+        (settings.state_db.parent.parent / "traces").rglob("first-byte-cancelled.jsonl")
+    )
+    traces = [json.loads(line) for line in trace_path.read_text().splitlines()]
+    assert len(traces) == 1
+    assert traces[0]["final_status"] == "cancelled"
+    assert traces[0]["metrics"]["request_timing_ms"] == payload["timings_ms"]
+
+
+@pytest.mark.asyncio
 async def test_streaming_api_consumer_close_closes_upstream_and_persists_abort(
     settings, stub_provider: StubProvider, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]

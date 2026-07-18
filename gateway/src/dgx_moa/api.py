@@ -303,11 +303,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             state_session_id = session_id
 
-        def finalize_failure(stage: str, status_value: str = "failed") -> None:
+        def finalize_failure(
+            stage: str,
+            status_value: str = "failed",
+            *,
+            downstream_started: bool = True,
+            current_state: Any | None = None,
+        ) -> None:
             nonlocal failure_finalized, state
             if failure_finalized:
                 return
-            current = state or request.app.state.store.get(state_session_id)
+            current = current_state or state or request.app.state.store.get(state_session_id)
             if current is None:
                 return
             failure_finalized = True
@@ -320,7 +326,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "executor_total",
                     round((time.monotonic() - executor_started) * 1000, 3),
                 )
-            current.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+            if downstream_started:
+                current.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
             record_request_timing(current)
             request.app.state.store.save(current)
             record_trace_safely(request, current, task_id)
@@ -503,6 +510,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request.app.state.store.save(state)
             record_trace_safely(request, state, task_id)
             return JSONResponse(response, headers={"X-Session-ID": session_id})
+        except asyncio.CancelledError:
+            current = state or request.app.state.store.get(state_session_id)
+            if current is not None:
+                current.final_status = "cancelled"
+                if body.stream:
+                    request.app.state.store.event(state_session_id, "stream_aborted", {})
+            finalize_failure(
+                active_stage,
+                "cancelled",
+                downstream_started=False,
+                current_state=current,
+            )
+            raise
         except DuplicateFailedCall as error:
             finalize_failure(active_stage)
             raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
