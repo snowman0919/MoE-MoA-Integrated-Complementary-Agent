@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import math
 import re
 import sqlite3
@@ -9,7 +10,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, Protocol
-from uuid import uuid4
+from uuid import UUID, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -31,6 +32,9 @@ DriverStatus = Literal["active", "inactive", "failed"]
 DriverOperation = Literal["status", "start", "stop", "cursor", "progress"]
 DriverErrorKind = Literal["timeout", "command_failed", "malformed_output"]
 ProgressQuality = Literal["measured_bytes", "measured_shards", "estimated", "unavailable"]
+LeaseKind = Literal["active_request", "open_stream", "continuation"]
+RequestLeaseKind = Literal["active_request", "open_stream"]
+GuardKind = Literal["evaluation_guard", "profile_guard"]
 
 MAX_PROGRESS_LINES = 1_000
 MAX_PROGRESS_LINE_CHARACTERS = 2_000
@@ -45,6 +49,7 @@ SHARD_PROGRESS = re.compile(
     r"checkpoint\s+shards?[^\r\n]*?(?P<loaded>\d+)\s*/\s*(?P<total>\d+)",
     re.IGNORECASE,
 )
+CONTINUATION_CORRELATION = re.compile(r"[0-9a-f]{64}")
 
 LIFECYCLE_STATES: tuple[LifecycleState, ...] = (
     "cold",
@@ -97,6 +102,17 @@ class LifecycleRecord(BaseModel):
     last_unload_duration_seconds: float | None = Field(default=None, ge=0)
     memory_before_bytes: int | None = Field(default=None, ge=0)
     memory_after_bytes: int | None = Field(default=None, ge=0)
+
+
+class LifecycleLease(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    lease_id: str
+    role: str
+    kind: LeaseKind
+    owner_correlation: str
+    created_at: float = Field(ge=0)
+    expires_at: float | None = Field(default=None, ge=0)
 
 
 class LoadProgress(BaseModel):
@@ -203,6 +219,10 @@ class LifecycleLoadError(LifecycleError):
         super().__init__(failure_class)
 
 
+def continuation_correlation(session_id: str) -> str:
+    return hashlib.sha256(b"dgx-moa-continuation\0" + session_id.encode()).hexdigest()
+
+
 class LifecycleDriver(Protocol):
     def status(self, role: str) -> DriverStatus: ...
 
@@ -216,6 +236,7 @@ class LifecycleDriver(Protocol):
 
 
 COLUMNS = tuple(LifecycleRecord.model_fields)
+LEASE_COLUMNS = tuple(LifecycleLease.model_fields)
 MUTABLE_FIELDS = frozenset(COLUMNS) - {
     "role",
     "state",
@@ -264,6 +285,17 @@ class LifecycleStore:
                 "last_load_duration_seconds REAL, last_unload_duration_seconds REAL, "
                 "memory_before_bytes INTEGER, memory_after_bytes INTEGER)"
             )
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS model_lifecycle_leases ("
+                "lease_id TEXT PRIMARY KEY, role TEXT NOT NULL, kind TEXT NOT NULL "
+                "CHECK(kind IN ('active_request', 'open_stream', 'continuation')), "
+                "owner_correlation TEXT NOT NULL, created_at REAL NOT NULL, expires_at REAL, "
+                "FOREIGN KEY(role) REFERENCES model_lifecycle(role))"
+            )
+            database.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS model_lifecycle_lease_owner "
+                "ON model_lifecycle_leases(role, kind, owner_correlation)"
+            )
             for role in self._roles:
                 now = self._clock()
                 record = LifecycleRecord(
@@ -289,6 +321,12 @@ class LifecycleStore:
         if role not in self._role_set:
             raise UnknownRoleError(role)
 
+    def _lease_now(self) -> float:
+        now = self._clock()
+        if not math.isfinite(now) or now < 0:
+            raise ValueError("lifecycle lease clock must be finite and nonnegative")
+        return now
+
     @staticmethod
     def _record(row: sqlite3.Row) -> LifecycleRecord:
         values = dict(row)
@@ -303,6 +341,15 @@ class LifecycleStore:
             int(values[column]) if column in BOOLEAN_FIELDS else values[column]
             for column in COLUMNS
         )
+
+    @staticmethod
+    def _lease_values(lease: LifecycleLease) -> tuple[Any, ...]:
+        values = lease.model_dump()
+        return tuple(values[column] for column in LEASE_COLUMNS)
+
+    @staticmethod
+    def _lease(row: sqlite3.Row) -> LifecycleLease:
+        return LifecycleLease.model_validate(dict(row))
 
     def _read(self, database: sqlite3.Connection, role: str) -> LifecycleRecord:
         row = database.execute(
@@ -325,6 +372,236 @@ class LifecycleStore:
         self._require_role(role)
         with self._connect() as database:
             return self._read(database, role)
+
+    def _sync_lease_counts(
+        self,
+        database: sqlite3.Connection,
+        roles: Iterable[str],
+        now: float,
+    ) -> None:
+        for role in roles:
+            counts = database.execute(
+                "SELECT "
+                "COUNT(*) FILTER (WHERE kind = 'active_request'), "
+                "COUNT(*) FILTER (WHERE kind = 'open_stream'), "
+                "COUNT(*) FILTER (WHERE kind = 'continuation' "
+                "AND expires_at > ?) "
+                "FROM model_lifecycle_leases WHERE role = ?",
+                (now, role),
+            ).fetchone()
+            assert counts is not None
+            database.execute(
+                "UPDATE model_lifecycle SET active_request_count = ?, open_stream_count = ?, "
+                "continuation_lease_count = ?, updated_at = ? WHERE role = ?",
+                (*counts, now, role),
+            )
+
+    def acquire_request_leases(
+        self,
+        request_id: str,
+        roles: Iterable[str],
+        *,
+        kind: RequestLeaseKind,
+    ) -> tuple[LifecycleLease, ...]:
+        namespace = UUID(request_id)
+        requested_roles = tuple(dict.fromkeys(roles))
+        for role in requested_roles:
+            self._require_role(role)
+        now = self._lease_now()
+        leases = tuple(
+            LifecycleLease(
+                lease_id=str(uuid5(namespace, f"{kind}:{role}")),
+                role=role,
+                kind=kind,
+                owner_correlation=request_id,
+                created_at=now,
+            )
+            for role in requested_roles
+        )
+        with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            for lease in leases:
+                database.execute(
+                    f"INSERT OR IGNORE INTO model_lifecycle_leases "
+                    f"({', '.join(LEASE_COLUMNS)}) "
+                    f"VALUES ({', '.join('?' for _ in LEASE_COLUMNS)})",
+                    self._lease_values(lease),
+                )
+            self._sync_lease_counts(database, requested_roles, now)
+            return tuple(
+                self._lease(
+                    database.execute(
+                        f"SELECT {', '.join(LEASE_COLUMNS)} FROM model_lifecycle_leases "
+                        "WHERE lease_id = ?",
+                        (lease.lease_id,),
+                    ).fetchone()
+                )
+                for lease in leases
+            )
+
+    def _prune_expired_continuations(
+        self,
+        database: sqlite3.Connection,
+        now: float,
+    ) -> tuple[int, tuple[str, ...]]:
+        roles = tuple(
+            row[0]
+            for row in database.execute(
+                "SELECT DISTINCT role FROM model_lifecycle_leases "
+                "WHERE kind = 'continuation' AND expires_at <= ?",
+                (now,),
+            )
+        )
+        removed = database.execute(
+            "DELETE FROM model_lifecycle_leases WHERE kind = 'continuation' AND expires_at <= ?",
+            (now,),
+        ).rowcount
+        return removed, roles
+
+    def refresh_continuation(
+        self,
+        request_id: str,
+        role: str,
+        owner_correlation: str,
+        *,
+        expires_at: float,
+    ) -> LifecycleLease:
+        self._require_role(role)
+        namespace = UUID(request_id)
+        if CONTINUATION_CORRELATION.fullmatch(owner_correlation) is None:
+            raise ValueError("invalid continuation correlation")
+        now = self._lease_now()
+        if not math.isfinite(expires_at) or expires_at <= now:
+            raise ValueError("continuation expiry must be finite and in the future")
+        lease = LifecycleLease(
+            lease_id=str(uuid5(namespace, f"continuation:{role}")),
+            role=role,
+            kind="continuation",
+            owner_correlation=owner_correlation,
+            created_at=now,
+            expires_at=expires_at,
+        )
+        with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            _, expired_roles = self._prune_expired_continuations(database, now)
+            database.execute(
+                f"INSERT INTO model_lifecycle_leases ({', '.join(LEASE_COLUMNS)}) "
+                f"VALUES ({', '.join('?' for _ in LEASE_COLUMNS)}) "
+                "ON CONFLICT(role, kind, owner_correlation) DO UPDATE SET "
+                "lease_id = excluded.lease_id, created_at = excluded.created_at, "
+                "expires_at = excluded.expires_at",
+                self._lease_values(lease),
+            )
+            self._sync_lease_counts(database, (*expired_roles, role), now)
+            row = database.execute(
+                f"SELECT {', '.join(LEASE_COLUMNS)} FROM model_lifecycle_leases "
+                "WHERE role = ? AND kind = 'continuation' AND owner_correlation = ?",
+                (role, owner_correlation),
+            ).fetchone()
+            assert row is not None
+            return self._lease(row)
+
+    def prune_expired_continuations(self) -> int:
+        now = self._lease_now()
+        with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            removed, roles = self._prune_expired_continuations(database, now)
+            self._sync_lease_counts(database, roles, now)
+            return removed
+
+    def release_continuation(self, role: str, owner_correlation: str) -> bool:
+        self._require_role(role)
+        if CONTINUATION_CORRELATION.fullmatch(owner_correlation) is None:
+            raise ValueError("invalid continuation correlation")
+        now = self._lease_now()
+        with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            _, expired_roles = self._prune_expired_continuations(database, now)
+            removed = database.execute(
+                "DELETE FROM model_lifecycle_leases WHERE role = ? "
+                "AND kind = 'continuation' AND owner_correlation = ? AND expires_at > ?",
+                (role, owner_correlation, now),
+            ).rowcount
+            self._sync_lease_counts(database, (*expired_roles, role), now)
+            return bool(removed)
+
+    def set_guard(
+        self,
+        role: str,
+        guard: GuardKind,
+        enabled: bool,
+        *,
+        expected_transition_id: str,
+    ) -> LifecycleRecord:
+        self._require_role(role)
+        if guard not in BOOLEAN_FIELDS:
+            raise ValueError("invalid lifecycle guard")
+        now = self._lease_now()
+        with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            current = self._read(database, role)
+            if current.transition_id != expected_transition_id:
+                raise StaleTransitionError(role)
+            if getattr(current, guard) is enabled:
+                return current
+            updated = self._updated_record(current, {guard: enabled}, now)
+            self._write(database, updated)
+            return updated
+
+    def unload_blockers(self, role: str) -> frozenset[str]:
+        self._require_role(role)
+        now = self._lease_now()
+        with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            _, expired_roles = self._prune_expired_continuations(database, now)
+            self._sync_lease_counts(database, (*expired_roles, role), now)
+            record = self._read(database, role)
+            blockers = {
+                kind
+                for kind, count in (
+                    ("active_request", record.active_request_count),
+                    ("open_stream", record.open_stream_count),
+                    ("continuation", record.continuation_lease_count),
+                )
+                if count
+            }
+            blockers.update(guard for guard in BOOLEAN_FIELDS if getattr(record, guard))
+            return frozenset(blockers)
+
+    def recover_leases(self) -> dict[str, LifecycleRecord]:
+        now = self._lease_now()
+        with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            database.execute(
+                "DELETE FROM model_lifecycle_leases WHERE kind IN ('active_request', 'open_stream')"
+            )
+            self._prune_expired_continuations(database, now)
+            self._sync_lease_counts(database, self._roles, now)
+            return {role: self._read(database, role) for role in self._roles}
+
+    def release_leases(self, lease_ids: Iterable[str]) -> None:
+        requested = tuple(dict.fromkeys(lease_ids))
+        if not requested:
+            return
+        if any(str(UUID(lease_id)) != lease_id for lease_id in requested):
+            raise ValueError("invalid lifecycle lease ID")
+        placeholders = ", ".join("?" for _ in requested)
+        now = self._lease_now()
+        with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            roles = tuple(
+                row[0]
+                for row in database.execute(
+                    f"SELECT DISTINCT role FROM model_lifecycle_leases "
+                    f"WHERE lease_id IN ({placeholders})",
+                    requested,
+                )
+            )
+            database.execute(
+                f"DELETE FROM model_lifecycle_leases WHERE lease_id IN ({placeholders})",
+                requested,
+            )
+            self._sync_lease_counts(database, roles, now)
 
     def _updated_record(
         self, current: LifecycleRecord, changes: Mapping[str, Any], now: float

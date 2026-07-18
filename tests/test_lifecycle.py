@@ -242,9 +242,230 @@ def test_schema_persists_every_lifecycle_field_without_changing_usage_tables(
             )
         }
         columns = {row[1] for row in database.execute("PRAGMA table_info(model_lifecycle)")}
+        lease_columns = {
+            row[1] for row in database.execute("PRAGMA table_info(model_lifecycle_leases)")
+        }
 
-    assert tables == {"request_usage", "lifecycle_samples", "model_lifecycle"}
+    assert tables == {
+        "request_usage",
+        "lifecycle_samples",
+        "model_lifecycle",
+        "model_lifecycle_leases",
+    }
     assert columns == set(module.LifecycleRecord.model_fields)
+    assert lease_columns == set(module.LifecycleLease.model_fields)
+
+
+def test_active_leases_are_idempotent_and_counted_exactly_per_role(tmp_path: Path) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "state.db", ("executor", "planner"))
+    request_id = "82b630ac-9a15-4fc2-b258-31aaf47e2140"
+
+    acquired = store.acquire_request_leases(
+        request_id,
+        ("executor", "planner"),
+        kind="active_request",
+    )
+    duplicate = store.acquire_request_leases(
+        request_id,
+        ("executor", "planner"),
+        kind="active_request",
+    )
+
+    assert duplicate == acquired
+    assert len({lease.lease_id for lease in acquired}) == 2
+    assert {lease.role for lease in acquired} == {"executor", "planner"}
+    assert all(lease.kind == "active_request" for lease in acquired)
+    assert store.get("executor").active_request_count == 1
+    assert store.get("planner").active_request_count == 1
+
+    store.release_leases(lease.lease_id for lease in acquired)
+    store.release_leases(lease.lease_id for lease in acquired)
+
+    assert store.get("executor").active_request_count == 0
+    assert store.get("planner").active_request_count == 0
+
+
+def test_stream_and_continuation_leases_are_content_free_and_expire(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    clock = [100.0]
+    path = tmp_path / "state.db"
+    store = module.LifecycleStore(path, ("executor",), clock=lambda: clock[0])
+    request_id = "6e3737e7-8142-4e56-a2f5-2a93ed200d13"
+    raw_session = "SENTINEL_RAW_SESSION_982a54"
+    owner = module.continuation_correlation(raw_session)
+
+    stream = store.acquire_request_leases(
+        request_id,
+        ("executor",),
+        kind="open_stream",
+    )
+    continuation = store.refresh_continuation(
+        request_id,
+        "executor",
+        owner,
+        expires_at=130.0,
+    )
+    refreshed = store.refresh_continuation(
+        request_id,
+        "executor",
+        owner,
+        expires_at=130.0,
+    )
+
+    assert refreshed == continuation
+    assert len(owner) == 64
+    assert continuation.expires_at == 130.0
+    assert store.get("executor").open_stream_count == 1
+    assert store.get("executor").continuation_lease_count == 1
+    persisted = b"".join(
+        candidate.read_bytes() for candidate in (path, Path(f"{path}-wal")) if candidate.exists()
+    )
+    assert raw_session.encode() not in persisted
+
+    store.release_leases(lease.lease_id for lease in stream)
+    clock[0] = 131.0
+    assert store.prune_expired_continuations() == 1
+    assert store.get("executor").open_stream_count == 0
+    assert store.get("executor").continuation_lease_count == 0
+
+
+@pytest.mark.parametrize("value", [-1.0, float("nan"), float("inf"), float("-inf")])
+def test_invalid_lease_clock_never_reaches_sql(tmp_path: Path, value: float) -> None:
+    module = lifecycle()
+    clock = [100.0]
+    store = module.LifecycleStore(tmp_path / "state.db", ("executor",), clock=lambda: clock[0])
+    clock[0] = value
+
+    with pytest.raises(ValueError):
+        store.acquire_request_leases(
+            "fc087974-e48b-4f3c-a95f-059c7027ce33",
+            ("executor",),
+            kind="active_request",
+        )
+
+    with sqlite3.connect(store.path) as database:
+        lease_count = database.execute("SELECT COUNT(*) FROM model_lifecycle_leases").fetchone()
+    assert lease_count == (0,)
+    assert store.get("executor").active_request_count == 0
+
+
+def test_unload_blockers_cover_every_lease_and_uncertain_guard(tmp_path: Path) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "state.db", ("executor",), clock=lambda: 100.0)
+    request_id = "97722e98-6549-43e4-bad6-15b356001faf"
+    owner = module.continuation_correlation("guarded-session")
+    transition_id = store.get("executor").transition_id
+    active = store.acquire_request_leases(
+        request_id,
+        ("executor",),
+        kind="active_request",
+    )
+    stream = store.acquire_request_leases(
+        request_id,
+        ("executor",),
+        kind="open_stream",
+    )
+    store.refresh_continuation(
+        request_id,
+        "executor",
+        owner,
+        expires_at=130.0,
+    )
+    store.set_guard(
+        "executor",
+        "evaluation_guard",
+        True,
+        expected_transition_id=transition_id,
+    )
+    store.set_guard(
+        "executor",
+        "profile_guard",
+        True,
+        expected_transition_id=transition_id,
+    )
+
+    assert store.unload_blockers("executor") == frozenset(
+        {
+            "active_request",
+            "open_stream",
+            "continuation",
+            "evaluation_guard",
+            "profile_guard",
+        }
+    )
+
+    store.release_leases(lease.lease_id for lease in (*active, *stream))
+    store.release_continuation("executor", owner)
+    store.set_guard(
+        "executor",
+        "evaluation_guard",
+        False,
+        expected_transition_id=transition_id,
+    )
+    store.set_guard(
+        "executor",
+        "profile_guard",
+        False,
+        expected_transition_id=transition_id,
+    )
+
+    assert store.unload_blockers("executor") == frozenset()
+
+
+def test_restart_recovery_removes_orphans_and_preserves_live_guards(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    clock = [100.0]
+    path = tmp_path / "state.db"
+    roles = ("executor", "planner")
+    store = module.LifecycleStore(path, roles, clock=lambda: clock[0])
+    request_id = "984088f6-d602-43f1-9536-f19cfebc3a1c"
+    store.acquire_request_leases(request_id, roles, kind="active_request")
+    store.acquire_request_leases(request_id, ("executor",), kind="open_stream")
+    store.refresh_continuation(
+        request_id,
+        "executor",
+        module.continuation_correlation("expired-session"),
+        expires_at=110.0,
+    )
+    store.refresh_continuation(
+        request_id,
+        "planner",
+        module.continuation_correlation("live-session"),
+        expires_at=200.0,
+    )
+    executor = store.get("executor")
+    planner = store.get("planner")
+    store.set_guard(
+        "executor",
+        "evaluation_guard",
+        True,
+        expected_transition_id=executor.transition_id,
+    )
+    store.set_guard(
+        "planner",
+        "profile_guard",
+        True,
+        expected_transition_id=planner.transition_id,
+    )
+
+    clock[0] = 120.0
+    restarted = module.LifecycleStore(path, roles, clock=lambda: clock[0])
+    recovered = restarted.recover_leases()
+
+    assert recovered["executor"].active_request_count == 0
+    assert recovered["executor"].open_stream_count == 0
+    assert recovered["executor"].continuation_lease_count == 0
+    assert recovered["executor"].evaluation_guard is True
+    assert recovered["planner"].active_request_count == 0
+    assert recovered["planner"].continuation_lease_count == 1
+    assert recovered["planner"].profile_guard is True
+    assert restarted.unload_blockers("executor") == frozenset({"evaluation_guard"})
+    assert restarted.unload_blockers("planner") == frozenset({"continuation", "profile_guard"})
 
 
 def test_transition_graph_is_explicit_and_exhaustive(tmp_path: Path) -> None:

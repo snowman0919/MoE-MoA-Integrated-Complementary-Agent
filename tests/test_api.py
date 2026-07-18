@@ -10,10 +10,10 @@ from contextlib import contextmanager
 import httpx
 import pytest
 from dgx_moa import providers
-from dgx_moa.api import create_app
+from dgx_moa.api import create_app, has_matching_tool_result
 from dgx_moa.config import Settings
 from dgx_moa.controller import fingerprint
-from dgx_moa.lifecycle import FakeLifecycleDriver
+from dgx_moa.lifecycle import FakeLifecycleDriver, continuation_correlation
 from dgx_moa.schemas import ChatRequest
 from dgx_moa.state import Phase, SessionState
 from dgx_moa.streaming import forward_sse as unclosed_forward_sse
@@ -73,7 +73,21 @@ def assert_usage(app, status: str):  # type: ignore[no-untyped-def]
     assert record.status == status
     assert record.completed_at is not None
     assert record.active_duration_seconds is not None
+    assert_no_request_leases(app)
     return record
+
+
+def assert_no_request_leases(app) -> None:  # type: ignore[no-untyped-def]
+    for role in app.state.settings.models:
+        record = app.state.lifecycle_store.get(role)
+        assert record.active_request_count == 0
+        assert record.open_stream_count == 0
+    with sqlite3.connect(app.state.settings.state_db) as database:
+        rows = database.execute(
+            "SELECT COUNT(*) FROM model_lifecycle_leases "
+            "WHERE kind IN ('active_request', 'open_stream')"
+        ).fetchone()
+    assert rows == (0,)
 
 
 def block_profile_control(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,6 +117,522 @@ async def direct_chat(app, session_id: str, *, stream: bool = False):  # type: i
         x_repository_commit=None,
         x_dirty_state=None,
     )
+
+
+@pytest.mark.parametrize(
+    ("messages", "expected"),
+    [
+        (
+            [
+                {"role": "assistant", "tool_calls": [{"id": "call-1"}]},
+                {"role": "tool", "tool_call_id": "call-1", "content": "ok"},
+            ],
+            True,
+        ),
+        (
+            [
+                {"role": "assistant", "tool_calls": [{"id": "call-1"}]},
+                {"role": "tool", "tool_call_id": "call-other", "content": "ok"},
+            ],
+            False,
+        ),
+        (
+            [
+                {"role": "assistant", "tool_calls": [{"id": "call-1"}]},
+                {"role": "tool", "tool_call_id": "call-1", "content": "ok"},
+                {"role": "user", "content": "ordinary later turn"},
+            ],
+            False,
+        ),
+        ([{"role": "tool", "tool_call_id": "call-1", "content": "ok"}], False),
+    ],
+)
+def test_tool_result_matching_requires_the_trailing_assistant_continuation(
+    messages: list[dict[str, object]], expected: bool
+) -> None:
+    assert has_matching_tool_result(messages) is expected  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_nonstream_active_lease_spans_provider_and_terminal_cleanup(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = stub_provider.complete
+
+    async def blocked(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor":
+            entered.set()
+            await release.wait()
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "completed"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = blocked  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        pending = asyncio.create_task(direct_chat(app, "active-nonstream"))
+        await asyncio.wait_for(entered.wait(), timeout=1)
+
+        active = app.state.lifecycle_store.get("executor")
+        assert active.active_request_count == 1
+        assert app.state.lifecycle_store.unload_blockers("executor") == frozenset(
+            {"active_request"}
+        )
+
+        release.set()
+        response = await asyncio.wait_for(pending, timeout=1)
+        finished = app.state.lifecycle_store.get("executor")
+
+    assert response.status_code == 200
+    assert finished.active_request_count == 0
+    assert app.state.lifecycle_store.unload_blockers("executor") == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_stream_leases_span_generation_and_generator_terminal_cleanup(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    release = asyncio.Event()
+    first_event = b'data: {"choices":[{"delta":{"content":"leased"}}]}\n\n'
+
+    async def delayed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        async def upstream():  # type: ignore[no-untyped-def]
+            yield first_event
+            await release.wait()
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return upstream()
+
+    stub_provider.stream = delayed  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await direct_chat(app, "leased-stream", stream=True)
+        assert isinstance(response, StreamingResponse)
+        assert await anext(response.body_iterator) == first_event
+
+        active = app.state.lifecycle_store.get("executor")
+        assert active.active_request_count == 1
+        assert active.open_stream_count == 1
+        assert app.state.lifecycle_store.unload_blockers("executor") == frozenset(
+            {"active_request", "open_stream"}
+        )
+
+        release.set()
+        _ = b"".join([chunk async for chunk in response.body_iterator])
+        finished = app.state.lifecycle_store.get("executor")
+
+    assert finished.active_request_count == 0
+    assert finished.open_stream_count == 0
+
+
+@pytest.mark.asyncio
+async def test_nonstream_cancellation_releases_active_lease(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    entered = asyncio.Event()
+
+    async def blocked(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        entered.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    stub_provider.complete = blocked  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        pending = asyncio.create_task(direct_chat(app, "cancelled-nonstream"))
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        assert app.state.lifecycle_store.get("executor").active_request_count == 1
+
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+
+        assert_usage(app, "cancelled")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [False, True])
+async def test_reviewer_evaluation_guard_is_scoped_to_the_real_review_call(
+    settings,
+    stub_provider: StubProvider,
+    failure: bool,
+) -> None:  # type: ignore[no-untyped-def]
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    guard_values: list[bool] = []
+    original = stub_provider.complete
+    app = create_app(settings)
+
+    async def guarded(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reviewer":
+            guard_values.append(app.state.lifecycle_store.get("reviewer").evaluation_guard)
+            entered.set()
+            await release.wait()
+            if failure:
+                raise ValueError("review failed")
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = guarded  # type: ignore[method-assign]
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        pending = asyncio.create_task(
+            chat_endpoint(app)(
+                ChatRequest(
+                    model="dgx-moa-orchestrated",
+                    messages=[{"role": "user", "content": "review this change"}],
+                    metadata={"diff_summary": "one verified change"},
+                ),
+                Request({"type": "http", "app": app}),
+                x_session_id=f"review-guard-{failure}",
+                x_runtime_channel=None,
+                x_trace_origin=None,
+                x_task_id=None,
+                x_workspace_path=None,
+                x_workspace_id=None,
+                x_repository_branch=None,
+                x_repository_commit=None,
+                x_dirty_state=None,
+            )
+        )
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        assert guard_values == [True]
+        assert app.state.lifecycle_store.unload_blockers("reviewer") >= {
+            "active_request",
+            "evaluation_guard",
+        }
+
+        release.set()
+        response = await asyncio.wait_for(pending, timeout=1)
+        reviewer = app.state.lifecycle_store.get("reviewer")
+
+    assert response.status_code == 200
+    assert reviewer.evaluation_guard is False
+    assert reviewer.active_request_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("failure", "expected_status"), [("trace", 200), ("usage", 502)])
+async def test_reviewer_guard_clears_before_terminal_observability_failure(
+    settings,
+    stub_provider: StubProvider,
+    failure: str,
+    expected_status: int,
+) -> None:  # type: ignore[no-untyped-def]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+
+        if failure == "trace":
+
+            def fail_trace(*args, **kwargs):  # type: ignore[no-untyped-def]
+                raise OSError("trace unavailable")
+
+            app.state.traces.record = fail_trace
+        else:
+
+            def fail_usage(*args, **kwargs):  # type: ignore[no-untyped-def]
+                raise RuntimeError("usage unavailable")
+
+            app.state.usage.finalize = fail_usage
+
+        response = await chat_endpoint(app)(
+            ChatRequest(
+                model="dgx-moa-orchestrated",
+                messages=[{"role": "user", "content": "review this change"}],
+                metadata={"diff_summary": "one verified change"},
+            ),
+            Request({"type": "http", "app": app}),
+            x_session_id=f"review-terminal-{failure}",
+            x_runtime_channel=None,
+            x_trace_origin=None,
+            x_task_id=None,
+            x_workspace_path=None,
+            x_workspace_id=None,
+            x_repository_branch=None,
+            x_repository_commit=None,
+            x_dirty_state=None,
+        )
+        reviewer = app.state.lifecycle_store.get("reviewer")
+
+    assert response.status_code == expected_status
+    assert reviewer.evaluation_guard is False
+    assert reviewer.active_request_count == 0
+
+
+def test_nonstream_tool_continuation_requires_same_session_and_matching_call(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    session_id = "strict-continuation"
+    original = stub_provider.complete
+
+    async def stop_after_tool(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor" and any(
+            message.get("role") == "tool" for message in request["messages"]
+        ):
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "tool accepted"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = stop_after_tool  # type: ignore[method-assign]
+    headers = {"Authorization": "Bearer test-secret", "X-Session-ID": session_id}
+    with client_with_stub(settings, stub_provider) as client:
+        first = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "work"}]},
+        )
+        call = first.json()["choices"][0]["message"]
+        held = client.app.state.lifecycle_store.get("executor")
+        with sqlite3.connect(settings.state_db) as database:
+            lease_row = database.execute(
+                "SELECT role, kind, owner_correlation, expires_at "
+                "FROM model_lifecycle_leases WHERE kind = 'continuation'"
+            ).fetchone()
+
+        ordinary = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [
+                    {"role": "user", "content": "work"},
+                    call,
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-preserved",
+                        "content": '{"stdout":"ok","exit_code":0}',
+                    },
+                    {"role": "user", "content": "ordinary later turn"},
+                ],
+            },
+        )
+        after_ordinary = client.app.state.lifecycle_store.get("executor")
+        mismatched = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [
+                    {"role": "user", "content": "work"},
+                    call,
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-other",
+                        "content": '{"stdout":"ok","exit_code":0}',
+                    },
+                ],
+            },
+        )
+        after_mismatch = client.app.state.lifecycle_store.get("executor")
+        different_session = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "different-session",
+            },
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [
+                    {"role": "user", "content": "work"},
+                    call,
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-preserved",
+                        "content": '{"stdout":"ok","exit_code":0}',
+                    },
+                ],
+            },
+        )
+        after_different_session = client.app.state.lifecycle_store.get("executor")
+        second = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [
+                    {"role": "user", "content": "work"},
+                    call,
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-preserved",
+                        "content": '{"stdout":"SENTINEL_TOOL_RESULT","exit_code":0}',
+                    },
+                ],
+            },
+        )
+        released = client.app.state.lifecycle_store.get("executor")
+
+    assert first.status_code == 200
+    assert held.active_request_count == 0
+    assert held.continuation_lease_count == 1
+    assert lease_row is not None
+    assert lease_row[:3] == (
+        "executor",
+        "continuation",
+        continuation_correlation(session_id),
+    )
+    assert lease_row[3] > 0
+    assert "call-preserved" not in repr(lease_row)
+    assert ordinary.status_code == 200
+    assert mismatched.status_code == 200
+    assert different_session.status_code == 200
+    assert after_ordinary.continuation_lease_count == 1
+    assert after_mismatch.continuation_lease_count == 1
+    assert after_different_session.continuation_lease_count == 1
+    assert second.status_code == 200
+    assert released.continuation_lease_count == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_tool_calls_create_one_continuation_before_stream_release(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    tool_delta = (
+        b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"stream-call",'
+        b'"type":"function","function":{"name":"read_file","arguments":"{}"}}]}}]}\n\n'
+    )
+    terminal = b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+    done = b"data: [DONE]\n\n"
+
+    async def streamed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        async def upstream():  # type: ignore[no-untyped-def]
+            yield tool_delta
+            yield terminal
+            yield done
+
+        return upstream()
+
+    stub_provider.stream = streamed  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await direct_chat(app, "stream-continuation", stream=True)
+        assert isinstance(response, StreamingResponse)
+        forwarded = b"".join([chunk async for chunk in response.body_iterator])
+        record = app.state.lifecycle_store.get("executor")
+
+    assert forwarded == tool_delta + terminal + done
+    assert record.active_request_count == 0
+    assert record.open_stream_count == 0
+    assert record.continuation_lease_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformed", [False, True])
+async def test_synthesized_done_and_malformed_sse_release_stream_leases(
+    settings,
+    stub_provider: StubProvider,
+    malformed: bool,
+) -> None:  # type: ignore[no-untyped-def]
+    terminal = b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+
+    async def streamed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        async def upstream():  # type: ignore[no-untyped-def]
+            yield b"data: incomplete" if malformed else terminal
+
+        return upstream()
+
+    stub_provider.stream = streamed  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await direct_chat(app, f"sse-terminal-{malformed}", stream=True)
+        assert isinstance(response, StreamingResponse)
+        if malformed:
+            with pytest.raises(ValueError, match="incomplete SSE event"):
+                _ = b"".join([chunk async for chunk in response.body_iterator])
+            assert_usage(app, "failed")
+        else:
+            forwarded = b"".join([chunk async for chunk in response.body_iterator])
+            assert forwarded == terminal + b"data: [DONE]\n\n"
+            assert_usage(app, "completed")
+
+
+def test_expired_continuation_is_not_revived_by_a_late_tool_result(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    clock = [100.0]
+    original = stub_provider.complete
+
+    async def stop_after_tool(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor" and any(
+            message.get("role") == "tool" for message in request["messages"]
+        ):
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "late result"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = stop_after_tool  # type: ignore[method-assign]
+    app = create_app(settings, lifecycle_clock=lambda: clock[0])
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        headers = {"Authorization": "Bearer test-secret", "X-Session-ID": "expires"}
+        first = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "work"}]},
+        )
+        call = first.json()["choices"][0]["message"]
+        with sqlite3.connect(settings.state_db) as database:
+            expires_at = database.execute(
+                "SELECT expires_at FROM model_lifecycle_leases WHERE kind = 'continuation'"
+            ).fetchone()
+
+        clock[0] = 701.0
+        assert app.state.lifecycle_store.unload_blockers("executor") == frozenset()
+        late = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [
+                    {"role": "user", "content": "work"},
+                    call,
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-preserved",
+                        "content": '{"stdout":"late","exit_code":0}',
+                    },
+                ],
+            },
+        )
+        record = app.state.lifecycle_store.get("executor")
+
+    assert expires_at == (700.0,)
+    assert late.status_code == 200
+    assert record.continuation_lease_count == 0
 
 
 @pytest.mark.asyncio
@@ -150,6 +680,7 @@ async def test_concurrent_cold_api_requests_return_one_json_load_and_usage_each(
                 break
             await asyncio.sleep(0)
         usage = app.state.usage.recent_requests()
+        assert_no_request_leases(app)
 
     assert len(responses) == 20
     for response in responses:
@@ -568,6 +1099,7 @@ async def test_managed_request_rejects_an_unmapped_required_role_honestly(
             x_dirty_state=None,
         )
         usage = assert_usage(app, "failed")
+        assert_no_request_leases(app)
 
     assert response.status_code == 503
     assert "retry-after" not in response.headers
@@ -636,6 +1168,7 @@ async def test_retry_exhaustion_returns_non_loading_model_failure(
         app.state.controller.provider = stub_provider
         response = await direct_chat(app, "retry-exhausted")
         usage = assert_usage(app, "failed")
+        assert_no_request_leases(app)
 
     assert response.status_code == 503
     assert "retry-after" not in response.headers
@@ -1858,6 +2391,14 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
     async with app.router.lifespan_context(app):
         app.state.provider = stub_provider
         app.state.controller.provider = stub_provider
+        guard_calls: list[tuple[object, ...]] = []
+        set_guard = app.state.lifecycle_store.set_guard
+
+        def record_guard(*args, **kwargs):  # type: ignore[no-untyped-def]
+            guard_calls.append(args)
+            return set_guard(*args, **kwargs)
+
+        app.state.lifecycle_store.set_guard = record_guard
         response = await chat_endpoint(app)(
             ChatRequest(
                 model="dgx-moa-orchestrated",
@@ -1899,6 +2440,9 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
         assert state.review_status == "deferred"
         assert "first_downstream_byte" in state.timings_ms
         assert_terminal_evidence(settings, app.state.store, "immediate-stream", "completed")
+        assert app.state.lifecycle_store.get("reviewer").evaluation_guard is False
+        assert guard_calls == []
+        assert_no_request_leases(app)
 
 
 @pytest.mark.asyncio
@@ -2737,6 +3281,7 @@ def test_secondary_trace_failure_marks_degraded_and_continues(
         assert (
             client.app.state.store.events("degraded")[-1]["event_type"] == "observability_degraded"
         )
+        assert_no_request_leases(client.app)
 
 
 def test_primary_state_failure_fails_closed(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -2755,3 +3300,29 @@ def test_primary_state_failure_fails_closed(settings, stub_provider: StubProvide
                     "messages": [{"role": "user", "content": "x"}],
                 },
             )
+        assert_no_request_leases(client.app)
+
+
+def test_terminal_state_lookup_failure_still_releases_active_lease(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+
+        def fail_session(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise ValueError("session setup failed")
+
+        def fail_lookup(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise OSError("state lookup unavailable")
+
+        client.app.state.controller.session = fail_session
+        client.app.state.store.get = fail_lookup
+        with pytest.raises(OSError, match="state lookup unavailable"):
+            client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer test-secret"},
+                json={
+                    "model": "dgx-moa-agent",
+                    "messages": [{"role": "user", "content": "x"}],
+                },
+            )
+        assert_no_request_leases(client.app)

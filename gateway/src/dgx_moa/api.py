@@ -24,6 +24,7 @@ from .lifecycle import (
     LifecycleRecord,
     LifecycleStore,
     SystemdLifecycleDriver,
+    continuation_correlation,
 )
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
@@ -90,6 +91,33 @@ def elapsed_ms(started: float) -> float:
     return round((time.monotonic() - started) * 1000, 3)
 
 
+def has_matching_tool_result(messages: list[dict[str, Any]]) -> bool:
+    assistant_index = next(
+        (
+            index
+            for index in range(len(messages) - 1, -1, -1)
+            if messages[index].get("role") == "assistant" and messages[index].get("tool_calls")
+        ),
+        None,
+    )
+    if assistant_index is None:
+        return False
+    trailing = messages[assistant_index + 1 :]
+    if not trailing or any(message.get("role") != "tool" for message in trailing):
+        return False
+    call_ids = {
+        call_id
+        for call in (messages[assistant_index].get("tool_calls") or [])
+        if isinstance(call, dict) and isinstance(call_id := call.get("id"), str) and call_id.strip()
+    }
+    result_ids = {
+        tool_call_id
+        for message in trailing
+        if isinstance(tool_call_id := message.get("tool_call_id"), str) and tool_call_id.strip()
+    }
+    return bool(call_ids & result_ids)
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -135,6 +163,7 @@ def create_app(
             configured.models,
             clock=lifecycle_clock,
         )
+        app.state.lifecycle_store.recover_leases()
         app.state.lifecycle = LifecycleCoordinator(
             app.state.lifecycle_store,
             lifecycle_driver or SystemdLifecycleDriver(configured.lifecycle_unit_map),
@@ -453,6 +482,8 @@ def create_app(
         terminal_finalized = False
         usage_started = False
         usage_request_id = str(uuid.uuid4())
+        active_lease_ids: tuple[str, ...] = ()
+        stream_lease_ids: tuple[str, ...] = ()
         first_byte_at: float | None = None
         token_usage: dict[str, int] = {}
         state: Any | None = None
@@ -592,52 +623,63 @@ def create_app(
             current_state: Any | None = None,
             retryable_failure_class: RetryableFailureClass | None = None,
         ) -> None:
-            nonlocal first_byte_at, terminal_finalized, state
+            nonlocal active_lease_ids, first_byte_at, state, stream_lease_ids
+            nonlocal terminal_finalized
             if terminal_finalized:
                 return
-            current = current_state or state or request.app.state.store.get(state_session_id)
             terminal_finalized = True
-            if stage is not None:
-                stage_status[stage] = status_value
-            if downstream_started:
-                first_byte_at = first_byte_at or time.time()
-            if current is not None:
-                if state is None:
-                    current.timings_ms = {"accepted": 0.0}
-                    state = current
-                if status_value == "cancelled":
-                    current.final_status = "cancelled"
-                elif status_value in {"failed", "timed_out"} and current.final_status != "blocked":
-                    current.final_status = "failed"
-                if executor_started is not None:
-                    current.timings_ms.setdefault(
-                        "executor_total",
-                        round((time.monotonic() - executor_started) * 1000, 3),
-                    )
+            try:
+                current = current_state or state or request.app.state.store.get(state_session_id)
+                if stage is not None:
+                    stage_status[stage] = status_value
                 if downstream_started:
-                    current.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
-                record_request_timing(current)
-                request.app.state.store.event(
-                    current.session_id,
-                    "session_ended",
-                    {"request_id": state_session_id, "status": status_value},
+                    first_byte_at = first_byte_at or time.time()
+                if current is not None:
+                    if state is None:
+                        current.timings_ms = {"accepted": 0.0}
+                        state = current
+                    if status_value == "cancelled":
+                        current.final_status = "cancelled"
+                    elif (
+                        status_value in {"failed", "timed_out"}
+                        and current.final_status != "blocked"
+                    ):
+                        current.final_status = "failed"
+                    if executor_started is not None:
+                        current.timings_ms.setdefault(
+                            "executor_total",
+                            round((time.monotonic() - executor_started) * 1000, 3),
+                        )
+                    if downstream_started:
+                        current.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                    record_request_timing(current)
+                    request.app.state.store.event(
+                        current.session_id,
+                        "session_ended",
+                        {"request_id": state_session_id, "status": status_value},
+                    )
+                    request.app.state.store.save(current)
+                    record_trace_safely(request, current, task_id)
+                if usage_started:
+                    request.app.state.usage.finalize(
+                        usage_request_id,
+                        RequestUsageFinalization(
+                            first_byte_at=first_byte_at,
+                            completed_at=time.time(),
+                            active_duration_seconds=time.monotonic() - accepted,
+                            status=status_value,
+                            retryable_failure_class=retryable_failure_class,
+                            prompt_tokens=token_usage.get("prompt_tokens"),
+                            completion_tokens=token_usage.get("completion_tokens"),
+                            total_tokens=token_usage.get("total_tokens"),
+                        ),
+                    )
+            finally:
+                request.app.state.lifecycle_store.release_leases(
+                    (*stream_lease_ids, *active_lease_ids)
                 )
-                request.app.state.store.save(current)
-                record_trace_safely(request, current, task_id)
-            if usage_started:
-                request.app.state.usage.finalize(
-                    usage_request_id,
-                    RequestUsageFinalization(
-                        first_byte_at=first_byte_at,
-                        completed_at=time.time(),
-                        active_duration_seconds=time.monotonic() - accepted,
-                        status=status_value,
-                        retryable_failure_class=retryable_failure_class,
-                        prompt_tokens=token_usage.get("prompt_tokens"),
-                        completion_tokens=token_usage.get("completion_tokens"),
-                        total_tokens=token_usage.get("total_tokens"),
-                    ),
-                )
+                active_lease_ids = ()
+                stream_lease_ids = ()
 
         if loading_record is not None:
             finalize_request(
@@ -661,6 +703,19 @@ def create_app(
             )
 
         try:
+            active_lease_ids = tuple(
+                lease.lease_id
+                for lease in request.app.state.lifecycle_store.acquire_request_leases(
+                    usage_request_id,
+                    roles,
+                    kind="active_request",
+                )
+            )
+            continuation_owner = continuation_correlation(state_session_id)
+            if has_matching_tool_result(raw["messages"]):
+                request.app.state.lifecycle_store.release_continuation(
+                    "executor", continuation_owner
+                )
             state = request.app.state.controller.session(state_session_id, raw["messages"])
             task_id = task_id or state.task_id or state_session_id
             raw["metadata"]["task_id"] = task_id
@@ -685,6 +740,14 @@ def create_app(
             executor_started = time.monotonic()
             state.timings_ms["upstream_start"] = elapsed_ms(accepted)
             if body.stream:
+                stream_lease_ids = tuple(
+                    lease.lease_id
+                    for lease in request.app.state.lifecycle_store.acquire_request_leases(
+                        usage_request_id,
+                        ("executor",),
+                        kind="open_stream",
+                    )
+                )
                 upstream = await request.app.state.provider.stream(
                     "executor",
                     configured.models["executor"],
@@ -771,18 +834,30 @@ def create_app(
                             else "cancelled"
                         )
                         token_usage.update(observation.usage)
-                        finalize_request(
-                            None,
-                            terminal_status,
-                            current_state=state,
-                            retryable_failure_class=(
-                                "executor_total_timeout"
-                                if terminal_status == "timed_out"
-                                else "backend_error"
-                                if terminal_status == "failed"
-                                else None
-                            ),
-                        )
+                        try:
+                            if terminal and "tool_calls" in observation.finish_reasons:
+                                request.app.state.lifecycle_store.refresh_continuation(
+                                    usage_request_id,
+                                    "executor",
+                                    continuation_owner,
+                                    expires_at=(
+                                        lifecycle_clock()
+                                        + configured.limits.tool_continuation_timeout_seconds
+                                    ),
+                                )
+                        finally:
+                            finalize_request(
+                                None,
+                                terminal_status,
+                                current_state=state,
+                                retryable_failure_class=(
+                                    "executor_total_timeout"
+                                    if terminal_status == "timed_out"
+                                    else "backend_error"
+                                    if terminal_status == "failed"
+                                    else None
+                                ),
+                            )
 
                 return StreamingResponse(
                     stream_response(),
@@ -827,7 +902,23 @@ def create_app(
                 )
                 active_stage = "reviewer"
                 try:
-                    await request.app.state.controller.review(state, review_observation)
+                    reviewer = request.app.state.lifecycle_store.get("reviewer")
+                    request.app.state.lifecycle_store.set_guard(
+                        "reviewer",
+                        "evaluation_guard",
+                        True,
+                        expected_transition_id=reviewer.transition_id,
+                    )
+                    try:
+                        await request.app.state.controller.review(state, review_observation)
+                    finally:
+                        reviewer = request.app.state.lifecycle_store.get("reviewer")
+                        request.app.state.lifecycle_store.set_guard(
+                            "reviewer",
+                            "evaluation_guard",
+                            False,
+                            expected_transition_id=reviewer.transition_id,
+                        )
                 except (httpx.HTTPError, StageTimeout, ValueError) as error:
                     state.review_status = "failed"
                     stage_status["reviewer"] = (
@@ -857,6 +948,15 @@ def create_app(
                 "assistant_stream_finished",
                 {"finish_reasons": [finish_reason] if finish_reason else []},
             )
+            if finish_reason == "tool_calls":
+                request.app.state.lifecycle_store.refresh_continuation(
+                    usage_request_id,
+                    "executor",
+                    continuation_owner,
+                    expires_at=(
+                        lifecycle_clock() + configured.limits.tool_continuation_timeout_seconds
+                    ),
+                )
             finalize_request(None, "completed", current_state=state)
             return JSONResponse(response, headers={"X-Session-ID": session_id})
         except asyncio.CancelledError:
