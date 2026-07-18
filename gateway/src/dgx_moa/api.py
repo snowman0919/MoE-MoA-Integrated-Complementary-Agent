@@ -619,6 +619,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "backend_error",
                 "backend_error",
             )
+        except Exception as error:
+            finalize_request(active_stage, "failed", downstream_started=True)
+            return error_response(
+                status.HTTP_502_BAD_GATEWAY,
+                str(error),
+                "backend_error",
+                "backend_error",
+            )
 
     @app.get("/admin/profile", response_model=ProfileResponse, dependencies=[Depends(admin_auth)])
     async def profile(request: Request) -> dict[str, str]:

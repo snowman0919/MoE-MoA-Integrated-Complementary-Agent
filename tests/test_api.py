@@ -1494,6 +1494,44 @@ def test_malformed_tool_call_returns_bad_gateway(settings, stub_provider: StubPr
         }
 
 
+@pytest.mark.parametrize("stream", [False, True])
+def test_unexpected_provider_setup_failure_finalizes_typed_error_once(
+    settings, stub_provider: StubProvider, stream: bool
+) -> None:  # type: ignore[no-untyped-def]
+    session_id = f"unexpected-{'stream' if stream else 'nonstream'}"
+
+    async def unexpected(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("unexpected backend failure")
+
+    if stream:
+        stub_provider.stream = unexpected  # type: ignore[method-assign]
+    else:
+        stub_provider.complete = unexpected  # type: ignore[method-assign]
+
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-agent",
+                "stream": stream,
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        trace = assert_terminal_evidence(settings, client.app.state.store, session_id, "failed")
+
+    assert response.status_code == 502
+    assert response.json() == {
+        "error": {
+            "message": "unexpected backend failure",
+            "type": "backend_error",
+            "code": "backend_error",
+            "param": None,
+        }
+    }
+    assert trace["final_status"] == "failed"
+
+
 @pytest.mark.parametrize(
     ("failure", "status_code"),
     [
