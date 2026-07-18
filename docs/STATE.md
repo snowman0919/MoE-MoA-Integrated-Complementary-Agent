@@ -38,11 +38,19 @@ Updated: 2026-07-18
 
 ## Validation baseline
 
-- Current phase-one suite: `180 passed`, with the existing FastAPI TestClient
-  deprecation warning; Ruff format/check, MyPy, shell syntax, and systemd unit
-  verification pass. The repository trace-corpus audit is separately red:
-  `4/10` sessions complete because six ignored legacy-v1 records shadow their
-  v2 session IDs. This is recorded evidence, not a green all-gates claim.
+- Current phase-one suite: `181 passed`, with the existing FastAPI TestClient
+  deprecation warning. The final re-review gate matrix passed Ruff format/check,
+  MyPy for 26 source files, shell syntax, systemd user-unit verification, and
+  `git diff --check`. The repository trace-corpus command remained red at exit
+  `1`: 4 of 10 sessions complete, with six `legacy_v1` records. The retained
+  physical-client audit also exited `1` at 0 of 13 complete, and the CPU-only
+  timeout audit exited `1` at 0 of 1 complete. This is recorded evidence, not a
+  green all-gates claim.
+- Final eight-command results were: pytest exit `0` with `181 passed, 1
+  warning`; Ruff format exit `0` with 48 files already formatted; Ruff check
+  exit `0`; MyPy exit `0` for 26 files; systemd verification exit `0`; all
+  `scripts/*.sh` syntax checks exit `0`; repository trace audit exit `1` with
+  the exact 4/10 result above; and `git diff --check` exit `0`.
 - Isolated post-fix API validation advertised all three aliases at `65536`,
   preserved native tool-call identity and continuation, returned typed auth,
   model, request, and backend errors, and kept ordinary chat/agent state
@@ -92,8 +100,9 @@ Updated: 2026-07-18
 
 - The isolated Task 9 trace audit found `0/13` sessions complete: every trace
   lacked `session_ended` and `workspace_identity`, and most lacked task IDs.
-  Phase-one client/stream behavior passed, but formal all-gates completion is
-  not claimed while the repository and isolated trace audits exit nonzero.
+  The later timeout trace had no missing fields but lacked `session_ended`, so
+  its audit was `0/1`. Phase-one client/stream behavior passed, but formal
+  all-gates completion is not claimed while all three trace audits exit nonzero.
 - Multi-file and bounded-engineering staging tasks exceeded the 180-second
   harness bound; their failed traces are retained for later analysis.
 - The 7.5-hour soak includes classified startup rollback incidents before the

@@ -787,13 +787,258 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `tool_calls`, while the continuation finished `stop` and recorded
   `tool_result_received` and `tool_execution_recorded`.
 
+#### Exact retained failed-to-successful transitions
+
+Only credential values are replaced by `[REDACTED]` below. All other paths,
+ports, versions, flags, environment names, prompts, and output files are the
+retained commands or configuration transitions.
+
+The Task 0 baseline first started each role in its own foreground shell without
+an API key. These three commands failed in the shared settings validator before
+model loading:
+
+```bash
+cd /tmp/dgx-moa-phase1.6roKBd
+exec env PYTHONPATH=/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/compat:/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/gateway/src \
+  DGX_MOA_CONFIG=/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/config/models.yaml \
+  XDG_CACHE_HOME=/home/kotori9/.cache MAX_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 \
+  VLLM_BIN=/home/kotori9/.pyenv/shims/vllm \
+  /home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/.venv/bin/python -m dgx_moa.serve executor
+exec env PYTHONPATH=/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/compat:/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/gateway/src \
+  DGX_MOA_CONFIG=/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/config/models.yaml \
+  XDG_CACHE_HOME=/home/kotori9/.cache MAX_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 \
+  VLLM_BIN=/home/kotori9/.pyenv/shims/vllm \
+  /home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/.venv/bin/python -m dgx_moa.serve planner
+exec env PYTHONPATH=/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/compat:/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/gateway/src \
+  DGX_MOA_CONFIG=/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/config/models.yaml \
+  XDG_CACHE_HOME=/home/kotori9/.cache MAX_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 \
+  VLLM_BIN=/home/kotori9/.pyenv/shims/vllm \
+  /home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/.venv/bin/python -m dgx_moa.serve reviewer
+```
+
+The credential retry added only
+`DGX_MOA_API_KEY='[REDACTED]'`. Its executor command did not pass a MoE-backend
+override, so vLLM `0.22.1` selected FlashInfer-CUTLASS and began the first-run
+SM121a build. After 9 of 96 objects, only that diagnostic executor was stopped;
+the successful Task 0 executor retry added `DGX_MOA_EXECUTOR_MOE_BACKEND=MARLIN`:
+
+```bash
+exec env PYTHONPATH=/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/compat:/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/gateway/src \
+  DGX_MOA_CONFIG=/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/config/models.yaml \
+  DGX_MOA_API_KEY='[REDACTED]' XDG_CACHE_HOME=/home/kotori9/.cache \
+  MAX_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 VLLM_BIN=/home/kotori9/.pyenv/shims/vllm \
+  /home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/.venv/bin/python -m dgx_moa.serve executor
+
+exec env PYTHONPATH=/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/compat:/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/gateway/src \
+  DGX_MOA_CONFIG=/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/config/models.yaml \
+  DGX_MOA_API_KEY='[REDACTED]' DGX_MOA_EXECUTOR_MOE_BACKEND=MARLIN \
+  XDG_CACHE_HOME=/home/kotori9/.cache MAX_JOBS=1 CMAKE_BUILD_PARALLEL_LEVEL=1 \
+  VLLM_BIN=/home/kotori9/.pyenv/shims/vllm \
+  /home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent/.venv/bin/python -m dgx_moa.serve executor
+```
+
+Task 9 used the fresh root and environment established below. Its executor went
+directly to MARLIN; the first reviewer command failed at CUDA
+`cudaMemGetInfo` before weights, and the byte-for-byte same reviewer command
+was retried after a 10-second memory-settle interval. Planner and the normal
+gateway then started with the shown commands:
+
+```bash
+export TASK_RUN_ROOT=/tmp/dgx-moa-phase1-post.ahMvu6
+export DGX_MOA_CONFIG="$TASK_RUN_ROOT/config.yaml"
+export DGX_MOA_STATE_DB="$TASK_RUN_ROOT/state/gateway.db"
+export DGX_MOA_BIND_HOST=127.0.0.1
+export DGX_MOA_BIND_PORT=19000
+export DGX_MOA_AUTH_ENABLED=true
+export DGX_MOA_API_KEY='[REDACTED]'
+export DGX_MOA_RUNTIME_CHANNEL=dev
+export DGX_MOA_TRACE_ORIGIN=validation
+export DGX_MOA_CONTROLLER_COMMIT=0d95591c86a81d6fcea290261a93917a3896d90e
+export DGX_MOA_VLLM_VERSION=0.22.1
+export DGX_MOA_PROJECT_ROOT=/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent
+export PYTHONPATH=/home/kotori9/dgx-moa-agent/compat
+export VLLM_BIN=/home/kotori9/.pyenv/shims/vllm
+export XDG_CACHE_HOME=/home/kotori9/.cache
+export MAX_JOBS=1
+export CMAKE_BUILD_PARALLEL_LEVEL=1
+
+DGX_MOA_EXECUTOR_MOE_BACKEND=MARLIN setsid uv run python -m dgx_moa.serve executor \
+  >"$TASK_RUN_ROOT/logs/executor.log" 2>&1 &
+setsid uv run python -m dgx_moa.serve reviewer \
+  >"$TASK_RUN_ROOT/logs/reviewer.log" 2>&1 &
+sleep 10
+setsid uv run python -m dgx_moa.serve reviewer \
+  >"$TASK_RUN_ROOT/logs/reviewer-retry.log" 2>&1 &
+setsid uv run python -m dgx_moa.serve planner \
+  >"$TASK_RUN_ROOT/logs/planner.log" 2>&1 &
+setsid uv run dgx-moa >"$TASK_RUN_ROOT/logs/gateway.log" 2>&1 &
+```
+
+The retained vLLM `0.22.1` argv confirms the executable flags and ports. The
+executor had `--moe-backend MARLIN`; the unchanged reviewer retry did not pass
+a backend override and vLLM selected MARLIN automatically:
+
+```bash
+/home/kotori9/.pyenv/shims/vllm serve /home/kotori9/models/dgx-moa/executor \
+  --host 127.0.0.1 --port 8101 --served-model-name dgx-moa-executor \
+  --max-model-len 65536 --max-num-seqs 1 --kv-cache-memory-bytes 1700000000 \
+  --gpu-memory-utilization 0.5 --moe-backend MARLIN \
+  --enable-auto-tool-choice --tool-call-parser qwen3_coder
+
+/home/kotori9/.pyenv/shims/vllm serve /home/kotori9/models/dgx-moa/reviewer \
+  --host 127.0.0.1 --port 8103 --served-model-name dgx-moa-reviewer \
+  --max-model-len 65536 --max-num-seqs 1 --kv-cache-memory-bytes 2300000000 \
+  --gpu-memory-utilization 0.25 \
+  --hf-config-path /tmp/dgx-moa-phase1-post.ahMvu6/data/run/reviewer-hf-config \
+  --reasoning-parser cohere_command4
+```
+
+The old timing wrapper was launched exactly as follows and its request returned
+HTTP `500`, 21 bytes, no DONE, and
+`TypeError: TimedProvider.stream() got an unexpected keyword argument
+'timeout_seconds'`:
+
+```bash
+setsid uv run python /tmp/dgx-moa-phase1.6roKBd/timed_gateway.py \
+  >"$TASK_RUN_ROOT/logs/timed-gateway.log" 2>&1 &
+```
+
+The validation-only adaptation added the new keyword-only parameters and
+forwarded them upstream:
+
+```python
+async def stream(
+    self,
+    role: str,
+    model: ModelConfig,
+    request: dict[str, Any],
+    *,
+    timeout_seconds: float | None = None,
+    stage: str | None = None,
+) -> AsyncIterator[bytes]:
+    upstream = await super().stream(
+        role, model, request, timeout_seconds=timeout_seconds, stage=stage
+    )
+```
+
+The retry command used the adapted ignored file and produced the retained HTTP
+`200` measurement:
+
+```bash
+setsid uv run python .superpowers/sdd/task-9-timed-gateway.py \
+  >"$TASK_RUN_ROOT/logs/timed-gateway-retry.log" 2>&1 &
+```
+
+OpenCode `1.17.18` first created its temporary configuration without a model
+limit and ran the following exact bounded command:
+
+```bash
+sed 's#http://<DGX_TAILSCALE_IP>:9000/v1#http://127.0.0.1:19000/v1#' \
+  config/opencode.example.json | \
+  jq '. + {permission:{"*":"deny",read:"allow"}}' \
+  >"$TASK_RUN_ROOT/opencode/normal/opencode.json"
+
+timeout 180 "$HOME/.opencode/bin/opencode" run --pure --auto --format json \
+  --dir "$TASK_RUN_ROOT/opencode/normal" --model dgx-moa/dgx-moa-agent \
+  'Reply exactly OPENCODE_OK.' \
+  >"$TASK_RUN_ROOT/opencode/normal/stdout.jsonl" \
+  2>"$TASK_RUN_ROOT/opencode/normal/stderr.log"
+```
+
+It exited with API HTTP `400` and complete body
+`{"error":{"message":"max_tokens exceeds server maximum
+16384","type":"invalid_request_error","code":"invalid_request","param":"max_tokens"}}`.
+The exact configuration transition and otherwise unchanged retry were:
+
+```bash
+jq '.provider["dgx-moa"].models["dgx-moa-agent"].limit={context:65536,output:16384}' \
+  "$TASK_RUN_ROOT/opencode/normal/opencode.json" \
+  >"$TASK_RUN_ROOT/opencode/normal/opencode.json.tmp"
+mv "$TASK_RUN_ROOT/opencode/normal/opencode.json.tmp" \
+  "$TASK_RUN_ROOT/opencode/normal/opencode.json"
+
+timeout 180 "$HOME/.opencode/bin/opencode" run --pure --auto --format json \
+  --dir "$TASK_RUN_ROOT/opencode/normal" --model dgx-moa/dgx-moa-agent \
+  'Reply exactly OPENCODE_OK.' \
+  >"$TASK_RUN_ROOT/opencode/normal/retry.stdout.jsonl" \
+  2>"$TASK_RUN_ROOT/opencode/normal/retry.stderr.log"
+```
+
+Hermes Agent `0.18.2` attempt one used a config with no `model.api_key`:
+
+```yaml
+model:
+  default: dgx-moa-agent
+  provider: custom
+  base_url: http://100.125.239.72:9000/v1
+  context_length: 65536
+  max_tokens: 16384
+
+platform_toolsets:
+  cli:
+    - file
+```
+
+Its exact invocation supplied only the host-gated generic environment variable:
+
+```bash
+cd /tmp/dgx-moa-phase1-post.ahMvu6/hermes/work
+HERMES_HOME=/tmp/dgx-moa-phase1-post.ahMvu6/hermes \
+  OPENAI_API_KEY="$DGX_MOA_API_KEY" NO_COLOR=1 \
+  hermes --ignore-rules -t file -z \
+  'Reply with exactly HERMES_OK and nothing else.' \
+  --usage-file /tmp/dgx-moa-phase1-post.ahMvu6/hermes/normal-usage.json \
+  >/tmp/dgx-moa-phase1-post.ahMvu6/hermes/normal.stdout \
+  2>/tmp/dgx-moa-phase1-post.ahMvu6/hermes/normal.stderr
+```
+
+It reached `100.125.239.72:9000` but returned `HTTP 401: invalid bearer token`.
+The only config transition was adding the environment reference beneath
+`model`:
+
+```yaml
+  api_key: ${DGX_MOA_API_KEY}
+```
+
+The retry removed the ineffective `OPENAI_API_KEY` assignment, retained
+`DGX_MOA_API_KEY='[REDACTED]'` in the supervisor environment, and used the same
+Hermes interface:
+
+```bash
+HERMES_HOME=/tmp/dgx-moa-phase1-post.ahMvu6/hermes NO_COLOR=1 \
+  hermes --ignore-rules -t file -z \
+  'Reply with exactly HERMES_OK and nothing else.' \
+  --usage-file /tmp/dgx-moa-phase1-post.ahMvu6/hermes/normal-retry-usage.json \
+  >/tmp/dgx-moa-phase1-post.ahMvu6/hermes/normal-retry.stdout \
+  2>/tmp/dgx-moa-phase1-post.ahMvu6/hermes/normal-retry.stderr
+```
+
+Finally, the CPU-only timeout harness provider started normally, but the first
+real-gateway launcher exited without binding because the module has no
+`__main__` call. The console-entry-point retry was the only launcher change:
+
+```bash
+TIMEOUT_ROOT=/tmp/dgx-moa-timeout.uVbS91
+DGX_MOA_API_KEY='[REDACTED]'
+export DGX_MOA_API_KEY
+setsid uv run python .superpowers/sdd/task-9-timeout-provider.py \
+  >"$TIMEOUT_ROOT/logs/provider.log" 2>&1 &
+
+DGX_MOA_CONFIG="$PWD/.superpowers/sdd/task-9-timeout-config.yaml" \
+  DGX_MOA_PROJECT_ROOT="$PWD" setsid uv run python -m dgx_moa.api \
+  >"$TIMEOUT_ROOT/logs/gateway.log" 2>&1 &
+
+DGX_MOA_CONFIG="$PWD/.superpowers/sdd/task-9-timeout-config.yaml" \
+  DGX_MOA_PROJECT_ROOT="$PWD" setsid uv run dgx-moa \
+  >"$TIMEOUT_ROOT/logs/gateway-retry.log" 2>&1 &
+```
+
 #### Safely redacted physical commands
 
 The following are the exact successful client and follow-up harness commands.
 Only the credential value is replaced by `[REDACTED]`; temporary paths, output
-redirections, models, prompts, headers, and options are retained. The initial
-physical gateway/model launch commands are already recorded in the isolated
-run report and are not duplicated here.
+redirections, models, prompts, headers, and options are retained. Failed and
+successful launch/configuration transitions are recorded immediately above.
 
 ```bash
 export DGX_MOA_API_KEY='[REDACTED]'
@@ -816,13 +1061,13 @@ curl --no-buffer --silent --show-error \
   --data '{"model":"dgx-moa-agent","messages":[{"role":"user","content":"Reply exactly STREAM_OK."}],"stream":true}' \
   http://127.0.0.1:19000/v1/chat/completions
 
-"$HOME/.opencode/bin/opencode" run --pure --auto --format json \
+timeout 180 "$HOME/.opencode/bin/opencode" run --pure --auto --format json \
   --dir /tmp/dgx-moa-phase1-post.ahMvu6/opencode/normal \
   --model dgx-moa/dgx-moa-agent 'Reply exactly OPENCODE_OK.' \
   >/tmp/dgx-moa-phase1-post.ahMvu6/opencode/normal/retry.stdout.jsonl \
   2>/tmp/dgx-moa-phase1-post.ahMvu6/opencode/normal/retry.stderr.log
 
-"$HOME/.opencode/bin/opencode" run --pure --auto --format json \
+timeout 180 "$HOME/.opencode/bin/opencode" run --pure --auto --format json \
   --dir /tmp/dgx-moa-phase1-post.ahMvu6/opencode/tool \
   --model dgx-moa/dgx-moa-agent \
   'Use the read tool exactly once to read FIXTURE.txt, then reply OPENCODE_TOOL_OK followed by its content.' \
@@ -850,21 +1095,21 @@ DGX_MOA_CONFIG="$PWD/.superpowers/sdd/task-9-timeout-config.yaml" \
   DGX_MOA_PROJECT_ROOT="$PWD" setsid uv run dgx-moa \
   >/tmp/dgx-moa-timeout.uVbS91/logs/gateway-retry.log 2>&1 &
 
-curl --silent --show-error \
+curl --silent --show-error --max-time 10 \
   --dump-header /tmp/dgx-moa-timeout.uVbS91/timeout.headers \
   --output /tmp/dgx-moa-timeout.uVbS91/timeout.body.json \
-  --write-out '%{http_code}\n' \
+  --write-out '%{http_code}' \
   -H 'Authorization: Bearer [REDACTED]' \
   -H 'Content-Type: application/json' \
   -H 'X-Session-ID: physical-executor-first-byte-timeout' \
   -H 'X-Runtime-Channel: dev' \
   -H 'X-Trace-Origin: validation' \
   -H 'X-Task-ID: TASK9-TIMEOUT' \
-  -H 'X-Workspace-Path: /home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent' \
+  -H "X-Workspace-Path: $PWD" \
   -H 'X-Workspace-ID: task9-timeout' \
-  -H 'X-Current-Branch: dev' \
-  -H 'X-Current-Commit: 391f968' \
-  -H 'X-Dirty-Status: clean' \
+  -H 'X-Repository-Branch: dev' \
+  -H 'X-Repository-Commit: 391f968' \
+  -H 'X-Dirty-State: clean' \
   --data '{"model":"dgx-moa-agent","messages":[{"role":"user","content":"Reply exactly TIMEOUT_UNEXPECTED."}],"stream":true,"max_tokens":64}' \
   http://127.0.0.1:19100/v1/chat/completions
 ```
@@ -876,7 +1121,7 @@ curl --silent --show-error \
   `workspace_identity`; 12 lacked `task_id`; decision task IDs were also
   missing. The client/stream checks passed, but this is a real phase-one
   observability gap and prevents an all-gates completion claim.
-- The first complete post-documentation gate run reported `180 passed, 1
+- The original Task 9 post-documentation gate run reported `180 passed, 1
   warning in 1.93s`, `48 files already formatted`, Ruff success, MyPy success
   for 26 source files, clean systemd verification, clean shell syntax, and
   clean `git diff --check`. The repository trace audit was the only nonzero
@@ -892,10 +1137,38 @@ curl --silent --show-error \
 - The phase-one design audit finds the intended public aliases, executor
   contract, field preservation, typed errors, bounded immediate streaming,
   native tool ownership, reviewer policy, output limits, truncation, timing,
-  and explicit context override covered by direct files and the 180-test suite;
-  the physical matrix proves the principal client and latency contracts.
+  and explicit context override covered by direct files and the current
+  181-test suite; the physical matrix proves the principal client and latency
+  contracts.
   Formal Task 9 completion remains blocked by both nonzero trace audits. The
   overall runtime-reliability Goal remains active for usage statistics,
   lifecycle and adaptive unloading, loading progress, memory-mechanism study,
   near-limit 64K validation, extended client matrices, soak, remaining docs,
   push, and PR work.
+
+#### Final re-review gate matrix
+
+After adding the Hermes contract test and the retained command transitions, the
+complete eight-command matrix was rerun. Earlier `180`-test pre-runtime and
+original Task 9 post-documentation results above remain chronological evidence;
+the current suite contains `181` tests.
+
+1. `uv run pytest -q`: exit `0`, `181 passed, 1 warning`.
+2. `uv run ruff format --check .`: exit `0`, `48 files already formatted`.
+3. `uv run ruff check .`: exit `0`, `All checks passed!`.
+4. `uv run mypy`: exit `0`, no issues in 26 source files.
+5. `systemd-analyze --user verify systemd/*`: exit `0`, no output.
+6. `for file in scripts/*.sh; do bash -n "$file"; done`: exit `0`, no output.
+7. `scripts/audit-trace-completeness.sh data/traces`: exit `1`, 10 total,
+   4 complete, 6 incomplete, 6 legacy, 40.0% mandatory completeness, and
+   `missing_fields={"legacy_v1":6}`.
+8. `git diff --check`: exit `0`, no output.
+
+The two retained isolated audits were also rerun after the same edit:
+
+- `/tmp/dgx-moa-phase1-post.ahMvu6/traces`: exit `1`, 13 total and 0 complete;
+  all 13 lack `session_ended` and `workspace_identity`, 12 lack top-level and
+  first-decision task IDs, 4 lack the second-decision task ID, and 2 lack the
+  third-decision task ID.
+- `/tmp/dgx-moa-timeout.uVbS91/traces`: exit `1`, 1 total and 0 complete; the
+  sole gap is one missing `session_ended` event, with no missing fields.
