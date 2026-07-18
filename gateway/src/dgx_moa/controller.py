@@ -680,6 +680,7 @@ class Controller:
             state.acceptance_criteria = parsed.get("acceptance_criteria", [])
             self.store.event(state.session_id, "plan_created", {"steps": len(state.plan)})
         state.phase = Phase.EXECUTING
+        state.final_status = None
         state.step_count += 1
         self._record_decision(
             "executor", state, {"type": "next_step_request"}, "Proceed from verified state"
@@ -736,9 +737,30 @@ class Controller:
             "assistant_message": choice.get("message", {}),
             "finish_reason": choice.get("finish_reason"),
         }
-        return json.dumps(redact(evidence), ensure_ascii=False, sort_keys=True)[
-            : self.settings.limits.max_review_evidence_characters
-        ]
+        bounded: dict[str, Any] = redact(evidence)
+        limit = self.settings.limits.max_review_evidence_characters
+        serialized = json.dumps(bounded, ensure_ascii=False, sort_keys=True)
+        marker = "...[truncated]"
+        while len(serialized) > limit:
+            key = max(
+                bounded,
+                key=lambda name: len(
+                    json.dumps(bounded[name], ensure_ascii=False, sort_keys=True)
+                ),
+            )
+            current = bounded[key]
+            source = (
+                current
+                if isinstance(current, str)
+                else json.dumps(current, ensure_ascii=False, sort_keys=True)
+            )
+            keep = max(0, len(source) - (len(serialized) - limit) - len(marker) - 2)
+            replacement = source[:keep] + marker
+            if bounded[key] == replacement:
+                raise ValueError("review evidence limit too small")
+            bounded[key] = replacement
+            serialized = json.dumps(bounded, ensure_ascii=False, sort_keys=True)
+        return serialized
 
     async def review(self, state: SessionState, observation: str) -> dict[str, Any]:
         state.phase = Phase.REVIEWING

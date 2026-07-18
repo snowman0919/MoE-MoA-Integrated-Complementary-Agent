@@ -9,6 +9,7 @@ import pytest
 from dgx_moa.api import create_app
 from dgx_moa.config import Settings
 from dgx_moa.schemas import ChatRequest
+from dgx_moa.state import Phase, SessionState
 from dgx_moa.streaming import forward_sse as unclosed_forward_sse
 from fastapi import Request
 from fastapi.responses import StreamingResponse
@@ -390,6 +391,14 @@ def test_length_finish_is_preserved_and_never_completes_session(
 
     stub_provider.complete = truncated  # type: ignore[method-assign]
     with client_with_stub(settings, stub_provider) as client:
+        client.app.state.store.save(
+            SessionState(
+                session_id="truncated",
+                objective="previous task",
+                phase=Phase.COMPLETED,
+                final_status="completed",
+            )
+        )
         response = client.post(
             "/v1/chat/completions",
             headers={"Authorization": "Bearer test-secret", "X-Session-ID": "truncated"},
