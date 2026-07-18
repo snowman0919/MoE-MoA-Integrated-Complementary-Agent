@@ -32,8 +32,7 @@ def role_bool_environment(role: str, name: str, default: bool = False) -> bool:
 
 
 def role_context_length(role: str, configured: int) -> str:
-    override = int(role_environment(role, "MAX_MODEL_LEN", configured))
-    return str(max(configured, override))
+    return role_environment(role, "MAX_MODEL_LEN", configured)
 
 
 def command(role: str) -> list[str]:

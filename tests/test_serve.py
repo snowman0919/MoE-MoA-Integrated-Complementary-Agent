@@ -39,8 +39,13 @@ def test_reviewer_uses_calibrated_kv_reservation() -> None:
     }
 
 
-def test_context_environment_cannot_lower_configured_minimum(
+def test_explicit_context_environment_overrides_configured_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DGX_MOA_EXECUTOR_MAX_MODEL_LEN", "16384")
+    assert role_context_length("executor", 65536) == "16384"
+
+
+def test_configured_context_is_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DGX_MOA_EXECUTOR_MAX_MODEL_LEN", raising=False)
     assert role_context_length("executor", 65536) == "65536"
