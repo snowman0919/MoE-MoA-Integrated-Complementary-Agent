@@ -39,3 +39,18 @@
   kernel OOM or any lower measurement still rejects startup.
 - Treat raw task and observation text as untrusted data for reviewer/judge roles;
   give those roles acceptance criteria and a final literal JSON-only boundary.
+
+## 2026-07-18
+
+- Expose fixed `dgx-moa-chat`, `dgx-moa-agent`, and `dgx-moa-orchestrated`
+  aliases through the existing authenticated gateway; direct modes remain
+  executor-only and external agents own native tool loops.
+- Require only standard OpenAI request fields. Keep project metadata and
+  provenance headers optional, preserve upstream response/tool fields, default
+  executor output to 4096 tokens, and cap it at 16384.
+- Forward complete SSE events immediately with exactly one DONE. Bound both
+  streaming observation capture and one SSE event to 1,000,000 bytes, and record
+  `finish_reason=length` as truncation rather than completion.
+- Keep streaming review off the critical path. Bound non-streaming reviewer
+  evidence to 16,000 characters, preserve valid output on low-risk review
+  failure, and allow high-risk explicit orchestration to fail closed.

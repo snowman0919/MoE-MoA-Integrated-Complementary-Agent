@@ -57,6 +57,9 @@ Tailscale Serve or Funnel; tailnet ACLs and bearer auth remain administrator-con
 Set `DGX_MOA_API_KEY` on the client, then copy
 `config/opencode.example.json` into the OpenCode configuration directory.
 Configuration is identical on macOS and Linux; only environment setup differs.
+The live validation harness explicitly selects `dgx-moa-agent` for both its
+tool-continuation and streaming requests. It keeps the request body
+OpenAI-compatible and sends validation provenance in the existing headers.
 
 For a persistent local client UI, start OpenCode in a named tmux session:
 
@@ -76,6 +79,19 @@ curl -fsS -H "Authorization: Bearer ${DGX_MOA_API_KEY}" \
 
 With auth disabled, omit the header. Admin profile endpoints stay disabled
 unless `DGX_MOA_ADMIN_API_ENABLED=true`.
+
+## API clients
+
+Use `/v1/models` to discover `dgx-moa-chat`, `dgx-moa-agent`, and
+`dgx-moa-orchestrated`. Direct external agents should select `dgx-moa-agent` and
+own the native tool loop. Standard OpenAI request fields are sufficient;
+project metadata and provenance headers are optional.
+
+The default executor output budget is 4096 tokens and the server cap is 16384.
+SSE is forwarded event-by-event with one DONE. A model/profile-loading 503 is
+retryable after the `Retry-After` interval. Full examples and typed errors are
+in `docs/API_CLIENT_MODES.md`; Hermes configuration is in
+`docs/HERMES_AGENT.md`.
 
 ## Models
 

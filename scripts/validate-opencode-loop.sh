@@ -24,7 +24,7 @@ trap 'rm -rf "$temporary"' EXIT
 curl -fsS "$base/healthz" >/dev/null
 curl -fsS "${auth[@]}" "$base/v1/models" >/dev/null
 cat >"$temporary/request.json" <<'JSON'
-{"model":"dgx-moa-agent","messages":[{"role":"user","content":"Call read_file once for /tmp/dgx-moa-validation.txt."}],"tools":[{"type":"function","function":{"name":"read_file","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}}],"tool_choice":"required","metadata":{"target_clear":true,"expected_files":1,"validation_command":"true"}}
+{"model":"dgx-moa-agent","messages":[{"role":"user","content":"Call read_file once for /tmp/dgx-moa-validation.txt."}],"tools":[{"type":"function","function":{"name":"read_file","description":"Read a file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}}],"tool_choice":"required"}
 JSON
 curl -fsS "${auth[@]}" "${identity[@]}" -H "X-Session-ID: $session" \
   -H 'X-Task-ID: live-loop-continuation' -H 'Content-Type: application/json' \
@@ -56,7 +56,7 @@ PY
 done
 curl -fsS -N "${auth[@]}" "${identity[@]}" -H "X-Session-ID: $stream_session" \
   -H 'X-Task-ID: live-loop-stream' -H 'Content-Type: application/json' \
-  -d '{"model":"dgx-moa-agent","stream":true,"messages":[{"role":"user","content":"Reply READY."}],"metadata":{"target_clear":true,"expected_files":1,"validation_command":"true"}}' \
+  -d '{"model":"dgx-moa-agent","stream":true,"messages":[{"role":"user","content":"Reply READY."}]}' \
   "$base/v1/chat/completions" >"$temporary/stream.out"
 grep -q 'data: \[DONE\]' "$temporary/stream.out"
 sleep 1

@@ -1,12 +1,30 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from dgx_moa.adapters import evaluate, register
 from dgx_moa.benchmark import TASKS, benchmark_models, summarize
 from dgx_moa.dataset import build, quality_tier
 from dgx_moa.improvement import compare, mine, statistics
+
+
+def test_api_client_mode_documentation() -> None:
+    api_modes = Path("docs/API_CLIENT_MODES.md").read_text()
+    hermes = Path("docs/HERMES_AGENT.md").read_text()
+    for alias in ("dgx-moa-chat", "dgx-moa-agent", "dgx-moa-orchestrated"):
+        assert alias in api_modes
+    assert "http://100.125.239.72:9000/v1" in hermes
+    assert "DGX_MOA_API_KEY" in hermes
+    assert "127.0.0.1:9000" not in hermes
+    assert "Tailscale Serve" not in hermes
+
+
+def test_opencode_validation_uses_standard_agent_requests() -> None:
+    harness = Path("scripts/validate-opencode-loop.sh").read_text()
+    assert harness.count('"model":"dgx-moa-agent"') == 2
+    assert '"metadata":' not in harness
 
 
 def test_benchmark_shape_and_improvement_tools(tmp_path) -> None:  # type: ignore[no-untyped-def]

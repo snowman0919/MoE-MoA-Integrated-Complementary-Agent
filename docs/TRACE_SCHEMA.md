@@ -23,6 +23,18 @@ Tool failure observations are classified deterministically where recognizable
 (`NONEXISTENT_PATH`, syntax/type, context, timeout, model-backend, or repeated
 action); unrecognized failures remain `TEST_FAILURE`.
 
+Phase-one request metrics are content-free. `metrics` records
+`request_timing_ms`, `runtime_mode`, `request_class`, `roles_required`, and
+`truncated`. Timing keys can include acceptance, upstream start, first upstream
+byte, first downstream byte, planner/reviewer duration, executor total, and
+request completion. The separate `request_timing` event records per-stage
+completed, timed-out, failed, deferred, cancelled, or aborted status. A
+`finish_reason` of `length` sets `truncated: true` and never proves completion.
+
+Streaming observations retain at most 1,000,000 bytes and are used only for
+bounded state/evidence; SSE events are forwarded before review. Native content
+and tool deltas are not copied into request timing metrics.
+
 `scripts/export-agentic-traces.sh` exports stable file-order JSONL. Training
 export is separate from collection and includes only explicit eligible v2 traces.
 Full source, authorization headers, and environment secrets are excluded.

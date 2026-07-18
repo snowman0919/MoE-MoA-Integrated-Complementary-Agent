@@ -1,6 +1,6 @@
 # State
 
-Updated: 2026-07-13T12:52:29+09:00
+Updated: 2026-07-18
 
 ## Branch and deployment
 
@@ -17,15 +17,24 @@ Updated: 2026-07-13T12:52:29+09:00
 
 - Gateway: authenticated direct tailnet TCP at `100.125.239.72:9000`.
 - Model endpoints: loopback-only executor `8101`, planner `8102`, reviewer `8103`.
-- Resident target and profile are ready; executor, planner, and reviewer are active.
 - Context limits are executor, planner, and reviewer `65536`.
-- Final streaming responses are buffered through the reviewer before their
-  original SSE chunks are released; tool-call streams bypass review.
+- Development phase one exposes `dgx-moa-chat`, `dgx-moa-agent`, and
+  `dgx-moa-orchestrated` through `/v1/models`. Chat and agent are executor-only;
+  orchestration roles are selected deterministically.
+- Complete SSE events are forwarded as they arrive with a single DONE. Streaming
+  review is deferred; it does not buffer executor output. Capture and individual
+  event bounds are each 1,000,000 bytes.
+- Executor output defaults to `4096` tokens with a server cap of `16384`.
+  `finish_reason=length` is preserved and recorded as truncation, not completion.
+- Standard OpenAI request fields suffice. Project metadata and provenance headers
+  remain optional, and errors use the typed OpenAI envelope.
 - KV reservations, model selection, unit topology, and memory gates are unchanged.
 - A configurable 10-second prestart memory-settle delay prevents reloads from
   racing unified-memory reclamation. The final resident restoration passed.
-- Local OpenCode `1.17.18` is active in tmux session `dgx-opencode`, working in
-  the `dev` repository with provider `dgx-moa/dgx-moa-agent`.
+- These contracts are implemented and synthetically testable on `dev`; Task 8
+  did not deploy production or run physical OpenCode/Hermes clients. The failed
+  pre-fix physical streaming baseline remains in `docs/VALIDATION.md`; Task 9
+  owns post-fix physical evidence.
 
 ## Validation baseline
 
