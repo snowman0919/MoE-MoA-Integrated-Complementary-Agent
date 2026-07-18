@@ -231,6 +231,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         accepted = time.monotonic()
         stage_status: dict[str, str] = {}
         timing_recorded = False
+        failure_finalized = False
+        state: Any | None = None
+        executor_started: float | None = None
+        active_stage = "request"
 
         def record_request_timing(state: Any) -> None:
             nonlocal timing_recorded
@@ -298,6 +302,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raw["messages"] = [raw["messages"][title_index]]
         else:
             state_session_id = session_id
+
+        def finalize_failure(stage: str, status_value: str = "failed") -> None:
+            nonlocal failure_finalized, state
+            if failure_finalized:
+                return
+            current = state or request.app.state.store.get(state_session_id)
+            if current is None:
+                return
+            failure_finalized = True
+            if state is None:
+                current.timings_ms = {"accepted": 0.0}
+                state = current
+            stage_status[stage] = status_value
+            if executor_started is not None:
+                current.timings_ms.setdefault(
+                    "executor_total",
+                    round((time.monotonic() - executor_started) * 1000, 3),
+                )
+            current.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+            record_request_timing(current)
+            request.app.state.store.save(current)
+            record_trace_safely(request, current, task_id)
+
         try:
             state = request.app.state.controller.session(state_session_id, raw["messages"])
             state.timings_ms = {"accepted": 0.0}
@@ -317,9 +344,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             state.request_class = request_class
             state.roles_required = list(roles)
             state.review_fail_closed = review_fails_closed(request_class)
+            active_stage = "planner" if "planner" in roles else "request"
             prepared = await request.app.state.controller.prepare_executor(state, raw, roles)
             if "planner" in state.timings_ms:
                 stage_status["planner"] = "completed"
+            active_stage = "executor_first_byte" if body.stream else "executor_total"
             executor_started = time.monotonic()
             state.timings_ms["upstream_start"] = elapsed_ms(accepted)
             if body.stream:
@@ -439,6 +468,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 review_observation = request.app.state.controller.review_observation(
                     state, response, body.metadata
                 )
+                active_stage = "reviewer"
                 try:
                     await request.app.state.controller.review(state, review_observation)
                 except (httpx.HTTPError, StageTimeout, ValueError) as error:
@@ -474,18 +504,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             record_trace_safely(request, state, task_id)
             return JSONResponse(response, headers={"X-Session-ID": session_id})
         except DuplicateFailedCall as error:
+            finalize_failure(active_stage)
             raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
         except StageTimeout as error:
-            stage_status[error.stage] = "timed_out"
-            if "upstream_start" in state.timings_ms:
-                state.timings_ms.setdefault(
-                    "executor_total",
-                    round((time.monotonic() - executor_started) * 1000, 3),
-                )
-            state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
-            record_request_timing(state)
-            request.app.state.store.save(state)
-            record_trace_safely(request, state, task_id)
+            finalize_failure(error.stage, "timed_out")
             return error_response(
                 status.HTTP_504_GATEWAY_TIMEOUT,
                 str(error),
@@ -493,11 +515,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 f"{error.stage}_timeout",
             )
         except httpx.TimeoutException as error:
+            phase = state.phase.value if state is not None else ""
             stage = {
                 "planning": "planner",
                 "reviewing": "reviewer",
                 "heavy_review": "judge",
-            }.get(state.phase.value, "executor")
+            }.get(phase, "executor")
+            finalize_failure(active_stage, "timed_out")
             return error_response(
                 status.HTTP_504_GATEWAY_TIMEOUT,
                 str(error),
@@ -505,6 +529,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 f"{stage}_timeout",
             )
         except httpx.HTTPStatusError as error:
+            finalize_failure(active_stage)
             try:
                 payload = error.response.json()
             except (ValueError, httpx.StreamError):
@@ -535,6 +560,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "backend_error",
             )
         except httpx.HTTPError as error:
+            finalize_failure(active_stage)
             return error_response(
                 status.HTTP_502_BAD_GATEWAY,
                 str(error),
@@ -542,6 +568,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "backend_error",
             )
         except ValueError as error:
+            finalize_failure(active_stage)
             if str(error) == "max_tokens exceeds server maximum 16384":
                 return error_response(
                     status.HTTP_400_BAD_REQUEST,

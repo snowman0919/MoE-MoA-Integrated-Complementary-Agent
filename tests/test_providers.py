@@ -124,3 +124,51 @@ async def test_stream_waits_for_first_byte_with_exact_stage(
 
     assert type(captured.value).__name__ == "StageTimeout"
     assert getattr(captured.value, "stage", None) == "executor_first_byte"
+
+
+@pytest.mark.asyncio
+async def test_stream_setup_cancellation_closes_response_and_client(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    first_byte_waiting = asyncio.Event()
+
+    class BlockingStream(httpx.AsyncByteStream):
+        async def __aiter__(self):  # type: ignore[no-untyped-def]
+            first_byte_waiting.set()
+            await asyncio.Event().wait()
+            yield b"data: [DONE]\n\n"
+
+    responses: list[httpx.Response] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        response = httpx.Response(200, stream=BlockingStream(), request=request)
+        responses.append(response)
+        return response
+
+    transport = httpx.MockTransport(respond)
+    clients: list[httpx.AsyncClient] = []
+    async_client = httpx.AsyncClient
+
+    def client(**kwargs):  # type: ignore[no-untyped-def]
+        created = async_client(transport=transport, **kwargs)
+        clients.append(created)
+        return created
+
+    monkeypatch.setattr("dgx_moa.providers.httpx.AsyncClient", client)
+    pending = asyncio.create_task(
+        ModelProvider().stream(
+            "executor",
+            settings.models["executor"],
+            {"messages": []},
+            timeout_seconds=10,
+            stage="executor_first_byte",
+        )
+    )
+    await asyncio.wait_for(first_byte_waiting.wait(), timeout=1)
+
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    assert responses[0].is_closed
+    assert clients[0].is_closed

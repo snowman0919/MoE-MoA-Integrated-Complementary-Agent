@@ -9,6 +9,7 @@ import pytest
 from dgx_moa import providers
 from dgx_moa.api import create_app
 from dgx_moa.config import Settings
+from dgx_moa.controller import fingerprint
 from dgx_moa.schemas import ChatRequest
 from dgx_moa.state import Phase, SessionState
 from dgx_moa.streaming import forward_sse as unclosed_forward_sse
@@ -1294,6 +1295,115 @@ def test_malformed_tool_call_returns_bad_gateway(settings, stub_provider: StubPr
             "code": "backend_error",
             "param": None,
         }
+
+
+@pytest.mark.parametrize(
+    ("failure", "status_code"),
+    [
+        ("upstream_400", 400),
+        ("upstream_500", 502),
+        ("http_error", 502),
+        ("malformed", 502),
+    ],
+)
+def test_non_timeout_terminal_failure_records_one_timing_and_trace(
+    settings,
+    stub_provider: StubProvider,
+    failure: str,
+    status_code: int,
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+    session_id = f"terminal-{failure}"
+    secret_content = f"content-must-not-leak-{failure}"
+
+    async def fail(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role != "executor":
+            return await original(role, model, request, **kwargs)
+        if failure == "http_error":
+            raise httpx.ConnectError("unavailable")
+        if failure.startswith("upstream_"):
+            upstream_status = int(failure.removeprefix("upstream_"))
+            response = httpx.Response(
+                upstream_status,
+                request=httpx.Request("POST", model.base_url),
+            )
+            raise httpx.HTTPStatusError(
+                "upstream rejected request", request=response.request, response=response
+            )
+        response = await original(role, model, request, **kwargs)
+        response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = "{"
+        return response
+
+    stub_provider.complete = fail  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": secret_content}],
+            },
+        )
+        timing_events = [
+            event
+            for event in client.app.state.store.events(session_id)
+            if event["event_type"] == "request_timing"
+        ]
+
+    assert response.status_code == status_code
+    assert len(timing_events) == 1
+    payload = timing_events[0]["payload"]
+    assert payload["stage_status"]["executor_total"] == "failed"
+    assert isinstance(payload["timings_ms"]["completed"], int | float)
+    assert secret_content not in json.dumps(payload)
+    trace_path = next((settings.state_db.parent.parent / "traces").rglob(f"{session_id}.jsonl"))
+    traces = [json.loads(line) for line in trace_path.read_text().splitlines()]
+    assert len(traces) == 1
+    assert traces[0]["metrics"]["request_timing_ms"] == payload["timings_ms"]
+
+
+def test_duplicate_failed_call_records_one_timing_and_trace(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    session_id = "duplicate-terminal"
+    call = {
+        "id": "call-duplicate",
+        "type": "function",
+        "function": {"name": "shell", "arguments": '{"cmd":"false"}'},
+    }
+    with client_with_stub(settings, stub_provider) as client:
+        client.app.state.store.save(
+            SessionState(
+                session_id=session_id,
+                failed_call_fingerprints=[fingerprint(call)],
+            )
+        )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [
+                    {"role": "assistant", "tool_calls": [call]},
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-duplicate",
+                        "content": '{"exit_code":2,"error":"bad"}',
+                    },
+                ],
+            },
+        )
+        timing_events = [
+            event
+            for event in client.app.state.store.events(session_id)
+            if event["event_type"] == "request_timing"
+        ]
+
+    assert response.status_code == 409
+    assert len(timing_events) == 1
+    assert timing_events[0]["payload"]["stage_status"] == {"request": "failed"}
+    trace_path = next((settings.state_db.parent.parent / "traces").rglob(f"{session_id}.jsonl"))
+    assert len(trace_path.read_text().splitlines()) == 1
 
 
 def test_multiple_tool_calls_are_preserved(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

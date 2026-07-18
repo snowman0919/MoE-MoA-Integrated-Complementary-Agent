@@ -81,6 +81,11 @@ class ModelProvider:
                 response.raise_for_status()
                 iterator = response.aiter_bytes()
                 first = await anext(iterator, None)
+        except asyncio.CancelledError:
+            if response is not None:
+                await response.aclose()
+            await client.aclose()
+            raise
         except (TimeoutError, httpx.TimeoutException) as error:
             if response is not None:
                 await response.aclose()
