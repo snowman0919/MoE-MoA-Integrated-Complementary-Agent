@@ -649,12 +649,19 @@ below. Heavy-judge validation is appended after its first isolated startup.
   time `54.364` seconds. State recorded planner `14815.343` ms, executor
   `322.505` ms, reviewer `39178.55` ms, and an approved review. This is the
   explicit orchestration path, not an ordinary-client dependency.
-- Negative requests returned typed OpenAI envelopes: unknown model HTTP `404`
-  with code `model_not_found`; `tool_choice` without tools HTTP `422` with code
-  `invalid_request`; wrong bearer token HTTP `401` with code `invalid_api_key`;
-  and an orchestrated request after only the controlled planner group was
-  stopped HTTP `502` with code/type `backend_error` and message
-  `All connection attempts failed`.
+- Negative requests returned these complete OpenAI error envelopes; the first
+  three were re-captured against the CPU-only follow-up gateway and matched the
+  original physical run:
+
+  ```text
+  HTTP 404 {"error":{"message":"unknown model","type":"invalid_request_error","code":"model_not_found","param":"model"}}
+  HTTP 422 {"error":{"message":"tool_choice requires tools","type":"invalid_request_error","code":"invalid_request","param":null}}
+  HTTP 401 {"error":{"message":"invalid bearer token","type":"authentication_error","code":"invalid_api_key","param":null}}
+  HTTP 502 {"error":{"message":"All connection attempts failed","type":"backend_error","code":"backend_error","param":null}}
+  ```
+
+  The HTTP `502` was the retained orchestrated request after only the controlled
+  planner group was stopped; it is distinct from the measured timeout below.
 
 #### Exact post-fix streaming measurement
 
@@ -682,6 +689,55 @@ below. Heavy-judge validation is appended after its first isolated startup.
   required and recorded role, `finish_reason=stop`, and no truncation. Reviewer
   was absent from both state and the critical path.
 
+#### Real HTTP executor-first-byte timeout
+
+- A follow-up used no GPU model. A fresh root
+  `/tmp/dgx-moa-timeout.uVbS91` contained state, trace, run, model-placeholder,
+  and log paths. A real CPU-only OpenAI-compatible provider bound
+  `127.0.0.1:19101`; the real gateway bound `127.0.0.1:19100` with
+  `executor_first_byte_timeout_seconds=0.25` and the slow provider as its only
+  executor. Production remained inactive and ports `9000`, `19100`, and
+  `19101` were free before startup.
+- The first gateway launcher, `uv run python -m dgx_moa.api`, exited without
+  binding because `api.py` defines the console `main()` but no module
+  `__main__` call; its empty log was retained. The retry used the declared
+  `uv run dgx-moa` console entry point and bound normally. This failed harness
+  attempt did not reach a request.
+- Session `physical-executor-first-byte-timeout` sent an authenticated standard
+  streaming request. The slow provider accepted the HTTP POST, returned HTTP
+  `200` headers, and logged `stream=true`, model `timeout-executor`, and
+  monotonic nanoseconds `1248155177768646`; it deliberately slept before its
+  first SSE byte. The gateway cancelled that stream at `1248155425595592`,
+  proving a first-byte timeout after connection and request acceptance rather
+  than connection refusal.
+- Client monotonic bounds were `1248154882995579` through
+  `1248155487226164`. The gateway returned this complete HTTP response before
+  starting SSE:
+
+  ```text
+  HTTP/1.1 504 Gateway Timeout
+  date: Sat, 18 Jul 2026 03:40:28 GMT
+  server: uvicorn
+  content-length: 126
+  content-type: application/json
+
+  {"error":{"message":"executor_first_byte timed out","type":"timeout_error","code":"executor_first_byte_timeout","param":null}}
+  ```
+
+- SQLite state was `agent/native_agent_turn`, executor-only. Its single
+  `request_timing` event recorded
+  `stage_status={"executor_first_byte":"timed_out"}` and milliseconds
+  `accepted=0.0`, `upstream_start=8.139`, `executor_total=257.988`,
+  `first_downstream_byte=266.133`, and `completed=266.135`. The trace at
+  `traces/dev/validation/2026-07-18/physical-executor-first-byte-timeout.jsonl`
+  preserved the same timing metrics, task `TASK9-TIMEOUT`, workspace identity,
+  executor decision, and `final_status=degraded`.
+- The isolated one-session trace audit still exited `1`: its fields were
+  complete, but `session_ended` was absent. Teardown stopped only gateway PGID
+  `4026366` and provider PGID `4025162`; both ports were unbound, the
+  environment-only credential was unset, memory was unchanged, production
+  units remained inactive, and the production worktree remained clean.
+
 #### Real OpenCode and Hermes clients
 
 - Real OpenCode `1.17.18` ran through its documented `opencode run --pure
@@ -695,8 +751,13 @@ below. Heavy-judge validation is appended after its first isolated startup.
   `OPENCODE_OK`, `finish_reason=stop`, and usage total/input/output
   `2824/2820/4`. Tool session `ses_08ccfe27effefpBnhcFEKpr03N` exited `0`,
   invoked native `read` call `call_ebb54446c04947f9bcfd77b4` on the isolated
-  `FIXTURE.txt`, received `OPENCODE_PHYSICAL_FIXTURE`, and continued with
-  `OPENCODE_TOOL_OK`. Gateway state recorded streaming completion,
+  `FIXTURE.txt` with exact client input
+  `{"filePath":"/tmp/dgx-moa-phase1-post.ahMvu6/opencode/tool/FIXTURE.txt"}`,
+  received `OPENCODE_PHYSICAL_FIXTURE`, and continued with
+  `OPENCODE_TOOL_OK`. The gateway access log recorded HTTP `200` for both normal
+  POSTs and all three tool-session POSTs. Normal state recorded request stream
+  flags `[true,true]` and two `stream_completed` events; tool state recorded
+  `[true,true,true]` and three `stream_completed` events, plus
   `tool_result_received`, `tool_execution_recorded`, and executor-only roles.
 - Real Hermes Agent `0.18.2` (`2026.7.7.2`, upstream `d9ee3424`) used its
   documented one-shot CLI, `provider: custom`, environment-expanded
@@ -711,7 +772,9 @@ below. Heavy-judge validation is appended after its first isolated startup.
   unrelated custom hosts and used its no-key placeholder. The retained retry
   used the documented `${DGX_MOA_API_KEY}` config reference. Normal session
   `20260718_121450_52e9b9` then exited `0` with `HERMES_OK`, one API call, and
-  usage `3112/4/3116` input/output/total.
+  usage `3112/4/3116` input/output/total. Gateway state
+  `7d5d40fd-f402-4a18-833f-c6caa9aaca2e` recorded `stream=true`, one
+  `stream_completed`, and `finish_reason=stop`.
 - Hermes tool session `20260718_121544_04de50` exited `0` with two API calls.
   Its exported transcript recorded native `read_file` call
   `call_b93806e12d814d80baa71f38` with arguments
@@ -720,8 +783,91 @@ below. Heavy-judge validation is appended after its first isolated startup.
   continuation `HERMES_TOOL_OK` with `finish_reason=stop`. Gateway state IDs
   `063de118-5cc1-4d41-b606-19f8bd51b0c2` and
   `42087b8e-abaf-4893-87c3-0718a7199b4a` remained executor-only and recorded
-  streaming completion; the continuation recorded `tool_result_received` and
-  `tool_execution_recorded`.
+  `stream=true` and one `stream_completed` each; the former finished
+  `tool_calls`, while the continuation finished `stop` and recorded
+  `tool_result_received` and `tool_execution_recorded`.
+
+#### Safely redacted physical commands
+
+The following are the exact successful client and follow-up harness commands.
+Only the credential value is replaced by `[REDACTED]`; temporary paths, output
+redirections, models, prompts, headers, and options are retained. The initial
+physical gateway/model launch commands are already recorded in the isolated
+run report and are not duplicated here.
+
+```bash
+export DGX_MOA_API_KEY='[REDACTED]'
+
+curl --fail --silent --show-error \
+  -H 'Authorization: Bearer [REDACTED]' \
+  http://127.0.0.1:19000/v1/models
+
+curl --silent --show-error \
+  -H 'Authorization: Bearer [REDACTED]' \
+  -H 'Content-Type: application/json' \
+  -H 'X-Session-ID: physical-curl-nonstream' \
+  --data '{"model":"dgx-moa-chat","messages":[{"role":"user","content":"Reply exactly CHAT_OK."}]}' \
+  http://127.0.0.1:19000/v1/chat/completions
+
+curl --no-buffer --silent --show-error \
+  -H 'Authorization: Bearer [REDACTED]' \
+  -H 'Content-Type: application/json' \
+  -H 'X-Session-ID: physical-curl-stream' \
+  --data '{"model":"dgx-moa-agent","messages":[{"role":"user","content":"Reply exactly STREAM_OK."}],"stream":true}' \
+  http://127.0.0.1:19000/v1/chat/completions
+
+"$HOME/.opencode/bin/opencode" run --pure --auto --format json \
+  --dir /tmp/dgx-moa-phase1-post.ahMvu6/opencode/normal \
+  --model dgx-moa/dgx-moa-agent 'Reply exactly OPENCODE_OK.' \
+  >/tmp/dgx-moa-phase1-post.ahMvu6/opencode/normal/retry.stdout.jsonl \
+  2>/tmp/dgx-moa-phase1-post.ahMvu6/opencode/normal/retry.stderr.log
+
+"$HOME/.opencode/bin/opencode" run --pure --auto --format json \
+  --dir /tmp/dgx-moa-phase1-post.ahMvu6/opencode/tool \
+  --model dgx-moa/dgx-moa-agent \
+  'Use the read tool exactly once to read FIXTURE.txt, then reply OPENCODE_TOOL_OK followed by its content.' \
+  >/tmp/dgx-moa-phase1-post.ahMvu6/opencode/tool/stdout.jsonl \
+  2>/tmp/dgx-moa-phase1-post.ahMvu6/opencode/tool/stderr.log
+
+HERMES_HOME=/tmp/dgx-moa-phase1-post.ahMvu6/hermes NO_COLOR=1 \
+  hermes --ignore-rules -t file -z \
+  'Reply with exactly HERMES_OK and nothing else.' \
+  --usage-file /tmp/dgx-moa-phase1-post.ahMvu6/hermes/normal-retry-usage.json \
+  >/tmp/dgx-moa-phase1-post.ahMvu6/hermes/normal-retry.stdout \
+  2>/tmp/dgx-moa-phase1-post.ahMvu6/hermes/normal-retry.stderr
+
+HERMES_HOME=/tmp/dgx-moa-phase1-post.ahMvu6/hermes NO_COLOR=1 \
+  hermes --ignore-rules -t file -z \
+  'Use the read_file tool to read /tmp/dgx-moa-phase1-post.ahMvu6/hermes/work/FIXTURE.txt. Do not answer before using the tool. After the tool returns HERMES_PHYSICAL_FIXTURE, reply with exactly HERMES_TOOL_OK and nothing else.' \
+  --usage-file /tmp/dgx-moa-phase1-post.ahMvu6/hermes/tool-usage.json \
+  >/tmp/dgx-moa-phase1-post.ahMvu6/hermes/tool.stdout \
+  2>/tmp/dgx-moa-phase1-post.ahMvu6/hermes/tool.stderr
+
+setsid uv run python .superpowers/sdd/task-9-timeout-provider.py \
+  >/tmp/dgx-moa-timeout.uVbS91/logs/provider.log 2>&1 &
+
+DGX_MOA_CONFIG="$PWD/.superpowers/sdd/task-9-timeout-config.yaml" \
+  DGX_MOA_PROJECT_ROOT="$PWD" setsid uv run dgx-moa \
+  >/tmp/dgx-moa-timeout.uVbS91/logs/gateway-retry.log 2>&1 &
+
+curl --silent --show-error \
+  --dump-header /tmp/dgx-moa-timeout.uVbS91/timeout.headers \
+  --output /tmp/dgx-moa-timeout.uVbS91/timeout.body.json \
+  --write-out '%{http_code}\n' \
+  -H 'Authorization: Bearer [REDACTED]' \
+  -H 'Content-Type: application/json' \
+  -H 'X-Session-ID: physical-executor-first-byte-timeout' \
+  -H 'X-Runtime-Channel: dev' \
+  -H 'X-Trace-Origin: validation' \
+  -H 'X-Task-ID: TASK9-TIMEOUT' \
+  -H 'X-Workspace-Path: /home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent' \
+  -H 'X-Workspace-ID: task9-timeout' \
+  -H 'X-Current-Branch: dev' \
+  -H 'X-Current-Commit: 391f968' \
+  -H 'X-Dirty-Status: clean' \
+  --data '{"model":"dgx-moa-agent","messages":[{"role":"user","content":"Reply exactly TIMEOUT_UNEXPECTED."}],"stream":true,"max_tokens":64}' \
+  http://127.0.0.1:19100/v1/chat/completions
+```
 
 #### Trace audit, teardown, and acceptance boundary
 
