@@ -251,6 +251,168 @@ def test_orchestrated_mode_uses_policy_roles(settings, stub_provider: StubProvid
     assert stub_provider.calls == ["planner", "executor"]
 
 
+def test_orchestrated_assistant_answer_without_evidence_skips_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def natural(role, model, request):  # type: ignore[no-untyped-def]
+        if role == "executor":
+            stub_provider.calls.append(role)
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "normal answer"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request)
+
+    stub_provider.complete = natural  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "answer normally"}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert stub_provider.calls == ["planner", "executor"]
+
+
+@pytest.mark.parametrize("failure", ["http", "timeout", "value"])
+def test_low_risk_review_failure_preserves_executor_response(
+    settings, stub_provider: StubProvider, failure: str
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def fail_review(role, model, request):  # type: ignore[no-untyped-def]
+        if role == "executor":
+            return {
+                "id": "chatcmpl-preserved",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "executor output"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        if role == "reviewer":
+            if failure == "http":
+                raise httpx.ConnectError("review unavailable")
+            if failure == "timeout":
+                raise httpx.ReadTimeout("review timed out")
+            raise ValueError("invalid review")
+        return await original(role, model, request)
+
+    stub_provider.complete = fail_review  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": failure},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "review this"}],
+                "metadata": {"diff_summary": "changed one implementation"},
+            },
+        )
+        state = client.app.state.store.get(failure)
+        events = client.app.state.store.events(failure)
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "executor output"
+    assert state and state.review_status == "failed"
+    assert state.observability_degraded is True
+    assert state.observability_status == "degraded"
+    assert any(event["event_type"] == "review_failed" for event in events)
+
+
+def test_high_risk_review_failure_returns_typed_bad_gateway(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def fail_review(role, model, request):  # type: ignore[no-untyped-def]
+        if role == "executor":
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "unreviewed output"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        if role == "reviewer":
+            raise ValueError("invalid review")
+        return await original(role, model, request)
+
+    stub_provider.complete = fail_review  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "high-risk"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "change authentication"}],
+                "metadata": {"authentication": True, "diff_summary": "auth changed"},
+            },
+        )
+        state = client.app.state.store.get("high-risk")
+        events = client.app.state.store.events("high-risk")
+
+    assert response.status_code == 502
+    assert response.json()["error"]["type"] == "backend_error"
+    assert state and state.review_status == "failed"
+    assert any(event["event_type"] == "review_failed" for event in events)
+
+
+def test_length_finish_is_preserved_and_never_completes_session(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def truncated(role, model, request):  # type: ignore[no-untyped-def]
+        if role == "executor":
+            return {
+                "id": "chatcmpl-truncated",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "partial output"},
+                        "finish_reason": "length",
+                    }
+                ],
+            }
+        return await original(role, model, request)
+
+    stub_provider.complete = truncated  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "truncated"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "make a change"}],
+                "metadata": {
+                    "executor_complete": True,
+                    "diff_summary": "changed one implementation",
+                    "completion_evidence": {"tests pass": "exit 0"},
+                },
+            },
+        )
+        state = client.app.state.store.get("truncated")
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["finish_reason"] == "length"
+    assert state and state.finish_reasons == ["length"]
+    assert state.truncated is True
+    assert state.final_status != "completed"
+    assert state.phase != "completed"
+
+
 def test_request_headers_set_trace_identity(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     headers = {
         "Authorization": "Bearer test-secret",

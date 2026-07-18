@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import time
 import uuid
@@ -365,20 +364,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "next_phase": state.phase,
                 }
             finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+            state.finish_reasons = [str(finish_reason)] if finish_reason else []
+            state.truncated = finish_reason == "length"
             if (
-                body.metadata.get("executor_complete") or finish_reason == "stop"
-            ) and "reviewer" in state.roles_required:
-                choice = response.get("choices", [{}])[0]
-                review_observation = json.dumps(
-                    {
-                        "assistant_message": choice.get("message", {}),
-                        "finish_reason": choice.get("finish_reason"),
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                )[:4000]
-                await request.app.state.controller.review(state, review_observation)
-                request.app.state.controller.apply_metadata(state, body.metadata)
+                "reviewer" in state.roles_required
+                and request.app.state.controller.has_review_evidence(state, body.metadata)
+            ):
+                review_observation = request.app.state.controller.review_observation(
+                    state, response, body.metadata
+                )
+                try:
+                    await request.app.state.controller.review(state, review_observation)
+                except (httpx.HTTPError, ValueError) as error:
+                    state.review_status = "failed"
+                    request.app.state.store.event(
+                        state_session_id,
+                        "review_failed",
+                        {"error_type": type(error).__name__},
+                    )
+                    if not state.review_fail_closed:
+                        state.observability_degraded = True
+                        state.observability_status = "degraded"
+                    request.app.state.store.save(state)
+                    if state.review_fail_closed:
+                        raise
+                else:
+                    if not state.truncated:
+                        request.app.state.controller.apply_metadata(state, body.metadata)
             request.app.state.store.event(
                 state_session_id,
                 "assistant_stream_finished",

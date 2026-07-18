@@ -42,6 +42,7 @@ class Limits(BaseModel):
     judge_tokens: int = 2_500
     max_stream_capture_bytes: int = 1_000_000
     max_sse_event_bytes: int = 1_000_000
+    max_review_evidence_characters: int = 16_000
     max_steps: int = 100
 
 

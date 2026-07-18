@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from dgx_moa.controller import Controller, DuplicateFailedCall, classify_failure, fingerprint
 from dgx_moa.state import Phase, SessionState, StateStore
@@ -319,3 +321,86 @@ def test_executor_prompt_does_not_force_json(settings, stub_provider: StubProvid
     )
     assert "Return one JSON object only" not in prompt
     assert "Use native OpenAI tool calls" in prompt
+
+
+def test_review_requires_external_evidence(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    assert controller.has_review_evidence(SessionState(session_id="chat"), {}) is False
+    assert controller.has_review_evidence(
+        SessionState(session_id="edit", tool_results=[{"changed_paths": ["a.py"]}]), {}
+    ) is True
+    assert controller.has_review_evidence(
+        SessionState(session_id="complete"),
+        {"completion_evidence": {"tests": "exit 0"}},
+    ) is True
+
+
+def test_review_observation_is_bounded_redacted_and_complete(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="review-evidence",
+        objective="fix api_key=sk-1234567890123456",
+        acceptance_criteria=["tests pass"],
+        tool_results=[{"stdout": f"result-{index}"} for index in range(5)],
+        approved_scope=["gateway/src"],
+        completion_evidence={"tests": "exit 0"},
+        failures=[{"root_cause_summary": f"failure-{index}"} for index in range(5)],
+    )
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Authorization: Bearer another-secret",
+                },
+                "finish_reason": "stop",
+            }
+        ]
+    }
+
+    observation = controller.review_observation(
+        state,
+        response,
+        {
+            "changed_paths": ["gateway/src/dgx_moa/api.py"],
+            "completion_evidence": {"lint": "exit 0"},
+            "diff_summary": "one focused change",
+            "validation_results": ["pytest: pass"],
+        },
+    )
+    evidence = json.loads(observation)
+
+    assert evidence == {
+        "acceptance_criteria": ["tests pass"],
+        "assistant_message": {
+            "content": "Authorization: Bearer [REDACTED]",
+            "role": "assistant",
+        },
+        "changed_paths": ["gateway/src/dgx_moa/api.py"],
+        "completion_evidence": {"lint": "exit 0", "tests": "exit 0"},
+        "diff_summary": "one focused change",
+        "finish_reason": "stop",
+        "known_failures": [
+            {"root_cause_summary": "failure-1"},
+            {"root_cause_summary": "failure-2"},
+            {"root_cause_summary": "failure-3"},
+            {"root_cause_summary": "failure-4"},
+        ],
+        "original_objective": "fix api_key=[REDACTED]",
+        "scope_evidence": ["gateway/src"],
+        "tool_results": [
+            {"stdout": "result-1"},
+            {"stdout": "result-2"},
+            {"stdout": "result-3"},
+            {"stdout": "result-4"},
+        ],
+        "validation_results": ["pytest: pass"],
+    }
+    assert len(
+        controller.review_observation(
+            state, response, {"diff_summary": "x" * 20_000}
+        )
+    ) == 16_000

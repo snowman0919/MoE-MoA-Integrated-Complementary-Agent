@@ -707,6 +707,39 @@ class Controller:
         body["max_tokens"] = requested_tokens
         return body
 
+    def has_review_evidence(self, state: SessionState, metadata: dict[str, Any]) -> bool:
+        return bool(
+            state.tool_results
+            or state.completion_evidence
+            or metadata.get("completion_evidence")
+            or metadata.get("changed_paths")
+            or metadata.get("diff_summary")
+            or metadata.get("validation_results")
+        )
+
+    def review_observation(
+        self, state: SessionState, response: dict[str, Any], metadata: dict[str, Any]
+    ) -> str:
+        choice = (response.get("choices") or [{}])[0]
+        current_completion = metadata.get("completion_evidence")
+        evidence = {
+            "original_objective": state.objective,
+            "acceptance_criteria": state.acceptance_criteria,
+            "changed_paths": metadata.get("changed_paths", []),
+            "diff_summary": metadata.get("diff_summary", ""),
+            "tool_results": state.tool_results[-4:],
+            "validation_results": metadata.get("validation_results", []),
+            "scope_evidence": state.approved_scope,
+            "completion_evidence": state.completion_evidence
+            | (current_completion if isinstance(current_completion, dict) else {}),
+            "known_failures": state.failures[-4:],
+            "assistant_message": choice.get("message", {}),
+            "finish_reason": choice.get("finish_reason"),
+        }
+        return json.dumps(redact(evidence), ensure_ascii=False, sort_keys=True)[
+            : self.settings.limits.max_review_evidence_characters
+        ]
+
     async def review(self, state: SessionState, observation: str) -> dict[str, Any]:
         state.phase = Phase.REVIEWING
         self.store.event(
