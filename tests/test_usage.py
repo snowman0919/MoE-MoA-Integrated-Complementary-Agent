@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from dgx_moa.config import Limits, load_settings
+from pydantic import ValidationError
 
 
 def usage_module() -> Any:
@@ -57,7 +58,7 @@ def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
 
     store.start(start_record(module, "request-1", 100.0))
     duplicate = start_record(module, "request-1", 999.0)
-    duplicate.client_class = "changed"
+    duplicate.client_class = "curl"
     store.start(duplicate)
     store.finalize("request-1", finalization(module, 104.0, 4.0))
     store.finalize(
@@ -66,7 +67,7 @@ def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
             completed_at=999.0,
             active_duration_seconds=999.0,
             status="failed",
-            retryable_failure_class="sentinel-second-finalization",
+            retryable_failure_class="backend_error",
         ),
     )
 
@@ -261,11 +262,45 @@ def test_recent_window_bounds_all_statistics_and_sparse_samples_are_insufficient
     assert report["load_duration_seconds"]["mean"] == 3.0
 
 
+def test_zero_inter_arrival_gaps_are_preserved_in_statistics(tmp_path: Path) -> None:
+    module = usage_module()
+    store = module.UsageStore(tmp_path / "usage.db")
+    for index, accepted_at in enumerate((100.0, 100.0, 101.0)):
+        store.start(start_record(module, f"request-{index}", accepted_at))
+
+    report = store.report(now=101.0)
+
+    assert report["inter_arrival_gaps_seconds"] == [0.0, 1.0]
+    assert report["inter_arrival_ewma_seconds"] == 0.25
+    assert report["inter_arrival_percentiles_seconds"] == {
+        "p50": 0.5,
+        "p75": 0.75,
+        "p90": 0.9,
+        "p95": 0.95,
+    }
+
+
+def test_zero_gaps_count_toward_adaptive_sample_sufficiency(tmp_path: Path) -> None:
+    module = usage_module()
+    store = module.UsageStore(tmp_path / "usage.db")
+    for index in range(21):
+        store.start(start_record(module, f"request-{index}", 100.0))
+
+    report = store.report(now=100.0)
+
+    assert report["inter_arrival_gaps_seconds"] == [0.0] * 20
+    assert report["adaptive_policy_samples"] == {
+        "usable": 20,
+        "minimum": 20,
+        "sufficient": True,
+    }
+
+
 def test_hour_and_day_counts_use_the_report_time(tmp_path: Path) -> None:
     module = usage_module()
     store = module.UsageStore(tmp_path / "usage.db")
     now = 100_000.0
-    for index, accepted_at in enumerate((now - 90_000, now - 4_000, now - 10)):
+    for index, accepted_at in enumerate((now - 90_000, now - 4_000, now - 10, now + 1)):
         store.start(start_record(module, f"request-{index}", accepted_at))
 
     report = store.report(now=now)
@@ -336,6 +371,95 @@ def test_forbidden_request_content_never_reaches_sqlite_or_report(tmp_path: Path
         assert sentinel not in serialized_report
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "sentinel"),
+    [
+        ("client_class", "SENTINEL_CATEGORY_CLIENT", "SENTINEL_CATEGORY_CLIENT"),
+        ("model_alias", "SENTINEL_CATEGORY_MODEL", "SENTINEL_CATEGORY_MODEL"),
+        ("runtime_mode", "SENTINEL_CATEGORY_MODE", "SENTINEL_CATEGORY_MODE"),
+        ("request_class", "SENTINEL_CATEGORY_REQUEST", "SENTINEL_CATEGORY_REQUEST"),
+        ("roles_required", ["executor", "SENTINEL_CATEGORY_ROLE"], "SENTINEL_CATEGORY_ROLE"),
+        ("model_state", "SENTINEL_CATEGORY_STATE", "SENTINEL_CATEGORY_STATE"),
+    ],
+)
+def test_request_start_rejects_category_sentinels_before_persistence(
+    tmp_path: Path, field: str, value: object, sentinel: str
+) -> None:
+    module = usage_module()
+    path = tmp_path / "usage.db"
+    store = module.UsageStore(path)
+    raw = {
+        "request_id": "safe-request",
+        "session_id": "safe-session",
+        "client_class": "openai-compatible",
+        "model_alias": "dgx-moa-agent",
+        "runtime_mode": "agent",
+        "request_class": "native_agent_turn",
+        "roles_required": ["executor"],
+        "accepted_at": 100.0,
+        "streaming": False,
+        "model_state": "warm",
+        "load_triggered": False,
+    }
+    raw[field] = value
+
+    with pytest.raises(ValidationError):
+        store.start(module.RequestUsageStart.model_validate(raw))
+
+    sqlite_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("usage.db*"))
+    assert sentinel.encode() not in sqlite_bytes
+    assert sentinel not in json.dumps(store.report(now=100.0), sort_keys=True)
+
+
+@pytest.mark.parametrize("field", ["status", "retryable_failure_class"])
+def test_request_finalization_rejects_category_sentinels_before_persistence(
+    tmp_path: Path, field: str
+) -> None:
+    module = usage_module()
+    path = tmp_path / "usage.db"
+    store = module.UsageStore(path)
+    store.start(start_record(module, "safe-request", 100.0))
+    sentinel = f"SENTINEL_CATEGORY_{field.upper()}"
+    raw = {
+        "completed_at": 101.0,
+        "active_duration_seconds": 1.0,
+        "status": "failed",
+        "retryable_failure_class": "backend_error",
+        field: sentinel,
+    }
+
+    with pytest.raises(ValidationError):
+        store.finalize("safe-request", module.RequestUsageFinalization.model_validate(raw))
+
+    assert store.get("safe-request").completed_at is None
+    sqlite_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("usage.db*"))
+    assert sentinel.encode() not in sqlite_bytes
+    assert sentinel not in json.dumps(store.report(now=101.0), sort_keys=True)
+
+
+@pytest.mark.parametrize("field", ["role", "kind"])
+def test_lifecycle_sample_rejects_category_sentinels_before_persistence(
+    tmp_path: Path, field: str
+) -> None:
+    module = usage_module()
+    path = tmp_path / "usage.db"
+    store = module.UsageStore(path)
+    sentinel = f"SENTINEL_CATEGORY_{field.upper()}"
+    raw = {
+        "role": "executor",
+        "kind": "load",
+        "duration_seconds": 1.0,
+        field: sentinel,
+    }
+
+    with pytest.raises(ValidationError):
+        store.record_lifecycle_sample(module.LifecycleSample.model_validate(raw))
+
+    sqlite_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("usage.db*"))
+    assert sentinel.encode() not in sqlite_bytes
+    assert sentinel not in json.dumps(store.report(now=100.0), sort_keys=True)
+
+
 def test_usage_limits_have_exact_defaults_and_yaml_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -349,3 +473,16 @@ def test_usage_limits_have_exact_defaults_and_yaml_values(
     assert configured.limits.usage_sample_window == 512
     assert configured.limits.usage_ewma_alpha == 0.25
     assert configured.limits.adaptive_minimum_samples == 20
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("usage_sample_window", 0),
+        ("usage_ewma_alpha", 2),
+        ("adaptive_minimum_samples", 0),
+    ],
+)
+def test_usage_limits_reject_out_of_bounds_values(field: str, value: int) -> None:
+    with pytest.raises(ValidationError):
+        Limits.model_validate({field: value})

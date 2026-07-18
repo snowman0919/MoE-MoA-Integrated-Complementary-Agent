@@ -12,8 +12,26 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .routing import RequestClass, RuntimeMode
+
+SafeClientClass = Literal[
+    "curl", "openai-python", "httpx", "opencode", "hermes-agent", "openai-compatible"
+]
+ModelAlias = Literal["dgx-moa-chat", "dgx-moa-agent", "dgx-moa-orchestrated"]
+Role = Literal["executor", "planner", "reviewer", "reasoner", "judge"]
 ModelState = Literal["warm", "cold", "loading"]
 LifecycleKind = Literal["load", "unload"]
+RequestStatus = Literal["completed", "failed", "cancelled", "timed_out"]
+RetryableFailureClass = Literal[
+    "backend_error",
+    "model_loading",
+    "planner_timeout",
+    "executor_first_byte_timeout",
+    "executor_total_timeout",
+    "executor_timeout",
+    "reviewer_timeout",
+    "judge_timeout",
+]
 
 REQUEST_COLUMNS = (
     "request_id, session_id, client_class, model_alias, runtime_mode, request_class, "
@@ -24,15 +42,15 @@ REQUEST_COLUMNS = (
 
 
 class RequestUsageStart(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
     request_id: str
     session_id: str
-    client_class: str
-    model_alias: str
-    runtime_mode: str
-    request_class: str
-    roles_required: tuple[str, ...]
+    client_class: SafeClientClass
+    model_alias: ModelAlias
+    runtime_mode: RuntimeMode
+    request_class: RequestClass
+    roles_required: tuple[Role, ...]
     accepted_at: float = Field(ge=0)
     streaming: bool
     model_state: ModelState
@@ -40,13 +58,13 @@ class RequestUsageStart(BaseModel):
 
 
 class RequestUsageFinalization(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
     first_byte_at: float | None = Field(default=None, ge=0)
     completed_at: float = Field(ge=0)
     active_duration_seconds: float | None = Field(default=None, ge=0)
-    status: str
-    retryable_failure_class: str | None = None
+    status: RequestStatus
+    retryable_failure_class: RetryableFailureClass | None = None
     prompt_tokens: int | None = Field(default=None, ge=0)
     completion_tokens: int | None = Field(default=None, ge=0)
     total_tokens: int | None = Field(default=None, ge=0)
@@ -56,17 +74,17 @@ class RequestUsageRecord(RequestUsageStart):
     first_byte_at: float | None = None
     completed_at: float | None = None
     active_duration_seconds: float | None = None
-    status: str | None = None
-    retryable_failure_class: str | None = None
+    status: RequestStatus | None = None
+    retryable_failure_class: RetryableFailureClass | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
 
 
 class LifecycleSample(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
-    role: str
+    role: Role
     kind: LifecycleKind
     duration_seconds: float = Field(ge=0)
     memory_before_bytes: int | None = Field(default=None, ge=0)
@@ -119,11 +137,7 @@ def request_statistics(
     adaptive_minimum_samples: int,
 ) -> dict[str, Any]:
     accepted = sorted(record.accepted_at for record in records)
-    gaps = [
-        later - earlier
-        for earlier, later in zip(accepted, accepted[1:], strict=False)
-        if later > earlier
-    ]
+    gaps = [later - earlier for earlier, later in zip(accepted, accepted[1:], strict=False)]
     roles = Counter(role for record in records for role in record.roles_required)
     warm_latencies = [
         record.active_duration_seconds
@@ -132,8 +146,8 @@ def request_statistics(
     ]
     return {
         "request_count": len(records),
-        "requests_last_hour": sum(value >= now - 3_600 for value in accepted),
-        "requests_last_day": sum(value >= now - 86_400 for value in accepted),
+        "requests_last_hour": sum(now - 3_600 <= value <= now for value in accepted),
+        "requests_last_day": sum(now - 86_400 <= value <= now for value in accepted),
         "inter_arrival_gaps_seconds": gaps,
         "inter_arrival_ewma_seconds": _ewma(gaps, ewma_alpha),
         "inter_arrival_percentiles_seconds": _percentiles(gaps),
