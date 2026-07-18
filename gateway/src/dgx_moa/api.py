@@ -215,21 +215,21 @@ def create_app(
             sleeper=lifecycle_sleeper,
             memory_probe=lifecycle_memory_probe,
         )
-        managed_roles = tuple(configured.lifecycle_unit_map)
-        if configured.lifecycle_mode in {"fixed", "adaptive"}:
-            await app.state.lifecycle.reconcile_managed(managed_roles)
-        app.state.lifecycle.start_scheduler(
-            configured.lifecycle_mode,
-            managed_roles,
-            configured.limits,
-            app.state.usage,
-        )
-        app.state.reviewer_evaluation_lock = asyncio.Lock()
-        app.state.traces = TraceRecorder(
-            configured.state_db.parent.parent / "traces", store, configured.models
-        )
-        app.state.profiles = ProfileManager(configured.run_dir, project_root)
         try:
+            managed_roles = tuple(configured.lifecycle_unit_map)
+            if configured.lifecycle_mode in {"fixed", "adaptive"}:
+                await app.state.lifecycle.reconcile_managed(managed_roles)
+            app.state.lifecycle.start_scheduler(
+                configured.lifecycle_mode,
+                managed_roles,
+                configured.limits,
+                app.state.usage,
+            )
+            app.state.reviewer_evaluation_lock = asyncio.Lock()
+            app.state.traces = TraceRecorder(
+                configured.state_db.parent.parent / "traces", store, configured.models
+            )
+            app.state.profiles = ProfileManager(configured.run_dir, project_root)
             yield
         finally:
             await app.state.lifecycle.close()

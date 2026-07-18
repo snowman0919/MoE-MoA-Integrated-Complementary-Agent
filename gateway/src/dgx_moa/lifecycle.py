@@ -11,14 +11,13 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from pathlib import Path
 from statistics import quantiles
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, Protocol, TypeVar, cast
 from uuid import UUID, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import MODEL_ROLES, SYSTEMD_UNIT_PATTERN, Limits
-from .usage import LifecycleSample, UsageStore
-from .usage import Role as UsageRole
+from .usage import UsageStore
 
 LifecycleState = Literal[
     "cold",
@@ -69,6 +68,7 @@ SHARD_PROGRESS = re.compile(
     re.IGNORECASE,
 )
 CONTINUATION_CORRELATION = re.compile(r"[0-9a-f]{64}")
+T = TypeVar("T")
 
 LIFECYCLE_STATES: tuple[LifecycleState, ...] = (
     "cold",
@@ -1073,6 +1073,61 @@ class LifecycleStore:
             self._write(database, transitioned)
             return transitioned
 
+    def complete_unload(
+        self,
+        role: str,
+        *,
+        expected_transition_id: str,
+        duration_seconds: float,
+        memory_before_bytes: int | None,
+        memory_after_bytes: int | None,
+    ) -> LifecycleRecord:
+        self._require_role(role)
+        with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            current = self._read(database, role)
+            if current.transition_id != expected_transition_id:
+                raise StaleTransitionError(role)
+            if current.state != "unloading":
+                raise InvalidTransitionError(f"{current.state} -> cold")
+            now = self._clock()
+            updated = self._updated_record(
+                current,
+                {
+                    "last_unload_duration_seconds": duration_seconds,
+                    "memory_before_bytes": memory_before_bytes,
+                    "memory_after_bytes": memory_after_bytes,
+                },
+                now,
+            )
+            values = updated.model_dump()
+            values.update(
+                state="cold",
+                transition_id=str(uuid4()),
+                transitioned_at=now,
+                updated_at=now,
+                ready_since=None,
+                failure_class=None,
+                failure_detail=None,
+                progress_value=None,
+                progress_quality=None,
+                eta_seconds=None,
+            )
+            cold = LifecycleRecord.model_validate(values)
+            self._write(database, cold)
+            database.execute(
+                "INSERT INTO lifecycle_samples "
+                "(role, kind, duration_seconds, memory_before_bytes, memory_after_bytes) "
+                "VALUES (?, 'unload', ?, ?, ?)",
+                (
+                    role,
+                    cold.last_unload_duration_seconds,
+                    cold.memory_before_bytes,
+                    cold.memory_after_bytes,
+                ),
+            )
+            return cold
+
     def _reconcile_transition(self, role: str, state: LifecycleState) -> LifecycleRecord:
         with self._connect() as database:
             database.execute("BEGIN IMMEDIATE")
@@ -1173,6 +1228,7 @@ class LifecycleCoordinator:
         self.memory_probe = memory_probe or self._memory_unavailable
         self._locks = {role: asyncio.Lock() for role in store._roles}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._load_driver_tasks: set[asyncio.Task[Any]] = set()
         self._scheduler_task: asyncio.Task[None] | None = None
         self._stop_tasks: dict[str, asyncio.Task[None]] = {}
         self._idle_state: dict[str, tuple[LifecycleMode, float | None, int]] = {}
@@ -1264,26 +1320,28 @@ class LifecycleCoordinator:
                     decision.next_consecutive_check_count,
                 )
                 if decision.would_unload and decision.action_allowed:
-                    await self._unload_role(role, record, usage)
-                    current = self.store.get(role)
-                    safe_decision = calculate_idle_policy(
-                        cast(ModelRole, role),
-                        mode,
-                        cast(Sequence[RoleUsageRecord], records),
-                        current,
-                        now=now,
-                        limits=limits,
-                        has_blockers=bool(self.store.unload_blockers(role)),
-                        previous_mode=mode,
-                        previous_last_activity_at=activity,
-                        previous_consecutive_check_count=decision.next_consecutive_check_count,
-                    )
-                    self.store.persist_decision(safe_decision)
-                    self._idle_state[role] = (
-                        mode,
-                        self._activity_at(current),
-                        safe_decision.next_consecutive_check_count,
-                    )
+                    try:
+                        await self._unload_role(role, record)
+                    finally:
+                        current = self.store.get(role)
+                        safe_decision = calculate_idle_policy(
+                            cast(ModelRole, role),
+                            mode,
+                            cast(Sequence[RoleUsageRecord], records),
+                            current,
+                            now=now,
+                            limits=limits,
+                            has_blockers=bool(self.store.unload_blockers(role)),
+                            previous_mode=mode,
+                            previous_last_activity_at=activity,
+                            previous_consecutive_check_count=decision.next_consecutive_check_count,
+                        )
+                        self.store.persist_decision(safe_decision)
+                        self._idle_state[role] = (
+                            mode,
+                            self._activity_at(current),
+                            safe_decision.next_consecutive_check_count,
+                        )
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -1299,7 +1357,6 @@ class LifecycleCoordinator:
         self,
         role: str,
         policy_record: LifecycleRecord,
-        usage: UsageStore,
     ) -> bool:
         async with self._locks[role]:
             try:
@@ -1316,7 +1373,7 @@ class LifecycleCoordinator:
             )
             if admitted is None:
                 return False
-            task = asyncio.create_task(self._complete_unload(role, admitted, usage))
+            task = asyncio.create_task(self._complete_unload(role, admitted))
             self._stop_tasks[role] = task
             try:
                 await asyncio.shield(task)
@@ -1331,7 +1388,6 @@ class LifecycleCoordinator:
         self,
         role: str,
         admitted: LifecycleRecord,
-        usage: UsageStore,
     ) -> None:
         started = float(self.clock())
         try:
@@ -1346,22 +1402,12 @@ class LifecycleCoordinator:
             except Exception as error:
                 raise LifecycleLoadError("memory_after_failed", type(error).__name__) from None
             duration = max(0.0, float(self.clock()) - started)
-            cold = self.store.transition(
+            self.store.complete_unload(
                 role,
-                "cold",
                 expected_transition_id=admitted.transition_id,
-                last_unload_duration_seconds=duration,
+                duration_seconds=duration,
                 memory_before_bytes=admitted.memory_before_bytes,
                 memory_after_bytes=memory_after,
-            )
-            usage.record_lifecycle_sample(
-                LifecycleSample(
-                    role=cast(UsageRole, role),
-                    kind="unload",
-                    duration_seconds=cold.last_unload_duration_seconds or 0.0,
-                    memory_before_bytes=cold.memory_before_bytes,
-                    memory_after_bytes=cold.memory_after_bytes,
-                )
             )
         except LifecycleLoadError as error:
             self._fail_unload(role, error.failure_class, error.failure_detail)
@@ -1537,7 +1583,8 @@ class LifecycleCoordinator:
             "process_starting",
             expected_transition_id=transition_id,
         )
-        cursor = await asyncio.to_thread(self._capture_progress_and_start, role)
+        cursor = await self._owned_load_driver_call(self.driver.capture_progress_cursor, role)
+        await self._owned_load_driver_call(self.driver.start, role)
         while True:
             driver_status = await asyncio.to_thread(self.driver.status, role)
             if driver_status != "active":
@@ -1646,10 +1693,16 @@ class LifecycleCoordinator:
             except TimeoutError:
                 raise LifecycleLoadError("health_timeout", "model health timed out") from None
 
-    def _capture_progress_and_start(self, role: str) -> str:
-        cursor = self.driver.capture_progress_cursor(role)
-        self.driver.start(role)
-        return cursor
+    async def _owned_load_driver_call(self, operation: Callable[[str], T], role: str) -> T:
+        task = asyncio.create_task(asyncio.to_thread(operation, role))
+        self._load_driver_tasks.add(task)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await asyncio.gather(task, return_exceptions=True)
+            raise
+        finally:
+            self._load_driver_tasks.discard(task)
 
     def _fail(self, role: str, failure_class: str, failure_detail: str) -> None:
         record = self.store.get(role)
@@ -1681,6 +1734,10 @@ class LifecycleCoordinator:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
+        load_driver_tasks = tuple(self._load_driver_tasks)
+        if load_driver_tasks:
+            await asyncio.gather(*load_driver_tasks, return_exceptions=True)
+        self._load_driver_tasks.clear()
 
 
 class FakeLifecycleDriver:

@@ -2126,24 +2126,27 @@ async def test_outer_model_load_deadline_is_distinct_from_health_timeout(
     module = lifecycle()
     store = module.LifecycleStore(tmp_path / "load-timeout.db", ("executor",))
     driver = module.FakeLifecycleDriver({"executor": "inactive"})
+    poll_entered = asyncio.Event()
 
     async def health_probe(role: str) -> bool:
         return False
 
     async def blocked_sleep(seconds: float) -> None:
+        poll_entered.set()
         await asyncio.Event().wait()
 
     coordinator = module.LifecycleCoordinator(
         store,
         driver,
         health_probe=health_probe,
-        timeout_seconds=0.01,
+        timeout_seconds=0.25,
         poll_seconds=0.25,
         clock=lambda: 100.0,
         sleeper=blocked_sleep,
     )
 
     await coordinator.ensure_ready("executor")
+    await asyncio.wait_for(poll_entered.wait(), timeout=1)
     await coordinator._tasks["executor"]
     failure = store.get("executor")
 
@@ -2152,6 +2155,54 @@ async def test_outer_model_load_deadline_is_distinct_from_health_timeout(
     assert failure.retry_count == 1
     assert driver.calls.count(("start", "executor")) == 1
     await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_close_waits_for_owned_load_start_and_prevents_post_close_driver_mutation(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingStartDriver(module.FakeLifecycleDriver):
+        def capture_progress_cursor(self, role: str) -> str:
+            self._require_role(role)
+            self.calls.append(("cursor", role))
+            entered.set()
+            assert release.wait(timeout=2)
+            return self._cursors[role]
+
+    store = module.LifecycleStore(tmp_path / "shutdown-load.db", ("executor",))
+    driver = BlockingStartDriver({"executor": "inactive"})
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=lambda role: asyncio.sleep(0, result=True),
+        timeout_seconds=10.0,
+        poll_seconds=1.0,
+    )
+    await coordinator.ensure_ready("executor")
+    for _ in range(1_000):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.001)
+    assert entered.is_set()
+
+    closing = asyncio.create_task(coordinator.close())
+    await asyncio.sleep(0.01)
+    was_pending = not closing.done()
+    release.set()
+    await asyncio.wait_for(closing, timeout=1)
+
+    failure = store.get("executor")
+    assert was_pending
+    assert ("start", "executor") not in driver.calls
+    assert failure.state == "failed"
+    assert failure.failure_class == "load_cancelled"
+    calls_at_close = tuple(driver.calls)
+    await asyncio.sleep(0.01)
+    assert tuple(driver.calls) == calls_at_close
 
 
 @pytest.mark.asyncio
@@ -2629,14 +2680,11 @@ async def test_unload_failures_are_truthful_bounded_and_not_rapidly_retried(
         return 1_000 + memory_calls
 
     if failure_point == "transition":
-        transition = store.transition
 
-        def fail_cold(role: str, state: str, **kwargs: Any):
-            if state == "cold":
-                raise sqlite3.OperationalError("SENTINEL transition")
-            return transition(role, state, **kwargs)
+        def fail_complete_unload(role: str, **kwargs: Any):
+            raise sqlite3.OperationalError("SENTINEL transition")
 
-        store.transition = fail_cold  # type: ignore[method-assign]
+        store.complete_unload = fail_complete_unload  # type: ignore[method-assign]
 
     usage = UsageStore(store.path)
     limits = Limits(
@@ -2675,7 +2723,7 @@ async def test_unload_failures_are_truthful_bounded_and_not_rapidly_retried(
 
 @pytest.mark.asyncio
 async def test_successful_unload_records_memory_duration_and_one_sample(tmp_path: Path) -> None:
-    from dgx_moa.usage import UsageStore
+    from dgx_moa.usage import LifecycleSample, UsageStore
 
     module = lifecycle()
     clock = [0.0]
@@ -2717,7 +2765,7 @@ async def test_successful_unload_records_memory_duration_and_one_sample(tmp_path
     assert cold.last_unload_duration_seconds == 3.0
     assert (cold.memory_before_bytes, cold.memory_after_bytes) == (1_000, 1_250)
     assert usage.recent_lifecycle_samples() == [
-        module.LifecycleSample(
+        LifecycleSample(
             role="executor",
             kind="unload",
             duration_seconds=3.0,
@@ -2725,6 +2773,53 @@ async def test_successful_unload_records_memory_duration_and_one_sample(tmp_path
             memory_after_bytes=1_250,
         )
     ]
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_unload_sample_insert_failure_rolls_back_cold_transition(tmp_path: Path) -> None:
+    from dgx_moa.usage import UsageStore
+
+    module = lifecycle()
+    clock = [0.0]
+    store = module.LifecycleStore(
+        tmp_path / "unload-sample-failure.db", ("executor",), clock=lambda: clock[0]
+    )
+    reach(store, "executor", "ready")
+    clock[0] = 100.0
+    usage = UsageStore(store.path)
+    with sqlite3.connect(store.path) as database:
+        database.execute(
+            "CREATE TRIGGER reject_unload_sample BEFORE INSERT ON lifecycle_samples "
+            "WHEN NEW.kind = 'unload' BEGIN "
+            "SELECT RAISE(FAIL, 'SENTINEL lifecycle sample'); END"
+        )
+    driver = module.FakeLifecycleDriver({"executor": "active"})
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=lambda role: asyncio.sleep(0, result=True),
+        timeout_seconds=10.0,
+        poll_seconds=1.0,
+        clock=lambda: clock[0],
+        memory_probe=lambda: 1_000,
+    )
+    limits = Limits(
+        executor_idle_minimum_seconds=5,
+        executor_idle_fallback_seconds=10,
+        executor_idle_maximum_seconds=100,
+        executor_minimum_ready_residency_seconds=1,
+    )
+
+    await coordinator.run_scheduler_check("fixed", ("executor",), limits, usage)
+    clock[0] = 101.0
+    await coordinator.run_scheduler_check("fixed", ("executor",), limits, usage)
+
+    failed = store.get("executor")
+    assert failed.state == "failed"
+    assert failed.failure_class == "unload_failed"
+    assert driver.calls.count(("stop", "executor")) == 1
+    assert usage.recent_lifecycle_samples() == []
     await coordinator.close()
 
 
@@ -2797,3 +2892,7 @@ async def test_scheduler_shutdown_waits_for_owned_inflight_stop_and_finishes_tra
 
     assert store.get("executor").state == "cold"
     assert coordinator._stop_tasks == {}
+    decision = store.latest_decision("executor")
+    assert decision is not None
+    assert decision.action_allowed is False
+    assert decision.reason == "state_not_ready"

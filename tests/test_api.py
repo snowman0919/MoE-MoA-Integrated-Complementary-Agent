@@ -516,6 +516,42 @@ async def test_lifespan_mode_contract_controls_recovery_and_one_scheduler(
 
 
 @pytest.mark.asyncio
+async def test_lifespan_late_initialization_failure_closes_started_scheduler(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "observe",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    app = create_app(
+        controlled,
+        lifecycle_driver=FakeLifecycleDriver({"executor": "inactive"}),
+        lifecycle_sleeper=lambda seconds: asyncio.Event().wait(),
+    )
+    captured: dict[str, asyncio.Task[None]] = {}
+
+    def fail_trace_initialization(*args: object, **kwargs: object) -> None:
+        scheduler = app.state.lifecycle._scheduler_task
+        assert scheduler is not None
+        captured["scheduler"] = scheduler
+        raise RuntimeError("SENTINEL trace initialization")
+
+    monkeypatch.setattr("dgx_moa.api.TraceRecorder", fail_trace_initialization)
+    with pytest.raises(RuntimeError, match="SENTINEL trace initialization"):
+        async with app.router.lifespan_context(app):
+            pass
+
+    scheduler = captured["scheduler"]
+    closed_before_cleanup = scheduler.done() and app.state.lifecycle._scheduler_task is None
+    if not closed_before_cleanup:
+        await app.state.lifecycle.close()
+    assert closed_before_cleanup
+
+
+@pytest.mark.asyncio
 async def test_stream_leases_span_generation_and_generator_terminal_cleanup(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
