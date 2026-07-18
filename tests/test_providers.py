@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
 import pytest
 from dgx_moa.providers import ModelProvider, parse_json_content
+
+
+def test_stage_timeout_defaults(settings) -> None:  # type: ignore[no-untyped-def]
+    assert settings.limits.planner_timeout_seconds == 120
+    assert settings.limits.executor_first_byte_timeout_seconds == 120
+    assert settings.limits.executor_total_timeout_seconds == 900
+    assert settings.limits.reviewer_timeout_seconds == 120
+    assert settings.limits.model_load_timeout_seconds == 1_200
+    assert settings.limits.tool_continuation_timeout_seconds == 600
 
 
 def test_judge_is_read_only(settings) -> None:  # type: ignore[no-untyped-def]
@@ -54,3 +64,63 @@ async def test_stream_error_body_is_available_to_the_api(settings, monkeypatch) 
         )
 
     assert captured.value.response.json() == envelope
+
+
+@pytest.mark.parametrize("stage", ["planner", "executor_total", "reviewer"])
+@pytest.mark.asyncio
+async def test_completion_timeout_has_exact_stage(
+    settings, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:  # type: ignore[no-untyped-def]
+    async def slow_response(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(1)
+        return httpx.Response(200, json={"choices": []}, request=request)
+
+    transport = httpx.MockTransport(slow_response)
+    async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "dgx_moa.providers.httpx.AsyncClient",
+        lambda **kwargs: async_client(transport=transport, **kwargs),
+    )
+
+    with pytest.raises(TimeoutError) as captured:
+        await ModelProvider().complete(
+            "executor",
+            settings.models["executor"],
+            {"messages": []},
+            timeout_seconds=0.001,
+            stage=stage,
+        )
+
+    assert type(captured.value).__name__ == "StageTimeout"
+    assert getattr(captured.value, "stage", None) == stage
+
+
+@pytest.mark.asyncio
+async def test_stream_waits_for_first_byte_with_exact_stage(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    class DelayedStream(httpx.AsyncByteStream):
+        async def __aiter__(self):  # type: ignore[no-untyped-def]
+            await asyncio.sleep(1)
+            yield b"data: [DONE]\n\n"
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=DelayedStream(), request=request)
+    )
+    async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "dgx_moa.providers.httpx.AsyncClient",
+        lambda **kwargs: async_client(transport=transport, **kwargs),
+    )
+
+    with pytest.raises(TimeoutError) as captured:
+        await ModelProvider().stream(
+            "executor",
+            settings.models["executor"],
+            {"messages": []},
+            timeout_seconds=0.001,
+            stage="executor_first_byte",
+        )
+
+    assert type(captured.value).__name__ == "StageTimeout"
+    assert getattr(captured.value, "stage", None) == "executor_first_byte"

@@ -43,6 +43,12 @@ class Limits(BaseModel):
     max_stream_capture_bytes: int = 1_000_000
     max_sse_event_bytes: int = 1_000_000
     max_review_evidence_characters: int = 16_000
+    planner_timeout_seconds: float = 120
+    executor_first_byte_timeout_seconds: float = 120
+    executor_total_timeout_seconds: float = 900
+    reviewer_timeout_seconds: float = 120
+    model_load_timeout_seconds: float = 1_200
+    tool_continuation_timeout_seconds: float = 600
     max_steps: int = 100
 
 

@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from .config import Settings, get_settings
 from .controller import Controller, DuplicateFailedCall
 from .profiles import ProfileManager
-from .providers import ModelProvider, validate_assistant_response
+from .providers import ModelProvider, StageTimeout, validate_assistant_response
 from .routing import (
     MODEL_MODES,
     classify_request,
@@ -229,6 +229,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         x_dirty_state: str | None = Header(default=None),
     ) -> Response:
         accepted = time.monotonic()
+        stage_status: dict[str, str] = {}
+        timing_recorded = False
+
+        def record_request_timing(state: Any) -> None:
+            nonlocal timing_recorded
+            if timing_recorded:
+                return
+            state.timings_ms["completed"] = elapsed_ms(accepted)
+            request.app.state.store.event(
+                state.session_id,
+                "request_timing",
+                {
+                    "timings_ms": dict(state.timings_ms),
+                    "stage_status": dict(stage_status),
+                },
+            )
+            timing_recorded = True
+
         profile_state = request.app.state.profiles.current()
         current_profile = profile_state["active_profile"]
         if current_profile == "judge" or profile_state["status"] in {
@@ -282,6 +300,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             state_session_id = session_id
         try:
             state = request.app.state.controller.session(state_session_id, raw["messages"])
+            state.timings_ms = {"accepted": 0.0}
             request.app.state.store.event(
                 state_session_id,
                 "request_received",
@@ -299,10 +318,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             state.roles_required = list(roles)
             state.review_fail_closed = review_fails_closed(request_class)
             prepared = await request.app.state.controller.prepare_executor(state, raw, roles)
+            if "planner" in state.timings_ms:
+                stage_status["planner"] = "completed"
+            executor_started = time.monotonic()
+            state.timings_ms["upstream_start"] = elapsed_ms(accepted)
             if body.stream:
                 upstream = await request.app.state.provider.stream(
-                    "executor", configured.models["executor"], prepared
+                    "executor",
+                    configured.models["executor"],
+                    prepared,
+                    timeout_seconds=configured.limits.executor_first_byte_timeout_seconds,
+                    stage="executor_first_byte",
                 )
+                state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
+                stage_status["executor_first_byte"] = "completed"
                 observation = StreamObservation(configured.limits.max_stream_capture_bytes)
 
                 async def stream_response() -> AsyncIterator[bytes]:
@@ -313,23 +342,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         max_event_bytes=configured.limits.max_sse_event_bytes,
                     )
                     try:
-                        async with aclosing(forwarder):
-                            async for chunk in forwarder:
-                                if "first_downstream_byte" not in state.timings_ms:
-                                    state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
-                                yield chunk
+                        async with asyncio.timeout_at(
+                            executor_started
+                            + configured.limits.executor_total_timeout_seconds
+                        ):
+                            async with aclosing(forwarder):
+                                async for chunk in forwarder:
+                                    if "first_downstream_byte" not in state.timings_ms:
+                                        state.timings_ms["first_downstream_byte"] = elapsed_ms(
+                                            accepted
+                                        )
+                                    yield chunk
                         completed = True
+                    except TimeoutError as error:
+                        stage_status["executor_total"] = "timed_out"
+                        raise StageTimeout("executor_total") from error
                     except asyncio.CancelledError:
+                        stage_status["executor_total"] = "cancelled"
                         if not observation.done_seen:
                             state.final_status = "cancelled"
                         raise
                     finally:
                         terminal = completed or observation.done_seen
+                        state.timings_ms["executor_total"] = round(
+                            (time.monotonic() - executor_started) * 1000, 3
+                        )
+                        stage_status.setdefault(
+                            "executor_total", "completed" if terminal else "aborted"
+                        )
                         state.finish_reasons = observation.finish_reasons
                         state.truncated = "length" in observation.finish_reasons
                         if terminal and "reviewer" in state.roles_required:
                             state.review_deferred = True
                             state.review_status = "deferred"
+                            stage_status["reviewer"] = "deferred"
                         if state.decisions:
                             state.decisions[-1]["outcome"] = {
                                 "status": "success" if terminal else "failure",
@@ -339,6 +385,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 "validation_triggered": False,
                                 "next_phase": state.phase,
                             }
+                        record_request_timing(state)
                         request.app.state.store.event(
                             state_session_id,
                             "assistant_stream_finished",
@@ -358,8 +405,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     headers={"X-Session-ID": session_id},
                 )
             response = await request.app.state.provider.complete(
-                "executor", configured.models["executor"], prepared
+                "executor",
+                configured.models["executor"],
+                prepared,
+                timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                stage="executor_total",
             )
+            state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
+            state.timings_ms["executor_total"] = round(
+                (time.monotonic() - executor_started) * 1000, 3
+            )
+            stage_status["executor_total"] = "completed"
             validate_assistant_response(response)
             if state.decisions:
                 state.decisions[-1]["structured_decision"] = response.get("choices", [{}])[0].get(
@@ -385,8 +441,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
                 try:
                     await request.app.state.controller.review(state, review_observation)
-                except (httpx.HTTPError, ValueError) as error:
+                except (httpx.HTTPError, StageTimeout, ValueError) as error:
                     state.review_status = "failed"
+                    stage_status["reviewer"] = (
+                        "timed_out" if isinstance(error, StageTimeout) else "failed"
+                    )
                     request.app.state.store.event(
                         state_session_id,
                         "review_failed",
@@ -397,10 +456,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         state.observability_status = "degraded"
                     request.app.state.store.save(state)
                     if state.review_fail_closed:
+                        if isinstance(error, StageTimeout):
+                            raise
                         raise ValueError(f"review failed: {error}") from error
                 else:
+                    stage_status["reviewer"] = "completed"
                     if not state.truncated:
                         request.app.state.controller.apply_metadata(state, body.metadata)
+            state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+            record_request_timing(state)
             request.app.state.store.event(
                 state_session_id,
                 "assistant_stream_finished",
@@ -411,6 +475,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse(response, headers={"X-Session-ID": session_id})
         except DuplicateFailedCall as error:
             raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        except StageTimeout as error:
+            stage_status[error.stage] = "timed_out"
+            if "upstream_start" in state.timings_ms:
+                state.timings_ms.setdefault(
+                    "executor_total",
+                    round((time.monotonic() - executor_started) * 1000, 3),
+                )
+            state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+            record_request_timing(state)
+            request.app.state.store.save(state)
+            record_trace_safely(request, state, task_id)
+            return error_response(
+                status.HTTP_504_GATEWAY_TIMEOUT,
+                str(error),
+                "timeout_error",
+                f"{error.stage}_timeout",
+            )
         except httpx.TimeoutException as error:
             stage = {
                 "planning": "planner",

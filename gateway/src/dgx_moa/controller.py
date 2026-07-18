@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import uuid
 from typing import Any
 
@@ -669,21 +670,35 @@ class Controller:
             self._record_decision(
                 "planner", state, {"type": "plan_request"}, "New or invalidated task"
             )
-            planner = await self.provider.complete(
-                "planner", self.settings.models["planner"], planner_request
-            )
             try:
-                parsed = parse_json_content(planner)
-            except ValueError:
-                self.store.event(
-                    state.session_id,
-                    "replan_requested",
-                    {"reason": "planner_structured_output_invalid"},
-                )
+                planner_started = time.monotonic()
                 planner = await self.provider.complete(
-                    "planner", self.settings.models["planner"], planner_request
+                    "planner",
+                    self.settings.models["planner"],
+                    planner_request,
+                    timeout_seconds=self.settings.limits.planner_timeout_seconds,
+                    stage="planner",
                 )
-                parsed = parse_json_content(planner)
+                try:
+                    parsed = parse_json_content(planner)
+                except ValueError:
+                    self.store.event(
+                        state.session_id,
+                        "replan_requested",
+                        {"reason": "planner_structured_output_invalid"},
+                    )
+                    planner = await self.provider.complete(
+                        "planner",
+                        self.settings.models["planner"],
+                        planner_request,
+                        timeout_seconds=self.settings.limits.planner_timeout_seconds,
+                        stage="planner",
+                    )
+                    parsed = parse_json_content(planner)
+            finally:
+                state.timings_ms["planner"] = round(
+                    (time.monotonic() - planner_started) * 1000, 3
+                )
             state.plan = parsed.get("plan", [])
             state.acceptance_criteria = parsed.get("acceptance_criteria", [])
             self.store.event(state.session_id, "plan_created", {"steps": len(state.plan)})
@@ -805,9 +820,19 @@ class Controller:
         decision_id = self._record_decision(
             "reviewer", state, {"type": "review_request"}, observation
         )
-        response = await self.provider.complete(
-            "reviewer", self.settings.models["reviewer"], request
-        )
+        reviewer_started = time.monotonic()
+        try:
+            response = await self.provider.complete(
+                "reviewer",
+                self.settings.models["reviewer"],
+                request,
+                timeout_seconds=self.settings.limits.reviewer_timeout_seconds,
+                stage="reviewer",
+            )
+        finally:
+            state.timings_ms["reviewer"] = round(
+                (time.monotonic() - reviewer_started) * 1000, 3
+            )
         result = parse_json_content(response)
         state.review_status = result.get("status", "rejected")
         state.phase = Phase.CORRECTION if state.review_status != "approved" else Phase.EXECUTING

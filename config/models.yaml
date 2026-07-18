@@ -26,6 +26,12 @@ gateway:
     max_stream_capture_bytes: 1000000
     max_sse_event_bytes: 1000000
     max_review_evidence_characters: 16000
+    planner_timeout_seconds: 120
+    executor_first_byte_timeout_seconds: 120
+    executor_total_timeout_seconds: 900
+    reviewer_timeout_seconds: 120
+    model_load_timeout_seconds: 1200
+    tool_continuation_timeout_seconds: 600
     max_steps: 100
 
 models:

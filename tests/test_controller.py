@@ -162,7 +162,7 @@ async def test_planner_retries_one_malformed_structured_response(  # type: ignor
     original = stub_provider.complete
     calls = 0
 
-    async def malformed_then_valid(role, model, request):  # type: ignore[no-untyped-def]
+    async def malformed_then_valid(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         nonlocal calls
         if role == "planner":
             calls += 1
@@ -184,7 +184,7 @@ async def test_planner_retries_one_malformed_structured_response(  # type: ignor
 async def test_reviewer_rejection_enters_correction(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 
-    async def reject(role, model, request):  # type: ignore[no-untyped-def]
+    async def reject(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         if role == "reviewer":
             return {
                 "choices": [{"message": {"content": '{"status":"rejected","findings":["bug"]}'}}]

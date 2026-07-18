@@ -6,6 +6,7 @@ from contextlib import contextmanager
 
 import httpx
 import pytest
+from dgx_moa import providers
 from dgx_moa.api import create_app
 from dgx_moa.config import Settings
 from dgx_moa.schemas import ChatRequest
@@ -235,7 +236,7 @@ def test_direct_modes_are_executor_only(settings, stub_provider: StubProvider, m
 
 
 def test_chat_returns_normal_assistant_content(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
-    async def natural(role, model, request):  # type: ignore[no-untyped-def]
+    async def natural(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         stub_provider.calls.append(role)
         return {
             "id": "chatcmpl-natural",
@@ -289,12 +290,175 @@ def test_orchestrated_mode_uses_policy_roles(settings, stub_provider: StubProvid
     assert stub_provider.calls == ["planner", "executor"]
 
 
+def test_role_calls_receive_exact_stage_timeouts(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "review this change"}],
+                "metadata": {"diff_summary": "one verified change"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert stub_provider.calls == ["planner", "executor", "reviewer"]
+    assert stub_provider.call_options == [
+        {"timeout_seconds": 120, "stage": "planner"},
+        {"timeout_seconds": 900, "stage": "executor_total"},
+        {"timeout_seconds": 120, "stage": "reviewer"},
+    ]
+
+
+def test_orchestrated_timing_records_role_durations(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "role-timing"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "review this change"}],
+                "metadata": {"diff_summary": "one verified change"},
+            },
+        )
+        state = client.app.state.store.get("role-timing")
+        timing_event = next(
+            event
+            for event in client.app.state.store.events("role-timing")
+            if event["event_type"] == "request_timing"
+        )
+
+    assert response.status_code == 200
+    assert state
+    assert all(state.timings_ms[stage] >= 0 for stage in ("planner", "executor_total", "reviewer"))
+    assert timing_event["payload"]["stage_status"] == {
+        "planner": "completed",
+        "executor_total": "completed",
+        "reviewer": "completed",
+    }
+
+
+def test_request_timing_event_is_numeric_and_content_free(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    secret_content = "never-copy-this-prompt-or-response"
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "timed"},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": secret_content}],
+            },
+        )
+        timing_events = [
+            event
+            for event in client.app.state.store.events("timed")
+            if event["event_type"] == "request_timing"
+        ]
+
+    assert response.status_code == 200
+    assert len(timing_events) == 1
+    payload = timing_events[0]["payload"]
+    assert set(payload) == {"timings_ms", "stage_status"}
+    timings = payload["timings_ms"]
+    assert set(timings) == {
+        "accepted",
+        "upstream_start",
+        "first_upstream_byte",
+        "first_downstream_byte",
+        "completed",
+        "executor_total",
+    }
+    assert all(isinstance(value, int | float) and value >= 0 for value in timings.values())
+    assert [timings[key] for key in (
+        "accepted",
+        "upstream_start",
+        "first_upstream_byte",
+        "first_downstream_byte",
+        "completed",
+    )] == sorted(
+        timings[key]
+        for key in (
+            "accepted",
+            "upstream_start",
+            "first_upstream_byte",
+            "first_downstream_byte",
+            "completed",
+        )
+    )
+    assert payload["stage_status"] == {"executor_total": "completed"}
+    assert secret_content not in json.dumps(payload)
+
+
+@pytest.mark.parametrize(
+    ("stage", "model", "metadata", "stream"),
+    [
+        ("planner", "dgx-moa-orchestrated", {"authentication": True}, False),
+        ("executor_first_byte", "dgx-moa-agent", {}, True),
+        ("executor_total", "dgx-moa-agent", {}, False),
+        (
+            "reviewer",
+            "dgx-moa-orchestrated",
+            {"authentication": True, "diff_summary": "auth changed"},
+            False,
+        ),
+    ],
+)
+def test_stage_timeout_returns_exact_typed_error(
+    settings,
+    stub_provider: StubProvider,
+    stage: str,
+    model: str,
+    metadata: dict[str, object],
+    stream: bool,
+) -> None:  # type: ignore[no-untyped-def]
+    timeout_type = getattr(providers, "StageTimeout", TimeoutError)
+    original_complete = stub_provider.complete
+    original_stream = stub_provider.stream
+
+    async def timed_complete(role, model_config, request, **kwargs):  # type: ignore[no-untyped-def]
+        if kwargs.get("stage") == stage:
+            raise timeout_type(stage)
+        return await original_complete(role, model_config, request, **kwargs)
+
+    async def timed_stream(role, model_config, request, **kwargs):  # type: ignore[no-untyped-def]
+        if kwargs.get("stage") == stage:
+            raise timeout_type(stage)
+        return await original_stream(role, model_config, request, **kwargs)
+
+    stub_provider.complete = timed_complete  # type: ignore[method-assign]
+    stub_provider.stream = timed_stream  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": model,
+                "stream": stream,
+                "messages": [{"role": "user", "content": "work"}],
+                "metadata": metadata,
+            },
+        )
+
+    assert response.status_code == 504
+    assert response.json()["error"] == {
+        "message": f"{stage} timed out",
+        "type": "timeout_error",
+        "code": f"{stage}_timeout",
+        "param": None,
+    }
+
+
 def test_orchestrated_assistant_answer_without_evidence_skips_review(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 
-    async def natural(role, model, request):  # type: ignore[no-untyped-def]
+    async def natural(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         if role == "executor":
             stub_provider.calls.append(role)
             return {
@@ -329,7 +493,7 @@ def test_low_risk_review_failure_preserves_executor_response(
 ) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 
-    async def fail_review(role, model, request):  # type: ignore[no-untyped-def]
+    async def fail_review(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         if role == "executor":
             return {
                 "id": "chatcmpl-preserved",
@@ -376,7 +540,7 @@ def test_high_risk_review_failure_returns_typed_bad_gateway(
 ) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 
-    async def fail_review(role, model, request):  # type: ignore[no-untyped-def]
+    async def fail_review(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         if role == "executor":
             return {
                 "choices": [
@@ -436,7 +600,7 @@ def test_length_finish_is_preserved_and_never_completes_session(
 ) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 
-    async def truncated(role, model, request):  # type: ignore[no-untyped-def]
+    async def truncated(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         if role == "executor":
             return {
                 "id": "chatcmpl-truncated",
@@ -516,7 +680,7 @@ def test_request_headers_set_trace_identity(settings, stub_provider: StubProvide
 def test_tool_result_continuation_uses_same_session(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 
-    async def continue_after_tool(role, model, request):  # type: ignore[no-untyped-def]
+    async def continue_after_tool(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         if role == "executor" and any(
             message.get("role") == "tool" for message in request["messages"]
         ):
@@ -745,7 +909,7 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
     release = asyncio.Event()
     first_event = b'data: {"choices":[{"delta":{"content":"now"}}]}\n\n'
 
-    async def delayed(role, model, request):  # type: ignore[no-untyped-def]
+    async def delayed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         stub_provider.calls.append(role)
         stub_provider.requests.append(request)
 
@@ -798,13 +962,72 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
 
 
 @pytest.mark.asyncio
+async def test_stream_total_deadline_does_not_retry_after_first_byte(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.limits.executor_total_timeout_seconds = 0.01
+    first_event = b'data: {"choices":[{"delta":{"content":"first"}}]}\n\n'
+    stream_attempts = 0
+
+    async def delayed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal stream_attempts
+        stream_attempts += 1
+
+        async def upstream():  # type: ignore[no-untyped-def]
+            yield first_event
+            await asyncio.Event().wait()
+
+        return upstream()
+
+    stub_provider.stream = delayed  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await chat_endpoint(app)(
+            ChatRequest(
+                model="dgx-moa-agent",
+                stream=True,
+                messages=[{"role": "user", "content": "work"}],
+                metadata={"session_id": "total-timeout"},
+            ),
+            Request({"type": "http", "app": app}),
+            x_session_id=None,
+            x_runtime_channel=None,
+            x_trace_origin=None,
+            x_task_id=None,
+            x_workspace_path=None,
+            x_workspace_id=None,
+            x_repository_branch=None,
+            x_repository_commit=None,
+            x_dirty_state=None,
+        )
+        assert isinstance(response, StreamingResponse)
+        assert await anext(response.body_iterator) == first_event
+
+        with pytest.raises(TimeoutError) as captured:
+            await asyncio.wait_for(anext(response.body_iterator), timeout=0.1)
+
+        assert stream_attempts == 1
+        assert type(captured.value).__name__ == "StageTimeout"
+        assert getattr(captured.value, "stage", None) == "executor_total"
+        timing_events = [
+            event
+            for event in app.state.store.events("total-timeout")
+            if event["event_type"] == "request_timing"
+        ]
+        assert len(timing_events) == 1
+        assert timing_events[0]["payload"]["stage_status"]["executor_total"] == "timed_out"
+
+
+@pytest.mark.asyncio
 async def test_streaming_api_persists_cancellation_and_closes_upstream(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
     blocked = asyncio.Event()
     closed = asyncio.Event()
 
-    async def delayed(role, model, request):  # type: ignore[no-untyped-def]
+    async def delayed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         stub_provider.calls.append(role)
 
         async def upstream():  # type: ignore[no-untyped-def]
@@ -877,7 +1100,7 @@ async def test_streaming_api_consumer_close_closes_upstream_and_persists_abort(
 
     upstream_iterator = upstream()
 
-    async def delayed(role, model, request):  # type: ignore[no-untyped-def]
+    async def delayed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         stub_provider.calls.append(role)
         return upstream_iterator
 
@@ -932,7 +1155,7 @@ async def test_streaming_api_close_after_done_persists_terminal_success(
         finally:
             closed.set()
 
-    async def delayed(role, model, request):  # type: ignore[no-untyped-def]
+    async def delayed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         stub_provider.calls.append(role)
         return upstream()
 
@@ -978,7 +1201,7 @@ async def test_streaming_api_close_after_done_persists_terminal_success(
 def test_streaming_upstream_400_returns_invalid_request(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
-    async def rejected(role, model, request):  # type: ignore[no-untyped-def]
+    async def rejected(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         response = httpx.Response(400, request=httpx.Request("POST", model.base_url))
         raise httpx.HTTPStatusError("context overflow", request=response.request, response=response)
 
@@ -1028,7 +1251,7 @@ def test_upstream_openai_400_envelope_and_status_are_preserved(
         }
     }
 
-    async def rejected(role, model, request):  # type: ignore[no-untyped-def]
+    async def rejected(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         response = httpx.Response(
             400,
             json=upstream_error,
@@ -1051,7 +1274,7 @@ def test_upstream_openai_400_envelope_and_status_are_preserved(
 def test_malformed_tool_call_returns_bad_gateway(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 
-    async def malformed(role, model, request):  # type: ignore[no-untyped-def]
+    async def malformed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         response = await original(role, model, request)
         if role == "executor":
             response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = "{"
@@ -1076,7 +1299,7 @@ def test_malformed_tool_call_returns_bad_gateway(settings, stub_provider: StubPr
 def test_multiple_tool_calls_are_preserved(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 
-    async def multiple(role, model, request):  # type: ignore[no-untyped-def]
+    async def multiple(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         response = await original(role, model, request)
         if role == "executor":
             response["choices"][0]["message"]["tool_calls"].append(
@@ -1102,7 +1325,7 @@ def test_multiple_tool_calls_are_preserved(settings, stub_provider: StubProvider
 def test_timeout_and_http_500_mapping(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 
-    async def timeout(role, model, request):  # type: ignore[no-untyped-def]
+    async def timeout(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         if role == "executor":
             raise httpx.ReadTimeout("timed out")
         return await original(role, model, request)
@@ -1122,7 +1345,7 @@ def test_timeout_and_http_500_mapping(settings, stub_provider: StubProvider) -> 
             "param": None,
         }
 
-    async def server_error(role, model, request):  # type: ignore[no-untyped-def]
+    async def server_error(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         if role == "executor":
             response = httpx.Response(500, request=httpx.Request("POST", "http://model"))
             raise httpx.HTTPStatusError("server error", request=response.request, response=response)

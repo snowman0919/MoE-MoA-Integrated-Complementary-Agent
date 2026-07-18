@@ -113,7 +113,7 @@ def test_synthetic_opencode_all_mvp_shapes(settings) -> None:  # type: ignore[no
         original = provider.complete
         reviews = 0
 
-        async def reject_once(role, model, body):  # type: ignore[no-untyped-def]
+        async def reject_once(role, model, body, **kwargs):  # type: ignore[no-untyped-def]
             nonlocal reviews
             if role == "reviewer":
                 reviews += 1

@@ -205,7 +205,14 @@ def trace_record(
         "training_eligibility": state.training_eligibility,
         "observability_status": state.observability_status,
         "observability_degraded": state.observability_degraded,
-        "metrics": metrics or {},
+        "metrics": (metrics or {})
+        | {
+            "request_timing_ms": state.timings_ms,
+            "runtime_mode": state.runtime_mode,
+            "request_class": state.request_class,
+            "roles_required": state.roles_required,
+            "truncated": state.truncated,
+        },
         "verified_state": state.verified_facts[-8:],
         "planner_output": state.plan,
         "tool_schema": {},

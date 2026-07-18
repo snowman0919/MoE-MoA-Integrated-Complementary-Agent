@@ -41,12 +41,20 @@ class StubProvider:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.requests: list[dict[str, Any]] = []
+        self.call_options: list[dict[str, Any]] = []
 
     async def complete(
-        self, role: str, model: ModelConfig, request: dict[str, Any]
+        self,
+        role: str,
+        model: ModelConfig,
+        request: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+        stage: str | None = None,
     ) -> dict[str, Any]:
         self.calls.append(role)
         self.requests.append(request)
+        self.call_options.append({"timeout_seconds": timeout_seconds, "stage": stage})
         if role == "planner":
             content = json.dumps(
                 {"plan": [{"step": "change"}], "acceptance_criteria": ["tests pass"]}
@@ -94,10 +102,17 @@ class StubProvider:
         }
 
     async def stream(
-        self, role: str, model: ModelConfig, request: dict[str, Any]
+        self,
+        role: str,
+        model: ModelConfig,
+        request: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+        stage: str | None = None,
     ) -> AsyncIterator[bytes]:
         self.calls.append(role)
         self.requests.append(request)
+        self.call_options.append({"timeout_seconds": timeout_seconds, "stage": stage})
 
         async def chunks() -> AsyncIterator[bytes]:
             yield b'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":null}]}\n\n'
