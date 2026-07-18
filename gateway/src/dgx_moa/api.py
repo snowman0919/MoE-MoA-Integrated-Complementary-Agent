@@ -118,6 +118,44 @@ def has_matching_tool_result(messages: list[dict[str, Any]]) -> bool:
     return bool(call_ids & result_ids)
 
 
+class ResponseOwnedIterator:
+    def __init__(
+        self,
+        stream: AsyncIterator[bytes],
+        cleanup: Callable[[], Awaitable[None]],
+    ) -> None:
+        self._stream = stream
+        self._cleanup = cleanup
+
+    def __aiter__(self) -> ResponseOwnedIterator:
+        return self
+
+    async def __anext__(self) -> bytes:
+        try:
+            return await anext(self._stream)
+        except BaseException:
+            await self._cleanup()
+            raise
+
+    async def aclose(self) -> None:
+        try:
+            close = getattr(self._stream, "aclose", None)
+            if close is not None:
+                await close()
+        finally:
+            await self._cleanup()
+
+
+class ResponseOwnedStreamingResponse(StreamingResponse):
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            close = getattr(self.body_iterator, "aclose", None)
+            if close is not None:
+                await close()
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -173,6 +211,7 @@ def create_app(
             clock=lifecycle_clock,
             sleeper=lifecycle_sleeper,
         )
+        app.state.reviewer_evaluation_lock = asyncio.Lock()
         app.state.traces = TraceRecorder(
             configured.state_db.parent.parent / "traces", store, configured.models
         )
@@ -758,10 +797,90 @@ def create_app(
                 state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
                 stage_status["executor_first_byte"] = "completed"
                 observation = StreamObservation(configured.limits.max_stream_capture_bytes)
+                stream_completed = False
+                stream_cleanup_lock = asyncio.Lock()
+                stream_cleaned = False
+
+                async def finish_stream() -> None:
+                    nonlocal stream_cleaned
+                    async with stream_cleanup_lock:
+                        if stream_cleaned:
+                            return
+                        stream_cleaned = True
+                        terminal = stream_completed or observation.done_seen
+                        state.timings_ms["executor_total"] = round(
+                            (time.monotonic() - executor_started) * 1000, 3
+                        )
+                        stage_status.setdefault(
+                            "executor_total", "completed" if terminal else "aborted"
+                        )
+                        terminal_status: RequestStatus = (
+                            "completed"
+                            if terminal
+                            else "timed_out"
+                            if stage_status.get("executor_total") == "timed_out"
+                            else "failed"
+                            if stage_status.get("executor_total") == "failed"
+                            else "cancelled"
+                        )
+                        try:
+                            state.finish_reasons = observation.finish_reasons
+                            state.truncated = "length" in observation.finish_reasons
+                            if terminal and "reviewer" in state.roles_required:
+                                state.review_deferred = True
+                                state.review_status = "deferred"
+                                stage_status["reviewer"] = "deferred"
+                            if state.decisions:
+                                state.decisions[-1]["outcome"] = {
+                                    "status": "success" if terminal else "failure",
+                                    "progress_made": bool(observation.finish_reasons),
+                                    "state_changed": False,
+                                    "scope_changed": False,
+                                    "validation_triggered": False,
+                                    "next_phase": state.phase,
+                                }
+                            token_usage.update(observation.usage)
+                            if terminal and "tool_calls" in observation.finish_reasons:
+                                request.app.state.lifecycle_store.refresh_continuation(
+                                    usage_request_id,
+                                    "executor",
+                                    continuation_owner,
+                                    expires_at=(
+                                        lifecycle_clock()
+                                        + configured.limits.tool_continuation_timeout_seconds
+                                    ),
+                                )
+                            request.app.state.store.event(
+                                state_session_id,
+                                "assistant_stream_finished",
+                                {"finish_reasons": observation.finish_reasons},
+                            )
+                            request.app.state.store.event(
+                                state_session_id,
+                                "stream_completed" if terminal else "stream_aborted",
+                                {},
+                            )
+                        finally:
+                            try:
+                                close = getattr(upstream, "aclose", None)
+                                if close is not None:
+                                    await close()
+                            finally:
+                                finalize_request(
+                                    None,
+                                    terminal_status,
+                                    current_state=state,
+                                    retryable_failure_class=(
+                                        "executor_total_timeout"
+                                        if terminal_status == "timed_out"
+                                        else "backend_error"
+                                        if terminal_status == "failed"
+                                        else None
+                                    ),
+                                )
 
                 async def stream_response() -> AsyncIterator[bytes]:
-                    nonlocal first_byte_at
-                    completed = False
+                    nonlocal first_byte_at, stream_completed
                     forwarder = forward_sse(
                         upstream,
                         observation,
@@ -779,7 +898,7 @@ def create_app(
                                         )
                                         first_byte_at = time.time()
                                     yield chunk
-                        completed = True
+                        stream_completed = True
                     except TimeoutError as error:
                         stage_status["executor_total"] = "timed_out"
                         raise StageTimeout("executor_total") from error
@@ -792,75 +911,10 @@ def create_app(
                         stage_status["executor_total"] = "failed"
                         raise
                     finally:
-                        terminal = completed or observation.done_seen
-                        state.timings_ms["executor_total"] = round(
-                            (time.monotonic() - executor_started) * 1000, 3
-                        )
-                        stage_status.setdefault(
-                            "executor_total", "completed" if terminal else "aborted"
-                        )
-                        state.finish_reasons = observation.finish_reasons
-                        state.truncated = "length" in observation.finish_reasons
-                        if terminal and "reviewer" in state.roles_required:
-                            state.review_deferred = True
-                            state.review_status = "deferred"
-                            stage_status["reviewer"] = "deferred"
-                        if state.decisions:
-                            state.decisions[-1]["outcome"] = {
-                                "status": "success" if terminal else "failure",
-                                "progress_made": bool(observation.finish_reasons),
-                                "state_changed": False,
-                                "scope_changed": False,
-                                "validation_triggered": False,
-                                "next_phase": state.phase,
-                            }
-                        request.app.state.store.event(
-                            state_session_id,
-                            "assistant_stream_finished",
-                            {"finish_reasons": observation.finish_reasons},
-                        )
-                        request.app.state.store.event(
-                            state_session_id,
-                            "stream_completed" if terminal else "stream_aborted",
-                            {},
-                        )
-                        terminal_status: RequestStatus = (
-                            "completed"
-                            if terminal
-                            else "timed_out"
-                            if stage_status.get("executor_total") == "timed_out"
-                            else "failed"
-                            if stage_status.get("executor_total") == "failed"
-                            else "cancelled"
-                        )
-                        token_usage.update(observation.usage)
-                        try:
-                            if terminal and "tool_calls" in observation.finish_reasons:
-                                request.app.state.lifecycle_store.refresh_continuation(
-                                    usage_request_id,
-                                    "executor",
-                                    continuation_owner,
-                                    expires_at=(
-                                        lifecycle_clock()
-                                        + configured.limits.tool_continuation_timeout_seconds
-                                    ),
-                                )
-                        finally:
-                            finalize_request(
-                                None,
-                                terminal_status,
-                                current_state=state,
-                                retryable_failure_class=(
-                                    "executor_total_timeout"
-                                    if terminal_status == "timed_out"
-                                    else "backend_error"
-                                    if terminal_status == "failed"
-                                    else None
-                                ),
-                            )
+                        await finish_stream()
 
-                return StreamingResponse(
-                    stream_response(),
+                return ResponseOwnedStreamingResponse(
+                    ResponseOwnedIterator(stream_response(), finish_stream),
                     media_type="text/event-stream",
                     headers={"X-Session-ID": session_id},
                 )
@@ -902,23 +956,26 @@ def create_app(
                 )
                 active_stage = "reviewer"
                 try:
-                    reviewer = request.app.state.lifecycle_store.get("reviewer")
-                    request.app.state.lifecycle_store.set_guard(
-                        "reviewer",
-                        "evaluation_guard",
-                        True,
-                        expected_transition_id=reviewer.transition_id,
-                    )
-                    try:
-                        await request.app.state.controller.review(state, review_observation)
-                    finally:
+                    async with request.app.state.reviewer_evaluation_lock:
                         reviewer = request.app.state.lifecycle_store.get("reviewer")
+                        if reviewer.evaluation_guard:
+                            raise ValueError("reviewer evaluation guard is already active")
+                        guard_transition_id = reviewer.transition_id
                         request.app.state.lifecycle_store.set_guard(
                             "reviewer",
                             "evaluation_guard",
-                            False,
-                            expected_transition_id=reviewer.transition_id,
+                            True,
+                            expected_transition_id=guard_transition_id,
                         )
+                        try:
+                            await request.app.state.controller.review(state, review_observation)
+                        finally:
+                            request.app.state.lifecycle_store.set_guard(
+                                "reviewer",
+                                "evaluation_guard",
+                                False,
+                                expected_transition_id=guard_transition_id,
+                            )
                 except (httpx.HTTPError, StageTimeout, ValueError) as error:
                     state.review_status = "failed"
                     stage_status["reviewer"] = (

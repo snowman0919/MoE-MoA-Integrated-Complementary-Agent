@@ -119,6 +119,29 @@ async def direct_chat(app, session_id: str, *, stream: bool = False):  # type: i
     )
 
 
+async def direct_review(app, session_id: str, *, high_risk: bool = False):  # type: ignore[no-untyped-def]
+    return await chat_endpoint(app)(
+        ChatRequest(
+            model="dgx-moa-orchestrated",
+            messages=[{"role": "user", "content": "review this change"}],
+            metadata={
+                "diff_summary": "one verified change",
+                **({"authentication": True} if high_risk else {}),
+            },
+        ),
+        Request({"type": "http", "app": app}),
+        x_session_id=session_id,
+        x_runtime_channel=None,
+        x_trace_origin=None,
+        x_task_id=None,
+        x_workspace_path=None,
+        x_workspace_id=None,
+        x_repository_branch=None,
+        x_repository_commit=None,
+        x_dirty_state=None,
+    )
+
+
 @pytest.mark.parametrize(
     ("messages", "expected"),
     [
@@ -239,6 +262,141 @@ async def test_stream_leases_span_generation_and_generator_terminal_cleanup(
 
 
 @pytest.mark.asyncio
+async def test_stream_close_before_first_iteration_owns_upstream_and_terminal_cleanup(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    closed = asyncio.Event()
+
+    class UnstartedUpstream:
+        def __aiter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __anext__(self) -> bytes:
+            await asyncio.Event().wait()
+            raise StopAsyncIteration
+
+        async def aclose(self) -> None:
+            closed.set()
+
+    async def delayed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        return UnstartedUpstream()
+
+    stub_provider.stream = delayed  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await direct_chat(app, "unstarted-close", stream=True)
+        assert isinstance(response, StreamingResponse)
+        active = app.state.lifecycle_store.get("executor")
+        assert (active.active_request_count, active.open_stream_count) == (1, 1)
+
+        await response.body_iterator.aclose()
+
+        assert closed.is_set()
+        assert_usage(app, "cancelled")
+        assert_terminal_evidence(settings, app.state.store, "unstarted-close", "cancelled")
+
+
+@pytest.mark.asyncio
+async def test_asgi_response_cancellation_while_sending_closes_stream_owner(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    closed = asyncio.Event()
+    sending_body = asyncio.Event()
+    first_event = b'data: {"choices":[{"delta":{"content":"first"}}]}\n\n'
+
+    async def upstream():  # type: ignore[no-untyped-def]
+        try:
+            yield first_event
+            await asyncio.Event().wait()
+        finally:
+            closed.set()
+
+    async def streamed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        return upstream()
+
+    async def receive() -> dict[str, str]:
+        await asyncio.Event().wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, object]) -> None:
+        if message["type"] == "http.response.body":
+            sending_body.set()
+            await asyncio.Event().wait()
+
+    stub_provider.stream = streamed  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await direct_chat(app, "asgi-send-cancel", stream=True)
+        pending = asyncio.create_task(
+            response(
+                {"type": "http", "asgi": {"spec_version": "2.4"}},
+                receive,
+                send,
+            )
+        )
+        await asyncio.wait_for(sending_body.wait(), timeout=1)
+        active = app.state.lifecycle_store.get("executor")
+        assert (active.active_request_count, active.open_stream_count) == (1, 1)
+
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+
+        assert closed.is_set()
+        assert_usage(app, "cancelled")
+        assert_terminal_evidence(settings, app.state.store, "asgi-send-cancel", "cancelled")
+
+
+@pytest.mark.asyncio
+async def test_stream_terminal_event_failure_still_closes_and_finalizes(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    closed = asyncio.Event()
+    terminal = b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+
+    async def upstream():  # type: ignore[no-untyped-def]
+        try:
+            yield terminal
+            yield b"data: [DONE]\n\n"
+        finally:
+            closed.set()
+
+    async def streamed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        return upstream()
+
+    stub_provider.stream = streamed  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        event = app.state.store.event
+
+        def fail_terminal_event(session_id, event_type, payload):  # type: ignore[no-untyped-def]
+            if event_type == "assistant_stream_finished":
+                raise OSError("terminal event unavailable")
+            return event(session_id, event_type, payload)
+
+        app.state.store.event = fail_terminal_event
+        response = await direct_chat(app, "terminal-event-failure", stream=True)
+        assert isinstance(response, StreamingResponse)
+        with pytest.raises(OSError, match="terminal event unavailable"):
+            _ = b"".join([chunk async for chunk in response.body_iterator])
+
+        assert closed.is_set()
+        assert_usage(app, "completed")
+        assert_terminal_evidence(
+            settings,
+            app.state.store,
+            "terminal-event-failure",
+            "completed",
+        )
+
+
+@pytest.mark.asyncio
 async def test_nonstream_cancellation_releases_active_lease(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -324,6 +482,123 @@ async def test_reviewer_evaluation_guard_is_scoped_to_the_real_review_call(
     assert response.status_code == 200
     assert reviewer.evaluation_guard is False
     assert reviewer.active_request_count == 0
+
+
+@pytest.mark.asyncio
+async def test_reviewer_transition_change_preserves_uncertain_guard(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+    app = create_app(settings)
+
+    async def transition_during_review(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reviewer":
+            guarded = app.state.lifecycle_store.get("reviewer")
+            assert guarded.evaluation_guard is True
+            app.state.lifecycle_store.transition(
+                "reviewer",
+                "load_queued",
+                expected_transition_id=guarded.transition_id,
+            )
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = transition_during_review  # type: ignore[method-assign]
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await direct_review(app, "review-transition-change")
+        reviewer = app.state.lifecycle_store.get("reviewer")
+
+    assert response.status_code == 502
+    assert reviewer.state == "load_queued"
+    assert reviewer.evaluation_guard is True
+    assert_no_request_leases(app)
+
+
+@pytest.mark.asyncio
+async def test_preexisting_reviewer_guard_is_not_claimed_or_cleared(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    reviewer_called = False
+    original = stub_provider.complete
+    app = create_app(settings)
+
+    async def observe(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal reviewer_called
+        if role == "reviewer":
+            reviewer_called = True
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = observe  # type: ignore[method-assign]
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        reviewer = app.state.lifecycle_store.get("reviewer")
+        app.state.lifecycle_store.set_guard(
+            "reviewer",
+            "evaluation_guard",
+            True,
+            expected_transition_id=reviewer.transition_id,
+        )
+
+        response = await direct_review(app, "preexisting-review-guard", high_risk=True)
+        guarded = app.state.lifecycle_store.get("reviewer")
+
+    assert response.status_code == 502
+    assert reviewer_called is False
+    assert guarded.evaluation_guard is True
+    assert_no_request_leases(app)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_reviewer_calls_are_serialized_guard_owners(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_entered = asyncio.Event()
+    release_second = asyncio.Event()
+    review_calls = 0
+    original = stub_provider.complete
+    app = create_app(settings)
+
+    async def serialized(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal review_calls
+        if role == "reviewer":
+            review_calls += 1
+            assert app.state.lifecycle_store.get("reviewer").evaluation_guard is True
+            if review_calls == 1:
+                first_entered.set()
+                await release_first.wait()
+            else:
+                second_entered.set()
+                await release_second.wait()
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = serialized  # type: ignore[method-assign]
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        first = asyncio.create_task(direct_review(app, "serialized-review-1"))
+        await asyncio.wait_for(first_entered.wait(), timeout=1)
+        second = asyncio.create_task(direct_review(app, "serialized-review-2"))
+        await asyncio.sleep(0)
+        assert second_entered.is_set() is False
+
+        release_first.set()
+        first_response = await asyncio.wait_for(first, timeout=1)
+        await asyncio.wait_for(second_entered.wait(), timeout=1)
+        assert app.state.lifecycle_store.get("reviewer").evaluation_guard is True
+
+        release_second.set()
+        second_response = await asyncio.wait_for(second, timeout=1)
+        reviewer = app.state.lifecycle_store.get("reviewer")
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert review_calls == 2
+    assert reviewer.evaluation_guard is False
+    assert_no_request_leases(app)
 
 
 @pytest.mark.asyncio
