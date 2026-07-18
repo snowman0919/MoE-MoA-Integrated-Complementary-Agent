@@ -600,6 +600,11 @@ class Controller:
     async def prepare_executor(
         self, state: SessionState, request: dict[str, Any], roles: tuple[str, ...]
     ) -> dict[str, Any]:
+        body = request.copy()
+        requested_tokens = int(body.get("max_tokens") or self.settings.limits.executor_tokens)
+        if requested_tokens > self.settings.limits.executor_max_tokens:
+            raise ValueError("max_tokens exceeds server maximum 16384")
+        body["max_tokens"] = requested_tokens
         if state.phase == Phase.BLOCKED:
             raise ValueError("session blocked after no progress")
         reasoner = self.settings.models.get("reasoner") if "reasoner" in roles else None
@@ -687,7 +692,6 @@ class Controller:
         )
         self.store.event(state.session_id, "tool_call_requested", {"step": state.step_count})
         self.store.save(state)
-        body = request.copy()
         messages = compress_messages(body["messages"], self.settings.limits)
         messages.insert(
             0,
@@ -702,17 +706,14 @@ class Controller:
             },
         )
         body["messages"] = messages
-        requested_tokens = int(body.get("max_tokens") or self.settings.limits.executor_tokens)
-        if requested_tokens > self.settings.limits.executor_max_tokens:
-            raise ValueError("max_tokens exceeds server maximum 16384")
-        body["max_tokens"] = requested_tokens
         return body
 
     def has_review_evidence(self, state: SessionState, metadata: dict[str, Any]) -> bool:
+        completion_evidence = metadata.get("completion_evidence")
         return bool(
             state.tool_results
             or state.completion_evidence
-            or metadata.get("completion_evidence")
+            or (isinstance(completion_evidence, dict) and completion_evidence)
             or metadata.get("changed_paths")
             or metadata.get("diff_summary")
             or metadata.get("validation_results")

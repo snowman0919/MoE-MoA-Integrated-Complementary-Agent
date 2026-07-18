@@ -147,6 +147,40 @@ def test_excessive_executor_output_budget_is_rejected(
     }
 
 
+def test_excessive_budget_preserves_reused_completed_session(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        client.app.state.store.save(
+            SessionState(
+                session_id="completed-budget",
+                objective="finished task",
+                phase=Phase.COMPLETED,
+                final_status="completed",
+            )
+        )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "completed-budget",
+            },
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "new task"}],
+                "max_tokens": 16_385,
+            },
+        )
+        state = client.app.state.store.get("completed-budget")
+
+    assert response.status_code == 400
+    assert state and state.phase == Phase.COMPLETED
+    assert state.final_status == "completed"
+    assert state.step_count == 0
+    assert state.decisions == []
+    assert stub_provider.calls == []
+
+
 @pytest.mark.parametrize(
     ("fields", "message"),
     [
@@ -278,6 +312,7 @@ def test_orchestrated_assistant_answer_without_evidence_skips_review(
             json={
                 "model": "dgx-moa-orchestrated",
                 "messages": [{"role": "user", "content": "answer normally"}],
+                "metadata": {"completion_evidence": "claimed"},
             },
         )
 
@@ -332,8 +367,9 @@ def test_low_risk_review_failure_preserves_executor_response(
     assert any(event["event_type"] == "review_failed" for event in events)
 
 
+@pytest.mark.parametrize("failure", ["value", "timeout", "http_4xx"])
 def test_high_risk_review_failure_returns_typed_bad_gateway(
-    settings, stub_provider: StubProvider
+    settings, stub_provider: StubProvider, failure: str
 ) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 
@@ -348,6 +384,24 @@ def test_high_risk_review_failure_returns_typed_bad_gateway(
                 ]
             }
         if role == "reviewer":
+            if failure == "timeout":
+                raise httpx.ReadTimeout("review timed out")
+            if failure == "http_4xx":
+                response = httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "message": "invalid reviewer request",
+                            "type": "invalid_request_error",
+                            "code": "invalid_request",
+                            "param": None,
+                        }
+                    },
+                    request=httpx.Request("POST", model.base_url),
+                )
+                raise httpx.HTTPStatusError(
+                    "invalid reviewer request", request=response.request, response=response
+                )
             raise ValueError("invalid review")
         return await original(role, model, request)
 
@@ -355,15 +409,18 @@ def test_high_risk_review_failure_returns_typed_bad_gateway(
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "high-risk"},
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": f"high-risk-{failure}",
+            },
             json={
                 "model": "dgx-moa-orchestrated",
                 "messages": [{"role": "user", "content": "change authentication"}],
                 "metadata": {"authentication": True, "diff_summary": "auth changed"},
             },
         )
-        state = client.app.state.store.get("high-risk")
-        events = client.app.state.store.events("high-risk")
+        state = client.app.state.store.get(f"high-risk-{failure}")
+        events = client.app.state.store.events(f"high-risk-{failure}")
 
     assert response.status_code == 502
     assert response.json()["error"]["type"] == "backend_error"

@@ -387,7 +387,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         state.observability_status = "degraded"
                     request.app.state.store.save(state)
                     if state.review_fail_closed:
-                        raise
+                        raise ValueError(f"review failed: {error}") from error
                 else:
                     if not state.truncated:
                         request.app.state.controller.apply_metadata(state, body.metadata)

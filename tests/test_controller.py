@@ -334,6 +334,9 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
         SessionState(session_id="complete"),
         {"completion_evidence": {"tests": "exit 0"}},
     ) is True
+    assert controller.has_review_evidence(
+        SessionState(session_id="claim"), {"completion_evidence": "claimed"}
+    ) is False
 
 
 def test_review_observation_is_bounded_redacted_and_complete(
