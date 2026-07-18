@@ -49,6 +49,9 @@ class Limits(BaseModel):
     reviewer_timeout_seconds: float = 120
     model_load_timeout_seconds: float = 1_200
     tool_continuation_timeout_seconds: float = 600
+    usage_sample_window: int = 512
+    usage_ewma_alpha: float = 0.25
+    adaptive_minimum_samples: int = 20
     max_steps: int = 100
 
 

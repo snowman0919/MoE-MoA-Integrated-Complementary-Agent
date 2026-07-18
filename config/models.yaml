@@ -32,6 +32,9 @@ gateway:
     reviewer_timeout_seconds: 120
     model_load_timeout_seconds: 1200
     tool_continuation_timeout_seconds: 600
+    usage_sample_window: 512
+    usage_ewma_alpha: 0.25
+    adaptive_minimum_samples: 20
     max_steps: 100
 
 models:
