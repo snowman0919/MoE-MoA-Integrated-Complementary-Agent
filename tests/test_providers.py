@@ -43,13 +43,12 @@ async def test_stream_error_body_is_available_to_the_api(settings, monkeypatch) 
             "param": "seed",
         }
     }
+
     class ErrorStream(httpx.AsyncByteStream):
         async def __aiter__(self):  # type: ignore[no-untyped-def]
             yield json.dumps(envelope).encode()
 
-    transport = httpx.MockTransport(
-        lambda request: httpx.Response(400, stream=ErrorStream())
-    )
+    transport = httpx.MockTransport(lambda request: httpx.Response(400, stream=ErrorStream()))
     async_client = httpx.AsyncClient
     monkeypatch.setattr(
         "dgx_moa.providers.httpx.AsyncClient",

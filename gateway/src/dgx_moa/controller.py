@@ -696,9 +696,7 @@ class Controller:
                     )
                     parsed = parse_json_content(planner)
             finally:
-                state.timings_ms["planner"] = round(
-                    (time.monotonic() - planner_started) * 1000, 3
-                )
+                state.timings_ms["planner"] = round((time.monotonic() - planner_started) * 1000, 3)
             state.plan = parsed.get("plan", [])
             state.acceptance_criteria = parsed.get("acceptance_criteria", [])
             self.store.event(state.session_id, "plan_created", {"steps": len(state.plan)})
@@ -763,9 +761,7 @@ class Controller:
         while len(serialized) > limit:
             key = max(
                 bounded,
-                key=lambda name: len(
-                    json.dumps(bounded[name], ensure_ascii=False, sort_keys=True)
-                ),
+                key=lambda name: len(json.dumps(bounded[name], ensure_ascii=False, sort_keys=True)),
             )
             current = bounded[key]
             source = (
@@ -830,9 +826,7 @@ class Controller:
                 stage="reviewer",
             )
         finally:
-            state.timings_ms["reviewer"] = round(
-                (time.monotonic() - reviewer_started) * 1000, 3
-            )
+            state.timings_ms["reviewer"] = round((time.monotonic() - reviewer_started) * 1000, 3)
         result = parse_json_content(response)
         state.review_status = result.get("status", "rejected")
         state.phase = Phase.CORRECTION if state.review_status != "approved" else Phase.EXECUTING

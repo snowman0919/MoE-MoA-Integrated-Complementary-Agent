@@ -79,33 +79,28 @@ def test_unknown_model_is_rejected() -> None:
 
 
 def test_request_classes_and_roles() -> None:
-    assert classify_request(
-        "chat", [{"role": "user", "content": "Hello"}], None, {}
-    ) == "plain_chat"
-    assert classify_request(
-        "chat", [{"role": "user", "content": "What changed?"}], None, {}
-    ) == "read_only_question"
-    assert classify_request(
-        "agent", [{"role": "tool", "content": "ok"}], None, {}
-    ) == "native_agent_turn"
-    assert classify_request(
-        "orchestrated", [], None, {"target_clear": True, "expected_files": 1}
-    ) == "small_clear_edit"
-    assert classify_request(
-        "orchestrated", [], None, {"expected_files": 4}
-    ) == "multi_file_task"
-    assert classify_request(
-        "orchestrated", [], None, {"recovery_task": True}
-    ) == "recovery_task"
-    assert classify_request(
-        "orchestrated", [], None, {"authentication": True}
-    ) == "high_risk_task"
+    assert (
+        classify_request("chat", [{"role": "user", "content": "Hello"}], None, {}) == "plain_chat"
+    )
+    assert (
+        classify_request("chat", [{"role": "user", "content": "What changed?"}], None, {})
+        == "read_only_question"
+    )
+    assert (
+        classify_request("agent", [{"role": "tool", "content": "ok"}], None, {})
+        == "native_agent_turn"
+    )
+    assert (
+        classify_request("orchestrated", [], None, {"target_clear": True, "expected_files": 1})
+        == "small_clear_edit"
+    )
+    assert classify_request("orchestrated", [], None, {"expected_files": 4}) == "multi_file_task"
+    assert classify_request("orchestrated", [], None, {"recovery_task": True}) == "recovery_task"
+    assert classify_request("orchestrated", [], None, {"authentication": True}) == "high_risk_task"
     assert classify_request("orchestrated", [], None, {}) == "explicit_orchestrated"
     assert required_roles("chat", "plain_chat") == ("executor",)
     assert required_roles("agent", "high_risk_task") == ("executor",)
     assert required_roles("orchestrated", "multi_file_task") == ("planner", "executor")
-    assert required_roles("orchestrated", "high_risk_task") == (
-        "planner", "executor", "reviewer"
-    )
+    assert required_roles("orchestrated", "high_risk_task") == ("planner", "executor", "reviewer")
     assert review_fails_closed("high_risk_task") is True
     assert review_fails_closed("explicit_orchestrated") is False

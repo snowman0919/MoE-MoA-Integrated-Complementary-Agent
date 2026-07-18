@@ -123,10 +123,7 @@ async def test_missing_done_is_synthesized_on_clean_eof() -> None:
     observation = StreamObservation(max_capture_bytes=1000)
 
     forwarded = [
-        event
-        async for event in forward_sse(
-            chunks(content), observation, max_event_bytes=1000
-        )
+        event async for event in forward_sse(chunks(content), observation, max_event_bytes=1000)
     ]
 
     assert forwarded == [content, b"data: [DONE]\n\n"]
@@ -162,9 +159,7 @@ async def test_observation_capture_is_truncated_at_bound() -> None:
 
     _ = [
         event
-        async for event in forward_sse(
-            chunks(first, second), observation, max_event_bytes=1000
-        )
+        async for event in forward_sse(chunks(first, second), observation, max_event_bytes=1000)
     ]
 
     assert bytes(observation.captured) == (first + second)[:17]

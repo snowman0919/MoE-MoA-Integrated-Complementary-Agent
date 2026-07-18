@@ -379,8 +379,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     )
                     try:
                         async with asyncio.timeout_at(
-                            executor_started
-                            + configured.limits.executor_total_timeout_seconds
+                            executor_started + configured.limits.executor_total_timeout_seconds
                         ):
                             async with aclosing(forwarder):
                                 async for chunk in forwarder:
@@ -561,8 +560,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and isinstance(upstream_error.get("type"), str)
                 and isinstance(upstream_error.get("code"), str)
                 and (
-                    upstream_error.get("param") is None
-                    or isinstance(upstream_error["param"], str)
+                    upstream_error.get("param") is None or isinstance(upstream_error["param"], str)
                 )
             ):
                 return JSONResponse(payload, status_code=error.response.status_code)

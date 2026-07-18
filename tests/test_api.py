@@ -312,9 +312,7 @@ def test_role_calls_receive_exact_stage_timeouts(settings, stub_provider: StubPr
     ]
 
 
-def test_orchestrated_timing_records_role_durations(
-    settings, stub_provider: StubProvider
-) -> None:  # type: ignore[no-untyped-def]
+def test_orchestrated_timing_records_role_durations(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(
             "/v1/chat/completions",
@@ -375,13 +373,16 @@ def test_request_timing_event_is_numeric_and_content_free(
         "executor_total",
     }
     assert all(isinstance(value, int | float) and value >= 0 for value in timings.values())
-    assert [timings[key] for key in (
-        "accepted",
-        "upstream_start",
-        "first_upstream_byte",
-        "first_downstream_byte",
-        "completed",
-    )] == sorted(
+    assert [
+        timings[key]
+        for key in (
+            "accepted",
+            "upstream_start",
+            "first_upstream_byte",
+            "first_downstream_byte",
+            "completed",
+        )
+    ] == sorted(
         timings[key]
         for key in (
             "accepted",
