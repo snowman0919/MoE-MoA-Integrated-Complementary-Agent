@@ -23,7 +23,11 @@ resolving it in the shell. Tailscale Serve and Funnel are not required.
 See `docs/API_CLIENT_MODES.md` for the model aliases, standard request and SSE
 contracts, typed errors, curl/OpenAI SDK/OpenCode examples, and output limits.
 See `docs/HERMES_AGENT.md` for the environment-only Hermes configuration. New
-phase-one physical client validation remains Task 9 work.
+physical lifecycle validation remains pending.
+
+See `docs/MODEL_LIFECYCLE.md` for model states, retryable loading responses,
+idle policy, blockers, status routes, and isolated-development rules. Checked-in
+lifecycle control is deliberately `disabled` with an empty unit map.
 
 Authoritative references: `docs/STATE.md` for current state,
 `docs/OPERATIONS.md` for operation, `docs/VALIDATION.md` for measured evidence,

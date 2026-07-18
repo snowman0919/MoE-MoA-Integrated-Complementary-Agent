@@ -33,3 +33,20 @@ Primary session state and event references live in SQLite. Append-oriented v2
 JSONL traces are date-partitioned by runtime channel and origin and indexed from
 SQLite. State persistence fails closed; secondary trace failure degrades
 observability without discarding an otherwise safe coding task.
+
+## Model lifecycle
+
+`LifecycleStore` persists one state row per role plus request/stream/continuation
+leases, evaluation/profile guards, current idle decisions, and lifecycle samples.
+`LifecycleCoordinator` serializes role work, owns single-flight load and shutdown,
+and runs a first-sleep scheduler. Optional roles are considered before executor.
+`SystemdLifecycleDriver` accepts only the exact validated role-to-unit map and
+uses argument vectors for status/start/stop and bounded progress reads.
+
+Managed requests acquire active and stream leases under the same role locks used
+by unloading. Policy checks use activity and content-free usage gaps; atomic
+admission rechecks state, transition, activity, every lease, and every guard.
+Executable unload is exact-unit full service stop, inactive verification, memory
+sampling, then a `cold` transition and sample. Failures become sanitized
+`failed` state. Full state, mode, race, recovery, and API contracts are in
+`docs/MODEL_LIFECYCLE.md`.

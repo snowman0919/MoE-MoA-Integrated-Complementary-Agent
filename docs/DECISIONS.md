@@ -54,3 +54,14 @@
 - Keep streaming review off the critical path. Bound non-streaming reviewer
   evidence to 16,000 characters, preserve valid output on low-risk review
   failure, and allow high-risk explicit orchestration to fail closed.
+- Keep lifecycle `disabled` with an empty unit map by default. Automated safety
+  contracts do not establish physical memory recovery or production readiness.
+- Use full service stop as the only executable unload fallback today because it
+  is exact-unit authorized and has a verifiable inactive state. Do not imply a
+  sleep, KV-eviction, or offload implementation.
+- Bound adaptive idle policy by role-class minimum/fallback/maximum and minimum
+  residency. Require two idle checks and 20 positive role-local gaps before the
+  inclusive-p75-times-1.5 threshold can replace fallback.
+- Keep sleep, KV eviction, offload, mechanism selection, production enablement,
+  and threshold recommendations pending physical measurement. Canonical states,
+  routes, blockers, and pending evidence are in `docs/MODEL_LIFECYCLE.md`.

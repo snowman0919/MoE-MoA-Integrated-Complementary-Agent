@@ -11,6 +11,151 @@ from dgx_moa.dataset import build, quality_tier
 from dgx_moa.improvement import compare, mine, statistics
 
 
+def read_required_doc(path: str) -> str:
+    document = Path(path)
+    assert document.is_file(), f"missing documentation contract: {path}"
+    return document.read_text()
+
+
+def test_model_lifecycle_documentation_contract() -> None:
+    lifecycle = read_required_doc("docs/MODEL_LIFECYCLE.md")
+
+    for state in (
+        "cold",
+        "load_queued",
+        "process_starting",
+        "loading_weights",
+        "initializing_engine",
+        "warming_up",
+        "ready",
+        "sleeping",
+        "unloading",
+        "failed",
+    ):
+        assert f"`{state}`" in lifecycle
+    for value in (
+        "Retry-After",
+        "X-DGX-MOA-Model-State",
+        "X-DGX-MOA-Weight-Load-Percent",
+        "model_loading",
+        "model_state",
+        "weight_load_percent",
+        "progress_quality",
+        "overall_load_percent",
+        "estimated_ready_seconds",
+        "measured_bytes",
+        "measured_shards",
+        "estimated",
+        "unavailable",
+    ):
+        assert value in lifecycle
+    assert "100%" in lifecycle
+    assert "engine initialization" in lifecycle.lower()
+    assert "warmup" in lifecycle.lower()
+
+    for mode in ("disabled", "observe", "fixed", "adaptive"):
+        assert f"`{mode}`" in lifecycle
+    assert "two consecutive" in lifecycle.lower()
+    assert "optional" in lifecycle.lower() and "before `executor`" in lifecycle
+    assert "minimum residency" in lifecycle.lower()
+    assert "inclusive p75" in lifecycle.lower()
+    assert "1.5" in lifecycle
+    assert "20 usable positive role-local gaps" in lifecycle
+    assert "| Executor | 900 | 2700 | 7200 | 600 |" in lifecycle
+    assert "| Optional role | 300 | 900 | 2700 | 300 |" in lifecycle
+    assert "30-second" in lifecycle
+    assert "`lifecycle_mode: disabled`" in lifecycle
+    assert "`lifecycle_unit_map: {}`" in lifecycle
+
+
+def test_model_lifecycle_safety_and_status_contract() -> None:
+    lifecycle = read_required_doc("docs/MODEL_LIFECYCLE.md")
+
+    for value in (
+        "lifecycle_unit_map",
+        "unique",
+        "dgx-moa-dev-",
+        "full service stop",
+        "active request",
+        "open stream",
+        "unexpired tool continuation",
+        "evaluation guard",
+        "profile guard",
+        "transient state",
+        "atomic recheck",
+        "single-flight",
+        "/v1/model-status",
+        "/v1/model-status/{role}",
+        "/v1/admin/runtime-status",
+        "/admin/profile",
+        "/admin/profile/resident",
+        "/admin/profile/judge",
+        "/admin/profile/restore",
+        "current-mode",
+        "content-free",
+        "shutdown",
+        "rollback",
+    ):
+        assert value in lifecycle
+    assert "only implemented unload action" in lifecycle.lower()
+    assert "status reads never call the lifecycle driver" in lifecycle.lower()
+    assert "failed" in lifecycle and "unmanaged" in lifecycle and "503" in lifecycle
+    assert "disabled + empty unit map" in lifecycle.lower()
+
+
+def test_lifecycle_docs_link_canonical_contract_and_keep_evidence_pending() -> None:
+    lifecycle = read_required_doc("docs/MODEL_LIFECYCLE.md")
+    related = {
+        path: read_required_doc(path)
+        for path in (
+            "README.md",
+            "docs/STATE.md",
+            "docs/OPERATIONS.md",
+            "docs/ARCHITECTURE.md",
+            "docs/TRACE_SCHEMA.md",
+            "docs/DECISIONS.md",
+        )
+    }
+    for text in related.values():
+        assert "MODEL_LIFECYCLE.md" in text
+
+    checked_in = yaml.safe_load(Path("config/models.yaml").read_text())["gateway"]
+    assert checked_in["lifecycle_mode"] == "disabled"
+    assert checked_in["lifecycle_unit_map"] == {}
+    assert "527 passed" in related["docs/STATE.md"]
+    for variable in (
+        "DGX_MOA_LIFECYCLE_MODE",
+        "DGX_MOA_LIFECYCLE_POLL_SECONDS",
+        "DGX_MOA_LIFECYCLE_UNIT_MAP",
+        "DGX_MOA_RUNTIME_CHANNEL",
+        "DGX_MOA_STATE_DB",
+    ):
+        assert variable in related["docs/OPERATIONS.md"]
+    for component in ("LifecycleCoordinator", "LifecycleStore", "SystemdLifecycleDriver"):
+        assert component in related["docs/ARCHITECTURE.md"]
+    for table in ("request_usage", "model_lifecycle_decisions", "lifecycle_samples"):
+        assert table in related["docs/TRACE_SCHEMA.md"]
+    trace_schema = related["docs/TRACE_SCHEMA.md"]
+    assert "raw prompt" in trace_schema.lower()
+    assert "`load_triggered`" in trace_schema
+    lifecycle_sample_contract = trace_schema.split("`lifecycle_samples`", 1)[1].split("\n\n", 1)[0]
+    assert "cold-start" not in lifecycle_sample_contract
+    for field in ("role", "kind", "duration", "memory"):
+        assert field in lifecycle_sample_contract
+
+    pending = lifecycle.split("## Pending physical evidence", 1)
+    assert len(pending) == 2
+    for evidence in (
+        "cold-load and progress",
+        "memory bytes",
+        "idle-unload guards",
+        "mechanism comparison",
+        "64K physical quality",
+        "production recommendation",
+    ):
+        assert evidence in pending[1]
+
+
 def test_api_client_mode_documentation() -> None:
     api_modes = Path("docs/API_CLIENT_MODES.md").read_text()
     hermes = Path("docs/HERMES_AGENT.md").read_text()

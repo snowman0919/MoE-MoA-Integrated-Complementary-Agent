@@ -46,3 +46,20 @@ Frontier decisions use events `frontier_eligible`, `frontier_profile_selected`,
 Events retain profile names and bounded result summaries only, never credentials.
 When frontier is connected but disabled, eligibility records `FRONTIER_DISABLED`
 without invoking Codex.
+
+## Content-free runtime tables
+
+Agent traces describe decision trajectories. SQLite `request_usage` describes
+request timing, status, roles, token counts, streaming, model state, and bounded
+failure classes; its `load_triggered` flag supplies the cold-start count.
+`model_lifecycle_decisions` records per-role mode, threshold, sample count,
+idle/residency values, hysteresis, action eligibility, reason, and timestamp.
+`lifecycle_samples` records role, load/unload kind, duration, and optional
+before/after memory integers.
+
+These tables and lifecycle status never store raw prompt, response, tool output,
+authorization, unit, path, command, environment value, or hidden reasoning.
+Trace/session IDs may correlate a request across stores; lifecycle rows remain
+content-free and are not training transcripts. Status exposes only decisions
+matching current mode. See `docs/MODEL_LIFECYCLE.md` for retention boundaries
+and lifecycle behavior.

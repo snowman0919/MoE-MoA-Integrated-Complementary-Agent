@@ -21,6 +21,33 @@ Runtime status reports service state/restarts, recent gateway/model failures,
 SQLite session counts, profile rollback events, and measured current memory.
 Unknown measurements remain explicit; they are not inferred.
 
+Lifecycle states and safety rules are canonical in
+`docs/MODEL_LIFECYCLE.md`.
+
+## Isolated lifecycle development
+
+These are environment examples, not executed evidence. Use them only with an
+isolated development config and development-owned process:
+
+```bash
+DGX_MOA_CONFIG=/path/to/dev-models.yaml
+DGX_MOA_RUNTIME_CHANNEL=dev
+DGX_MOA_STATE_DB=/path/to/isolated-dev/gateway.db
+DGX_MOA_BIND_PORT=19000
+DGX_MOA_LIFECYCLE_MODE=observe
+DGX_MOA_LIFECYCLE_POLL_SECONDS=30
+DGX_MOA_LIFECYCLE_UNIT_MAP='{"executor":"dgx-moa-dev-executor.service"}'
+```
+
+Use unique validated `dgx-moa-dev-*` units, a loopback port, state database, and
+run directory that share nothing with production. `DGX_MOA_ADMIN_API_ENABLED`
+remains false unless the isolated test needs protected admin routes.
+
+Rollback example: set `DGX_MOA_LIFECYCLE_MODE=disabled` and
+`DGX_MOA_LIFECYCLE_UNIT_MAP='{}'` before starting a fresh isolated dev gateway.
+Disabled mode makes no lifecycle driver calls. This task provides no production
+replacement, restart, or enablement procedure.
+
 ## Profiles
 
 ```bash

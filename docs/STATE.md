@@ -35,9 +35,21 @@ Updated: 2026-07-18
   OpenAI Python, HTTPX, OpenCode `1.17.18`, and Hermes Agent `0.18.2` checks in
   Task 9. The post-fix stream reached the client before executor completion and
   used no planner or reviewer. Production was not deployed or restarted.
+- Automated lifecycle contracts now cover persisted states, single-flight load,
+  typed loading progress, content-free usage/decisions/samples, leases/guards,
+  bounded idle policy, exact-unit full-stop unload, restart reconciliation,
+  status filtering, and shutdown ownership. The canonical contract is
+  `docs/MODEL_LIFECYCLE.md`.
+- Checked-in lifecycle mode remains `disabled` with an empty unit map. Physical
+  cold load/progress, recovered memory bytes, idle-unload guards, mechanism
+  comparison, 64K near-limit quality, and any production recommendation remain
+  pending.
 
 ## Validation baseline
 
+- Phase-two automated gate after lifecycle scheduling: `527 passed`; Ruff
+  format/check, MyPy, and `git diff --check` also passed. This is automated
+  evidence only and does not supersede the physical phase-one history below.
 - Current phase-one suite: `181 passed`, with the existing FastAPI TestClient
   deprecation warning. The final re-review gate matrix passed Ruff format/check,
   MyPy for 26 source files, shell syntax, systemd user-unit verification, and
@@ -108,7 +120,6 @@ Updated: 2026-07-18
 - The 7.5-hour soak includes classified startup rollback incidents before the
   memory-settle fix; the final resident state is healthy with no active loop.
 - Promotion still requires human review of PR #2 and a later main deployment.
-- The overall runtime-reliability Goal also still requires usage statistics,
-  lifecycle/adaptive unloading, loading progress, memory-mechanism study, a
-  near-limit 64K request, extended client matrices, soak, remaining docs, push,
-  and PR work.
+- The overall runtime-reliability Goal still requires physical lifecycle and
+  memory evidence, memory-mechanism study, a near-limit 64K request, extended
+  client matrices, soak, remaining publication, push, and PR work.
