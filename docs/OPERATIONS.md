@@ -33,10 +33,19 @@ isolated development config and development-owned process:
 DGX_MOA_CONFIG=/path/to/dev-models.yaml
 DGX_MOA_RUNTIME_CHANNEL=dev
 DGX_MOA_STATE_DB=/path/to/isolated-dev/gateway.db
+DGX_MOA_BIND_HOST=127.0.0.1
 DGX_MOA_BIND_PORT=19000
 DGX_MOA_LIFECYCLE_MODE=observe
 DGX_MOA_LIFECYCLE_POLL_SECONDS=30
 DGX_MOA_LIFECYCLE_UNIT_MAP='{"executor":"dgx-moa-dev-executor.service"}'
+```
+
+`DGX_MOA_CONFIG` selects the development YAML. Set the isolated run directory
+there; no run-directory environment override is implemented:
+
+```yaml
+gateway:
+  run_dir: /path/to/isolated-dev/run
 ```
 
 Use unique validated `dgx-moa-dev-*` units, a loopback port, state database, and

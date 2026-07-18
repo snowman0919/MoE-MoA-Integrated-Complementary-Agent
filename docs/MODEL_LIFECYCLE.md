@@ -8,7 +8,7 @@ not a production recommendation; physical evidence listed below is pending.
 
 | State | Meaning |
 | --- | --- |
-| `cold` | Authorized service is inactive; next managed request may queue one load. |
+| `cold` | Persisted controller state from which managed loading may be queued. |
 | `load_queued` | One single-flight load owns the role. |
 | `process_starting` | Exact authorized service is starting. |
 | `loading_weights` | Service journal may report weight progress. |
@@ -18,6 +18,10 @@ not a production recommendation; physical evidence listed below is pending.
 | `sleeping` | Reserved state; no sleep mechanism is implemented. |
 | `unloading` | Atomic admission passed and full service stop is owned. |
 | `failed` | Load, recovery, memory sampling, or unload failed safely. |
+
+A `cold` record is persisted controller state, not standalone proof that its
+service is inactive. Exact inactivity is established only by `fixed`/`adaptive`
+startup reconciliation or a successful full stop that verifies inactive status.
 
 Transitions use an opaque transition ID. Stale updates fail. In `fixed` and
 `adaptive`, a request for a `cold` role starts at most one load task; concurrent
@@ -80,9 +84,11 @@ expired continuations. `fixed` and `adaptive` reconcile authorized roles:
 inactive becomes `cold`, failed service becomes `failed`, healthy active becomes
 `ready`, and unhealthy or unreadable state becomes `failed`. Observe keeps its
 persisted lifecycle state without driver reconciliation. In-memory hysteresis
-resets on every restart. Gateway shutdown cancels and joins the scheduler, owns any
-in-flight full stop to completion, cancels and joins load tasks, and waits for
-owned driver work; no detached lifecycle work remains.
+resets on every restart. Gateway shutdown cancels and joins scheduler and load
+tasks, waits for owned load driver capture/start work, and waits for any admitted
+unload stop task. Bounded read-only status/progress probes and memory reads use
+worker threads and may finish after parent cancellation; they do not control
+service state.
 
 Scheduler polling is 30-second by checked-in default. Optional roles are checked
 before `executor`. An idle threshold must be exceeded on two consecutive checks
@@ -104,10 +110,11 @@ check, but status exposes only decisions matching the current-mode filter.
 
 `lifecycle_unit_map` is the sole role-to-unit authorization input. Roles must be
 known, unit names must be valid and unique, and non-main runtimes accept only the
-`dgx-moa-dev-*` namespace. Request bodies cannot supply a unit, path, command,
-runtime channel, or production provenance. The only implemented unload action
-and fallback is full service stop of the exact mapped unit; sleep, KV eviction,
-and offload are not implemented.
+`dgx-moa-dev-*` namespace. Inference request fields and content are never
+consulted for lifecycle unit/path/command authorization or driver argument
+vectors. Only validated settings and `lifecycle_unit_map` authorize lifecycle
+driver targets. The only implemented unload action and fallback is full service
+stop of the exact mapped unit; sleep, KV eviction, and offload are not implemented.
 
 Unload is blocked by any active request, open stream, unexpired tool continuation,
 evaluation guard, profile guard, or transient state. Policy checks are advisory;

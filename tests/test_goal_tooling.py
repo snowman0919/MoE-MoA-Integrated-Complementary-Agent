@@ -101,6 +101,34 @@ def test_model_lifecycle_safety_and_status_contract() -> None:
     assert "status reads never call the lifecycle driver" in lifecycle.lower()
     assert "failed" in lifecycle and "unmanaged" in lifecycle and "503" in lifecycle
     assert "disabled + empty unit map" in lifecycle.lower()
+    normalized_lifecycle = " ".join(lifecycle.lower().split())
+    assert "no detached lifecycle work remains" not in normalized_lifecycle
+    for boundary in (
+        "scheduler and load tasks",
+        "load driver capture/start work",
+        "admitted unload stop task",
+        "bounded read-only status/progress probes",
+        "may finish after parent cancellation",
+    ):
+        assert boundary in normalized_lifecycle
+    assert "request bodies cannot supply a unit, path, command" not in normalized_lifecycle
+    assert (
+        "inference request fields and content are never consulted for lifecycle "
+        "unit/path/command authorization or driver argument vectors" in normalized_lifecycle
+    )
+    assert (
+        "only validated settings and `lifecycle_unit_map` authorize lifecycle driver targets"
+        in normalized_lifecycle
+    )
+    assert "authorized service is inactive" not in normalized_lifecycle
+    for cold_boundary in (
+        "`cold` record is persisted controller state",
+        "not standalone proof that its service is inactive",
+        "`fixed`/`adaptive` startup reconciliation",
+        "successful full stop",
+        "verifies inactive status",
+    ):
+        assert cold_boundary in normalized_lifecycle
 
 
 def test_lifecycle_docs_link_canonical_contract_and_keep_evidence_pending() -> None:
@@ -131,6 +159,14 @@ def test_lifecycle_docs_link_canonical_contract_and_keep_evidence_pending() -> N
         "DGX_MOA_STATE_DB",
     ):
         assert variable in related["docs/OPERATIONS.md"]
+    isolated_operations = (
+        related["docs/OPERATIONS.md"]
+        .split("## Isolated lifecycle development", 1)[1]
+        .split("## Profiles", 1)[0]
+    )
+    assert "DGX_MOA_BIND_HOST=127.0.0.1" in isolated_operations
+    assert "run_dir: /path/to/isolated-dev/run" in isolated_operations
+    assert "DGX_MOA_RUN_DIR" not in isolated_operations
     for component in ("LifecycleCoordinator", "LifecycleStore", "SystemdLifecycleDriver"):
         assert component in related["docs/ARCHITECTURE.md"]
     for table in ("request_usage", "model_lifecycle_decisions", "lifecycle_samples"):
