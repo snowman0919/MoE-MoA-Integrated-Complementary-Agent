@@ -973,10 +973,9 @@ def create_app(
             stage_status["executor_total"] = "completed"
             token_usage.update(reported_usage(response.get("usage")))
             validate_assistant_response(response)
+            assistant_message = response.get("choices", [{}])[0].get("message", {})
             if state.decisions:
-                state.decisions[-1]["structured_decision"] = response.get("choices", [{}])[0].get(
-                    "message", {}
-                )
+                state.decisions[-1]["structured_decision"] = assistant_message
                 state.decisions[-1]["outcome"] = {
                     "status": "success",
                     "progress_made": True,
@@ -1046,7 +1045,7 @@ def create_app(
                 "assistant_stream_finished",
                 {"finish_reasons": [finish_reason] if finish_reason else []},
             )
-            if finish_reason == "tool_calls":
+            if finish_reason == "tool_calls" or assistant_message.get("tool_calls"):
                 request.app.state.lifecycle_store.refresh_continuation(
                     usage_request_id,
                     "executor",

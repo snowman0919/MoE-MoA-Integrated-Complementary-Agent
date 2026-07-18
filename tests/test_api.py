@@ -1111,6 +1111,57 @@ def test_nonstream_tool_continuation_requires_same_session_and_matching_call(
     assert released.continuation_lease_count == 0
 
 
+def test_nonstream_tool_call_payload_creates_continuation_when_finish_reason_is_stop(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def tool_call_with_stop(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call-stop",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "read_file",
+                                        "arguments": "{}",
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = tool_call_with_stop  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "stop-with-tool-call",
+            },
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        held = client.app.state.lifecycle_store.get("executor")
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["finish_reason"] == "stop"
+    assert response.json()["choices"][0]["message"]["tool_calls"]
+    assert held.continuation_lease_count == 1
+
+
 @pytest.mark.asyncio
 async def test_stream_tool_calls_create_one_continuation_before_stream_release(
     settings, stub_provider: StubProvider
