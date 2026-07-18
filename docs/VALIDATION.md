@@ -1140,7 +1140,7 @@ curl --silent --show-error --max-time 10 \
   and explicit context override covered by direct files and the current
   181-test suite; the physical matrix proves the principal client and latency
   contracts.
-  Formal Task 9 completion remains blocked by both nonzero trace audits. The
+  Formal Task 9 completion remains blocked by all three nonzero trace audits. The
   overall runtime-reliability Goal remains active for usage statistics,
   lifecycle and adaptive unloading, loading progress, memory-mechanism study,
   near-limit 64K validation, extended client matrices, soak, remaining docs,
