@@ -147,3 +147,26 @@ def test_runtime_report_contains_bounded_content_free_usage(tmp_path: Path, monk
     assert str(state_db) not in serialized
     assert "systemctl" not in serialized
     assert "dgx-moa-executor.service" not in serialized
+
+
+def test_runtime_active_count_includes_rows_outside_statistics_window(tmp_path: Path) -> None:
+    state_db = tmp_path / "state.db"
+    usage = UsageStore(state_db)
+    for index in range(513):
+        usage.start(
+            RequestUsageStart(
+                request_id=f"request-{index}",
+                session_id=f"session-{index}",
+                client_class="openai-compatible",
+                model_alias="dgx-moa-agent",
+                runtime_mode="agent",
+                request_class="native_agent_turn",
+                roles_required=("executor",),
+                accepted_at=float(index),
+                streaming=False,
+                model_state="warm",
+            )
+        )
+
+    assert len(usage.recent_requests()) == 512
+    assert runtime_status.usage_status(state_db)["active_request_count"] == 513

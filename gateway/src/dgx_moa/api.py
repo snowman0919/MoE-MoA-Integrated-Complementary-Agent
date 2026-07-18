@@ -332,6 +332,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             state_session_id = session_id
         task_id = str(raw["metadata"].get("task_id") or "")
+        request_class = classify_request(mode, raw["messages"], raw.get("tools"), raw["metadata"])
+        roles = required_roles(mode, request_class)
+        request.app.state.usage.start(
+            RequestUsageStart(
+                request_id=usage_request_id,
+                session_id=str(
+                    uuid.uuid5(
+                        request.app.state.usage_session_namespace,
+                        state_session_id,
+                    )
+                ),
+                client_class=classify_client(
+                    request.headers.get("user-agent") if "headers" in request.scope else None
+                ),
+                model_alias=cast(
+                    ModelAlias,
+                    next(alias for alias, alias_mode in MODEL_MODES.items() if alias_mode == mode),
+                ),
+                runtime_mode=mode,
+                request_class=request_class,
+                roles_required=cast(tuple[Role, ...], roles),
+                accepted_at=accepted_at,
+                streaming=body.stream,
+                model_state="warm",
+                load_triggered=False,
+            )
+        )
+        usage_started = True
 
         def finalize_request(
             stage: str | None,
@@ -345,34 +373,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if terminal_finalized:
                 return
             current = current_state or state or request.app.state.store.get(state_session_id)
-            if current is None:
-                return
             terminal_finalized = True
-            if state is None:
-                current.timings_ms = {"accepted": 0.0}
-                state = current
             if stage is not None:
                 stage_status[stage] = status_value
-            if status_value == "cancelled":
-                current.final_status = "cancelled"
-            elif status_value in {"failed", "timed_out"} and current.final_status != "blocked":
-                current.final_status = "failed"
-            if executor_started is not None:
-                current.timings_ms.setdefault(
-                    "executor_total",
-                    round((time.monotonic() - executor_started) * 1000, 3),
-                )
             if downstream_started:
-                current.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
                 first_byte_at = first_byte_at or time.time()
-            record_request_timing(current)
-            request.app.state.store.event(
-                current.session_id,
-                "session_ended",
-                {"request_id": state_session_id, "status": status_value},
-            )
-            request.app.state.store.save(current)
-            record_trace_safely(request, current, task_id)
+            if current is not None:
+                if state is None:
+                    current.timings_ms = {"accepted": 0.0}
+                    state = current
+                if status_value == "cancelled":
+                    current.final_status = "cancelled"
+                elif status_value in {"failed", "timed_out"} and current.final_status != "blocked":
+                    current.final_status = "failed"
+                if executor_started is not None:
+                    current.timings_ms.setdefault(
+                        "executor_total",
+                        round((time.monotonic() - executor_started) * 1000, 3),
+                    )
+                if downstream_started:
+                    current.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                record_request_timing(current)
+                request.app.state.store.event(
+                    current.session_id,
+                    "session_ended",
+                    {"request_id": state_session_id, "status": status_value},
+                )
+                request.app.state.store.save(current)
+                record_trace_safely(request, current, task_id)
             if usage_started:
                 request.app.state.usage.finalize(
                     usage_request_id,
@@ -401,38 +429,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request.app.state.controller.select_route(state, raw["metadata"])
             if body.metadata.get("no_progress"):
                 request.app.state.controller.note_no_progress(state)
-            request_class = classify_request(
-                mode, raw["messages"], raw.get("tools"), raw["metadata"]
-            )
-            roles = required_roles(mode, request_class)
-            request.app.state.usage.start(
-                RequestUsageStart(
-                    request_id=usage_request_id,
-                    session_id=str(
-                        uuid.uuid5(
-                            request.app.state.usage_session_namespace,
-                            state_session_id,
-                        )
-                    ),
-                    client_class=classify_client(
-                        request.headers.get("user-agent") if "headers" in request.scope else None
-                    ),
-                    model_alias=cast(
-                        ModelAlias,
-                        next(
-                            alias for alias, alias_mode in MODEL_MODES.items() if alias_mode == mode
-                        ),
-                    ),
-                    runtime_mode=mode,
-                    request_class=request_class,
-                    roles_required=cast(tuple[Role, ...], roles),
-                    accepted_at=accepted_at,
-                    streaming=body.stream,
-                    model_state="warm",
-                    load_triggered=False,
-                )
-            )
-            usage_started = True
             state.runtime_mode = mode
             state.request_class = request_class
             state.roles_required = list(roles)

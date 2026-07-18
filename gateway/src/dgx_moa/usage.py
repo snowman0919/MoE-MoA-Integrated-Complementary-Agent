@@ -39,6 +39,7 @@ RetryableFailureClass = Literal[
     "reviewer_timeout",
     "judge_timeout",
 ]
+SQLITE_MAX_INTEGER = 2**63 - 1
 
 REQUEST_COLUMNS = (
     "request_id, session_id, client_class, model_alias, runtime_mode, request_class, "
@@ -80,9 +81,9 @@ class RequestUsageFinalization(BaseModel):
     active_duration_seconds: float | None = Field(default=None, ge=0)
     status: RequestStatus
     retryable_failure_class: RetryableFailureClass | None = None
-    prompt_tokens: int | None = Field(default=None, ge=0)
-    completion_tokens: int | None = Field(default=None, ge=0)
-    total_tokens: int | None = Field(default=None, ge=0)
+    prompt_tokens: int | None = Field(default=None, ge=0, le=SQLITE_MAX_INTEGER)
+    completion_tokens: int | None = Field(default=None, ge=0, le=SQLITE_MAX_INTEGER)
+    total_tokens: int | None = Field(default=None, ge=0, le=SQLITE_MAX_INTEGER)
 
 
 class RequestUsageRecord(RequestUsageStart):
@@ -91,9 +92,9 @@ class RequestUsageRecord(RequestUsageStart):
     active_duration_seconds: float | None = None
     status: RequestStatus | None = None
     retryable_failure_class: RetryableFailureClass | None = None
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
+    prompt_tokens: int | None = Field(default=None, ge=0, le=SQLITE_MAX_INTEGER)
+    completion_tokens: int | None = Field(default=None, ge=0, le=SQLITE_MAX_INTEGER)
+    total_tokens: int | None = Field(default=None, ge=0, le=SQLITE_MAX_INTEGER)
 
 
 class LifecycleSample(BaseModel):
@@ -325,6 +326,13 @@ class UsageStore:
                 (self.sample_window,),
             ).fetchall()
         return [self._record(row) for row in reversed(rows)]
+
+    def active_request_count(self) -> int:
+        with self._connect() as database:
+            row = database.execute(
+                "SELECT COUNT(*) FROM request_usage WHERE completed_at IS NULL"
+            ).fetchone()
+        return int(row[0])
 
     def record_lifecycle_sample(self, sample: LifecycleSample) -> None:
         with self._connect() as database:

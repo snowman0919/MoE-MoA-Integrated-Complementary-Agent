@@ -4,6 +4,8 @@ import json
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, field
 
+from .usage import SQLITE_MAX_INTEGER
+
 TOKEN_FIELDS = ("prompt_tokens", "completion_tokens", "total_tokens")
 
 
@@ -13,7 +15,7 @@ def reported_usage(value: object) -> dict[str, int]:
     return {
         key: token_count
         for key in TOKEN_FIELDS
-        if type(token_count := value.get(key)) is int and token_count >= 0
+        if type(token_count := value.get(key)) is int and 0 <= token_count <= SQLITE_MAX_INTEGER
     }
 
 

@@ -449,6 +449,46 @@ def test_chat_returns_normal_assistant_content(settings, stub_provider: StubProv
     assert (usage.prompt_tokens, usage.completion_tokens, usage.total_tokens) == (2, 4, 6)
 
 
+def test_nonstream_omits_unstorable_token_statistics_without_changing_response(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    huge = 2**63
+
+    async def huge_usage(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        return {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "still valid"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": huge,
+                "completion_tokens": True,
+                "total_tokens": "5",
+            },
+        }
+
+    stub_provider.complete = huge_usage  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
+        )
+        usage = assert_usage(client.app, "completed")
+
+    assert response.status_code == 200
+    assert response.json()["usage"] == {
+        "prompt_tokens": huge,
+        "completion_tokens": True,
+        "total_tokens": "5",
+    }
+    assert usage.prompt_tokens is None
+    assert usage.completion_tokens is None
+    assert usage.total_tokens is None
+
+
 def test_orchestrated_mode_uses_policy_roles(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(
@@ -1636,6 +1676,60 @@ async def test_streaming_api_close_after_done_persists_terminal_success(
         assert_terminal_evidence(settings, app.state.store, "terminal-close", "completed")
 
 
+@pytest.mark.asyncio
+async def test_streaming_omits_unstorable_tokens_without_post_done_error(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    huge = 2**63
+    terminal_payload = {
+        "choices": [{"delta": {}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": huge, "completion_tokens": -1, "total_tokens": 5},
+    }
+    terminal = f"data: {json.dumps(terminal_payload, separators=(',', ':'))}\n\n".encode()
+    done = b"data: [DONE]\n\n"
+
+    async def streamed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        async def upstream():  # type: ignore[no-untyped-def]
+            yield terminal
+            yield done
+
+        return upstream()
+
+    stub_provider.stream = streamed  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await chat_endpoint(app)(
+            ChatRequest(
+                model="dgx-moa-agent",
+                stream=True,
+                messages=[{"role": "user", "content": "work"}],
+                metadata={"session_id": "huge-stream-usage"},
+            ),
+            Request({"type": "http", "app": app}),
+            x_session_id=None,
+            x_runtime_channel=None,
+            x_trace_origin=None,
+            x_task_id=None,
+            x_workspace_path=None,
+            x_workspace_id=None,
+            x_repository_branch=None,
+            x_repository_commit=None,
+            x_dirty_state=None,
+        )
+        assert isinstance(response, StreamingResponse)
+        assert await anext(response.body_iterator) == terminal
+        assert await anext(response.body_iterator) == done
+        with pytest.raises(StopAsyncIteration):
+            await anext(response.body_iterator)
+        usage = assert_usage(app, "completed")
+
+    assert usage.prompt_tokens is None
+    assert usage.completion_tokens is None
+    assert usage.total_tokens == 5
+
+
 def test_streaming_upstream_400_returns_invalid_request(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1876,12 +1970,104 @@ def test_duplicate_failed_call_records_one_timing_and_trace(
             for event in client.app.state.store.events(session_id)
             if event["event_type"] == "request_timing"
         ]
+        usage = assert_usage(client.app, "failed")
 
     assert response.status_code == 409
     assert len(timing_events) == 1
     assert timing_events[0]["payload"]["stage_status"] == {"request": "failed"}
     trace_path = next((settings.state_db.parent.parent / "traces").rglob(f"{session_id}.jsonl"))
     assert len(trace_path.read_text().splitlines()) == 1
+    assert usage.retryable_failure_class is None
+
+
+def test_step_budget_failure_finalizes_one_usage_row(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    settings.limits.max_steps = 1
+    session_id = "usage-step-budget"
+    with client_with_stub(settings, stub_provider) as client:
+        client.app.state.store.save(SessionState(session_id=session_id, step_count=1))
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
+        )
+        usage = assert_usage(client.app, "failed")
+
+    assert response.status_code == 502
+    assert response.json()["error"]["message"] == "session step budget exhausted"
+    assert stub_provider.calls == []
+    assert usage.retryable_failure_class == "backend_error"
+
+
+def test_provenance_failure_finalizes_exactly_one_failed_usage_row(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    session_id = "usage-provenance"
+    headers = {"Authorization": "Bearer test-secret", "X-Session-ID": session_id}
+    with client_with_stub(settings, stub_provider) as client:
+        first = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "one"}]},
+        )
+        second = client.post(
+            "/v1/chat/completions",
+            headers=headers
+            | {
+                "X-Runtime-Channel": "candidate",
+                "X-Trace-Origin": "candidate_evaluation",
+            },
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "two"}]},
+        )
+        records = client.app.state.usage.recent_requests()
+
+    assert first.status_code == 200
+    assert second.status_code == 502
+    assert second.json()["error"]["message"] == "session runtime provenance changed"
+    assert [record.status for record in records] == ["completed", "failed"]
+    assert sum(record.status == "failed" for record in records) == 1
+    assert stub_provider.calls == ["executor"]
+
+
+def test_route_failure_finalizes_one_usage_row(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "x"}],
+                "metadata": {"expected_files": "not-an-integer"},
+            },
+        )
+        usage = assert_usage(client.app, "failed")
+
+    assert response.status_code == 502
+    assert "invalid literal for int" in response.json()["error"]["message"]
+    assert stub_provider.calls == []
+    assert usage.request_class == "native_agent_turn"
+    assert usage.roles_required == ("executor",)
+
+
+def test_session_setup_failure_finalizes_usage_without_state(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+
+        def fail_session(*args, **kwargs):  # type: ignore[no-untyped-def]
+            assert len(client.app.state.usage.recent_requests()) == 1
+            raise ValueError("session setup failed")
+
+        client.app.state.controller.session = fail_session
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
+        )
+        usage = assert_usage(client.app, "failed")
+
+    assert response.status_code == 502
+    assert response.json()["error"]["message"] == "session setup failed"
+    assert usage.retryable_failure_class == "backend_error"
 
 
 def test_multiple_tool_calls_are_preserved(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

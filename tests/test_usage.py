@@ -157,6 +157,42 @@ def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
     }
 
 
+def test_token_counts_are_bounded_to_sqlite_signed_integer_range() -> None:
+    module = usage_module()
+    maximum = 2**63 - 1
+
+    accepted = module.RequestUsageFinalization(
+        completed_at=1.0,
+        status="completed",
+        prompt_tokens=maximum,
+        completion_tokens=maximum,
+        total_tokens=maximum,
+    )
+
+    assert accepted.total_tokens == maximum
+    for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        with pytest.raises(ValidationError):
+            module.RequestUsageFinalization.model_validate(
+                {"completed_at": 1.0, "status": "completed", field: maximum + 1}
+            )
+
+
+def test_active_request_count_is_not_limited_by_statistics_window(tmp_path: Path) -> None:
+    module = usage_module()
+    store = module.UsageStore(tmp_path / "usage.db", sample_window=2)
+    for index in range(5):
+        store.start(start_record(module, f"active-{index}", float(index)))
+
+    assert len(store.recent_requests()) == 2
+    assert store.active_request_count() == 5
+
+    store.finalize(
+        "active-0",
+        module.RequestUsageFinalization(completed_at=10.0, status="completed"),
+    )
+    assert store.active_request_count() == 4
+
+
 def test_statistics_cover_gaps_ewma_percentiles_roles_latency_and_lifecycle(
     tmp_path: Path,
 ) -> None:

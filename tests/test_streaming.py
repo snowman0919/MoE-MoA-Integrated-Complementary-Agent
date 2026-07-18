@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
-from dgx_moa.streaming import StreamObservation, forward_sse
+from dgx_moa.streaming import StreamObservation, forward_sse, reported_usage
 
 
 async def chunks(*values: bytes) -> AsyncIterator[bytes]:
@@ -181,6 +181,11 @@ async def test_observation_extracts_only_reported_token_counts() -> None:
         "completion_tokens": 3,
         "total_tokens": 5,
     }
+
+
+@pytest.mark.parametrize("value", [True, -1, 2**63, "5", 1.0])
+def test_reported_usage_omits_non_sqlite_integer_values(value: object) -> None:
+    assert reported_usage({"total_tokens": value}) == {}
 
 
 @pytest.mark.asyncio

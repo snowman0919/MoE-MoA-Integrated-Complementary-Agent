@@ -102,7 +102,7 @@ def usage_status(path: Path) -> dict[str, Any]:
     )
     return {
         "last_request": last_request,
-        "active_request_count": sum(record.completed_at is None for record in requests),
+        "active_request_count": store.active_request_count(),
         "request_statistics": {
             key: value
             for key, value in statistics.items()
