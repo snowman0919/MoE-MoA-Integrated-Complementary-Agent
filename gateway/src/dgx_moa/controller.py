@@ -212,7 +212,7 @@ class Controller:
         )
         state.controller_commit = self.settings.controller_commit
         state.vllm_version = self.settings.vllm_version
-        task_id = str(metadata.get("task_id", state.task_id))
+        task_id = str(metadata.get("task_id") or state.task_id or state.session_id)
         if state.task_id and state.task_id != task_id:
             raise ValueError("session task identity changed")
         state.task_id = task_id
@@ -222,6 +222,11 @@ class Controller:
             if state.repository and state.repository != identity:
                 raise ValueError("session repository identity changed")
             state.repository = identity
+        elif not state.repository:
+            state.repository = {
+                "workspace_identifier": "external-api",
+                "identity_quality": "client_unspecified",
+            }
         state.route, state.route_reasons = select_route(metadata)
         if state.route == "escalation":
             state.judge_status = "eligible"

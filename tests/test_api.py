@@ -38,6 +38,20 @@ def chat_endpoint(app):  # type: ignore[no-untyped-def]
     )
 
 
+def assert_terminal_evidence(settings, store, session_id: str, status: str) -> dict:  # type: ignore[no-untyped-def]
+    events = store.events(session_id)
+    timing_events = [event for event in events if event["event_type"] == "request_timing"]
+    terminal_events = [event for event in events if event["event_type"] == "session_ended"]
+    assert len(timing_events) == 1
+    assert len(terminal_events) == 1
+    assert terminal_events[0]["payload"] == {"request_id": session_id, "status": status}
+    trace_path = next((settings.state_db.parent.parent / "traces").rglob(f"{session_id}.jsonl"))
+    traces = [json.loads(line) for line in trace_path.read_text().splitlines()]
+    assert len(traces) == 1
+    assert sum(event["event_type"] == "session_ended" for event in traces[0]["events"]) == 1
+    return traces[0]
+
+
 def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     with client_with_stub(settings, stub_provider) as client:
         assert client.get("/healthz").status_code == 200
@@ -61,6 +75,30 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert call["id"] == "call-preserved"
         assert response.json()["usage"]["total_tokens"] == 3
         assert stub_provider.calls == ["executor"]
+
+
+def test_standard_request_gets_safe_identity_and_terminal_trace(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    session_id = "standard-terminal"
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "work"}]},
+        )
+        state = client.app.state.store.get(session_id)
+        trace = assert_terminal_evidence(settings, client.app.state.store, session_id, "completed")
+
+    assert response.status_code == 200
+    assert state and state.task_id == session_id
+    assert state.repository == {
+        "workspace_identifier": "external-api",
+        "identity_quality": "client_unspecified",
+    }
+    assert trace["task_id"] == session_id
+    assert trace["workspace_identity"]["workspace_identifier"] == "external-api"
+    assert all(decision["task_id"] == session_id for decision in trace["agent_decisions"])
 
 
 def test_executor_request_fields_are_preserved(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -418,6 +456,7 @@ def test_stage_timeout_returns_exact_typed_error(
     metadata: dict[str, object],
     stream: bool,
 ) -> None:  # type: ignore[no-untyped-def]
+    session_id = f"stage-timeout-{stage}"
     timeout_type = getattr(providers, "StageTimeout", TimeoutError)
     original_complete = stub_provider.complete
     original_stream = stub_provider.stream
@@ -437,7 +476,10 @@ def test_stage_timeout_returns_exact_typed_error(
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer test-secret"},
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": session_id,
+            },
             json={
                 "model": model,
                 "stream": stream,
@@ -445,6 +487,7 @@ def test_stage_timeout_returns_exact_typed_error(
                 "metadata": metadata,
             },
         )
+        trace = assert_terminal_evidence(settings, client.app.state.store, session_id, "timed_out")
 
     assert response.status_code == 504
     assert response.json()["error"] == {
@@ -453,6 +496,7 @@ def test_stage_timeout_returns_exact_typed_error(
         "code": f"{stage}_timeout",
         "param": None,
     }
+    assert trace["final_status"] == "failed"
 
 
 def test_orchestrated_assistant_answer_without_evidence_skips_review(
@@ -677,6 +721,42 @@ def test_request_headers_set_trace_identity(settings, stub_provider: StubProvide
             "current_commit": "abc",
             "dirty_status": "clean",
         }
+        continuation = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "header-identity",
+            },
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "work"}]},
+        )
+        continued_state = client.app.state.store.get("header-identity")
+
+    assert continuation.status_code == 200
+    assert continued_state and continued_state.task_id == "task-1"
+    assert continued_state.repository["workspace_identifier"] == "repo"
+
+
+def test_request_json_cannot_select_runtime_trace_provenance(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "body-provenance",
+            },
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "work"}],
+                "metadata": {"runtime_channel": "main", "trace_origin": "production"},
+            },
+        )
+        state = client.app.state.store.get("body-provenance")
+
+    assert response.status_code == 200
+    assert state and state.runtime_channel == settings.runtime_channel
+    assert state.trace_origin == settings.trace_origin
 
 
 def test_tool_result_continuation_uses_same_session(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -891,17 +971,20 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         assert final["choices"][0]["finish_reason"] == "stop"
         assert "usage" in final
         events = client.app.state.store.events("stream")
-        assert events[-1]["event_type"] == "stream_completed"
+        assert sum(event["event_type"] == "stream_completed" for event in events) == 1
         assert stub_provider.calls == ["executor"]
         assert not any(event["event_type"] == "review_completed" for event in events)
         assert events[-1]["created_at"]
-        trace_path = next((settings.state_db.parent.parent / "traces").rglob("stream.jsonl"))
-        trace = json.loads(trace_path.read_text())
+        trace = assert_terminal_evidence(settings, client.app.state.store, "stream", "completed")
         assert {event["event_type"] for event in trace["events"]} >= {
             "request_received",
             "route_selected",
             "tool_call_requested",
+            "session_ended",
         }
+        assert trace["task_id"] == "stream"
+        assert trace["workspace_identity"]["workspace_identifier"] == "external-api"
+        assert all(decision["task_id"] == "stream" for decision in trace["agent_decisions"])
 
 
 @pytest.mark.asyncio
@@ -952,6 +1035,13 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
         assert first == first_event
         assert not release.is_set()
         assert stub_provider.calls == ["planner", "executor"]
+        assert not any(
+            event["event_type"] == "session_ended"
+            for event in app.state.store.events("immediate-stream")
+        )
+        assert not list(
+            (settings.state_db.parent.parent / "traces").rglob("immediate-stream.jsonl")
+        )
 
         release.set()
         remaining = b"".join([chunk async for chunk in response.body_iterator])
@@ -961,6 +1051,7 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
         assert state and state.review_deferred
         assert state.review_status == "deferred"
         assert "first_downstream_byte" in state.timings_ms
+        assert_terminal_evidence(settings, app.state.store, "immediate-stream", "completed")
 
 
 @pytest.mark.asyncio
@@ -1020,6 +1111,8 @@ async def test_stream_total_deadline_does_not_retry_after_first_byte(
         ]
         assert len(timing_events) == 1
         assert timing_events[0]["payload"]["stage_status"]["executor_total"] == "timed_out"
+        trace = assert_terminal_evidence(settings, app.state.store, "total-timeout", "timed_out")
+        assert trace["final_status"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -1076,7 +1169,15 @@ async def test_streaming_api_persists_cancellation_and_closes_upstream(
 
         state = app.state.store.get("cancelled-stream")
         assert state and state.final_status == "cancelled"
-        assert app.state.store.events("cancelled-stream")[-1]["event_type"] == "stream_aborted"
+        assert (
+            sum(
+                event["event_type"] == "stream_aborted"
+                for event in app.state.store.events("cancelled-stream")
+            )
+            == 1
+        )
+        trace = assert_terminal_evidence(settings, app.state.store, "cancelled-stream", "cancelled")
+        assert trace["final_status"] == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -1155,6 +1256,7 @@ async def test_streaming_api_first_byte_cancellation_persists_terminal_evidence(
     assert len(traces) == 1
     assert traces[0]["final_status"] == "cancelled"
     assert traces[0]["metrics"]["request_timing_ms"] == payload["timings_ms"]
+    assert_terminal_evidence(settings, app.state.store, "first-byte-cancelled", "cancelled")
 
 
 @pytest.mark.asyncio
@@ -1215,8 +1317,17 @@ async def test_streaming_api_consumer_close_closes_upstream_and_persists_abort(
 
         state = app.state.store.get("closed-stream")
         assert state
+        assert state.final_status == "cancelled"
         assert state.decisions[-1]["outcome"]["status"] == "failure"
-        assert app.state.store.events("closed-stream")[-1]["event_type"] == "stream_aborted"
+        assert (
+            sum(
+                event["event_type"] == "stream_aborted"
+                for event in app.state.store.events("closed-stream")
+            )
+            == 1
+        )
+        trace = assert_terminal_evidence(settings, app.state.store, "closed-stream", "cancelled")
+        assert trace["final_status"] == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -1275,7 +1386,14 @@ async def test_streaming_api_close_after_done_persists_terminal_success(
         assert state.review_deferred
         assert state.review_status == "deferred"
         assert state.decisions[-1]["outcome"]["status"] == "success"
-        assert app.state.store.events("terminal-close")[-1]["event_type"] == "stream_completed"
+        assert (
+            sum(
+                event["event_type"] == "stream_completed"
+                for event in app.state.store.events("terminal-close")
+            )
+            == 1
+        )
+        assert_terminal_evidence(settings, app.state.store, "terminal-close", "completed")
 
 
 def test_streaming_upstream_400_returns_invalid_request(
@@ -1428,6 +1546,7 @@ def test_non_timeout_terminal_failure_records_one_timing_and_trace(
             for event in client.app.state.store.events(session_id)
             if event["event_type"] == "request_timing"
         ]
+        trace = assert_terminal_evidence(settings, client.app.state.store, session_id, "failed")
 
     assert response.status_code == status_code
     assert len(timing_events) == 1
@@ -1435,10 +1554,8 @@ def test_non_timeout_terminal_failure_records_one_timing_and_trace(
     assert payload["stage_status"]["executor_total"] == "failed"
     assert isinstance(payload["timings_ms"]["completed"], int | float)
     assert secret_content not in json.dumps(payload)
-    trace_path = next((settings.state_db.parent.parent / "traces").rglob(f"{session_id}.jsonl"))
-    traces = [json.loads(line) for line in trace_path.read_text().splitlines()]
-    assert len(traces) == 1
-    assert traces[0]["metrics"]["request_timing_ms"] == payload["timings_ms"]
+    assert trace["final_status"] == "failed"
+    assert trace["metrics"]["request_timing_ms"] == payload["timings_ms"]
 
 
 def test_duplicate_failed_call_records_one_timing_and_trace(

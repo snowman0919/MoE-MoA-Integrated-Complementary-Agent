@@ -231,7 +231,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         accepted = time.monotonic()
         stage_status: dict[str, str] = {}
         timing_recorded = False
-        failure_finalized = False
+        terminal_finalized = False
         state: Any | None = None
         executor_started: float | None = None
         active_stage = "request"
@@ -281,10 +281,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "invalid_request",
                 "max_tokens",
             )
-        if x_runtime_channel:
-            raw["metadata"]["runtime_channel"] = x_runtime_channel
-        if x_trace_origin:
-            raw["metadata"]["trace_origin"] = x_trace_origin
+        raw["metadata"]["runtime_channel"] = x_runtime_channel or configured.runtime_channel
+        raw["metadata"]["trace_origin"] = x_trace_origin or configured.trace_origin
         if x_task_id:
             raw["metadata"]["task_id"] = x_task_id
         if x_workspace_path:
@@ -295,32 +293,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "current_commit": x_repository_commit or "unknown",
                 "dirty_status": x_dirty_state or "unknown",
             }
-        task_id = str(raw["metadata"].get("task_id", ""))
         title_index = title_request_index(raw["messages"])
         if title_index is not None:
             state_session_id = f"{session_id}:title"
             raw["messages"] = [raw["messages"][title_index]]
         else:
             state_session_id = session_id
+        task_id = str(raw["metadata"].get("task_id") or "")
 
-        def finalize_failure(
-            stage: str,
-            status_value: str = "failed",
+        def finalize_request(
+            stage: str | None,
+            status_value: str,
             *,
-            downstream_started: bool = True,
+            downstream_started: bool = False,
             current_state: Any | None = None,
         ) -> None:
-            nonlocal failure_finalized, state
-            if failure_finalized:
+            nonlocal terminal_finalized, state
+            if terminal_finalized:
                 return
             current = current_state or state or request.app.state.store.get(state_session_id)
             if current is None:
                 return
-            failure_finalized = True
+            terminal_finalized = True
             if state is None:
                 current.timings_ms = {"accepted": 0.0}
                 state = current
-            stage_status[stage] = status_value
+            if stage is not None:
+                stage_status[stage] = status_value
+            if status_value == "cancelled":
+                current.final_status = "cancelled"
+            elif status_value in {"failed", "timed_out"} and current.final_status != "blocked":
+                current.final_status = "failed"
             if executor_started is not None:
                 current.timings_ms.setdefault(
                     "executor_total",
@@ -329,11 +332,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if downstream_started:
                 current.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
             record_request_timing(current)
+            request.app.state.store.event(
+                current.session_id,
+                "session_ended",
+                {"request_id": state_session_id, "status": status_value},
+            )
             request.app.state.store.save(current)
             record_trace_safely(request, current, task_id)
 
         try:
             state = request.app.state.controller.session(state_session_id, raw["messages"])
+            task_id = task_id or state.task_id or state_session_id
+            raw["metadata"]["task_id"] = task_id
             state.timings_ms = {"accepted": 0.0}
             request.app.state.store.event(
                 state_session_id,
@@ -397,6 +407,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         if not observation.done_seen:
                             state.final_status = "cancelled"
                         raise
+                    except Exception:
+                        stage_status["executor_total"] = "failed"
+                        raise
                     finally:
                         terminal = completed or observation.done_seen
                         state.timings_ms["executor_total"] = round(
@@ -420,7 +433,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 "validation_triggered": False,
                                 "next_phase": state.phase,
                             }
-                        record_request_timing(state)
                         request.app.state.store.event(
                             state_session_id,
                             "assistant_stream_finished",
@@ -431,8 +443,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "stream_completed" if terminal else "stream_aborted",
                             {},
                         )
-                        request.app.state.store.save(state)
-                        record_trace_safely(request, state, task_id)
+                        terminal_status = (
+                            "completed"
+                            if terminal
+                            else "timed_out"
+                            if stage_status.get("executor_total") == "timed_out"
+                            else "failed"
+                            if stage_status.get("executor_total") == "failed"
+                            else "cancelled"
+                        )
+                        finalize_request(None, terminal_status, current_state=state)
 
                 return StreamingResponse(
                     stream_response(),
@@ -500,14 +520,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if not state.truncated:
                         request.app.state.controller.apply_metadata(state, body.metadata)
             state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
-            record_request_timing(state)
             request.app.state.store.event(
                 state_session_id,
                 "assistant_stream_finished",
                 {"finish_reasons": [finish_reason] if finish_reason else []},
             )
-            request.app.state.store.save(state)
-            record_trace_safely(request, state, task_id)
+            finalize_request(None, "completed", current_state=state)
             return JSONResponse(response, headers={"X-Session-ID": session_id})
         except asyncio.CancelledError:
             current = state or request.app.state.store.get(state_session_id)
@@ -515,7 +533,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 current.final_status = "cancelled"
                 if body.stream:
                     request.app.state.store.event(state_session_id, "stream_aborted", {})
-            finalize_failure(
+            finalize_request(
                 active_stage,
                 "cancelled",
                 downstream_started=False,
@@ -523,10 +541,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             raise
         except DuplicateFailedCall as error:
-            finalize_failure(active_stage)
+            finalize_request(active_stage, "failed", downstream_started=True)
             raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
         except StageTimeout as error:
-            finalize_failure(error.stage, "timed_out")
+            finalize_request(error.stage, "timed_out", downstream_started=True)
             return error_response(
                 status.HTTP_504_GATEWAY_TIMEOUT,
                 str(error),
@@ -540,7 +558,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "reviewing": "reviewer",
                 "heavy_review": "judge",
             }.get(phase, "executor")
-            finalize_failure(active_stage, "timed_out")
+            finalize_request(active_stage, "timed_out", downstream_started=True)
             return error_response(
                 status.HTTP_504_GATEWAY_TIMEOUT,
                 str(error),
@@ -548,7 +566,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 f"{stage}_timeout",
             )
         except httpx.HTTPStatusError as error:
-            finalize_failure(active_stage)
+            finalize_request(active_stage, "failed", downstream_started=True)
             try:
                 payload = error.response.json()
             except (ValueError, httpx.StreamError):
@@ -578,7 +596,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "backend_error",
             )
         except httpx.HTTPError as error:
-            finalize_failure(active_stage)
+            finalize_request(active_stage, "failed", downstream_started=True)
             return error_response(
                 status.HTTP_502_BAD_GATEWAY,
                 str(error),
@@ -586,7 +604,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "backend_error",
             )
         except ValueError as error:
-            finalize_failure(active_stage)
+            finalize_request(active_stage, "failed", downstream_started=True)
             if str(error) == "max_tokens exceeds server maximum 16384":
                 return error_response(
                     status.HTTP_400_BAD_REQUEST,

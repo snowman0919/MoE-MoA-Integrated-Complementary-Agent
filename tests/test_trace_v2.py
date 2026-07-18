@@ -189,6 +189,64 @@ def test_incomplete_and_legacy_traces_are_not_promoted(tmp_path) -> None:  # typ
     assert dataset["count"] == 0 and dataset["legacy_excluded"] == 1
 
 
+def test_audit_prefers_v2_over_duplicate_legacy_session(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    state = complete_state()
+    complete_v2 = trace_record(
+        state,
+        events=[
+            {"event_type": event_type}
+            for event_type in (
+                "session_started",
+                "route_selected",
+                "assistant_stream_finished",
+                "session_ended",
+            )
+        ],
+        models=settings.models,
+    )
+    (traces / "a-v2.jsonl").write_text(json.dumps(complete_v2) + "\n")
+    (traces / "z-v1.jsonl").write_text(
+        json.dumps({"schema_version": "agent-trace-v1", "session_id": state.session_id}) + "\n"
+    )
+
+    report = audit_traces(traces)
+
+    assert report["total_sessions"] == 1
+    assert report["complete_sessions"] == 1
+    assert report["legacy_sessions"] == 0
+
+
+def test_audit_uses_later_read_sequence_within_same_schema(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    state = complete_state()
+    complete_v2 = trace_record(
+        state,
+        events=[
+            {"event_type": event_type}
+            for event_type in (
+                "session_started",
+                "route_selected",
+                "assistant_stream_finished",
+                "session_ended",
+            )
+        ],
+        models=settings.models,
+    )
+    incomplete_v2 = complete_v2 | {"task_id": ""}
+    (traces / "records.jsonl").write_text(
+        json.dumps(complete_v2) + "\n" + json.dumps(incomplete_v2) + "\n"
+    )
+
+    report = audit_traces(traces)
+
+    assert report["total_sessions"] == 1
+    assert report["incomplete_sessions"] == 1
+    assert report["missing_fields"] == {"task_id": 1}
+
+
 def test_tool_linkage_and_stricter_training_override(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
     state = SessionState(session_id="tool")
