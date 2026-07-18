@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 from dgx_moa.adapters import evaluate, register
 from dgx_moa.benchmark import TASKS, benchmark_models, summarize
 from dgx_moa.dataset import build, quality_tier
@@ -19,6 +20,26 @@ def test_api_client_mode_documentation() -> None:
     assert "DGX_MOA_API_KEY" in hermes
     assert "127.0.0.1:9000" not in hermes
     assert "Tailscale Serve" not in hermes
+
+
+def test_hermes_documentation_matches_physical_config() -> None:
+    hermes = Path("docs/HERMES_AGENT.md").read_text()
+    yaml_block = hermes.split("```yaml\n", 1)[1].split("\n```", 1)[0]
+    assert yaml.safe_load(yaml_block) == {
+        "model": {
+            "default": "dgx-moa-agent",
+            "provider": "custom",
+            "base_url": "http://100.125.239.72:9000/v1",
+            "api_key": "${DGX_MOA_API_KEY}",
+            "context_length": 65536,
+            "max_tokens": 16384,
+        },
+        "platform_toolsets": {"cli": ["file"]},
+    }
+    assert "custom_openai" not in hermes
+    assert "Hermes Agent `0.18.2`" in hermes
+    assert "HERMES_OK" in hermes
+    assert "deferred" not in hermes.lower()
 
 
 def test_opencode_validation_uses_standard_agent_requests() -> None:
