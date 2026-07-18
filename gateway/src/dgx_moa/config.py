@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
+import re
+from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -14,6 +17,8 @@ API_KEY_PLACEHOLDERS = {
     "replace-with-a-long-random-token",
     "replace-with-a-long-random-value",
 }
+MODEL_ROLES = frozenset({"executor", "planner", "reviewer", "reasoner", "judge"})
+SYSTEMD_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@-]*\.service$")
 
 
 def parse_bool(value: Any) -> bool:
@@ -87,6 +92,9 @@ class Settings(BaseModel):
     vllm_version: str = "unknown"
     frontier_enabled: bool = False
     frontier_disabled_reason: str = "host_sandbox_capability_blocked"
+    lifecycle_mode: Literal["disabled", "observe", "fixed", "adaptive"] = "disabled"
+    lifecycle_poll_seconds: float = Field(default=30, gt=0)
+    lifecycle_unit_map: dict[str, str] = Field(default_factory=dict)
     models: dict[str, ModelConfig] = Field(default_factory=dict)
     limits: Limits = Field(default_factory=Limits)
 
@@ -106,6 +114,26 @@ class Settings(BaseModel):
                 "DGX_MOA_API_KEY must contain a non-placeholder token when "
                 "DGX_MOA_AUTH_ENABLED=true"
             )
+        return self
+
+    @field_validator("lifecycle_unit_map")
+    @classmethod
+    def validate_lifecycle_unit_map(cls, value: dict[str, str]) -> dict[str, str]:
+        unknown = set(value) - MODEL_ROLES
+        if unknown:
+            raise ValueError(f"unknown lifecycle role: {sorted(unknown)[0]}")
+        if any(not SYSTEMD_UNIT_PATTERN.fullmatch(unit) for unit in value.values()):
+            raise ValueError("invalid systemd unit")
+        if len(set(value.values())) != len(value):
+            raise ValueError("duplicate lifecycle unit")
+        return value
+
+    @model_validator(mode="after")
+    def validate_lifecycle_runtime(self) -> Settings:
+        if self.runtime_channel != "main" and any(
+            not unit.startswith("dgx-moa-dev-") for unit in self.lifecycle_unit_map.values()
+        ):
+            raise ValueError("non-main lifecycle units must use the dgx-moa-dev namespace")
         return self
 
 
@@ -148,6 +176,17 @@ def load_settings(path: str | Path | None = None) -> Settings:
         "DGX_MOA_FRONTIER_DISABLED_REASON",
         gateway.get("frontier_disabled_reason", "host_sandbox_capability_blocked"),
     )
+    gateway["lifecycle_mode"] = os.getenv(
+        "DGX_MOA_LIFECYCLE_MODE", gateway.get("lifecycle_mode", "disabled")
+    )
+    gateway["lifecycle_poll_seconds"] = os.getenv(
+        "DGX_MOA_LIFECYCLE_POLL_SECONDS", gateway.get("lifecycle_poll_seconds", 30)
+    )
+    unit_map: Any = os.getenv("DGX_MOA_LIFECYCLE_UNIT_MAP", gateway.get("lifecycle_unit_map", {}))
+    if isinstance(unit_map, str):
+        with suppress(json.JSONDecodeError):
+            unit_map = json.loads(unit_map)
+    gateway["lifecycle_unit_map"] = unit_map
     return Settings.model_validate(gateway)
 
 
