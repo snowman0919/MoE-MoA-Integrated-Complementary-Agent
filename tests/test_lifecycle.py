@@ -1851,6 +1851,7 @@ async def test_coordinator_preserves_prior_progress_when_new_logs_are_invalid(
 ) -> None:
     module = lifecycle()
     blocked = asyncio.Event()
+    second_poll = asyncio.Event()
     sleep_calls = 0
     store = module.LifecycleStore(tmp_path / "preserve-progress.db", ("executor",))
     driver = module.FakeLifecycleDriver(
@@ -1867,6 +1868,7 @@ async def test_coordinator_preserves_prior_progress_when_new_logs_are_invalid(
         if sleep_calls == 1:
             driver._progress["executor"] = ("checkpoint shards: invalid",)
             return
+        second_poll.set()
         await blocked.wait()
 
     coordinator = module.LifecycleCoordinator(
@@ -1880,10 +1882,7 @@ async def test_coordinator_preserves_prior_progress_when_new_logs_are_invalid(
     )
 
     await coordinator.ensure_ready("executor")
-    for _ in range(100):
-        if sleep_calls == 2:
-            break
-        await asyncio.sleep(0)
+    await asyncio.wait_for(second_poll.wait(), timeout=1.0)
     record = store.get("executor")
 
     assert record.progress_value == 60.0
