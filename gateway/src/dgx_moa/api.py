@@ -5,7 +5,7 @@ import math
 import os
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -21,6 +21,7 @@ from .controller import Controller, DuplicateFailedCall
 from .lifecycle import (
     LifecycleCoordinator,
     LifecycleDriver,
+    LifecycleNotReadyError,
     LifecycleRecord,
     LifecycleStore,
     SystemdLifecycleDriver,
@@ -35,6 +36,7 @@ from .routing import (
     resolve_runtime_mode,
     review_fails_closed,
 )
+from .runtime_status import memory_available as runtime_memory_available
 from .runtime_status import report as runtime_report
 from .schemas import ChatRequest, ProfileResponse
 from .security import admin_dependency, auth_dependency
@@ -163,6 +165,7 @@ def create_app(
     lifecycle_health_probe: Callable[[str], Awaitable[bool]] | None = None,
     lifecycle_clock: Callable[[], float] = time.time,
     lifecycle_sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    lifecycle_memory_probe: Callable[[], int] = runtime_memory_available,
 ) -> FastAPI:
     configured = settings or get_settings()
     auth = auth_dependency(configured)
@@ -210,6 +213,16 @@ def create_app(
             poll_seconds=configured.lifecycle_poll_seconds,
             clock=lifecycle_clock,
             sleeper=lifecycle_sleeper,
+            memory_probe=lifecycle_memory_probe,
+        )
+        managed_roles = tuple(configured.lifecycle_unit_map)
+        if configured.lifecycle_mode in {"fixed", "adaptive"}:
+            await app.state.lifecycle.reconcile_managed(managed_roles)
+        app.state.lifecycle.start_scheduler(
+            configured.lifecycle_mode,
+            managed_roles,
+            configured.limits,
+            app.state.usage,
         )
         app.state.reviewer_evaluation_lock = asyncio.Lock()
         app.state.traces = TraceRecorder(
@@ -272,6 +285,9 @@ def create_app(
             request.app.state.store.save(state)
 
     def public_lifecycle_record(record: LifecycleRecord) -> dict[str, Any]:
+        decision = app.state.lifecycle_store.latest_decision(record.role)
+        if decision is not None and decision.mode != configured.lifecycle_mode:
+            decision = None
         return {
             "role": record.role,
             "state": record.state,
@@ -286,6 +302,7 @@ def create_app(
             "estimated_ready_seconds": record.eta_seconds,
             "failure_class": record.failure_class,
             "retry_count": record.retry_count,
+            "idle_decision": decision.model_dump(mode="json") if decision else None,
             "lifecycle_mode": configured.lifecycle_mode,
             "control": ("observe_only" if configured.lifecycle_mode == "observe" else "managed"),
         }
@@ -307,6 +324,7 @@ def create_app(
             "estimated_ready_seconds": None,
             "failure_class": None,
             "retry_count": 0,
+            "idle_decision": None,
             "lifecycle_mode": configured.lifecycle_mode,
             "control": "disabled" if configured.lifecycle_mode == "disabled" else "unmanaged",
         }
@@ -484,6 +502,14 @@ def create_app(
                 if mode == "disabled"
                 else set(configured.models) - set(configured.lifecycle_unit_map)
             ),
+            "idle_decisions": {
+                role: decision.model_dump(mode="json")
+                for role in sorted(configured.lifecycle_unit_map)
+                if mode != "disabled"
+                and (decision := request.app.state.lifecycle_store.latest_decision(role))
+                is not None
+                and decision.mode == mode
+            },
         }
         if mode == "disabled":
             payload["external_state"] = "not_lifecycle_managed"
@@ -744,12 +770,26 @@ def create_app(
         try:
             active_lease_ids = tuple(
                 lease.lease_id
-                for lease in request.app.state.lifecycle_store.acquire_request_leases(
+                for lease in await request.app.state.lifecycle.acquire_request_leases(
                     usage_request_id,
                     roles,
                     kind="active_request",
+                    require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
                 )
             )
+        except LifecycleNotReadyError as error:
+            record = error.record
+            if record.state == "failed":
+                finalize_request("model_unavailable", "failed")
+                return unavailable_response(record.role, record=record)
+            finalize_request(
+                "model_loading",
+                "failed",
+                retryable_failure_class="model_loading",
+            )
+            return loading_response(record)
+
+        try:
             continuation_owner = continuation_correlation(state_session_id)
             if has_matching_tool_result(raw["messages"]):
                 request.app.state.lifecycle_store.release_continuation(
@@ -781,10 +821,11 @@ def create_app(
             if body.stream:
                 stream_lease_ids = tuple(
                     lease.lease_id
-                    for lease in request.app.state.lifecycle_store.acquire_request_leases(
+                    for lease in await request.app.state.lifecycle.acquire_request_leases(
                         usage_request_id,
                         ("executor",),
                         kind="open_stream",
+                        require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
                     )
                 )
                 upstream = await request.app.state.provider.stream(
@@ -1155,6 +1196,8 @@ def create_app(
             runtime_report,
             request.app.state.settings.state_db,
             request.app.state.project_root,
+            lifecycle_mode=configured.lifecycle_mode,
+            managed_roles=tuple(configured.lifecycle_unit_map),
         )
 
     @app.get("/admin/profile", response_model=ProfileResponse, dependencies=[Depends(admin_auth)])
@@ -1162,10 +1205,44 @@ def create_app(
         return dict(request.app.state.profiles.current())
 
     async def switch_profile(name: str, request: Request) -> dict[str, str]:
+        guard_ownership: dict[str, str] = {}
+        switch_task: asyncio.Task[Mapping[str, str]] | None = None
         try:
-            return dict(await asyncio.to_thread(request.app.state.profiles.switch, name))
+            if configured.lifecycle_mode in {"fixed", "adaptive"}:
+                try:
+                    guard_ownership = await request.app.state.lifecycle.claim_guards(
+                        configured.lifecycle_unit_map,
+                        "profile_guard",
+                    )
+                except Exception as error:
+                    raise HTTPException(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "lifecycle profile guard unavailable",
+                    ) from error
+            switch_task = asyncio.create_task(
+                asyncio.to_thread(request.app.state.profiles.switch, name)
+            )
+            try:
+                return dict(await asyncio.shield(switch_task))
+            except asyncio.CancelledError:
+                await switch_task
+                raise
+        except HTTPException:
+            raise
         except Exception as error:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(error)) from error
+        finally:
+            if guard_ownership:
+                try:
+                    await request.app.state.lifecycle.release_guards(
+                        guard_ownership,
+                        "profile_guard",
+                    )
+                except Exception as error:
+                    raise HTTPException(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "lifecycle profile guard cleanup unavailable",
+                    ) from error
 
     @app.post(
         "/admin/profile/resident",

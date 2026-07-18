@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import subprocess
+import threading
 import traceback
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import pytest
@@ -760,10 +761,141 @@ def test_schema_persists_every_lifecycle_field_without_changing_usage_tables(
         "request_usage",
         "lifecycle_samples",
         "model_lifecycle",
+        "model_lifecycle_decisions",
         "model_lifecycle_leases",
     }
     assert columns == set(module.LifecycleRecord.model_fields)
     assert lease_columns == set(module.LifecycleLease.model_fields)
+
+
+def test_latest_idle_decision_is_migration_safe_typed_and_content_free(tmp_path: Path) -> None:
+    module = lifecycle()
+    path = tmp_path / "state.db"
+    store = module.LifecycleStore(path, ("executor",), clock=lambda: 100.0)
+    sentinel = "SENTINEL_DECISION_CONTENT_882fab"
+    usage = policy_usage(0.0)
+    usage.session_id = sentinel
+    decision = module.calculate_idle_policy(
+        "executor",
+        "fixed",
+        (usage,),
+        policy_record(module),
+        now=100.0,
+        limits=Limits(
+            executor_idle_minimum_seconds=5,
+            executor_idle_fallback_seconds=20,
+            executor_idle_maximum_seconds=100,
+            executor_minimum_ready_residency_seconds=1,
+        ),
+    )
+
+    first = store.persist_decision(decision)
+    duplicate = store.persist_decision(decision)
+    restarted = module.LifecycleStore(path, ("executor",), clock=lambda: 101.0)
+
+    assert duplicate == first
+    assert restarted.latest_decision("executor") == first
+    assert restarted.latest_decisions() == {"executor": first}
+    assert first.model_dump() == decision.model_dump() | {"decided_at": 100.0}
+    persisted = b"".join(
+        candidate.read_bytes() for candidate in (path, Path(f"{path}-wal")) if candidate.exists()
+    )
+    assert sentinel.encode() not in persisted
+
+
+def test_unload_admission_atomically_rechecks_transition_and_every_blocker(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "state.db", ("executor",), clock=lambda: 100.0)
+    ready = reach(store, "executor", "ready")
+    request_id = "d7c1a25f-3f6e-4356-b13c-96bbbd2c447e"
+    active = store.acquire_request_leases(
+        request_id,
+        ("executor",),
+        kind="active_request",
+    )
+
+    assert (
+        store.admit_unload(
+            "executor",
+            expected_transition_id=ready.transition_id,
+            memory_before_bytes=1_000,
+        )
+        is None
+    )
+    assert store.get("executor").state == "ready"
+
+    store.release_leases(lease.lease_id for lease in active)
+    assert (
+        store.admit_unload(
+            "executor",
+            expected_transition_id=ready.transition_id,
+            memory_before_bytes=1_000,
+        )
+        is None
+    )
+    ready = store.get("executor")
+    admitted = store.admit_unload(
+        "executor",
+        expected_transition_id=ready.transition_id,
+        expected_ready_since=ready.ready_since,
+        expected_last_used_at=ready.last_used_at,
+        memory_before_bytes=1_000,
+    )
+
+    assert admitted is not None
+    assert admitted.state == "unloading"
+    assert admitted.memory_before_bytes == 1_000
+    assert (
+        store.admit_unload(
+            "executor",
+            expected_transition_id=ready.transition_id,
+            memory_before_bytes=1_000,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "blocker",
+    ["open_stream", "continuation", "evaluation_guard", "profile_guard"],
+)
+def test_unload_admission_rejects_each_live_blocker(tmp_path: Path, blocker: str) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(
+        tmp_path / f"{blocker}.db",
+        ("executor",),
+        clock=lambda: 100.0,
+    )
+    ready = reach(store, "executor", "ready")
+    request_id = "d0fb4c14-965a-484f-9265-6976db828fdd"
+    if blocker == "open_stream":
+        store.acquire_request_leases(request_id, ("executor",), kind="open_stream")
+    elif blocker == "continuation":
+        store.refresh_continuation(
+            request_id,
+            "executor",
+            module.continuation_correlation("blocked-session"),
+            expires_at=200.0,
+        )
+    else:
+        store.set_guard(
+            "executor",
+            blocker,
+            True,
+            expected_transition_id=ready.transition_id,
+        )
+
+    assert (
+        store.admit_unload(
+            "executor",
+            expected_transition_id=ready.transition_id,
+            memory_before_bytes=1_000,
+        )
+        is None
+    )
+    assert store.get("executor").state == "ready"
 
 
 def test_active_leases_are_idempotent_and_counted_exactly_per_role(tmp_path: Path) -> None:
@@ -794,6 +926,78 @@ def test_active_leases_are_idempotent_and_counted_exactly_per_role(tmp_path: Pat
 
     assert store.get("executor").active_request_count == 0
     assert store.get("planner").active_request_count == 0
+
+
+def test_active_release_marks_activity_once_at_terminal_cleanup(tmp_path: Path) -> None:
+    module = lifecycle()
+    clock = [100.0]
+    store = module.LifecycleStore(
+        tmp_path / "activity.db",
+        ("executor", "planner"),
+        clock=lambda: clock[0],
+    )
+    leases = store.acquire_request_leases(
+        "e5078c84-3bb3-4d28-bb02-da4ea0fda769",
+        ("executor", "planner"),
+        kind="active_request",
+    )
+
+    clock[0] = 125.0
+    store.release_leases(lease.lease_id for lease in leases)
+    assert store.get("executor").last_used_at == 125.0
+    assert store.get("planner").last_used_at == 125.0
+
+    clock[0] = 150.0
+    store.release_leases(lease.lease_id for lease in leases)
+    assert store.get("executor").last_used_at == 125.0
+    assert store.get("planner").last_used_at == 125.0
+
+
+@pytest.mark.asyncio
+async def test_coordinator_acquires_multiple_ready_roles_atomically_or_none(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "coordinated.db", ("executor", "planner"))
+    executor = reach(store, "executor", "ready")
+    reach(store, "planner", "ready")
+    coordinator = module.LifecycleCoordinator(
+        store,
+        module.FakeLifecycleDriver({"executor": "active", "planner": "active"}),
+        health_probe=lambda role: asyncio.sleep(0, result=True),
+        timeout_seconds=10.0,
+        poll_seconds=1.0,
+    )
+
+    leases = await coordinator.acquire_request_leases(
+        "48d1c9a5-1bc0-4756-8894-89d76b2e767c",
+        ("executor", "planner"),
+        kind="active_request",
+        require_ready=True,
+    )
+    assert {lease.role for lease in leases} == {"executor", "planner"}
+    await coordinator.release_request_leases(lease.lease_id for lease in leases)
+    executor = store.get("executor")
+    admitted = store.admit_unload(
+        "executor",
+        expected_transition_id=executor.transition_id,
+        expected_ready_since=executor.ready_since,
+        expected_last_used_at=executor.last_used_at,
+        memory_before_bytes=1_000,
+    )
+    assert admitted is not None
+
+    with pytest.raises(module.LifecycleNotReadyError) as error:
+        await coordinator.acquire_request_leases(
+            "53f4c311-c5a5-4f44-890e-b6d7edba3987",
+            ("planner", "executor"),
+            kind="active_request",
+            require_ready=True,
+        )
+
+    assert error.value.record.state == "unloading"
+    assert store.get("planner").active_request_count == 0
+    await coordinator.close()
 
 
 def test_stream_and_continuation_leases_are_content_free_and_expire(
@@ -923,6 +1127,41 @@ def test_unload_blockers_cover_every_lease_and_uncertain_guard(tmp_path: Path) -
     )
 
     assert store.unload_blockers("executor") == frozenset()
+
+
+def test_multi_role_guard_claim_is_atomic_when_a_guard_is_already_owned(tmp_path: Path) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "guard-claim.db", ("executor", "planner"))
+    planner = store.get("planner")
+    store.set_guard(
+        "planner",
+        "profile_guard",
+        True,
+        expected_transition_id=planner.transition_id,
+    )
+
+    with pytest.raises(module.LifecycleError, match="already active"):
+        store.claim_guards(("executor", "planner"), "profile_guard")
+
+    assert store.get("executor").profile_guard is False
+    assert store.get("planner").profile_guard is True
+
+
+def test_guard_release_preserves_uncertainty_after_a_transition(tmp_path: Path) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "guard-stale.db", ("executor", "planner"))
+    executor = reach(store, "executor", "ready")
+    ownership = store.claim_guards(("executor", "planner"), "profile_guard")
+    store.transition(
+        "executor",
+        "unloading",
+        expected_transition_id=executor.transition_id,
+    )
+
+    store.release_guards(ownership, "profile_guard")
+
+    assert store.get("executor").profile_guard is True
+    assert store.get("planner").profile_guard is False
 
 
 def test_restart_recovery_removes_orphans_and_preserves_live_guards(
@@ -2086,3 +2325,475 @@ async def test_load_scopes_progress_immediately_before_start_without_persisting_
     assert driver.progress_cursors == [("executor", cursor)]
     assert cursor.encode() not in store.path.read_bytes()
     await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_disabled_has_no_scheduler_and_observe_records_without_side_effects(
+    tmp_path: Path,
+) -> None:
+    from dgx_moa.usage import UsageStore
+
+    module = lifecycle()
+    first_poll = asyncio.Event()
+    block = asyncio.Event()
+    sleep_calls = 0
+    store = module.LifecycleStore(tmp_path / "scheduler.db", ("executor",))
+    reach(store, "executor", "ready")
+    usage = UsageStore(store.path)
+    driver = module.FakeLifecycleDriver({"executor": "active"})
+
+    async def sleeper(seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        assert seconds == 1.0
+        if sleep_calls == 1:
+            first_poll.set()
+            return
+        await block.wait()
+
+    def reject_memory() -> int:
+        raise AssertionError("observe sampled memory")
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=lambda role: asyncio.sleep(0, result=True),
+        timeout_seconds=10.0,
+        poll_seconds=1.0,
+        clock=lambda: 10_000.0,
+        sleeper=sleeper,
+        memory_probe=reject_memory,
+    )
+
+    assert coordinator.start_scheduler("disabled", ("executor",), Limits(), usage) is None
+    assert sleep_calls == 0
+    scheduler = coordinator.start_scheduler("observe", ("executor",), Limits(), usage)
+    assert scheduler is not None
+    assert coordinator.start_scheduler("observe", ("executor",), Limits(), usage) is scheduler
+    await asyncio.wait_for(first_poll.wait(), timeout=1)
+    for _ in range(100):
+        if store.latest_decision("executor") is not None:
+            break
+        await asyncio.sleep(0)
+
+    decision = store.latest_decision("executor")
+    assert decision is not None
+    assert decision.mode == "observe"
+    assert driver.calls == []
+    assert not scheduler.done()
+    await coordinator.close()
+    assert scheduler.done()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["fixed", "adaptive"])
+async def test_scheduler_orders_optional_roles_before_executor_and_stops_on_second_check(
+    tmp_path: Path,
+    mode: Literal["fixed", "adaptive"],
+) -> None:
+    from dgx_moa.usage import UsageStore
+
+    module = lifecycle()
+    clock = [0.0]
+    roles = ("executor", "reviewer", "planner")
+    store = module.LifecycleStore(tmp_path / "ordering.db", roles, clock=lambda: clock[0])
+    for role in roles:
+        reach(store, role, "ready")
+    clock[0] = 100.0
+    driver = module.FakeLifecycleDriver({role: "active" for role in roles})
+    usage = UsageStore(store.path)
+    memory_samples = iter((1_000, 1_100, 2_000, 2_100, 3_000, 3_100))
+    limits = Limits(
+        executor_idle_minimum_seconds=5,
+        executor_idle_fallback_seconds=10,
+        executor_idle_maximum_seconds=100,
+        executor_minimum_ready_residency_seconds=1,
+        optional_idle_minimum_seconds=5,
+        optional_idle_fallback_seconds=10,
+        optional_idle_maximum_seconds=100,
+        optional_minimum_ready_residency_seconds=1,
+    )
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=lambda role: asyncio.sleep(0, result=True),
+        timeout_seconds=10.0,
+        poll_seconds=1.0,
+        clock=lambda: clock[0],
+        memory_probe=lambda: next(memory_samples),
+    )
+
+    await coordinator.run_scheduler_check(mode, roles, limits, usage)
+    assert not any(operation == "stop" for operation, _ in driver.calls)
+    clock[0] = 101.0
+    await coordinator.run_scheduler_check(mode, roles, limits, usage)
+
+    assert [role for operation, role in driver.calls if operation == "stop"] == [
+        "planner",
+        "reviewer",
+        "executor",
+    ]
+    assert all(store.get(role).state == "cold" for role in roles)
+    assert [sample.role for sample in usage.recent_lifecycle_samples()] == [
+        "planner",
+        "reviewer",
+        "executor",
+    ]
+    assert all(
+        store.latest_decision(role) is not None
+        and store.latest_decision(role).action_allowed is False
+        and store.latest_decision(role).reason == "state_not_ready"
+        for role in roles
+    )
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_activity_release_resets_scheduler_hysteresis(tmp_path: Path) -> None:
+    from dgx_moa.usage import UsageStore
+
+    module = lifecycle()
+    clock = [0.0]
+    store = module.LifecycleStore(
+        tmp_path / "activity-reset.db", ("executor",), clock=lambda: clock[0]
+    )
+    reach(store, "executor", "ready")
+    driver = module.FakeLifecycleDriver({"executor": "active"})
+    limits = Limits(
+        executor_idle_minimum_seconds=5,
+        executor_idle_fallback_seconds=10,
+        executor_idle_maximum_seconds=100,
+        executor_minimum_ready_residency_seconds=1,
+    )
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=lambda role: asyncio.sleep(0, result=True),
+        timeout_seconds=10.0,
+        poll_seconds=1.0,
+        clock=lambda: clock[0],
+        memory_probe=lambda: 1_000,
+    )
+    usage = UsageStore(store.path)
+    clock[0] = 100.0
+    await coordinator.run_scheduler_check("fixed", ("executor",), limits, usage)
+    leases = store.acquire_request_leases(
+        "7147bbd5-f70c-45d5-a396-9668c78d4d12",
+        ("executor",),
+        kind="active_request",
+    )
+    clock[0] = 101.0
+    store.release_leases(lease.lease_id for lease in leases)
+    clock[0] = 200.0
+    await coordinator.run_scheduler_check("fixed", ("executor",), limits, usage)
+
+    decision = store.latest_decision("executor")
+    assert decision is not None
+    assert decision.reason == "activity_reset"
+    assert decision.next_consecutive_check_count == 0
+    assert driver.calls == []
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_state", sorted(STATES - {"cold"}))
+@pytest.mark.parametrize(
+    ("driver_status", "healthy", "expected_state"),
+    [
+        ("inactive", False, "cold"),
+        ("failed", False, "failed"),
+        ("active", True, "ready"),
+        ("active", False, "failed"),
+    ],
+)
+async def test_restart_reconciliation_maps_every_persisted_state_to_driver_reality(
+    tmp_path: Path,
+    source_state: str,
+    driver_status: str,
+    healthy: bool,
+    expected_state: str,
+) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(
+        tmp_path / f"recover-{source_state}-{driver_status}-{healthy}.db",
+        ("executor",),
+        clock=lambda: 100.0,
+    )
+    reach(store, "executor", source_state)
+    driver = module.FakeLifecycleDriver({"executor": driver_status})
+    health_calls: list[str] = []
+
+    async def health(role: str) -> bool:
+        health_calls.append(role)
+        return healthy
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=health,
+        timeout_seconds=10.0,
+        poll_seconds=1.0,
+        clock=lambda: 200.0,
+    )
+
+    recovered = await coordinator.reconcile_managed(("executor",))
+
+    assert recovered["executor"].state == expected_state
+    assert driver.calls == [("status", "executor")]
+    assert health_calls == (["executor"] if driver_status == "active" else [])
+    if expected_state == "ready":
+        assert recovered["executor"].ready_since is not None
+    if driver_status == "active" and not healthy:
+        assert recovered["executor"].failure_class == "recovery_unhealthy"
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_restart_health_probe_is_bounded_and_never_starts_or_stops(tmp_path: Path) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "recover-timeout.db", ("executor",))
+    reach(store, "executor", "ready")
+    driver = module.FakeLifecycleDriver({"executor": "active"})
+
+    async def blocked_health(role: str) -> bool:
+        await asyncio.Event().wait()
+        return True
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=blocked_health,
+        timeout_seconds=0.01,
+        poll_seconds=1.0,
+    )
+
+    recovered = await coordinator.reconcile_managed(("executor",))
+
+    assert recovered["executor"].state == "failed"
+    assert recovered["executor"].failure_class == "recovery_unhealthy"
+    assert driver.calls == [("status", "executor")]
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure_point", "failure_class", "expected_stop_calls"),
+    [
+        ("memory_before", "memory_before_failed", 0),
+        ("stop", "stop_command_failed", 1),
+        ("status", "service_active", 1),
+        ("memory_after", "memory_after_failed", 1),
+        ("transition", "unload_failed", 1),
+    ],
+)
+async def test_unload_failures_are_truthful_bounded_and_not_rapidly_retried(
+    tmp_path: Path,
+    failure_point: str,
+    failure_class: str,
+    expected_stop_calls: int,
+) -> None:
+    from dgx_moa.usage import UsageStore
+
+    module = lifecycle()
+    clock = [0.0]
+    store = module.LifecycleStore(
+        tmp_path / f"unload-{failure_point}.db",
+        ("executor",),
+        clock=lambda: clock[0],
+    )
+    reach(store, "executor", "ready")
+    clock[0] = 100.0
+
+    class FailureDriver(module.FakeLifecycleDriver):
+        def stop(self, role: str) -> None:
+            if failure_point == "stop":
+                self._require_role(role)
+                self.calls.append(("stop", role))
+                raise module.LifecycleDriverError("stop", "command_failed")
+            if failure_point == "status":
+                self._require_role(role)
+                self.calls.append(("stop", role))
+                return
+            super().stop(role)
+
+    driver = FailureDriver({"executor": "active"})
+    memory_calls = 0
+
+    def memory() -> int:
+        nonlocal memory_calls
+        memory_calls += 1
+        if failure_point == "memory_before" and memory_calls == 1:
+            raise RuntimeError("SENTINEL memory before")
+        if failure_point == "memory_after" and memory_calls == 2:
+            raise RuntimeError("SENTINEL memory after")
+        return 1_000 + memory_calls
+
+    if failure_point == "transition":
+        transition = store.transition
+
+        def fail_cold(role: str, state: str, **kwargs: Any):
+            if state == "cold":
+                raise sqlite3.OperationalError("SENTINEL transition")
+            return transition(role, state, **kwargs)
+
+        store.transition = fail_cold  # type: ignore[method-assign]
+
+    usage = UsageStore(store.path)
+    limits = Limits(
+        executor_idle_minimum_seconds=5,
+        executor_idle_fallback_seconds=10,
+        executor_idle_maximum_seconds=100,
+        executor_minimum_ready_residency_seconds=1,
+    )
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=lambda role: asyncio.sleep(0, result=True),
+        timeout_seconds=10.0,
+        poll_seconds=1.0,
+        clock=lambda: clock[0],
+        memory_probe=memory,
+    )
+
+    await coordinator.run_scheduler_check("fixed", ("executor",), limits, usage)
+    clock[0] = 101.0
+    await coordinator.run_scheduler_check("fixed", ("executor",), limits, usage)
+    clock[0] = 102.0
+    await coordinator.run_scheduler_check("fixed", ("executor",), limits, usage)
+
+    failed = store.get("executor")
+    assert failed.state == "failed"
+    assert failed.failure_class == failure_class
+    assert driver.calls.count(("stop", "executor")) == expected_stop_calls
+    assert usage.recent_lifecycle_samples() == []
+    decision = store.latest_decision("executor")
+    assert decision is not None
+    assert decision.action_allowed is False
+    assert "SENTINEL" not in failed.model_dump_json()
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_successful_unload_records_memory_duration_and_one_sample(tmp_path: Path) -> None:
+    from dgx_moa.usage import UsageStore
+
+    module = lifecycle()
+    clock = [0.0]
+    store = module.LifecycleStore(
+        tmp_path / "unload-success.db", ("executor",), clock=lambda: clock[0]
+    )
+    reach(store, "executor", "ready")
+    clock[0] = 100.0
+
+    class TimedDriver(module.FakeLifecycleDriver):
+        def stop(self, role: str) -> None:
+            super().stop(role)
+            clock[0] = 104.0
+
+    usage = UsageStore(store.path)
+    memory = iter((1_000, 1_250))
+    limits = Limits(
+        executor_idle_minimum_seconds=5,
+        executor_idle_fallback_seconds=10,
+        executor_idle_maximum_seconds=100,
+        executor_minimum_ready_residency_seconds=1,
+    )
+    coordinator = module.LifecycleCoordinator(
+        store,
+        TimedDriver({"executor": "active"}),
+        health_probe=lambda role: asyncio.sleep(0, result=True),
+        timeout_seconds=10.0,
+        poll_seconds=1.0,
+        clock=lambda: clock[0],
+        memory_probe=lambda: next(memory),
+    )
+
+    await coordinator.run_scheduler_check("fixed", ("executor",), limits, usage)
+    clock[0] = 101.0
+    await coordinator.run_scheduler_check("fixed", ("executor",), limits, usage)
+
+    cold = store.get("executor")
+    assert cold.state == "cold"
+    assert cold.last_unload_duration_seconds == 3.0
+    assert (cold.memory_before_bytes, cold.memory_after_bytes) == (1_000, 1_250)
+    assert usage.recent_lifecycle_samples() == [
+        module.LifecycleSample(
+            role="executor",
+            kind="unload",
+            duration_seconds=3.0,
+            memory_before_bytes=1_000,
+            memory_after_bytes=1_250,
+        )
+    ]
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_shutdown_waits_for_owned_inflight_stop_and_finishes_transition(
+    tmp_path: Path,
+) -> None:
+    from dgx_moa.usage import UsageStore
+
+    module = lifecycle()
+    clock = [0.0]
+    store = module.LifecycleStore(
+        tmp_path / "shutdown-stop.db", ("executor",), clock=lambda: clock[0]
+    )
+    reach(store, "executor", "ready")
+    clock[0] = 100.0
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingStopDriver(module.FakeLifecycleDriver):
+        def stop(self, role: str) -> None:
+            self._require_role(role)
+            self.calls.append(("stop", role))
+            entered.set()
+            assert release.wait(timeout=2)
+            self._statuses[role] = "inactive"
+
+    sleep_calls = 0
+
+    async def sleeper(seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls <= 2:
+            return
+        await asyncio.Event().wait()
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        BlockingStopDriver({"executor": "active"}),
+        health_probe=lambda role: asyncio.sleep(0, result=True),
+        timeout_seconds=10.0,
+        poll_seconds=1.0,
+        clock=lambda: clock[0],
+        sleeper=sleeper,
+        memory_probe=lambda: 1_000,
+    )
+    coordinator.start_scheduler(
+        "fixed",
+        ("executor",),
+        Limits(
+            executor_idle_minimum_seconds=5,
+            executor_idle_fallback_seconds=10,
+            executor_idle_maximum_seconds=100,
+            executor_minimum_ready_residency_seconds=1,
+        ),
+        UsageStore(store.path),
+    )
+    for _ in range(1_000):
+        if entered.is_set():
+            break
+        await asyncio.sleep(0.001)
+    assert entered.is_set()
+
+    closing = asyncio.create_task(coordinator.close())
+    await asyncio.sleep(0)
+    assert not closing.done()
+    assert store.get("executor").state == "unloading"
+    release.set()
+    await asyncio.wait_for(closing, timeout=1)
+
+    assert store.get("executor").state == "cold"
+    assert coordinator._stop_tasks == {}
