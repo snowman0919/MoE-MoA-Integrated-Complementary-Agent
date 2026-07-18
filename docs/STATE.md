@@ -41,15 +41,30 @@ Updated: 2026-07-18
   status filtering, and shutdown ownership. The canonical contract is
   `docs/MODEL_LIFECYCLE.md`.
 - Checked-in lifecycle mode remains `disabled` with an empty unit map. Physical
-  cold load/progress, recovered memory bytes, idle-unload guards, mechanism
-  comparison, 64K near-limit quality, and any production recommendation remain
-  pending.
+  Task 10 used an isolated fixed-mode harness only; no production lifecycle
+  setting changed. It physically passed cold single-flight, measured-shard
+  progress, active/stream/continuation guards, ordered full-stop unload, memory
+  return within host-snapshot noise, timeout, and one reload at 64K
+  configuration. Mechanism comparison, near-limit 64K quality, and any
+  production recommendation remain pending.
 
 ## Validation baseline
 
-- Phase-two automated gate after lifecycle scheduling: `527 passed`; Ruff
-  format/check, MyPy, and `git diff --check` also passed. This is automated
-  evidence only and does not supersede the physical phase-one history below.
+- Earlier phase-two automated scheduling gate: `527 passed`; it remains the
+  pre-physical historical baseline.
+- Phase-two Task 10 gate after the tool-continuation compatibility fix:
+  `531 passed`; Ruff format/check, MyPy for 28 source files, unit-file
+  verification, shell syntax, checked-in trace audit 10/10, and
+  `git diff --check` all passed.
+- The isolated Task 10 physical matrix passed all required rows at dev commit
+  `ee2d714`: 12/12 cold requests returned typed loading `503` with one start;
+  measured-shard progress reached ready in about 944 seconds; real active,
+  disconnected-stream, and forced-tool continuation guards blocked unload;
+  optional stopped before the executor; reload reached ready in about 273
+  seconds; success/disconnect/timeout trace roots each audited 1/1 complete.
+  Sanitized retained traces contain placeholders rather than validation
+  objectives, model output, or tool content. Production was not restarted,
+  deployed, or modified.
 - Current phase-one suite: `181 passed`, with the existing FastAPI TestClient
   deprecation warning. The final re-review gate matrix passed Ruff format/check,
   MyPy for 26 source files, shell syntax, systemd user-unit verification, and
@@ -114,12 +129,14 @@ Updated: 2026-07-18
   lacked `session_ended` and `workspace_identity`, and most lacked task IDs.
   The later timeout trace had no missing fields but lacked `session_ended`, so
   its audit was `0/1`. Phase-one client/stream behavior passed, but formal
-  all-gates completion is not claimed while all three trace audits exit nonzero.
+  Task 9 all-gates completion was not claimed. The current checked-in corpus and
+  new Task 10 success/disconnect/timeout traces all audit at 100%; the retained
+  historical Task 9 roots are unchanged evidence.
 - Multi-file and bounded-engineering staging tasks exceeded the 180-second
   harness bound; their failed traces are retained for later analysis.
 - The 7.5-hour soak includes classified startup rollback incidents before the
   memory-settle fix; the final resident state is healthy with no active loop.
 - Promotion still requires human review of PR #2 and a later main deployment.
-- The overall runtime-reliability Goal still requires physical lifecycle and
-  memory evidence, memory-mechanism study, a near-limit 64K request, extended
-  client matrices, soak, remaining publication, push, and PR work.
+- The overall runtime-reliability Goal still requires the memory-mechanism
+  study, a near-limit 64K request, extended client matrices, soak, remaining
+  publication, push, and PR work.

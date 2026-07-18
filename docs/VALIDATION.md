@@ -1172,3 +1172,218 @@ The two retained isolated audits were also rerun after the same edit:
   third-decision task ID.
 - `/tmp/dgx-moa-timeout.uVbS91/traces`: exit `1`, 1 total and 0 complete; the
   sole gap is one missing `session_ended` event, with no missing fields.
+
+## 2026-07-18 — Isolated physical lifecycle matrix (Task 10)
+
+Task 10 ran only foreground development processes from commit
+`ee2d714a1b7a4cac7fca4655fa035535da94c727`. The production worktree remained
+read-only at clean `main` commit
+`c2a9af0d6b5db8dd940842c56a7236ac867061ff`; no service manager, profile,
+deployment, AppArmor, or Frontier command was used. The successful raw root is
+`/tmp/dgx-moa-task10-yhs6_hr8`; it ran from
+`2026-07-18T15:03:58.596447+00:00` through
+`2026-07-18T15:24:34.850669+00:00`. Its API key existed only in the harness
+environment and is redacted from the manifest and results.
+
+### Retained failure transitions
+
+The following failed attempts remain as evidence and were not converted into
+passes:
+
+- `/tmp/dgx-moa-task10-f7w_eqsb` stopped before starting any process because
+  this GPU reports `0, [N/A], [N/A]` for memory fields. The root contains only
+  empty directories, so it is an observed failed attempt, not retained raw
+  result evidence. The parser now preserves those fields as JSON null with
+  `memory_metrics_available=false`; its regression test passes.
+- `/tmp/dgx-moa-task10-xofa35a1` observed a transient empty `/proc` argv while
+  capturing the optional process identity. The harness failed closed. The
+  retained result itself ends with `RuntimeProcessLeak` and a running planner.
+  That exact planner identity was revalidated and stopped afterward, and
+  current read-only checks find none of its processes or ports, but no retained
+  artifact attests that later cleanup. Identity capture now retries only the
+  transient empty-argv state and has a regression test.
+- `/tmp/dgx-moa-task10-53voozpd` reached real model health after about 1,034
+  seconds, but the initial 3,600-second lifecycle poll interval could not
+  observe it before the 1,200-second load timeout. Exact teardown passed. Load
+  polling is now 2 seconds while automatic idle/residency thresholds remain
+  independently fixed at 7,200 seconds.
+- `/tmp/dgx-moa-task10-wv_g_4bp` reached ready in about 1,026 seconds and proved
+  12 typed loading responses, one start, monotonic measured-shard progress,
+  retry success, and an active-request guard. Its stream assertion sampled
+  after the real stream had already closed. The harness now requires a fresh
+  blocked scheduler decision while the stream lease is open and then requires
+  a cancelled terminal state with `stream_aborted` and without
+  `stream_completed`.
+- `/tmp/dgx-moa-task10-uv1pt8ub` passed that stricter stream-disconnect proof,
+  then exposed a real compatibility defect: vLLM returned a non-empty
+  `message.tool_calls` with `finish_reason=stop`, so the gateway did not create
+  a continuation lease. The run stopped only its exact owned groups and
+  returned memory. The broader reliability goal authorized the separate source
+  remediation commit `ee2d714`, made between validation attempts: the gateway
+  now treats a validated non-empty tool-call payload as continuation evidence
+  while preserving the provider's original finish reason. The new regression
+  first failed, then the relevant three tests and the full 531-test suite
+  passed. Task 10's final tracked change remains documentation-only.
+- `/tmp/dgx-moa-task10-d36rm7e7` was the first result with all physical rows
+  marked passed, but independent evidence review rejected it as final proof:
+  traces retained raw objective/model/tool content, the v1 manifest overwrote
+  the first executor identity on reload, and final host `MemAvailable` was
+  `767856640` bytes below its initial snapshot after 120.19 seconds. Its rows
+  remain useful diagnostic evidence, but the run is superseded by the final
+  root above.
+
+### Preflight, runtime, and immutable inputs
+
+Immediately before the successful run, all eight non-mutating gates exited
+zero: `uv run pytest -q` reported `531 passed, 1 warning`; Ruff format reported
+53 files; Ruff check and MyPy for 28 source files passed; unit-file verification,
+all shell syntax checks, and `git diff --check` were clean; the checked-in trace
+audit reported 10/10 complete and 100.0% mandatory-field completeness. The
+ignored harness also passed 9 tests, Ruff format/check, Python compilation, and
+its dry run.
+
+Preflight `MemAvailable` was `120673374208` bytes against the 80-GiB start gate
+and 40-GiB continuous floor. Loopback ports were gateway `19200`, executor
+`19201`, and optional `19202`; production ports `9000`, `8101`-`8104`, and
+`8110` were unbound. There was no unowned DGX MoA/vLLM runtime. The exact
+executor command retained `--max-model-len 65536`, `--max-num-seqs 1`,
+`--kv-cache-memory-bytes 1700000000`, `--gpu-memory-utilization 0.5`,
+`--moe-backend MARLIN`, automatic tool choice, and the `qwen3_coder` parser on
+`127.0.0.1:19201`. Installed versions were vLLM `0.22.1`, OpenCode `1.17.18`,
+and Hermes Agent `0.18.2`.
+
+The model path metadata fingerprint was unchanged before and after: revision
+`27a8f16f463b9a13c91c332c40cf93e09717347e`, metadata SHA-256
+`8077dc0ac131f7ae208132823c06b58d3410eba670ff511e3e42b9daf790c077`,
+82 files, 4 directories, `47613238658` total bytes, and the same newest mtime.
+This is a path/count/size/mtime/revision fingerprint, not a content hash or a
+byte-for-byte model comparison.
+
+The final run seeded only `cache` and `home/.cache/flashinfer` from the earlier
+isolated root `/tmp/dgx-moa-task10-d36rm7e7`; provenance is recorded in
+`cache-seed.json` and preflight. Root-dependent cache keys still caused the
+first engine to rebuild much of its initialization path, so the seed is not
+claimed as a complete cold-start cache hit.
+
+### Successful physical rows
+
+- Cold/single-flight: 12 concurrent real loopback requests all returned HTTP
+  `503` with typed code `model_loading` in `0.14082865789532661` seconds, and
+  the manifest recorded exactly one executor start.
+- Progress/ready: observations followed `process_starting` ->
+  `loading_weights` -> `initializing_engine` -> `warming_up` -> `ready`.
+  Measured shard progress was monotonic and reached 100% without treating later
+  initialization or warmup as ready. The lifecycle measured load duration was
+  `942.7537190914154` seconds and the status wait was
+  `944.0529136529658` seconds. vLLM separately logged weight loading in
+  `238.88` seconds, model loading in `249.978614` seconds using 44.31 GiB, and
+  initial profiling/warmup in `580.42` seconds. It reported a 67,121-token KV
+  cache and 1.02x maximum concurrency for a 65,536-token request. The real retry
+  returned HTTP `200` with `finish_reason=stop`.
+- Guards: a real non-stream request held `active_request_count=1`; a real stream
+  held `active_request_count=1` and `open_stream_count=1`, produced a fresh
+  `reason=blocked` idle decision, and after downstream close ended
+  `cancelled` with `stream_aborted` and no `stream_completed`; a real forced
+  tool call held `continuation_lease_count=1`, and its matching real tool-result
+  continuation released it. Each scheduler check left the executor ready.
+- Timeout: a real request under the controlled 0.001-second executor total
+  limit returned HTTP `504` with typed code `executor_total_timeout`.
+- Ordered unload: after three manual hysteresis checks, the optional process
+  stopped before the executor. The optional sample took
+  `0.29537057876586914` seconds; the single executor unload sample took
+  `1.361647605895996` seconds and ended in `cold`. Memory settlement took
+  `6.216998043004423` seconds and there was no rapid retry.
+- Reload: the next real request returned typed loading HTTP `503`, the manifest
+  recorded exactly the second executor start, ready returned in
+  `273.00104479002766` seconds, and the retry returned HTTP `200`. vLLM logged
+  the second weight load at `237.30` seconds, model load at `248.278115`
+  seconds, and profile/KV/warmup at `9.22` seconds including `2.86` seconds of
+  compilation.
+- Traces: the isolated success, disconnect/cancellation, and timeout roots each
+  audited 1/1 complete with 100.0% mandatory-field completeness. The checked-in
+  corpus independently audited 10/10 complete at 100.0%. Before final artifact
+  capture, all six isolated trace files were atomically sanitized; objectives
+  and model decisions use explicit placeholders, tool-event payloads retain
+  only `content_redacted=true`, and raw tool/evidence fields are empty. A
+  structural check over the seven root records plus three audit copies found
+  zero violations, the three copies match their sanitized roots by SHA-256,
+  and a known-sensitive-string scan found no match. These audits prove
+  structural completeness, not semantic success: the named success trace has a
+  completed `session_ended` event but top-level `final_status=degraded`. The
+  separately reviewed sanitizer code and tests require a final teardown pass
+  and make the harness fail closed if sanitization cannot complete.
+
+### Memory and exact teardown
+
+`nvidia-smi` was available but this unified-memory GPU exposed neither used nor
+free byte fields, so every GPU byte value is null and no GPU percentage is
+inferred. Host and exact-owned-process measurements were:
+
+| Point | MemAvailable bytes | owned PSS bytes | owned RSS bytes |
+| --- | ---: | ---: | ---: |
+| initial | 120509042688 | 0 | 0 |
+| warm ready | 65156329472 | 4532602880 | 4947398656 |
+| immediately before ordered unload | 65325219840 | 4655138816 | 5070721024 |
+| immediately after unload | 120379711488 | 0 | 0 |
+| best bounded unload settle | 120564150272 | 0 | 0 |
+| final after reload teardown | 120676032512 | 0 | 0 |
+
+The final snapshot exceeded the initial snapshot by `166989824` bytes, while
+exact-owned PSS/RSS were zero. This supports full process-memory return within
+host `MemAvailable` snapshot noise; it does not establish a GPU-byte result
+because those metrics were unavailable. The earlier `d36rm7e7` shortfall is
+retained above rather than generalized away.
+
+The v2 manifest preserves full history rather than only the latest role entry:
+planner PID/PGID/session `1249683`, first executor `1249697`, and reloaded
+executor `1274552`, each with start ticks, cwd, requested and observed argv,
+start time, stop time, and `state=stopped`. It records planner start once and
+executor start exactly twice, then planner stop, first executor stop, and final
+executor stop. Each kill was limited to a recorded PID=PGID=session group after
+leader and group-member identity revalidation.
+
+The point-in-time, scoped final fingerprint found loopback ports
+`19200`-`19202` and production ports
+`9000`, `8101`-`8104`, and `8110` unbound, no DGX MoA/vLLM runtime process,
+clean unchanged production, clean dev at `ee2d714`, and the unchanged metadata
+fingerprint. The successful physical result contains no failures and reports
+`passed=true`.
+
+### Final post-documentation gates
+
+An earlier post-documentation attempt launched all eight commands concurrently.
+It found one real documentation-contract mismatch because the historical `527
+passed` baseline had been replaced rather than retained, and one asynchronous
+progress test missed its bounded scheduler-yield observation while CPU-heavy
+gates ran beside it (`529 passed, 2 failed`). The historical line was restored
+alongside the current baseline. The progress test then passed 10 of 10 isolated
+repetitions, matching the earlier green full-suite runs; no lifecycle code
+changed for that transient scheduling failure.
+
+After the evidence correction, the first serialized gate run exited zero for
+all eight commands. A verification rerun after recording that result then
+reproduced the same test race even without concurrent gates: 530 passed and
+`test_coordinator_preserves_prior_progress_when_new_logs_are_invalid` failed
+while its background load was still `process_starting`. The isolated test
+reproduced on repetition 12. Its bounded loop of 100 `asyncio.sleep(0)` yields
+did not guarantee completion of the coordinator's `to_thread` calls.
+
+Separate test-only commit `8cd8117` replaced yield counting with an event set
+on entry to the second poll sleep. Runtime code did not change. The corrected
+test passed 100/100 isolated repetitions, the full suite passed 531/531, and an
+independent review confirmed that `coordinator.close()` still cancels and
+collects the blocked task. Task 10's final tracked commit remains limited to
+this documentation.
+
+The final serialized gate run after that test stabilization exited zero for all
+eight commands:
+
+1. `uv run pytest -q`: `531 passed, 1 warning`.
+2. `uv run ruff format --check .`: `53 files already formatted`.
+3. `uv run ruff check .`: `All checks passed!`.
+4. `uv run mypy`: no issues in 28 source files.
+5. `systemd-analyze --user verify systemd/*`: no output.
+6. `for file in scripts/*.sh; do bash -n "$file"; done`: no output.
+7. `scripts/audit-trace-completeness.sh data/traces`: 10/10 complete, 0
+   incomplete, 0 legacy, and 100.0% mandatory-field completeness.
+8. `git diff --check`: no output.
