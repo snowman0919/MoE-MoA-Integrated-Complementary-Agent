@@ -446,6 +446,65 @@ async def test_health_success_marks_ready_and_later_api_retry_succeeds(
 
 
 @pytest.mark.asyncio
+async def test_completed_retryable_failure_is_requeued_as_loading_on_the_next_request(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    driver = FakeLifecycleDriver({"executor": "inactive"})
+    blocked = asyncio.Event()
+
+    async def health_probe(role: str) -> bool:
+        assert role == "executor"
+        return False
+
+    async def sleeper(seconds: float) -> None:
+        await blocked.wait()
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health_probe,
+        lifecycle_clock=lambda: 100.0,
+        lifecycle_sleeper=sleeper,
+    )
+    async with app.router.lifespan_context(app):
+        cold = app.state.lifecycle_store.get("executor")
+        queued = app.state.lifecycle_store.transition(
+            "executor", "load_queued", expected_transition_id=cold.transition_id
+        )
+        app.state.lifecycle_store.transition(
+            "executor",
+            "failed",
+            expected_transition_id=queued.transition_id,
+            failure_class="health_timeout",
+            retry_count=1,
+        )
+        completed = asyncio.create_task(asyncio.sleep(0))
+        await completed
+        app.state.lifecycle._tasks["executor"] = completed
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+
+        response = await direct_chat(app, "retryable-failure")
+        usage = assert_usage(app, "failed")
+
+    assert response.status_code == 503
+    assert response.headers["X-DGX-MOA-Model-State"] == "load_queued"
+    assert response.headers["Retry-After"]
+    assert json.loads(response.body)["error"]["code"] == "model_loading"
+    assert usage.load_triggered is True
+    assert usage.model_state == "loading"
+    assert usage.retryable_failure_class == "model_loading"
+    assert stub_provider.calls == []
+
+
+@pytest.mark.asyncio
 async def test_managed_request_rejects_an_unmapped_required_role_honestly(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

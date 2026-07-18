@@ -145,12 +145,6 @@ def parse_load_progress(
             if candidate is not None:
                 shards_percent = candidate
 
-    if stage != "loading_weights":
-        return LoadProgress(
-            state=stage,
-            weight_load_percent=100.0,
-            progress_quality="estimated",
-        )
     measured = bytes_percent if bytes_percent is not None else shards_percent
     quality: ProgressQuality = (
         "measured_bytes"
@@ -162,6 +156,16 @@ def parse_load_progress(
     if previous_percent is not None and (measured is None or previous_percent > measured):
         measured = previous_percent
         quality = previous_quality or (quality if quality != "unavailable" else "estimated")
+    if stage != "loading_weights":
+        return LoadProgress(
+            state=stage,
+            weight_load_percent=100.0,
+            progress_quality=(
+                quality
+                if measured == 100.0 and quality in {"measured_bytes", "measured_shards"}
+                else "estimated"
+            ),
+        )
     return LoadProgress(
         state="loading_weights",
         weight_load_percent=measured,
@@ -469,7 +473,8 @@ class LifecycleCoordinator:
                     pass
                 except Exception:
                     pass
-                return LoadCheck(record=self.store.get(role))
+                record = self.store.get(role)
+                task = None
             if record.state == "ready" or task is not None:
                 return LoadCheck(record=record)
             if record.state not in {"cold", "failed"} or record.retry_count >= MAX_LOAD_RETRIES:

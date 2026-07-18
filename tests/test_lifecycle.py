@@ -751,6 +751,58 @@ def test_progress_parser_recognizes_post_weight_stages(line: str, expected_state
     assert progress.progress_quality == "estimated"
 
 
+@pytest.mark.parametrize(
+    (
+        "lines",
+        "previous_percent",
+        "previous_quality",
+        "expected_state",
+        "expected_quality",
+    ),
+    [
+        (
+            ("Loading safetensors checkpoint shards: 4/4", "Warming up model runner"),
+            None,
+            None,
+            "warming_up",
+            "measured_shards",
+        ),
+        (
+            ("Starting engine initialization",),
+            100.0,
+            "measured_bytes",
+            "initializing_engine",
+            "measured_bytes",
+        ),
+        (
+            ("Loading safetensors checkpoint shards: 1/4", "Warming up model runner"),
+            None,
+            None,
+            "warming_up",
+            "estimated",
+        ),
+    ],
+)
+def test_post_weight_stage_preserves_only_measured_complete_progress(
+    lines: tuple[str, ...],
+    previous_percent: float | None,
+    previous_quality: str | None,
+    expected_state: str,
+    expected_quality: str,
+) -> None:
+    module = lifecycle()
+
+    progress = module.parse_load_progress(
+        lines,
+        previous_percent=previous_percent,
+        previous_quality=previous_quality,
+    )
+
+    assert progress.state == expected_state
+    assert progress.weight_load_percent == 100.0
+    assert progress.progress_quality == expected_quality
+
+
 def test_progress_parser_ignores_malformed_ambiguous_and_unbounded_input() -> None:
     module = lifecycle()
     lines = tuple("x" * 10_000 for _ in range(2_000)) + (
@@ -952,25 +1004,20 @@ async def test_start_failure_allows_only_one_bounded_manual_retry(
     first = await coordinator.ensure_ready("executor")
     await coordinator._tasks["executor"]
     first_failure = store.get("executor")
-    first_refreshed = await coordinator.ensure_ready("executor")
     second = await coordinator.ensure_ready("executor")
     await coordinator._tasks["executor"]
     second_failure = store.get("executor")
-    second_refreshed = await coordinator.ensure_ready("executor")
     blocked = await coordinator.ensure_ready("executor")
 
     assert first.load_triggered is True
     assert first_failure.failure_class == failure_class
     assert first_failure.retry_count == 1
-    assert first_refreshed.record == first_failure
-    assert first_refreshed.load_triggered is False
     assert second.load_triggered is True
+    assert second.record.state == "load_queued"
     assert second_failure.failure_class == failure_class
     assert second_failure.retry_count == module.MAX_LOAD_RETRIES
-    assert second_refreshed.record == second_failure
-    assert second_refreshed.load_triggered is False
     assert blocked.load_triggered is False
-    assert blocked.record.state == "failed"
+    assert blocked.record == second_failure
     assert driver.calls == [
         ("cursor", "executor"),
         ("start", "executor"),
@@ -1138,9 +1185,20 @@ async def test_outer_model_load_deadline_is_distinct_from_health_timeout(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("completed_state", ["ready", "failed"])
-async def test_done_load_task_refreshes_state_before_returning(
-    tmp_path: Path, completed_state: str
+@pytest.mark.parametrize(
+    ("completed_state", "retry_count", "expected_state", "expected_trigger"),
+    [
+        ("ready", 0, "ready", False),
+        ("failed", 1, "load_queued", True),
+        ("failed", 2, "failed", False),
+    ],
+)
+async def test_done_load_task_refreshes_before_the_normal_retry_decision(
+    tmp_path: Path,
+    completed_state: str,
+    retry_count: int,
+    expected_state: str,
+    expected_trigger: bool,
 ) -> None:
     module = lifecycle()
     store = module.LifecycleStore(tmp_path / f"race-{completed_state}.db", ("executor",))
@@ -1157,7 +1215,7 @@ async def test_done_load_task_refreshes_state_before_returning(
             "failed",
             expected_transition_id=stale.transition_id,
             failure_class="health_timeout",
-            retry_count=1,
+            retry_count=retry_count,
         )
     driver = module.FakeLifecycleDriver({"executor": "active"})
 
@@ -1191,11 +1249,17 @@ async def test_done_load_task_refreshes_state_before_returning(
 
     check = await coordinator.ensure_ready("executor")
 
-    assert check.record == current
-    assert check.load_triggered is False
+    assert check.record.state == expected_state
+    assert check.load_triggered is expected_trigger
     assert reads == 2
-    assert coordinator._tasks == {}
     assert driver.calls == []
+    if expected_trigger:
+        assert check.record.transition_id != current.transition_id
+        assert set(coordinator._tasks) == {"executor"}
+    else:
+        assert check.record == current
+        assert coordinator._tasks == {}
+    await coordinator.close()
 
 
 @pytest.mark.asyncio
