@@ -16,6 +16,54 @@ class StageTimeout(TimeoutError):
         self.stage = stage
 
 
+class OwnedByteStream:
+    def __init__(
+        self,
+        first: bytes | None,
+        iterator: AsyncIterator[bytes],
+        response: httpx.Response,
+        client: httpx.AsyncClient,
+    ) -> None:
+        self._first = first
+        self._first_pending = first is not None
+        self._iterator = iterator
+        self._response = response
+        self._client = client
+        self._close_lock = asyncio.Lock()
+        self._closed = False
+
+    def __aiter__(self) -> OwnedByteStream:
+        return self
+
+    async def __anext__(self) -> bytes:
+        if self._closed:
+            raise StopAsyncIteration
+        try:
+            if self._first_pending:
+                self._first_pending = False
+                assert self._first is not None
+                return self._first
+            return await anext(self._iterator)
+        except StopAsyncIteration:
+            await self.aclose()
+            raise
+        except BaseException:
+            await self.aclose()
+            raise
+
+    async def aclose(self) -> None:
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                if not self._response.is_closed:
+                    await self._response.aclose()
+            finally:
+                if not self._client.is_closed:
+                    await self._client.aclose()
+
+
 class ModelProvider:
     def __init__(self, timeout: float = 300.0):
         self.timeout = timeout
@@ -97,17 +145,7 @@ class ModelProvider:
             await client.aclose()
             raise
 
-        async def chunks() -> AsyncIterator[bytes]:
-            try:
-                if first is not None:
-                    yield first
-                async for chunk in iterator:
-                    yield chunk
-            finally:
-                await response.aclose()
-                await client.aclose()
-
-        return chunks()
+        return OwnedByteStream(first, iterator, response, client)
 
 
 def response_message(response: dict[str, Any]) -> dict[str, Any]:

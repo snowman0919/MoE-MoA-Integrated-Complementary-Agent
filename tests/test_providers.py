@@ -8,6 +8,49 @@ import pytest
 from dgx_moa.providers import ModelProvider, parse_json_content
 
 
+class CountingResponse(httpx.Response):
+    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        super().__init__(*args, **kwargs)
+        self.close_count = 0
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+        await super().aclose()
+
+
+class CountingClient(httpx.AsyncClient):
+    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        super().__init__(*args, **kwargs)
+        self.close_count = 0
+
+    async def aclose(self) -> None:
+        self.close_count += 1
+        await super().aclose()
+
+
+def tracked_stream_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    stream: httpx.AsyncByteStream,
+) -> tuple[list[CountingResponse], list[CountingClient]]:
+    responses: list[CountingResponse] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        response = CountingResponse(200, stream=stream, request=request)
+        responses.append(response)
+        return response
+
+    transport = httpx.MockTransport(respond)
+    clients: list[CountingClient] = []
+
+    def client(**kwargs):  # type: ignore[no-untyped-def]
+        created = CountingClient(transport=transport, **kwargs)
+        clients.append(created)
+        return created
+
+    monkeypatch.setattr("dgx_moa.providers.httpx.AsyncClient", client)
+    return responses, clients
+
+
 def test_stage_timeout_defaults(settings) -> None:  # type: ignore[no-untyped-def]
     assert settings.limits.planner_timeout_seconds == 120
     assert settings.limits.executor_first_byte_timeout_seconds == 120
@@ -171,3 +214,109 @@ async def test_stream_setup_cancellation_closes_response_and_client(
 
     assert responses[0].is_closed
     assert clients[0].is_closed
+
+
+@pytest.mark.asyncio
+async def test_stream_close_before_first_iteration_closes_response_and_client_once(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    class Bytes(httpx.AsyncByteStream):
+        async def __aiter__(self):  # type: ignore[no-untyped-def]
+            yield b"first"
+            yield b"second"
+
+    responses, clients = tracked_stream_transport(monkeypatch, Bytes())
+    stream = await ModelProvider().stream(
+        "executor",
+        settings.models["executor"],
+        {"messages": []},
+    )
+
+    await stream.aclose()  # type: ignore[attr-defined]
+    await stream.aclose()  # type: ignore[attr-defined]
+
+    assert responses[0].is_closed
+    assert clients[0].is_closed
+    assert responses[0].close_count == 1
+    assert clients[0].close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_preserves_prefetched_byte_order_and_closes_on_exhaustion(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    class Bytes(httpx.AsyncByteStream):
+        async def __aiter__(self):  # type: ignore[no-untyped-def]
+            yield b"first"
+            yield b"second"
+            yield b"third"
+
+    responses, clients = tracked_stream_transport(monkeypatch, Bytes())
+    stream = await ModelProvider().stream(
+        "executor",
+        settings.models["executor"],
+        {"messages": []},
+    )
+
+    chunks = [chunk async for chunk in stream]
+    await stream.aclose()  # type: ignore[attr-defined]
+
+    assert chunks == [b"first", b"second", b"third"]
+    assert responses[0].close_count == 1
+    assert clients[0].close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_iteration_error_closes_response_and_client_once(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    class FailingBytes(httpx.AsyncByteStream):
+        async def __aiter__(self):  # type: ignore[no-untyped-def]
+            yield b"first"
+            raise RuntimeError("stream failed")
+
+    responses, clients = tracked_stream_transport(monkeypatch, FailingBytes())
+    stream = await ModelProvider().stream(
+        "executor",
+        settings.models["executor"],
+        {"messages": []},
+    )
+
+    assert await anext(stream) == b"first"
+    with pytest.raises(RuntimeError, match="stream failed"):
+        await anext(stream)
+    await stream.aclose()  # type: ignore[attr-defined]
+
+    assert responses[0].close_count == 1
+    assert clients[0].close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_iteration_cancellation_closes_response_and_client_once(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    waiting = asyncio.Event()
+
+    class BlockingBytes(httpx.AsyncByteStream):
+        async def __aiter__(self):  # type: ignore[no-untyped-def]
+            yield b"first"
+            waiting.set()
+            await asyncio.Event().wait()
+
+    responses, clients = tracked_stream_transport(monkeypatch, BlockingBytes())
+    stream = await ModelProvider().stream(
+        "executor",
+        settings.models["executor"],
+        {"messages": []},
+    )
+
+    assert await anext(stream) == b"first"
+    pending = asyncio.create_task(anext(stream))
+    await asyncio.wait_for(waiting.wait(), timeout=1)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    await stream.aclose()  # type: ignore[attr-defined]
+
+    assert responses[0].close_count == 1
+    assert clients[0].close_count == 1
