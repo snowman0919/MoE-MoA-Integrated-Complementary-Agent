@@ -1387,3 +1387,93 @@ eight commands:
 7. `scripts/audit-trace-completeness.sh data/traces`: 10/10 complete, 0
    incomplete, 0 legacy, and 100.0% mandatory-field completeness.
 8. `git diff --check`: no output.
+
+## Phase 3 Unload Mechanism Study — 2026-07-19
+
+### Pre-execution gates and scope
+
+Before any model process started, the serialized repository gates passed:
+`uv run pytest -q` reported `531 passed, 1 warning`; Ruff format/check, MyPy for
+28 source files, user-unit verification, all shell syntax checks, and
+`git diff --check` exited zero; the checked-in trace audit remained 10/10
+complete at 100.0%. The ignored phase-three harness passed 21 tests before the
+first physical attempt and 26 tests after the retained tokenizer, systemd
+collection, request-timeout, and resume corrections. Its ignore-aware Ruff,
+Python compilation, and direct installed-Python dry run passed.
+
+Trials used only fresh paths under `/tmp/dgx-moa-phase3-*`, loopback port
+`19301`, and exact transient units matching
+`dgx-moa-dev-phase3-[a-f0-9]{8}.service` or exact Task 10-style owned
+PID/PGID/SID groups. Production remained read-only `main` at `c2a9af0`; no
+production service or port was acted on.
+
+### Retained attempts
+
+- `/tmp/dgx-moa-phase3-52ffwbov` failed before process start because
+  Transformers 5.8 returned `BatchEncoding` while the runner counted mapping
+  fields instead of `input_ids`. A failing regression was added; the real
+  tokenizer then produced `63786` tokens.
+- `/tmp/dgx-moa-phase3-9l7a3ayp/mechanisms.json`, SHA-256
+  `6a5ce3ba6055f265f93e6f7a06752bbd883002bcbabf65512ab109db3e440994`,
+  preserves the first complete A-D attempt. A finished short/tool/near-limit
+  HTTP 200 requests and stopped cleanly, but `systemctl show` represented its
+  collected unit as `LoadState=not-found` with an empty working directory; the
+  runner misclassified that as a mismatched live unit. B reached ready in
+  `938.83` seconds but its sleep call exceeded httpx's five-second default.
+  C was deliberately interrupted and exactly torn down rather than spending a
+  full cold load on the known timeout bug. D reached ready in `952.86` seconds,
+  completed live reset HTTP 200, and then failed its first exact post-reset
+  short quality check.
+- Tests first fixed `LoadState=not-found` normalization and physical endpoint
+  timeout propagation. Resume did not rewrite the original. The authoritative
+  `/tmp/dgx-moa-phase3-9l7a3ayp/mechanisms-resumed.json`, SHA-256
+  `625b25afbadbb1e8ef42f95e836df627ec22e37c87e07301102eaaa6194b6af9`,
+  links the original SHA and retains its per-row failure summaries.
+
+### Final physical result
+
+The resumed result reports `passed=true`, no harness failures, and selection
+`A_full_systemd_stop_start` with the same mechanism preserved as fallback.
+
+- A passed two exact transient-unit cycles. Cold/warm ready times were
+  `946.3586723739281` and `272.0807015961036` seconds; stop times were
+  `1.146820979192853` and `1.118467804044485` seconds. MemAvailable deltas were
+  `55227699200` and `54869725184` bytes. Short and forced native-tool checks
+  passed. Backend prompt usage was `63786` tokens twice, with near-limit
+  latencies `17.792744473088533` and `17.567367010051385` seconds.
+- B level-1 sleep was natively supported and completed two cycles. Sleep times
+  were `21.733480336144567` and `2.1252455201465636` seconds; wake times were
+  `38.78946190699935` and `7.454574962845072` seconds. Its median
+  `25938081792`-byte return was 47.12% of A, below the required 90%, and owned
+  PSS did not remain stable. Short/tool checks and backend `63786`-token quality
+  still passed, so the rejection is memory/stability-based rather than a
+  capacity failure.
+- C level-2 sleep and wake routes returned HTTP 200 after a
+  `941.2777812271379`-second ready. Pre-sleep short/tool checks passed; the first
+  post-wake exact short check failed, so no second-cycle, memory-selection, or
+  near-limit claim is made.
+- D's live reset route returned HTTP 200 after a `952.8551460539456`-second
+  ready. Two identical-prefix probes passed with 1560 prompt tokens and
+  `0.701514609856531`/`0.4988313359208405` seconds latency. The first exact
+  post-reset short check failed, so reset is a rejected cache-clear result, not
+  an unload mechanism.
+
+The final point-in-time fingerprint found phase-three and production ports
+unbound, runtime process count zero, unchanged clean dev/production commits,
+and the unchanged model metadata fingerprint. GPU used/free byte metrics were
+null, and no GPU percentage is inferred. Result JSON passed the recursive
+content-free scan; retained manifests contain only the literal
+`redacted-environment-only` API-key descriptor, not a credential. Detailed
+selection math and limitations are in `docs/MEMORY_OPTIMIZATION.md`.
+
+Independent read-only raw-evidence review passed with no blocker. It matched the
+original SHA link, prior-attempt summaries, A identities and cgroups, all A/B
+quality/timing/memory values, deterministic 90% calculation, C/D route success
+followed by generic quality rejection, and the final fingerprint. It also
+confirmed result/log redaction. Review limits are retained rather than promoted
+away: A's systemd identities exist in resumed JSON while its generic foreground
+manifests/events are empty; C/D failed text is intentionally unavailable; two
+samples do not form a robust distribution; MemAvailable is noisy, GPU bytes are
+null, and model equality is metadata-only. One vLLM shutdown log reports
+`resource_tracker` semaphore cleanup, with no surviving process, port, PSS, or
+RSS in the final checks.
