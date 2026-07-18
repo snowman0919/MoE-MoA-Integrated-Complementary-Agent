@@ -17,6 +17,13 @@ from .routing import RequestClass, RuntimeMode
 SafeClientClass = Literal[
     "curl", "openai-python", "httpx", "opencode", "hermes-agent", "openai-compatible"
 ]
+CLIENT_MARKERS: tuple[tuple[str, SafeClientClass], ...] = (
+    ("opencode", "opencode"),
+    ("hermes-agent", "hermes-agent"),
+    ("openai/python", "openai-python"),
+    ("python-httpx", "httpx"),
+    ("curl/", "curl"),
+)
 ModelAlias = Literal["dgx-moa-chat", "dgx-moa-agent", "dgx-moa-orchestrated"]
 Role = Literal["executor", "planner", "reviewer", "reasoner", "judge"]
 ModelState = Literal["warm", "cold", "loading"]
@@ -39,6 +46,14 @@ REQUEST_COLUMNS = (
     "status, streaming, model_state, load_triggered, retryable_failure_class, "
     "prompt_tokens, completion_tokens, total_tokens"
 )
+
+
+def classify_client(user_agent: str | None) -> SafeClientClass:
+    normalized = (user_agent or "").lower()
+    for marker, client_class in CLIENT_MARKERS:
+        if marker in normalized:
+            return client_class
+    return "openai-compatible"
 
 
 class RequestUsageStart(BaseModel):

@@ -7,7 +7,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import uvicorn
@@ -26,11 +26,31 @@ from .routing import (
     resolve_runtime_mode,
     review_fails_closed,
 )
+from .runtime_status import report as runtime_report
 from .schemas import ChatRequest, ProfileResponse
 from .security import admin_dependency, auth_dependency
 from .state import StateStore
-from .streaming import StreamObservation, forward_sse
+from .streaming import StreamObservation, forward_sse, reported_usage
 from .trace import TraceRecorder
+from .usage import (
+    ModelAlias,
+    RequestStatus,
+    RequestUsageFinalization,
+    RequestUsageStart,
+    RetryableFailureClass,
+    Role,
+    UsageStore,
+    classify_client,
+)
+
+TIMEOUT_FAILURE_CLASSES: dict[str, RetryableFailureClass] = {
+    "planner": "planner_timeout",
+    "executor_first_byte": "executor_first_byte_timeout",
+    "executor_total": "executor_total_timeout",
+    "executor": "executor_timeout",
+    "reviewer": "reviewer_timeout",
+    "judge": "judge_timeout",
+}
 
 
 def error_response(
@@ -71,16 +91,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         store = StateStore(configured.state_db)
         provider = ModelProvider()
+        project_root = Path(os.getenv("DGX_MOA_PROJECT_ROOT", ".")).resolve()
         app.state.settings = configured
         app.state.store = store
+        app.state.usage = UsageStore(
+            configured.state_db,
+            sample_window=configured.limits.usage_sample_window,
+            ewma_alpha=configured.limits.usage_ewma_alpha,
+            adaptive_minimum_samples=configured.limits.adaptive_minimum_samples,
+        )
+        app.state.usage_session_namespace = uuid.uuid4()
+        app.state.project_root = project_root
         app.state.provider = provider
         app.state.controller = Controller(configured, store, provider)
         app.state.traces = TraceRecorder(
             configured.state_db.parent.parent / "traces", store, configured.models
         )
-        app.state.profiles = ProfileManager(
-            configured.run_dir, Path(os.getenv("DGX_MOA_PROJECT_ROOT", "."))
-        )
+        app.state.profiles = ProfileManager(configured.run_dir, project_root)
         yield
 
     app = FastAPI(title="DGX MoA Agent", version="0.1.0", lifespan=lifespan)
@@ -229,9 +256,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         x_dirty_state: str | None = Header(default=None),
     ) -> Response:
         accepted = time.monotonic()
+        accepted_at = time.time()
         stage_status: dict[str, str] = {}
         timing_recorded = False
         terminal_finalized = False
+        usage_started = False
+        usage_request_id = str(uuid.uuid4())
+        first_byte_at: float | None = None
+        token_usage: dict[str, int] = {}
         state: Any | None = None
         executor_started: float | None = None
         active_stage = "request"
@@ -303,12 +335,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         def finalize_request(
             stage: str | None,
-            status_value: str,
+            status_value: RequestStatus,
             *,
             downstream_started: bool = False,
             current_state: Any | None = None,
+            retryable_failure_class: RetryableFailureClass | None = None,
         ) -> None:
-            nonlocal terminal_finalized, state
+            nonlocal first_byte_at, terminal_finalized, state
             if terminal_finalized:
                 return
             current = current_state or state or request.app.state.store.get(state_session_id)
@@ -331,6 +364,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
             if downstream_started:
                 current.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                first_byte_at = first_byte_at or time.time()
             record_request_timing(current)
             request.app.state.store.event(
                 current.session_id,
@@ -339,6 +373,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             request.app.state.store.save(current)
             record_trace_safely(request, current, task_id)
+            if usage_started:
+                request.app.state.usage.finalize(
+                    usage_request_id,
+                    RequestUsageFinalization(
+                        first_byte_at=first_byte_at,
+                        completed_at=time.time(),
+                        active_duration_seconds=time.monotonic() - accepted,
+                        status=status_value,
+                        retryable_failure_class=retryable_failure_class,
+                        prompt_tokens=token_usage.get("prompt_tokens"),
+                        completion_tokens=token_usage.get("completion_tokens"),
+                        total_tokens=token_usage.get("total_tokens"),
+                    ),
+                )
 
         try:
             state = request.app.state.controller.session(state_session_id, raw["messages"])
@@ -357,6 +405,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 mode, raw["messages"], raw.get("tools"), raw["metadata"]
             )
             roles = required_roles(mode, request_class)
+            request.app.state.usage.start(
+                RequestUsageStart(
+                    request_id=usage_request_id,
+                    session_id=str(
+                        uuid.uuid5(
+                            request.app.state.usage_session_namespace,
+                            state_session_id,
+                        )
+                    ),
+                    client_class=classify_client(
+                        request.headers.get("user-agent") if "headers" in request.scope else None
+                    ),
+                    model_alias=cast(
+                        ModelAlias,
+                        next(
+                            alias for alias, alias_mode in MODEL_MODES.items() if alias_mode == mode
+                        ),
+                    ),
+                    runtime_mode=mode,
+                    request_class=request_class,
+                    roles_required=cast(tuple[Role, ...], roles),
+                    accepted_at=accepted_at,
+                    streaming=body.stream,
+                    model_state="warm",
+                    load_triggered=False,
+                )
+            )
+            usage_started = True
             state.runtime_mode = mode
             state.request_class = request_class
             state.roles_required = list(roles)
@@ -381,6 +457,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 observation = StreamObservation(configured.limits.max_stream_capture_bytes)
 
                 async def stream_response() -> AsyncIterator[bytes]:
+                    nonlocal first_byte_at
                     completed = False
                     forwarder = forward_sse(
                         upstream,
@@ -397,6 +474,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                         state.timings_ms["first_downstream_byte"] = elapsed_ms(
                                             accepted
                                         )
+                                        first_byte_at = time.time()
                                     yield chunk
                         completed = True
                     except TimeoutError as error:
@@ -443,7 +521,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "stream_completed" if terminal else "stream_aborted",
                             {},
                         )
-                        terminal_status = (
+                        terminal_status: RequestStatus = (
                             "completed"
                             if terminal
                             else "timed_out"
@@ -452,7 +530,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             if stage_status.get("executor_total") == "failed"
                             else "cancelled"
                         )
-                        finalize_request(None, terminal_status, current_state=state)
+                        token_usage.update(observation.usage)
+                        finalize_request(
+                            None,
+                            terminal_status,
+                            current_state=state,
+                            retryable_failure_class=(
+                                "executor_total_timeout"
+                                if terminal_status == "timed_out"
+                                else "backend_error"
+                                if terminal_status == "failed"
+                                else None
+                            ),
+                        )
 
                 return StreamingResponse(
                     stream_response(),
@@ -471,6 +561,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (time.monotonic() - executor_started) * 1000, 3
             )
             stage_status["executor_total"] = "completed"
+            token_usage.update(reported_usage(response.get("usage")))
             validate_assistant_response(response)
             if state.decisions:
                 state.decisions[-1]["structured_decision"] = response.get("choices", [{}])[0].get(
@@ -520,6 +611,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if not state.truncated:
                         request.app.state.controller.apply_metadata(state, body.metadata)
             state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+            first_byte_at = time.time()
             request.app.state.store.event(
                 state_session_id,
                 "assistant_stream_finished",
@@ -544,7 +636,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             finalize_request(active_stage, "failed", downstream_started=True)
             raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
         except StageTimeout as error:
-            finalize_request(error.stage, "timed_out", downstream_started=True)
+            finalize_request(
+                error.stage,
+                "timed_out",
+                downstream_started=True,
+                retryable_failure_class=TIMEOUT_FAILURE_CLASSES.get(error.stage),
+            )
             return error_response(
                 status.HTTP_504_GATEWAY_TIMEOUT,
                 str(error),
@@ -558,7 +655,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "reviewing": "reviewer",
                 "heavy_review": "judge",
             }.get(phase, "executor")
-            finalize_request(active_stage, "timed_out", downstream_started=True)
+            finalize_request(
+                active_stage,
+                "timed_out",
+                downstream_started=True,
+                retryable_failure_class=TIMEOUT_FAILURE_CLASSES.get(stage),
+            )
             return error_response(
                 status.HTTP_504_GATEWAY_TIMEOUT,
                 str(error),
@@ -566,7 +668,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 f"{stage}_timeout",
             )
         except httpx.HTTPStatusError as error:
-            finalize_request(active_stage, "failed", downstream_started=True)
+            finalize_request(
+                active_stage,
+                "failed",
+                downstream_started=True,
+                retryable_failure_class=(
+                    "backend_error" if error.response.status_code >= 500 else None
+                ),
+            )
             try:
                 payload = error.response.json()
             except (ValueError, httpx.StreamError):
@@ -596,7 +705,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "backend_error",
             )
         except httpx.HTTPError as error:
-            finalize_request(active_stage, "failed", downstream_started=True)
+            finalize_request(
+                active_stage,
+                "failed",
+                downstream_started=True,
+                retryable_failure_class="backend_error",
+            )
             return error_response(
                 status.HTTP_502_BAD_GATEWAY,
                 str(error),
@@ -604,7 +718,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "backend_error",
             )
         except ValueError as error:
-            finalize_request(active_stage, "failed", downstream_started=True)
+            finalize_request(
+                active_stage,
+                "failed",
+                downstream_started=True,
+                retryable_failure_class="backend_error",
+            )
             if str(error) == "max_tokens exceeds server maximum 16384":
                 return error_response(
                     status.HTTP_400_BAD_REQUEST,
@@ -620,13 +739,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "backend_error",
             )
         except Exception as error:
-            finalize_request(active_stage, "failed", downstream_started=True)
+            finalize_request(
+                active_stage,
+                "failed",
+                downstream_started=True,
+                retryable_failure_class="backend_error",
+            )
             return error_response(
                 status.HTTP_502_BAD_GATEWAY,
                 str(error),
                 "backend_error",
                 "backend_error",
             )
+
+    @app.get("/v1/admin/runtime-status", dependencies=[Depends(admin_auth)])
+    async def admin_runtime_status(request: Request) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            runtime_report,
+            request.app.state.settings.state_db,
+            request.app.state.project_root,
+        )
 
     @app.get("/admin/profile", response_model=ProfileResponse, dependencies=[Depends(admin_auth)])
     async def profile(request: Request) -> dict[str, str]:

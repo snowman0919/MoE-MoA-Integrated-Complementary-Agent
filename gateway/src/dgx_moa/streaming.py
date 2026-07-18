@@ -4,6 +4,18 @@ import json
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, field
 
+TOKEN_FIELDS = ("prompt_tokens", "completion_tokens", "total_tokens")
+
+
+def reported_usage(value: object) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        key: token_count
+        for key in TOKEN_FIELDS
+        if type(token_count := value.get(key)) is int and token_count >= 0
+    }
+
 
 @dataclass
 class StreamObservation:
@@ -13,6 +25,7 @@ class StreamObservation:
     finish_reasons: list[str] = field(default_factory=list)
     tool_delta_seen: bool = False
     done_seen: bool = False
+    usage: dict[str, int] = field(default_factory=dict)
 
     def observe(self, event: bytes) -> None:
         remaining = self.max_capture_bytes - len(self.captured)
@@ -25,6 +38,7 @@ class StreamObservation:
                 payload = json.loads(line[6:])
             except ValueError:
                 continue
+            self.usage.update(reported_usage(payload.get("usage")))
             choice = (payload.get("choices") or [{}])[0]
             delta = choice.get("delta") or {}
             if isinstance(delta.get("content"), str):

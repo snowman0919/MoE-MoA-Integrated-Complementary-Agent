@@ -15,6 +15,26 @@ def usage_module() -> Any:
     return import_module("dgx_moa.usage")
 
 
+@pytest.mark.parametrize(
+    ("user_agent", "expected"),
+    [
+        ("curl/8.14.1", "curl"),
+        ("OpenAI/Python 1.109.1", "openai-python"),
+        ("python-httpx/0.28.1", "httpx"),
+        ("opencode/1.17.18", "opencode"),
+        ("Hermes-Agent/0.18.2", "hermes-agent"),
+        ("unknown-client/1.0", "openai-compatible"),
+        (None, "openai-compatible"),
+    ],
+)
+def test_client_classification_is_bounded_and_content_free(
+    user_agent: str | None, expected: str
+) -> None:
+    module = usage_module()
+
+    assert module.classify_client(user_agent) == expected
+
+
 def start_record(
     module: Any,
     request_id: str,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
+import uuid
 from contextlib import contextmanager
 
 import httpx
@@ -52,6 +54,26 @@ def assert_terminal_evidence(settings, store, session_id: str, status: str) -> d
     return traces[0]
 
 
+def assert_usage(app, status: str):  # type: ignore[no-untyped-def]
+    records = app.state.usage.recent_requests()
+    assert len(records) == 1
+    record = records[0]
+    assert uuid.UUID(record.request_id).version == 4
+    assert record.status == status
+    assert record.completed_at is not None
+    assert record.active_duration_seconds is not None
+    return record
+
+
+def block_profile_control(monkeypatch: pytest.MonkeyPatch) -> None:
+    def reject_control(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("profile control escaped an admin route test")
+
+    monkeypatch.setattr("dgx_moa.profiles.ProfileManager.switch", reject_control)
+    monkeypatch.setattr("dgx_moa.profiles.ProfileManager.transition", reject_control)
+    monkeypatch.setattr("dgx_moa.profiles.subprocess.run", reject_control)
+
+
 def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     with client_with_stub(settings, stub_provider) as client:
         assert client.get("/healthz").status_code == 200
@@ -75,6 +97,117 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert call["id"] == "call-preserved"
         assert response.json()["usage"]["total_tokens"] == 3
         assert stub_provider.calls == ["executor"]
+
+
+def test_nonstream_usage_is_content_free_and_uses_opaque_server_ids(
+    settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    block_profile_control(monkeypatch)
+    raw_session = "SENTINEL_RAW_SESSION_1f3c8d"
+    raw_prompt = "SENTINEL_PROMPT_074f95"
+    raw_response = "SENTINEL_RESPONSE_f92bb1"
+    raw_tool = "SENTINEL_TOOL_953a6e"
+    raw_user_agent = "OpenAI/Python 1.109.1 SENTINEL_RAW_UA_4bf4ac"
+    raw_secret = "SENTINEL_SECRET_8102d4"
+
+    async def response_with_usage(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        return {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": raw_response},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        }
+
+    stub_provider.complete = response_with_usage  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": raw_session,
+                "User-Agent": raw_user_agent,
+            },
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": raw_prompt}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": raw_tool,
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+                "metadata": {"secret": raw_secret},
+            },
+        )
+        record = assert_usage(client.app, "completed")
+        report = client.get(
+            "/v1/admin/runtime-status",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        with sqlite3.connect(settings.state_db) as database:
+            usage_row = database.execute("SELECT * FROM request_usage").fetchone()
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == raw_response
+    assert record.session_id != raw_session
+    assert record.client_class == "openai-python"
+    assert record.model_alias == "dgx-moa-agent"
+    assert record.runtime_mode == "agent"
+    assert record.request_class == "native_agent_turn"
+    assert record.roles_required == ("executor",)
+    assert record.first_byte_at is not None
+    assert record.accepted_at <= record.first_byte_at <= record.completed_at
+    assert record.streaming is False
+    assert record.model_state == "warm"
+    assert record.load_triggered is False
+    assert record.retryable_failure_class is None
+    assert (record.prompt_tokens, record.completion_tokens, record.total_tokens) == (2, 3, 5)
+    assert report.status_code == 404
+    persisted_usage = repr(usage_row)
+    serialized_record = record.model_dump_json()
+    for sentinel in (
+        raw_session,
+        raw_prompt,
+        raw_response,
+        raw_tool,
+        raw_user_agent,
+        raw_secret,
+        "test-secret",
+    ):
+        assert sentinel not in persisted_usage
+        assert sentinel not in serialized_record
+
+
+def test_usage_correlates_repeated_sessions_without_storing_the_raw_value(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    raw_session = "SENTINEL_CORRELATED_SESSION_51c8d4"
+    with client_with_stub(settings, stub_provider) as client:
+        for _ in range(2):
+            response = client.post(
+                "/v1/chat/completions",
+                headers={
+                    "Authorization": "Bearer test-secret",
+                    "X-Session-ID": raw_session,
+                },
+                json={
+                    "model": "dgx-moa-agent",
+                    "messages": [{"role": "user", "content": "work"}],
+                },
+            )
+            assert response.status_code == 200
+        records = client.app.state.usage.recent_requests()
+
+    assert len(records) == 2
+    assert records[0].request_id != records[1].request_id
+    assert records[0].session_id == records[1].session_id
+    assert records[0].session_id != raw_session
 
 
 def test_standard_request_gets_safe_identity_and_terminal_trace(
@@ -300,6 +433,7 @@ def test_chat_returns_normal_assistant_content(settings, stub_provider: StubProv
                 "messages": [{"role": "user", "content": "hi"}],
             },
         )
+        usage = assert_usage(client.app, "completed")
     assert response.json()["choices"][0] == {
         "message": {"role": "assistant", "content": "Hello from executor."},
         "finish_reason": "stop",
@@ -312,6 +446,7 @@ def test_chat_returns_normal_assistant_content(settings, stub_provider: StubProv
         "completion_tokens": 4,
         "total_tokens": 6,
     }
+    assert (usage.prompt_tokens, usage.completion_tokens, usage.total_tokens) == (2, 4, 6)
 
 
 def test_orchestrated_mode_uses_policy_roles(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -488,6 +623,7 @@ def test_stage_timeout_returns_exact_typed_error(
             },
         )
         trace = assert_terminal_evidence(settings, client.app.state.store, session_id, "timed_out")
+        usage = assert_usage(client.app, "timed_out")
 
     assert response.status_code == 504
     assert response.json()["error"] == {
@@ -497,6 +633,7 @@ def test_stage_timeout_returns_exact_typed_error(
         "param": None,
     }
     assert trace["final_status"] == "failed"
+    assert usage.retryable_failure_class == f"{stage}_timeout"
 
 
 def test_orchestrated_assistant_answer_without_evidence_skips_review(
@@ -859,8 +996,9 @@ def test_auth_enabled_invalid_key_returns_401(settings, stub_provider: StubProvi
 
 
 def test_auth_disabled_allows_inference_headers_or_none(
-    settings, stub_provider: StubProvider
+    settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # type: ignore[no-untyped-def]
+    block_profile_control(monkeypatch)
     disabled = Settings.model_validate(
         settings.model_dump() | {"auth_enabled": False, "api_key": None}
     )
@@ -870,6 +1008,91 @@ def test_auth_disabled_allows_inference_headers_or_none(
             client.get("/v1/models", headers={"Authorization": "Bearer unused"}).status_code == 200
         )
         assert client.get("/admin/profile").status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/admin/profile"),
+        ("POST", "/admin/profile/resident"),
+        ("POST", "/admin/profile/judge"),
+        ("POST", "/admin/profile/restore"),
+        ("GET", "/v1/admin/runtime-status"),
+    ],
+)
+@pytest.mark.parametrize("authorization", [None, "Bearer test-secret"])
+def test_admin_flag_is_checked_before_authentication_for_every_admin_endpoint(
+    settings,
+    stub_provider: StubProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    path: str,
+    authorization: str | None,
+) -> None:  # type: ignore[no-untyped-def]
+    block_profile_control(monkeypatch)
+    headers = {"Authorization": authorization} if authorization else {}
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.request(method, path, headers=headers)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["message"] == "admin API is disabled"
+
+
+def test_runtime_status_requires_admin_auth_and_returns_safe_usage(
+    settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    block_profile_control(monkeypatch)
+    enabled = Settings.model_validate(settings.model_dump() | {"admin_api_enabled": True})
+
+    def fake_command(*args: str) -> str:
+        if args[0] == "systemctl":
+            return "ActiveState=active\nSubState=running\nNRestarts=0\nExecMainStatus=0"
+        if args[0] == "git":
+            return "abc123"
+        return ""
+
+    monkeypatch.setattr("dgx_moa.runtime_status.command", fake_command)
+    monkeypatch.setattr("dgx_moa.runtime_status.memory_available", lambda: 123)
+    raw_session = "SENTINEL_ADMIN_SESSION_e72d60"
+    raw_user_agent = "curl/8.14.1 SENTINEL_ADMIN_UA_26c9c7"
+    with client_with_stub(enabled, stub_provider) as client:
+        created = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": raw_session,
+                "User-Agent": raw_user_agent,
+            },
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "SENTINEL_ADMIN_PROMPT_41af3e"}],
+            },
+        )
+        unauthorized = client.get("/v1/admin/runtime-status")
+        authorized = client.get(
+            "/v1/admin/runtime-status",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+
+    assert created.status_code == 200
+    assert unauthorized.status_code == 401
+    assert authorized.status_code == 200
+    payload = authorized.json()
+    assert payload["usage"]["active_request_count"] == 0
+    assert payload["usage"]["last_request"]["client_class"] == "curl"
+    assert payload["usage"]["request_statistics"]["request_count"] == 1
+    assert payload["usage"]["adaptive_idle_timeout_seconds"] is None
+    serialized = json.dumps(payload, sort_keys=True)
+    for sentinel in (
+        raw_session,
+        raw_user_agent,
+        "SENTINEL_ADMIN_PROMPT_41af3e",
+        "test-secret",
+        str(settings.state_db),
+        "dgx-moa-executor.service",
+        "systemctl",
+    ):
+        assert sentinel not in serialized
 
 
 def test_secret_never_appears_in_logs(settings, stub_provider: StubProvider, caplog) -> None:  # type: ignore[no-untyped-def]
@@ -985,6 +1208,10 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         assert trace["task_id"] == "stream"
         assert trace["workspace_identity"]["workspace_identifier"] == "external-api"
         assert all(decision["task_id"] == "stream" for decision in trace["agent_decisions"])
+        usage = assert_usage(client.app, "completed")
+        assert usage.streaming is True
+        assert usage.first_byte_at is not None
+        assert usage.total_tokens == 1
 
 
 @pytest.mark.asyncio
@@ -1113,6 +1340,10 @@ async def test_stream_total_deadline_does_not_retry_after_first_byte(
         assert timing_events[0]["payload"]["stage_status"]["executor_total"] == "timed_out"
         trace = assert_terminal_evidence(settings, app.state.store, "total-timeout", "timed_out")
         assert trace["final_status"] == "failed"
+        usage = assert_usage(app, "timed_out")
+        assert usage.streaming is True
+        assert usage.first_byte_at is not None
+        assert usage.retryable_failure_class == "executor_total_timeout"
 
 
 @pytest.mark.asyncio
@@ -1178,6 +1409,9 @@ async def test_streaming_api_persists_cancellation_and_closes_upstream(
         )
         trace = assert_terminal_evidence(settings, app.state.store, "cancelled-stream", "cancelled")
         assert trace["final_status"] == "cancelled"
+        usage = assert_usage(app, "cancelled")
+        assert usage.first_byte_at is not None
+        assert usage.retryable_failure_class is None
 
 
 @pytest.mark.asyncio
@@ -1257,6 +1491,9 @@ async def test_streaming_api_first_byte_cancellation_persists_terminal_evidence(
     assert traces[0]["final_status"] == "cancelled"
     assert traces[0]["metrics"]["request_timing_ms"] == payload["timings_ms"]
     assert_terminal_evidence(settings, app.state.store, "first-byte-cancelled", "cancelled")
+    usage = assert_usage(app, "cancelled")
+    assert usage.first_byte_at is None
+    assert usage.retryable_failure_class is None
 
 
 @pytest.mark.asyncio
@@ -1328,6 +1565,9 @@ async def test_streaming_api_consumer_close_closes_upstream_and_persists_abort(
         )
         trace = assert_terminal_evidence(settings, app.state.store, "closed-stream", "cancelled")
         assert trace["final_status"] == "cancelled"
+        usage = assert_usage(app, "cancelled")
+        assert usage.streaming is True
+        assert usage.first_byte_at is not None
 
 
 @pytest.mark.asyncio
@@ -1492,6 +1732,8 @@ def test_malformed_tool_call_returns_bad_gateway(settings, stub_provider: StubPr
             "code": "backend_error",
             "param": None,
         }
+        usage = assert_usage(client.app, "failed")
+        assert usage.retryable_failure_class == "backend_error"
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -1519,6 +1761,7 @@ def test_unexpected_provider_setup_failure_finalizes_typed_error_once(
             },
         )
         trace = assert_terminal_evidence(settings, client.app.state.store, session_id, "failed")
+        usage = assert_usage(client.app, "failed")
 
     assert response.status_code == 502
     assert response.json() == {
@@ -1530,6 +1773,7 @@ def test_unexpected_provider_setup_failure_finalizes_typed_error_once(
         }
     }
     assert trace["final_status"] == "failed"
+    assert usage.retryable_failure_class == "backend_error"
 
 
 @pytest.mark.parametrize(

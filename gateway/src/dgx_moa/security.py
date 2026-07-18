@@ -57,11 +57,11 @@ def admin_dependency(settings: Settings) -> Callable[..., Coroutine[Any, Any, No
     async def authenticate_admin(
         request: Request, authorization: str | None = Header(default=None)
     ) -> None:
+        if not settings.admin_api_enabled:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "admin API is disabled")
         if settings.auth_enabled:
             verify_bearer(settings.api_key or "", authorization)
             return
-        if not settings.admin_api_enabled:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "admin API is disabled")
         client_host = request.client.host if request.client else ""
         if client_host not in {"127.0.0.1", "::1"}:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "admin API requires loopback")

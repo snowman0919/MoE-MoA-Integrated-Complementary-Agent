@@ -166,6 +166,24 @@ async def test_observation_capture_is_truncated_at_bound() -> None:
 
 
 @pytest.mark.asyncio
+async def test_observation_extracts_only_reported_token_counts() -> None:
+    event = (
+        b'data: {"choices":[{"delta":{"content":"SENTINEL_RESPONSE"}}],'
+        b'"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5,'
+        b'"secret":"SENTINEL_SECRET"}}\n\n'
+    )
+    observation = StreamObservation(max_capture_bytes=1_000)
+
+    _ = [chunk async for chunk in forward_sse(chunks(event), observation, max_event_bytes=1_000)]
+
+    assert observation.usage == {
+        "prompt_tokens": 2,
+        "completion_tokens": 3,
+        "total_tokens": 5,
+    }
+
+
+@pytest.mark.asyncio
 async def test_oversized_event_is_rejected() -> None:
     event = b"data: " + (b"x" * 20) + b"\n\n"
 

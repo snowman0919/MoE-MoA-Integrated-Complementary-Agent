@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .usage import UsageStore
+
 SERVICES = ("gateway", "executor", "planner", "reviewer", "reasoner", "judge")
 
 
@@ -87,6 +89,39 @@ def service_status(role: str) -> dict[str, Any]:
     }
 
 
+def usage_status(path: Path) -> dict[str, Any]:
+    store = UsageStore(path)
+    requests = store.recent_requests()
+    statistics = store.report()
+    lifecycle_samples = store.recent_lifecycle_samples()
+    role_states = {
+        role: record.model_state for record in requests for role in record.roles_required
+    }
+    last_request = (
+        requests[-1].model_dump(mode="json", exclude={"session_id"}) if requests else None
+    )
+    return {
+        "last_request": last_request,
+        "active_request_count": sum(record.completed_at is None for record in requests),
+        "request_statistics": {
+            key: value
+            for key, value in statistics.items()
+            if key not in {"load_duration_seconds", "unload_duration_seconds"}
+        },
+        "role_states": role_states,
+        "adaptive_idle_timeout_seconds": None,
+        "cold_starts": statistics["cold_starts"],
+        "loading_failures": sum(
+            record.retryable_failure_class == "model_loading" for record in requests
+        ),
+        "lifecycle": {
+            "load_duration_seconds": statistics["load_duration_seconds"],
+            "unload_duration_seconds": statistics["unload_duration_seconds"],
+            "samples": [sample.model_dump(mode="json") for sample in lifecycle_samples],
+        },
+    }
+
+
 def report(state_db: Path, project: Path) -> dict[str, Any]:
     journal = command(
         "journalctl",
@@ -141,6 +176,7 @@ def report(state_db: Path, project: Path) -> dict[str, Any]:
         "completed_session_count": states["completed"],
         "failed_session_count": states["failed"],
         "blocked_session_count": states["blocked"],
+        "usage": usage_status(state_db),
         "historical_window": "24h journald; memory since soak log start when available",
     }
 
@@ -168,6 +204,13 @@ def main() -> None:
         f"failed={result['failed_session_count']} blocked={result['blocked_session_count']} "
         f"gateway_5xx_24h={result['gateway_5xx_count_24h']} "
         f"observability_degraded={result['observability_degradation_count']}"
+    )
+    usage = result["usage"]
+    print(
+        f"usage_requests={usage['request_statistics']['request_count']} "
+        f"active={usage['active_request_count']} cold_starts={usage['cold_starts']} "
+        f"loading_failures={usage['loading_failures']} "
+        f"idle_timeout={usage['adaptive_idle_timeout_seconds']}"
     )
 
 
