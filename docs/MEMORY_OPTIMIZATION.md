@@ -9,6 +9,11 @@ mechanism and the mandatory fallback. Sleep level 1, sleep level 2, and live
 prefix/KV reset were physically exercised but did not satisfy the combined
 memory-return, stability, and quality contract.
 
+Keep the existing 65,536-token executor configuration. The one-variable study
+selected `baseline`: `--max-model-len 65536`, `--max-num-seqs 1`,
+`--kv-cache-memory-bytes 1700000000`, `--gpu-memory-utilization 0.5`, and
+MARLIN. No new runtime flag is justified.
+
 This is isolated development evidence, not a deployment. Checked-in lifecycle
 mode remains `disabled`; production was not started, stopped, restarted,
 modified, or deployed.
@@ -68,6 +73,61 @@ The final fingerprint found ports `19300`, `19301`, `9000`, `8101`-`8104`, and
 production `main` at `c2a9af0`, and unchanged model metadata SHA-256
 `8077dc0ac131f7ae208132823c06b58d3410eba670ff511e3e42b9daf790c077`.
 
+## 65,536-token candidate study
+
+The authoritative result is
+`/tmp/dgx-moa-phase3-7vfm7bzv/candidates-confirmed.json`, SHA-256
+`10f233b47acfb52e54ee41532963d68e38831e7337818d4335b57f3bc2eaad03`.
+It reports `passed=true`, no failures, and selection `baseline`. It links the
+retained earlier generations; the content-free long-response diagnostic is
+`/tmp/dgx-moa-phase3-dktd_9pv/long-diagnostic.json`, SHA-256
+`e165f0d227cfe2713a8bee901567eee23fe3931c2cfd960ca5a209ddf9cc0340`.
+
+| Candidate | One changed dimension | Ready / near-64K latency | Warm owned PSS / MemAvailable | Outcome |
+| --- | --- | ---: | ---: | --- |
+| baseline | none | `934.930s` / `17.775s` | `4545508352` / `66737324032` bytes | selected; complete contract passed |
+| FP8 | FP8 KV, dynamic scales requested, `900000000` KV bytes | `1038.116s` / `19.864s` | `4537163776` / `66412109824` bytes | no material PSS improvement; dynamic scales disabled for the installed hybrid path and no capacity retry needed |
+| prefix off | disable prefix caching | n/a | n/a | exact no-op: installed baseline already logged prefix caching disabled |
+| eager | disable compile/CUDA graphs | `912.472s` / `20.047s` | `3859753984` / `66124435456` bytes | full contract passed, but rejected by matched safety rule |
+| chunked 8K | batched-token ceiling `8192` | `949.070s` / `17.174s` | `4590109696` / `64325787648` bytes | no material PSS improvement |
+| CPU offload 4G | `--cpu-offload-gb 4` | `953.048s` / `18.143s` | `5341807616` / `66104176640` bytes | PSS worsened |
+| KV offload 1G | native KV offload size `1` | startup failed | n/a | hybrid block/hash divisibility incompatibility; exact teardown passed |
+
+Every physical row kept context `65536` and `max_num_seqs=1`. All successful
+screening rows reported `63786` backend prompt tokens, not merely a local
+tokenizer estimate. Baseline and eager both passed five exact short cases, the
+1,100-number long response, three native tool calls, restricted Python code,
+strict reviewer JSON, stable owned memory, and teardown PSS/RSS zero. Their
+long responses contained 1,100 finite numeric items and finished with `stop`;
+baseline used 4,393 completion tokens in `113.904s`, eager 4,394 in `203.297s`.
+
+Eager reduced owned PSS by `685754368` bytes, but its matched warm
+MemAvailable was `612888576` bytes below baseline. That exceeds the
+`268435456`-byte noise band, so the deterministic safety rule rejected eager
+and retained baseline. `gpu_memory_utilization` was not swept because explicit
+KV bytes were fixed and unified-memory GPU used/free byte telemetry remained
+unavailable; no GPU percentage is inferred.
+
+The baseline prefix probes both passed at 1,565 prompt tokens with
+`0.492s`/`0.507s` latency. Prefix caching was already disabled, cached-token
+telemetry was null, retained PSS delta was only `2105344` bytes, and reset
+returned HTTP 200 in `0.023s`; this supplies no reason to add a disable flag.
+
+### Retained corrections
+
+The first full matrix exposed one ambiguous short fixture, then the long
+fixture's token budget. A content-free diagnostic proved the repeated-number
+request hit `1400` completion tokens, only 700 numeric items, and
+`finish_reason=length`. Raising the cap alone still did not self-terminate.
+The final fixture uses the ascending integers 1 through 1100 and an `END` stop,
+with a 5,000-token cap. An interrupted eager load was exactly torn down. A
+later attempt exhausted `/tmp`: baseline's raw log records nvcc failing to write
+a generated C file, and the next eager preparation failed while copying the
+seed cache. Its partial result was retained, result/log/manifest evidence was
+preserved, and only exact regenerable experiment `cache/` directories were
+removed. After the confirmed run, the current harness gained a 10-GiB disk
+preflight gate for later studies; the confirmed artifact did not exercise it.
+
 ## Selection rule
 
 A live mechanism had to return at least 90% of A's matched MemAvailable delta,
@@ -83,13 +143,12 @@ alone cannot select a live mechanism, and A remains the fail-closed choice.
   reduce ambiguity but cannot turn it into a device-only measurement.
 - A and B each have only two samples; their medians are deterministic selection
   inputs, not statistically robust performance distributions.
-- The installed runtime logged prefix caching disabled by default, so the later
-  `prefix_off` 64K candidate is a no-op/unsupported comparison rather than an
-  optimization claim.
-- The mechanism study proves one physical near-limit request shape, not the full
-  five-short/long/tool/code/reviewer candidate contract. The FP8, explicit KV,
-  graph/eager, chunked-prefill, CPU-offload, and KV-offload matrix remains the
-  next phase-three task.
+- The installed runtime logged prefix caching disabled by default, so
+  `prefix_off` is a no-op/unsupported comparison rather than an optimization
+  claim.
+- FP8's original full-contract failure used the invalid repeated-number fixture;
+  it was not rerun after diagnostics because its PSS improvement was only
+  `8344576` bytes, far below the fixed noise band, and therefore could not win.
 - No production threshold, topology, or service setting changed from this
   evidence. Deployment still requires reviewed source/config changes and a
   later human-controlled migration.

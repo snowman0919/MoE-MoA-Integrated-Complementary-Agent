@@ -1477,3 +1477,71 @@ samples do not form a robust distribution; MemAvailable is noisy, GPU bytes are
 null, and model equality is metadata-only. One vLLM shutdown log reports
 `resource_tracker` semaphore cleanup, with no surviving process, port, PSS, or
 RSS in the final checks.
+
+## Phase 3 65,536-Token Candidate Study — 2026-07-19
+
+The authoritative content-free result is
+`/tmp/dgx-moa-phase3-7vfm7bzv/candidates-confirmed.json`, SHA-256
+`10f233b47acfb52e54ee41532963d68e38831e7337818d4335b57f3bc2eaad03`.
+It reports `passed=true`, no failures, and selection `baseline`. The final
+fingerprint records clean dev `eb165d3`, clean production `main` at `c2a9af0`,
+unchanged model revision `27a8f16` and metadata SHA-256
+`8077dc0ac131f7ae208132823c06b58d3410eba670ff511e3e42b9daf790c077`,
+all scoped phase-three/production ports unbound, and runtime process count zero.
+
+All physical candidates kept `--max-model-len 65536` and
+`--max-num-seqs 1`. Baseline, FP8, eager, chunked-8K, and CPU-offload screening
+reported exactly 63,786 backend prompt tokens with the expected needle and
+`finish_reason=stop`. KV offload failed during startup because the installed
+hybrid layout required a GPU block size divisible by its hash block size;
+teardown still left PSS/RSS zero. Prefix-off was rejected without process start
+because the installed baseline already disabled prefix caching.
+
+The final baseline and eager trials passed the complete contract:
+
+| Check | Baseline | Eager |
+| --- | ---: | ---: |
+| cold ready | `934.9303155951202s` | `912.4722288539633s` |
+| near-64K latency / reported prompt tokens | `17.774531355826184s` / `63786` | `20.046998847974464s` / `63786` |
+| five short cases / forced native tools | 5/5 / 3/3 | 5/5 / 3/3 |
+| long numeric items / completion tokens / latency | `1100` / `4393` / `113.90377882798202s` | `1100` / `4394` / `203.29746027011424s` |
+| restricted code / strict reviewer JSON | pass / pass | pass / pass |
+| warm owned PSS | `4545508352` | `3859753984` bytes |
+| warm MemAvailable | `66737324032` | `66124435456` bytes |
+| owned-memory growth | `512000` | `385024` bytes |
+| post-stop owned PSS/RSS | `0` / `0` | `0` / `0` |
+
+Although eager lowered owned PSS by `685754368` bytes, its warm MemAvailable
+was `612888576` bytes lower than baseline. The fixed `268435456`-byte noise
+band therefore rejected eager before the lowest-PSS tie-breaker. The selected
+baseline settings are the existing `1700000000` KV bytes,
+`gpu_memory_utilization=0.5`, and MARLIN; Task 4 requires no source change.
+
+FP8 used `--kv-cache-dtype fp8 --calculate-kv-scales` with `900000000` KV
+bytes, reached capacity 68,560 tokens, and required no capacity retry. The
+installed hybrid path disabled calculated dynamic scales and checkpoint scales
+were absent. Its warm PSS was `4537163776`, only `8344576` bytes below the final
+baseline and far inside the noise band. Its retained full-contract failure was
+from the superseded long fixture. FP8 is noncompetitive on memory; that retained
+failure cannot be attributed to model quality.
+
+The runner retained each correction rather than rewriting evidence. The
+diagnostic result at `/tmp/dgx-moa-phase3-dktd_9pv/long-diagnostic.json`, SHA-256
+`e165f0d227cfe2713a8bee901567eee23fe3931c2cfd960ca5a209ddf9cc0340`,
+proved that the first long request parsed finite numbers but exhausted its
+1,400-token cap after 700 items. The 2,400-token repeat still did not
+self-terminate. The confirmed request enumerated 1 through 1100 and used an
+`END` stop with a 5,000-token cap. A later `ENOSPC` attempt is preserved in
+`candidates-verified.partial.json`: baseline's log records nvcc failing to write
+a generated C file, then eager cache seeding also failed. Only derived
+experiment cache directories were removed. The current harness now gates on 10
+GiB free disk, but the confirmed artifact predates and did not exercise that
+gate.
+
+The ignored harness finished with 60 passing tests plus ignore-aware Ruff and
+Python compilation. No prompt, model output, native tool argument value,
+Authorization header, API key, or model weight is present in result JSON;
+normalized output SHA-256 and content-free usage metadata are retained instead.
+GPU used/free byte fields remained null, so no GPU percentage is claimed. This
+remains undeployed development evidence; production was not started, stopped,
+restarted, edited, or deployed.
