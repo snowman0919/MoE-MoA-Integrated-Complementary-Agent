@@ -157,8 +157,11 @@ def test_excessive_budget_preserves_reused_completed_session(
                 objective="finished task",
                 phase=Phase.COMPLETED,
                 final_status="completed",
+                no_progress_count=2,
             )
         )
+        before = client.app.state.store.get("completed-budget")
+        events_before = client.app.state.store.events("completed-budget")
         response = client.post(
             "/v1/chat/completions",
             headers={
@@ -168,16 +171,16 @@ def test_excessive_budget_preserves_reused_completed_session(
             json={
                 "model": "dgx-moa-agent",
                 "messages": [{"role": "user", "content": "new task"}],
+                "metadata": {"no_progress": True},
                 "max_tokens": 16_385,
             },
         )
         state = client.app.state.store.get("completed-budget")
+        events = client.app.state.store.events("completed-budget")
 
     assert response.status_code == 400
-    assert state and state.phase == Phase.COMPLETED
-    assert state.final_status == "completed"
-    assert state.step_count == 0
-    assert state.decisions == []
+    assert state == before
+    assert events == events_before
     assert stub_provider.calls == []
 
 

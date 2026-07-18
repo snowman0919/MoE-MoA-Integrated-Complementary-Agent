@@ -597,14 +597,17 @@ class Controller:
             )
         )
 
+    def executor_tokens(self, request: dict[str, Any]) -> int:
+        requested_tokens = int(request.get("max_tokens") or self.settings.limits.executor_tokens)
+        if requested_tokens > self.settings.limits.executor_max_tokens:
+            raise ValueError("max_tokens exceeds server maximum 16384")
+        return requested_tokens
+
     async def prepare_executor(
         self, state: SessionState, request: dict[str, Any], roles: tuple[str, ...]
     ) -> dict[str, Any]:
         body = request.copy()
-        requested_tokens = int(body.get("max_tokens") or self.settings.limits.executor_tokens)
-        if requested_tokens > self.settings.limits.executor_max_tokens:
-            raise ValueError("max_tokens exceeds server maximum 16384")
-        body["max_tokens"] = requested_tokens
+        body["max_tokens"] = self.executor_tokens(body)
         if state.phase == Phase.BLOCKED:
             raise ValueError("session blocked after no progress")
         reasoner = self.settings.models.get("reasoner") if "reasoner" in roles else None

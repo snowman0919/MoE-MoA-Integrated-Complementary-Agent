@@ -249,6 +249,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "executor is not configured")
         session_id = x_session_id or str(body.metadata.get("session_id") or uuid.uuid4())
         raw = body.model_dump(exclude_none=True)
+        try:
+            raw["max_tokens"] = request.app.state.controller.executor_tokens(raw)
+        except ValueError as error:
+            return error_response(
+                status.HTTP_400_BAD_REQUEST,
+                str(error),
+                "invalid_request_error",
+                "invalid_request",
+                "max_tokens",
+            )
         if x_runtime_channel:
             raw["metadata"]["runtime_channel"] = x_runtime_channel
         if x_trace_origin:
