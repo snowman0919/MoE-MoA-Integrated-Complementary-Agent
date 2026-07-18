@@ -583,3 +583,173 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - Final client status was HTTP `200`; the response contained `62174` SSE bytes
   and exactly one `[DONE]`. This is a defect reproduction and timing baseline,
   not a throughput or quality benchmark.
+
+### Phase-one isolated post-fix validation
+
+- On 2026-07-18, development commit `0d95591` was validated against the
+  unchanged production reference `c2a9af0`. The production worktree was clean
+  on `main`; all production gateway/model units and targets were inactive, and
+  ports `8101`, `8102`, `8103`, `8104`, `8110`, `9000`, and `19000` were
+  unbound before the run.
+- The pre-runtime gates reported `180 passed, 1 warning in 2.27s`, `48 files
+  already formatted`, Ruff `All checks passed!`, MyPy success for 26 source
+  files, clean systemd verification, clean shell syntax, and clean
+  `git diff --check`. The warning was the existing Starlette TestClient
+  deprecation. The repository trace audit exited `1`: 10 sessions, 4 complete,
+  6 incomplete/legacy, and 40.0% mandatory-field completeness. The six missing
+  records were `legacy_v1`; ignored root records with duplicate session IDs
+  sort after and shadow the corresponding nested v2 records.
+- The isolated root was `/tmp/dgx-moa-phase1-post.ahMvu6`, with separate
+  `state/gateway.db`, `traces`, `data/run`, and `logs` paths. The gateway bound
+  only `127.0.0.1:19000`; physical models bound only loopback `8101`, `8102`,
+  and `8103`. A fresh API credential existed only in the supervisor process
+  environment and was unset when that process exited.
+- Controlled process groups were executor `3896715`, reviewer retry `3915544`,
+  planner `3921619`, timed gateway `3973021`, and temporary tailnet relay
+  `3985247`. The executor used the same diagnostic vLLM `MARLIN` MoE backend as
+  Task 0. It advertised maximum model length `65536`; reviewer and planner also
+  advertised `65536`.
+- Executor checkpoint loading took `606.69` seconds. The first reviewer start
+  failed before weight loading with CUDA `cudaMemGetInfo` out-of-memory; its
+  log was retained, memory was allowed to settle, and the unchanged retry loaded
+  four shards in `196.34` seconds and became ready. Planner then became ready.
+  All three real model endpoints were concurrently healthy before client tests.
+
+#### Generic OpenAI-compatible clients
+
+- Authenticated `/v1/models` returned, in order, `dgx-moa-chat`,
+  `dgx-moa-agent`, and `dgx-moa-orchestrated`, each with
+  `context_length=65536`.
+- Curl non-streaming chat session `physical-curl-nonstream` returned HTTP `200`,
+  natural content `CHAT_OK`, completion ID `chatcmpl-9051f38c1b87592a`,
+  `finish_reason=stop`, and usage `260/3/263`. Persisted policy was
+  `chat/plain_chat`, requiring and recording only executor.
+- Curl streaming agent session `physical-curl-stream` returned HTTP `200`,
+  content `STREAM_OK`, `1029` bytes, completion ID
+  `chatcmpl-9cacc35b31422f23`, and exactly one `[DONE]`. Persisted policy was
+  `agent/native_agent_turn`, requiring and recording only executor.
+- The official OpenAI Python client `2.6.1`, using no project metadata, returned
+  HTTP `200`, `OPENAI_OK`, completion ID `chatcmpl-b55b4713f2a48802`, session
+  header `99e087e8-2c49-4ce6-9699-adac639e2d74`, `finish_reason=stop`, and usage
+  `260/4/264`. Its state was executor-only.
+- A minimal HTTPX `0.28.1` streaming consumer, also without project metadata,
+  returned HTTP `200`, `HTTPX_OK`, `1252` bytes, and exactly one `[DONE]` in
+  session `2ad4d7f0-5e41-49fc-8af6-e649d8d01242`. Its first raw byte was at
+  monotonic nanoseconds `1245245784681732`, completion was
+  `1245245866156559`, and elapsed time was `285.885` milliseconds. Its state
+  was `chat/plain_chat`, executor-only.
+- Native tool session `physical-tool-loop` first returned exactly one
+  `read_file` call with ID `chatcmpl-tool-b6f42439d220f9ab`, arguments
+  `{"path":"/tmp/dgx-moa-physical.txt"}`, and `finish_reason=tool_calls`.
+  A standard tool-result continuation preserved that ID and returned
+  `PHYSICAL_TOOL_RESULT` in natural assistant content with
+  `finish_reason=stop`. Both decisions were executor-only.
+- Explicit orchestrated session `physical-orchestrated` returned HTTP `200`,
+  `ORCHESTRATED_OK`, completion ID `chatcmpl-971a44e0da6ad77e`, and elapsed
+  time `54.364` seconds. State recorded planner `14815.343` ms, executor
+  `322.505` ms, reviewer `39178.55` ms, and an approved review. This is the
+  explicit orchestration path, not an ordinary-client dependency.
+- Negative requests returned typed OpenAI envelopes: unknown model HTTP `404`
+  with code `model_not_found`; `tool_choice` without tools HTTP `422` with code
+  `invalid_request`; wrong bearer token HTTP `401` with code `invalid_api_key`;
+  and an orchestrated request after only the controlled planner group was
+  stopped HTTP `502` with code/type `backend_error` and message
+  `All connection attempts failed`.
+
+#### Exact post-fix streaming measurement
+
+- The preserved Task 0 timing wrapper initially returned HTTP `500`, 21 bytes,
+  and no DONE because Task 6 added `timeout_seconds` keywords to
+  `Provider.stream()` after that wrapper was written. The retained exception was
+  `TypeError`; an ignored validation-only wrapper was updated to forward the
+  new keywords without changing gateway source.
+- The successful session `physical-streaming-postfix-retry` used the exact Task
+  0 prompt, `Write exactly twenty short numbered lines about reliable APIs.`
+  Raw monotonic nanoseconds were request accepted `1245752311438712`, executor
+  start `1245752342543874`, executor first byte `1245752523408335`, downstream
+  headers `1245752524396351`, downstream first byte `1245752524595631`, executor
+  complete `1245759218474816`, and downstream complete `1245759226444430`.
+- Derived durations were executor start `0.031105162` seconds after acceptance,
+  executor first-byte latency `0.180864461` seconds, executor first byte
+  `0.211969623` seconds after acceptance, one-event transport overhead
+  `0.001187296` seconds, executor total `6.875930942` seconds, downstream first
+  byte `0.213156919` seconds after acceptance, and downstream total
+  `6.915005718` seconds. The client received its first byte
+  `6.693879185` seconds before executor completion; final forwarding finished
+  `0.007969614` seconds after executor completion.
+- Final status was HTTP `200`, `59652` bytes, and exactly one `[DONE]`.
+  Persisted state was `agent/native_agent_turn`, with executor as the only
+  required and recorded role, `finish_reason=stop`, and no truncation. Reviewer
+  was absent from both state and the critical path.
+
+#### Real OpenCode and Hermes clients
+
+- Real OpenCode `1.17.18` ran through its documented `opencode run --pure
+  --auto --format json --dir ... --model dgx-moa/dgx-moa-agent` interface from
+  explicit isolated working directories. Its first normal attempt returned
+  API HTTP `400` because a temporary config without a model `limit.output`
+  caused the client to request more than the server cap of `16384`. Adding the
+  documented temporary `limit: {context: 65536, output: 16384}` fixed the
+  client configuration without changing repository source.
+- OpenCode normal session `ses_08cd07ec3ffeHhZ6FnUz8r3GUQ` exited `0` with
+  `OPENCODE_OK`, `finish_reason=stop`, and usage total/input/output
+  `2824/2820/4`. Tool session `ses_08ccfe27effefpBnhcFEKpr03N` exited `0`,
+  invoked native `read` call `call_ebb54446c04947f9bcfd77b4` on the isolated
+  `FIXTURE.txt`, received `OPENCODE_PHYSICAL_FIXTURE`, and continued with
+  `OPENCODE_TOOL_OK`. Gateway state recorded streaming completion,
+  `tool_result_received`, `tool_execution_recorded`, and executor-only roles.
+- Real Hermes Agent `0.18.2` (`2026.7.7.2`, upstream `d9ee3424`) used its
+  documented one-shot CLI, `provider: custom`, environment-expanded
+  `model.api_key`, model `dgx-moa-agent`, and the direct tailnet URL
+  `http://100.125.239.72:9000/v1`. The environment reference prevented any
+  credential from being stored. A controlled foreground TCP relay bound only
+  `100.125.239.72:9000` after port 9000 and production inactivity were proved;
+  it forwarded only to the isolated loopback gateway and was removed first at
+  teardown. No Tailscale Serve, systemd, or production configuration changed.
+- Hermes attempt one reached the endpoint but returned `HTTP 401: invalid bearer
+  token`: version 0.18.2 deliberately host-gates `OPENAI_API_KEY` away from
+  unrelated custom hosts and used its no-key placeholder. The retained retry
+  used the documented `${DGX_MOA_API_KEY}` config reference. Normal session
+  `20260718_121450_52e9b9` then exited `0` with `HERMES_OK`, one API call, and
+  usage `3112/4/3116` input/output/total.
+- Hermes tool session `20260718_121544_04de50` exited `0` with two API calls.
+  Its exported transcript recorded native `read_file` call
+  `call_b93806e12d814d80baa71f38` with arguments
+  `{"path": "/tmp/dgx-moa-phase1-post.ahMvu6/hermes/work/FIXTURE.txt"}`,
+  tool result `HERMES_PHYSICAL_FIXTURE`, `finish_reason=tool_calls`, and a
+  continuation `HERMES_TOOL_OK` with `finish_reason=stop`. Gateway state IDs
+  `063de118-5cc1-4d41-b606-19f8bd51b0c2` and
+  `42087b8e-abaf-4893-87c3-0718a7199b4a` remained executor-only and recorded
+  streaming completion; the continuation recorded `tool_result_received` and
+  `tool_execution_recorded`.
+
+#### Trace audit, teardown, and acceptance boundary
+
+- The isolated trace audit exited `1`: 13 sessions, 0 complete, 0 legacy, and
+  0.0% mandatory-field completeness. All 13 lacked `session_ended` and
+  `workspace_identity`; 12 lacked `task_id`; decision task IDs were also
+  missing. The client/stream checks passed, but this is a real phase-one
+  observability gap and prevents an all-gates completion claim.
+- The first complete post-documentation gate run reported `180 passed, 1
+  warning in 1.93s`, `48 files already formatted`, Ruff success, MyPy success
+  for 26 source files, clean systemd verification, clean shell syntax, and
+  clean `git diff --check`. The repository trace audit was the only nonzero
+  command: exit `1`, 10 total, 4 complete, 6 incomplete/legacy, 40.0%
+  mandatory-field completeness, with `legacy_v1` missing for six sessions.
+- Teardown stopped only the verified controlled groups: tailnet relay first,
+  then isolated gateway, reviewer, and executor; planner had already been
+  stopped for the backend-error check. Ports `8101`, `8102`, `8103`, `8104`,
+  `8110`, `9000`, and `19000` were unbound afterward, the owned PIDs were
+  absent, no NVIDIA compute process remained, and `MemAvailable` returned to
+  `120329036` kB. All production units/targets remained inactive and the
+  production `main` worktree remained clean.
+- The phase-one design audit finds the intended public aliases, executor
+  contract, field preservation, typed errors, bounded immediate streaming,
+  native tool ownership, reviewer policy, output limits, truncation, timing,
+  and explicit context override covered by direct files and the 180-test suite;
+  the physical matrix proves the principal client and latency contracts.
+  Formal Task 9 completion remains blocked by both nonzero trace audits. The
+  overall runtime-reliability Goal remains active for usage statistics,
+  lifecycle and adaptive unloading, loading progress, memory-mechanism study,
+  near-limit 64K validation, extended client matrices, soak, remaining docs,
+  push, and PR work.

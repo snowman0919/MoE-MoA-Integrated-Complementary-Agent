@@ -31,15 +31,26 @@ Updated: 2026-07-18
 - KV reservations, model selection, unit topology, and memory gates are unchanged.
 - A configurable 10-second prestart memory-settle delay prevents reloads from
   racing unified-memory reclamation. The final resident restoration passed.
-- These contracts are implemented and synthetically testable on `dev`; Task 8
-  did not deploy production or run physical OpenCode/Hermes clients. The failed
-  pre-fix physical streaming baseline remains in `docs/VALIDATION.md`; Task 9
-  owns post-fix physical evidence.
+- These contracts are implemented on `dev` and passed isolated physical curl,
+  OpenAI Python, HTTPX, OpenCode `1.17.18`, and Hermes Agent `0.18.2` checks in
+  Task 9. The post-fix stream reached the client before executor completion and
+  used no planner or reviewer. Production was not deployed or restarted.
 
 ## Validation baseline
 
-- Automated suite: `96 passed`; Ruff format/check, MyPy, shell syntax, and
-  systemd unit verification pass.
+- Current phase-one suite: `180 passed`, with the existing FastAPI TestClient
+  deprecation warning; Ruff format/check, MyPy, shell syntax, and systemd unit
+  verification pass. The repository trace-corpus audit is separately red:
+  `4/10` sessions complete because six ignored legacy-v1 records shadow their
+  v2 session IDs. This is recorded evidence, not a green all-gates claim.
+- Isolated post-fix API validation advertised all three aliases at `65536`,
+  preserved native tool-call identity and continuation, returned typed auth,
+  model, request, and backend errors, and kept ordinary chat/agent state
+  executor-only.
+- For the exact Task 0 twenty-line prompt, downstream first byte arrived
+  `0.213156919` seconds after acceptance and `6.693879185` seconds before
+  executor completion, with HTTP `200` and one `[DONE]`. The corresponding
+  direct-agent state recorded only the executor role.
 - Fixed synthetic benchmark: `10/10`, success rate `1.0`, routes `3/6/1`
   fast/standard/escalation, tool calls per success `1.2`.
 - Required real OpenCode staging: 10 sessions covering read `3`, small edit `3`,
@@ -79,8 +90,16 @@ Updated: 2026-07-18
 
 ## Known limitations
 
+- The isolated Task 9 trace audit found `0/13` sessions complete: every trace
+  lacked `session_ended` and `workspace_identity`, and most lacked task IDs.
+  Phase-one client/stream behavior passed, but formal all-gates completion is
+  not claimed while the repository and isolated trace audits exit nonzero.
 - Multi-file and bounded-engineering staging tasks exceeded the 180-second
   harness bound; their failed traces are retained for later analysis.
 - The 7.5-hour soak includes classified startup rollback incidents before the
   memory-settle fix; the final resident state is healthy with no active loop.
 - Promotion still requires human review of PR #2 and a later main deployment.
+- The overall runtime-reliability Goal also still requires usage statistics,
+  lifecycle/adaptive unloading, loading progress, memory-mechanism study, a
+  near-limit 64K request, extended client matrices, soak, remaining docs, push,
+  and PR work.
