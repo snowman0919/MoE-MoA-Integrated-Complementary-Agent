@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import sqlite3
 import subprocess
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .config import MODEL_ROLES, SYSTEMD_UNIT_PATTERN
 
@@ -57,6 +58,8 @@ TRANSITIONS: dict[LifecycleState, frozenset[LifecycleState]] = {
 
 
 class LifecycleRecord(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     role: str
     state: LifecycleState
     transition_id: str
@@ -374,7 +377,7 @@ class SystemdLifecycleDriver:
         timeout_seconds: float = 10.0,
         journal_lines: int = 200,
     ):
-        if timeout_seconds <= 0:
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         if not 1 <= journal_lines <= 1_000:
             raise ValueError("journal_lines must be between 1 and 1000")
@@ -396,6 +399,7 @@ class SystemdLifecycleDriver:
             raise UnknownRoleError(role) from error
 
     def _run(self, operation: DriverOperation, args: Sequence[str]) -> str:
+        completed: subprocess.CompletedProcess[str] | None
         try:
             completed = subprocess.run(
                 list(args),
@@ -404,8 +408,10 @@ class SystemdLifecycleDriver:
                 timeout=self._timeout_seconds,
                 check=False,
             )
-        except subprocess.TimeoutExpired as error:
-            raise LifecycleDriverError(operation, "timeout") from error
+        except subprocess.TimeoutExpired:
+            completed = None
+        if completed is None:
+            raise LifecycleDriverError(operation, "timeout") from None
         if completed.returncode != 0:
             raise LifecycleDriverError(operation, "command_failed")
         return completed.stdout
@@ -434,10 +440,12 @@ class SystemdLifecycleDriver:
         return states[lines[0]]
 
     def start(self, role: str) -> None:
-        self._run("start", ["systemctl", "--user", "start", self._unit(role)])
+        args = ["systemctl", "--user", "start", self._unit(role)]
+        self._run("start", args)
 
     def stop(self, role: str) -> None:
-        self._run("stop", ["systemctl", "--user", "stop", self._unit(role)])
+        args = ["systemctl", "--user", "stop", self._unit(role)]
+        self._run("stop", args)
 
     def progress(self, role: str) -> tuple[str, ...]:
         output = self._run(

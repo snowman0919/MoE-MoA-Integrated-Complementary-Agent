@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
+import traceback
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -120,6 +121,12 @@ def test_invalid_lifecycle_mode_and_poll_interval_are_rejected() -> None:
         Settings(auth_enabled=False, lifecycle_mode="automatic")
     with pytest.raises(ValidationError, match="lifecycle_poll_seconds"):
         Settings(auth_enabled=False, lifecycle_poll_seconds=0)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_lifecycle_poll_interval_rejects_non_finite_values(value: float) -> None:
+    with pytest.raises(ValidationError, match="lifecycle_poll_seconds"):
+        Settings(auth_enabled=False, lifecycle_poll_seconds=value)
 
 
 @pytest.mark.parametrize(
@@ -293,6 +300,45 @@ def test_updates_and_transitions_reject_stale_ids_atomically(tmp_path: Path) -> 
     assert store.get("planner").state == "cold"
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "ready_since",
+        "last_used_at",
+        "progress_value",
+        "eta_seconds",
+        "last_load_duration_seconds",
+        "last_unload_duration_seconds",
+    ],
+)
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_lifecycle_updates_roll_back(tmp_path: Path, field: str, value: float) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / f"{field}-{value}.db", ("executor",))
+    before = store.get("executor")
+
+    with pytest.raises(ValidationError):
+        store.update("executor", before.transition_id, **{field: value})
+
+    assert store.get("executor") == before
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_clock_transition_rolls_back(tmp_path: Path, value: float) -> None:
+    module = lifecycle()
+    clock = [100.0]
+    store = module.LifecycleStore(
+        tmp_path / f"clock-{value}.db", ("executor",), clock=lambda: clock[0]
+    )
+    before = store.get("executor")
+    clock[0] = value
+
+    with pytest.raises(ValidationError):
+        store.transition("executor", "load_queued", expected_transition_id=before.transition_id)
+
+    assert store.get("executor") == before
+
+
 def test_failure_is_sanitized_and_role_changes_are_isolated(tmp_path: Path) -> None:
     module = lifecycle()
     store = module.LifecycleStore(tmp_path / "state.db", ("executor", "reviewer"))
@@ -456,6 +502,16 @@ def test_systemd_driver_converts_timeout_to_safe_typed_error(
     assert "systemctl" not in str(raised.value)
     assert "journalctl" not in str(raised.value)
     assert "secret" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    formatted = "".join(traceback.format_exception(raised.value))
+    for secret in (
+        "systemctl",
+        "journalctl",
+        "dgx-moa-dev-executor.service",
+        "secret-stderr",
+    ):
+        assert secret not in formatted
 
 
 @pytest.mark.parametrize("operation", ["status", "start", "stop", "progress"])
@@ -495,7 +551,16 @@ def test_systemd_status_rejects_malformed_output(
 
 
 @pytest.mark.parametrize(
-    ("timeout_seconds", "journal_lines"), [(0.0, 10), (-1.0, 10), (1.0, 0), (1.0, 1001)]
+    ("timeout_seconds", "journal_lines"),
+    [
+        (0.0, 10),
+        (-1.0, 10),
+        (float("nan"), 10),
+        (float("inf"), 10),
+        (float("-inf"), 10),
+        (1.0, 0),
+        (1.0, 1001),
+    ],
 )
 def test_systemd_driver_bounds_timeout_and_progress_lines(
     timeout_seconds: float, journal_lines: int

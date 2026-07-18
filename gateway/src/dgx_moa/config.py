@@ -93,7 +93,7 @@ class Settings(BaseModel):
     frontier_enabled: bool = False
     frontier_disabled_reason: str = "host_sandbox_capability_blocked"
     lifecycle_mode: Literal["disabled", "observe", "fixed", "adaptive"] = "disabled"
-    lifecycle_poll_seconds: float = Field(default=30, gt=0)
+    lifecycle_poll_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
     lifecycle_unit_map: dict[str, str] = Field(default_factory=dict)
     models: dict[str, ModelConfig] = Field(default_factory=dict)
     limits: Limits = Field(default_factory=Limits)
