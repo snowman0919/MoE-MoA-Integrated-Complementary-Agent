@@ -542,3 +542,39 @@ def test_usage_limits_have_exact_defaults_and_yaml_values(
 def test_usage_limits_reject_out_of_bounds_values(field: str, value: int) -> None:
     with pytest.raises(ValidationError):
         Limits.model_validate({field: value})
+
+
+def test_busy_hour_counts_do_not_make_a_sparse_optional_role_adaptive(tmp_path: Path) -> None:
+    lifecycle = import_module("dgx_moa.lifecycle")
+    module = usage_module()
+    store = module.UsageStore(tmp_path / "usage.db")
+    start = 100_000.0
+    for index in range(30):
+        roles = ("executor", "planner") if index in {0, 29} else ("executor",)
+        store.start(start_record(module, f"request-{index}", start + index, roles_required=roles))
+
+    report = store.report(now=start + 30)
+    record = lifecycle.LifecycleRecord(
+        role="planner",
+        state="ready",
+        transition_id="502713d8-6d11-436c-829f-757ec8d3fbf2",
+        transitioned_at=0.0,
+        updated_at=0.0,
+        ready_since=0.0,
+        last_used_at=0.0,
+    )
+    decision = lifecycle.calculate_idle_policy(
+        "planner",
+        "adaptive",
+        store.recent_requests(),
+        record,
+        now=start + 30,
+        limits=Limits(),
+    )
+
+    assert report["requests_last_hour"] == 30
+    assert report["requests_last_day"] == 30
+    assert report["adaptive_policy_samples"]["sufficient"] is True
+    assert decision.sample_count == 1
+    assert decision.threshold_source == "sparse_fallback"
+    assert decision.threshold_seconds == 900.0

@@ -57,7 +57,27 @@ class Limits(BaseModel):
     usage_sample_window: int = Field(default=512, ge=1)
     usage_ewma_alpha: float = Field(default=0.25, gt=0, le=1)
     adaptive_minimum_samples: int = Field(default=20, ge=1)
+    executor_idle_fallback_seconds: float = Field(default=2_700, gt=0, allow_inf_nan=False)
+    executor_idle_minimum_seconds: float = Field(default=900, gt=0, allow_inf_nan=False)
+    executor_idle_maximum_seconds: float = Field(default=7_200, gt=0, allow_inf_nan=False)
+    executor_minimum_ready_residency_seconds: float = Field(default=600, gt=0, allow_inf_nan=False)
+    optional_idle_fallback_seconds: float = Field(default=900, gt=0, allow_inf_nan=False)
+    optional_idle_minimum_seconds: float = Field(default=300, gt=0, allow_inf_nan=False)
+    optional_idle_maximum_seconds: float = Field(default=2_700, gt=0, allow_inf_nan=False)
+    optional_minimum_ready_residency_seconds: float = Field(default=300, gt=0, allow_inf_nan=False)
     max_steps: int = 100
+
+    @model_validator(mode="after")
+    def validate_idle_threshold_order(self) -> Limits:
+        for role_class in ("executor", "optional"):
+            minimum = getattr(self, f"{role_class}_idle_minimum_seconds")
+            fallback = getattr(self, f"{role_class}_idle_fallback_seconds")
+            maximum = getattr(self, f"{role_class}_idle_maximum_seconds")
+            if not minimum <= fallback <= maximum:
+                raise ValueError(
+                    f"{role_class} idle thresholds must satisfy minimum <= fallback <= maximum"
+                )
+        return self
 
 
 class ModelConfig(BaseModel):

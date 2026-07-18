@@ -9,12 +9,13 @@ import subprocess
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from pathlib import Path
+from statistics import quantiles
 from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .config import MODEL_ROLES, SYSTEMD_UNIT_PATTERN
+from .config import MODEL_ROLES, SYSTEMD_UNIT_PATTERN, Limits
 
 LifecycleState = Literal[
     "cold",
@@ -35,6 +36,21 @@ ProgressQuality = Literal["measured_bytes", "measured_shards", "estimated", "una
 LeaseKind = Literal["active_request", "open_stream", "continuation"]
 RequestLeaseKind = Literal["active_request", "open_stream"]
 GuardKind = Literal["evaluation_guard", "profile_guard"]
+ModelRole = Literal["executor", "planner", "reviewer", "reasoner", "judge"]
+LifecycleMode = Literal["disabled", "observe", "fixed", "adaptive"]
+IdleThresholdSource = Literal["disabled", "fixed", "sparse_fallback", "adaptive_p75"]
+IdlePolicyReason = Literal[
+    "mode_disabled",
+    "mode_changed",
+    "state_reset",
+    "state_not_ready",
+    "blocked",
+    "minimum_residency",
+    "activity_reset",
+    "below_threshold",
+    "first_idle_check",
+    "idle_confirmed",
+]
 
 MAX_PROGRESS_LINES = 1_000
 MAX_PROGRESS_LINE_CHARACTERS = 2_000
@@ -126,6 +142,179 @@ class LoadProgress(BaseModel):
 class LoadCheck(BaseModel):
     record: LifecycleRecord
     load_triggered: bool = False
+
+
+class RoleUsageRecord(Protocol):
+    accepted_at: float
+    roles_required: tuple[str, ...]
+
+
+class IdlePolicyDecision(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    role: ModelRole
+    mode: LifecycleMode
+    threshold_seconds: float = Field(gt=0)
+    threshold_source: IdleThresholdSource
+    sample_count: int = Field(ge=0)
+    idle_seconds: float = Field(ge=0)
+    residency_seconds: float = Field(ge=0)
+    next_consecutive_check_count: int = Field(ge=0, le=2)
+    would_unload: bool
+    action_allowed: bool
+    reason: IdlePolicyReason
+
+
+def _idle_bounds(role: str, limits: Limits) -> tuple[float, float, float, float]:
+    prefix = "executor" if role == "executor" else "optional"
+    minimum = float(getattr(limits, f"{prefix}_idle_minimum_seconds"))
+    fallback = float(getattr(limits, f"{prefix}_idle_fallback_seconds"))
+    maximum = float(getattr(limits, f"{prefix}_idle_maximum_seconds"))
+    residency = float(getattr(limits, f"{prefix}_minimum_ready_residency_seconds"))
+    if (
+        any(
+            not math.isfinite(value) or value <= 0
+            for value in (minimum, fallback, maximum, residency)
+        )
+        or not minimum <= fallback <= maximum
+    ):
+        raise ValueError("invalid idle policy limits")
+    return minimum, fallback, maximum, residency
+
+
+def _role_usage_gaps(
+    records: Sequence[RoleUsageRecord], role: str, sample_window: int
+) -> list[float]:
+    if not isinstance(sample_window, int) or isinstance(sample_window, bool) or sample_window < 1:
+        raise ValueError("usage sample window must be positive")
+    timestamps: list[float] = []
+    for record in records:
+        try:
+            accepted_at = float(record.accepted_at)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if role in record.roles_required and math.isfinite(accepted_at) and accepted_at >= 0:
+            timestamps.append(accepted_at)
+    timestamps = sorted(timestamps)[-sample_window:]
+    return [
+        gap
+        for earlier, later in zip(timestamps, timestamps[1:], strict=False)
+        if math.isfinite(gap := later - earlier) and gap > 0
+    ]
+
+
+def calculate_idle_policy(
+    role: ModelRole,
+    mode: LifecycleMode,
+    records: Sequence[RoleUsageRecord],
+    record: LifecycleRecord,
+    *,
+    now: float,
+    limits: Limits,
+    has_blockers: bool = False,
+    previous_mode: LifecycleMode | None = None,
+    previous_last_activity_at: float | None = None,
+    previous_consecutive_check_count: int = 0,
+) -> IdlePolicyDecision:
+    if role not in MODEL_ROLES or record.role != role:
+        raise ValueError("invalid idle policy role")
+    modes = {"disabled", "observe", "fixed", "adaptive"}
+    if mode not in modes or (previous_mode is not None and previous_mode not in modes):
+        raise ValueError("invalid idle policy mode")
+    if type(has_blockers) is not bool:
+        raise ValueError("has_blockers must be boolean")
+    if (
+        not isinstance(previous_consecutive_check_count, int)
+        or isinstance(previous_consecutive_check_count, bool)
+        or not 0 <= previous_consecutive_check_count <= 2
+    ):
+        raise ValueError("invalid idle policy check count")
+    now = float(now)
+    if not math.isfinite(now) or now < 0:
+        raise ValueError("idle policy time must be finite and nonnegative")
+    if previous_last_activity_at is not None and (
+        not math.isfinite(previous_last_activity_at) or previous_last_activity_at < 0
+    ):
+        raise ValueError("previous activity time must be finite and nonnegative")
+    if (
+        not isinstance(limits.adaptive_minimum_samples, int)
+        or isinstance(limits.adaptive_minimum_samples, bool)
+        or limits.adaptive_minimum_samples < 1
+    ):
+        raise ValueError("adaptive minimum samples must be positive")
+
+    minimum, fallback, maximum, minimum_residency = _idle_bounds(role, limits)
+    gaps = _role_usage_gaps(records, role, limits.usage_sample_window)
+    adaptive = mode in {"observe", "adaptive"} and len(gaps) >= limits.adaptive_minimum_samples
+    if adaptive:
+        p75 = gaps[0] if len(gaps) == 1 else quantiles(gaps, n=4, method="inclusive")[2]
+        threshold = min(maximum, max(minimum, 1.5 * p75))
+        source: IdleThresholdSource = "adaptive_p75"
+    else:
+        threshold = fallback
+        source = (
+            "disabled" if mode == "disabled" else "fixed" if mode == "fixed" else "sparse_fallback"
+        )
+
+    ready_since = record.ready_since
+    activity_at: float | None = None
+    if record.state == "ready" and ready_since is not None:
+        ready_since = float(ready_since)
+        if not math.isfinite(ready_since) or ready_since < 0:
+            raise ValueError("ready time must be finite and nonnegative")
+        if record.last_used_at is not None:
+            last_used_at = float(record.last_used_at)
+            if not math.isfinite(last_used_at) or last_used_at < 0:
+                raise ValueError("last activity time must be finite and nonnegative")
+            activity_at = max(ready_since, last_used_at)
+        else:
+            # A ready role never used in this residency safely idles from ready_since.
+            activity_at = ready_since
+    idle_seconds = max(0.0, now - activity_at) if activity_at is not None else 0.0
+    residency_seconds = max(0.0, now - ready_since) if ready_since is not None else 0.0
+
+    reason: IdlePolicyReason
+    next_count = 0
+    would_unload = False
+    if mode == "disabled":
+        reason = "mode_disabled"
+    elif previous_mode is not None and previous_mode != mode:
+        reason = "mode_changed"
+    elif record.state != "ready" or ready_since is None or activity_at is None:
+        reason = "state_not_ready"
+    elif has_blockers:
+        reason = "blocked"
+    elif residency_seconds < minimum_residency:
+        reason = "minimum_residency"
+    elif previous_last_activity_at is not None and previous_last_activity_at != activity_at:
+        reason = "activity_reset"
+    elif idle_seconds <= threshold:
+        reason = "below_threshold"
+    elif previous_consecutive_check_count and (
+        previous_mode is None or previous_last_activity_at is None
+    ):
+        reason = "state_reset"
+    elif previous_consecutive_check_count == 0:
+        next_count = 1
+        reason = "first_idle_check"
+    else:
+        next_count = 2
+        would_unload = True
+        reason = "idle_confirmed"
+
+    return IdlePolicyDecision(
+        role=role,
+        mode=mode,
+        threshold_seconds=threshold,
+        threshold_source=source,
+        sample_count=len(gaps),
+        idle_seconds=idle_seconds,
+        residency_seconds=residency_seconds,
+        next_consecutive_check_count=next_count,
+        would_unload=would_unload,
+        action_allowed=would_unload and mode in {"fixed", "adaptive"},
+        reason=reason,
+    )
 
 
 def _reported_percent(match: re.Match[str]) -> float | None:

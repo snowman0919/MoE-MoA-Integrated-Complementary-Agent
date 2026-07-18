@@ -10,7 +10,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from dgx_moa.config import Settings, load_settings
+from dgx_moa.config import Limits, Settings, load_settings
 from pydantic import ValidationError
 
 STATES = {
@@ -89,6 +89,49 @@ def lifecycle() -> Any:
     return import_module("dgx_moa.lifecycle")
 
 
+def policy_record(
+    module: Any,
+    role: str = "executor",
+    *,
+    state: str = "ready",
+    ready_since: float | None = 0.0,
+    last_used_at: float | None = 0.0,
+) -> Any:
+    return module.LifecycleRecord(
+        role=role,
+        state=state,
+        transition_id="d4f650df-11fb-4477-98c9-fc8aa7093684",
+        transitioned_at=0.0,
+        updated_at=0.0,
+        ready_since=ready_since,
+        last_used_at=last_used_at,
+    )
+
+
+def policy_usage(accepted_at: float, roles: tuple[str, ...] = ("executor",)) -> Any:
+    from dgx_moa.usage import RequestUsageStart
+
+    return RequestUsageStart(
+        request_id=f"request-{accepted_at}-{roles}",
+        session_id=f"session-{accepted_at}-{roles}",
+        client_class="openai-compatible",
+        model_alias="dgx-moa-agent",
+        runtime_mode="agent",
+        request_class="native_agent_turn",
+        roles_required=roles,
+        accepted_at=accepted_at,
+        streaming=False,
+        model_state="warm",
+    )
+
+
+def policy_usage_from_gaps(gaps: list[float], roles: tuple[str, ...] = ("executor",)) -> list[Any]:
+    accepted = [0.0]
+    for gap in gaps:
+        accepted.append(accepted[-1] + gap)
+    return [policy_usage(value, roles) for value in accepted]
+
+
 @pytest.fixture(autouse=True)
 def block_real_service_commands(monkeypatch: pytest.MonkeyPatch) -> None:
     def tripwire(*args: object, **kwargs: object) -> None:
@@ -110,6 +153,473 @@ def test_lifecycle_defaults_are_disabled_and_empty() -> None:
     assert settings.lifecycle_mode == "disabled"
     assert settings.lifecycle_poll_seconds == 30
     assert settings.lifecycle_unit_map == {}
+
+
+def test_idle_policy_limits_have_conservative_defaults_and_yaml_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = {
+        "executor_idle_fallback_seconds": 2_700.0,
+        "executor_idle_minimum_seconds": 900.0,
+        "executor_idle_maximum_seconds": 7_200.0,
+        "executor_minimum_ready_residency_seconds": 600.0,
+        "optional_idle_fallback_seconds": 900.0,
+        "optional_idle_minimum_seconds": 300.0,
+        "optional_idle_maximum_seconds": 2_700.0,
+        "optional_minimum_ready_residency_seconds": 300.0,
+    }
+
+    limits = Limits()
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
+    configured = load_settings(Path("config/models.yaml")).limits
+
+    for field, value in expected.items():
+        assert getattr(limits, field) == value
+        assert getattr(configured, field) == value
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "executor_idle_fallback_seconds",
+        "executor_idle_minimum_seconds",
+        "executor_idle_maximum_seconds",
+        "executor_minimum_ready_residency_seconds",
+        "optional_idle_fallback_seconds",
+        "optional_idle_minimum_seconds",
+        "optional_idle_maximum_seconds",
+        "optional_minimum_ready_residency_seconds",
+    ],
+)
+@pytest.mark.parametrize("value", [0.0, -1.0, float("nan"), float("inf"), float("-inf")])
+def test_idle_policy_limits_reject_non_positive_or_non_finite_values(
+    field: str, value: float
+) -> None:
+    with pytest.raises(ValidationError):
+        Limits.model_validate({field: value})
+
+
+@pytest.mark.parametrize("role_class", ["executor", "optional"])
+def test_idle_policy_limits_require_minimum_fallback_maximum_order(
+    role_class: str,
+) -> None:
+    prefix = f"{role_class}_idle"
+    for values in (
+        {f"{prefix}_minimum_seconds": 901, f"{prefix}_fallback_seconds": 900},
+        {f"{prefix}_fallback_seconds": 901, f"{prefix}_maximum_seconds": 900},
+    ):
+        with pytest.raises(ValidationError, match="minimum.*fallback.*maximum"):
+            Limits.model_validate(values)
+
+
+def test_idle_policy_modes_separate_evidence_from_action_authority() -> None:
+    module = lifecycle()
+    limits = Limits(
+        executor_idle_minimum_seconds=5,
+        executor_idle_fallback_seconds=20,
+        executor_idle_maximum_seconds=100,
+        executor_minimum_ready_residency_seconds=1,
+    )
+    records = policy_usage_from_gaps([10.0] * 20)
+    record = policy_record(module)
+
+    disabled = module.calculate_idle_policy(
+        "executor",
+        "disabled",
+        records,
+        record,
+        now=1_000.0,
+        limits=limits,
+        previous_mode="disabled",
+        previous_last_activity_at=0.0,
+        previous_consecutive_check_count=1,
+    )
+    observe = module.calculate_idle_policy(
+        "executor",
+        "observe",
+        records,
+        record,
+        now=1_000.0,
+        limits=limits,
+        previous_mode="observe",
+        previous_last_activity_at=0.0,
+        previous_consecutive_check_count=1,
+    )
+    fixed = module.calculate_idle_policy(
+        "executor",
+        "fixed",
+        records,
+        record,
+        now=1_000.0,
+        limits=limits,
+        previous_mode="fixed",
+        previous_last_activity_at=0.0,
+        previous_consecutive_check_count=1,
+    )
+    adaptive = module.calculate_idle_policy(
+        "executor",
+        "adaptive",
+        records,
+        record,
+        now=1_000.0,
+        limits=limits,
+        previous_mode="adaptive",
+        previous_last_activity_at=0.0,
+        previous_consecutive_check_count=1,
+    )
+
+    assert (disabled.threshold_seconds, disabled.threshold_source) == (20.0, "disabled")
+    assert disabled.next_consecutive_check_count == 0
+    assert disabled.would_unload is False
+    assert disabled.action_allowed is False
+    assert disabled.reason == "mode_disabled"
+    assert (observe.threshold_seconds, observe.threshold_source) == (15.0, "adaptive_p75")
+    assert observe.would_unload is True
+    assert observe.action_allowed is False
+    assert (fixed.threshold_seconds, fixed.threshold_source) == (20.0, "fixed")
+    assert fixed.would_unload is True
+    assert fixed.action_allowed is True
+    assert (adaptive.threshold_seconds, adaptive.threshold_source) == (
+        15.0,
+        "adaptive_p75",
+    )
+    assert adaptive.would_unload is True
+    assert adaptive.action_allowed is True
+
+
+def test_adaptive_policy_requires_twenty_positive_role_gaps() -> None:
+    module = lifecycle()
+    limits = Limits(
+        executor_idle_minimum_seconds=5,
+        executor_idle_fallback_seconds=20,
+        executor_idle_maximum_seconds=100,
+    )
+    record = policy_record(module)
+
+    sparse = module.calculate_idle_policy(
+        "executor",
+        "adaptive",
+        policy_usage_from_gaps([10.0] * 19),
+        record,
+        now=1_000.0,
+        limits=limits,
+    )
+    sufficient = module.calculate_idle_policy(
+        "executor",
+        "adaptive",
+        policy_usage_from_gaps([10.0] * 20),
+        record,
+        now=1_000.0,
+        limits=limits,
+    )
+
+    assert (sparse.sample_count, sparse.threshold_seconds, sparse.threshold_source) == (
+        19,
+        20.0,
+        "sparse_fallback",
+    )
+    assert (
+        sufficient.sample_count,
+        sufficient.threshold_seconds,
+        sufficient.threshold_source,
+    ) == (20, 15.0, "adaptive_p75")
+
+
+@pytest.mark.parametrize(
+    ("gaps", "minimum", "fallback", "maximum", "expected"),
+    [
+        ([float(value) for value in range(1, 21)], 1.0, 20.0, 100.0, 22.875),
+        ([1.0] * 20, 10.0, 20.0, 100.0, 10.0),
+        ([1_000.0] * 20, 10.0, 20.0, 100.0, 100.0),
+        ([10.0] * 19 + [1_000_000.0], 5.0, 20.0, 100.0, 15.0),
+    ],
+)
+def test_adaptive_p75_uses_exact_interpolation_and_both_clamps(
+    gaps: list[float],
+    minimum: float,
+    fallback: float,
+    maximum: float,
+    expected: float,
+) -> None:
+    module = lifecycle()
+    limits = Limits(
+        executor_idle_minimum_seconds=minimum,
+        executor_idle_fallback_seconds=fallback,
+        executor_idle_maximum_seconds=maximum,
+    )
+
+    decision = module.calculate_idle_policy(
+        "executor",
+        "adaptive",
+        list(reversed(policy_usage_from_gaps(gaps))),
+        policy_record(module),
+        now=2_000_000.0,
+        limits=limits,
+    )
+
+    assert decision.sample_count == 20
+    assert decision.threshold_seconds == pytest.approx(expected)
+    assert minimum <= decision.threshold_seconds <= maximum
+
+
+def test_role_samples_are_sorted_separated_and_bounded_before_gap_calculation() -> None:
+    module = lifecycle()
+    limits = Limits(
+        usage_sample_window=3,
+        adaptive_minimum_samples=2,
+        executor_idle_minimum_seconds=1,
+        executor_idle_fallback_seconds=10,
+        executor_idle_maximum_seconds=2_000,
+        optional_idle_minimum_seconds=1,
+        optional_idle_fallback_seconds=10,
+        optional_idle_maximum_seconds=2_000,
+    )
+    records = [
+        policy_usage(1.0, ("planner",)),
+        policy_usage(1_000.0),
+        policy_usage(10.0),
+        policy_usage(10.0, ("planner",)),
+        policy_usage(0.0),
+        policy_usage(6.0, ("planner",)),
+        policy_usage(20.0),
+        policy_usage(3.0, ("planner",)),
+    ]
+
+    executor = module.calculate_idle_policy(
+        "executor",
+        "adaptive",
+        records,
+        policy_record(module),
+        now=2_000.0,
+        limits=limits,
+    )
+    planner = module.calculate_idle_policy(
+        "planner",
+        "adaptive",
+        records,
+        policy_record(module, "planner"),
+        now=2_000.0,
+        limits=limits,
+    )
+
+    assert (executor.sample_count, executor.threshold_seconds) == (2, pytest.approx(1_106.25))
+    assert (planner.sample_count, planner.threshold_seconds) == (2, pytest.approx(5.625))
+
+
+def test_minimum_residency_blocks_old_activity_and_never_used_ready_uses_ready_since() -> None:
+    module = lifecycle()
+    limits = Limits(
+        optional_idle_minimum_seconds=10,
+        optional_idle_fallback_seconds=50,
+        optional_idle_maximum_seconds=100,
+        optional_minimum_ready_residency_seconds=300,
+    )
+
+    too_new = module.calculate_idle_policy(
+        "planner",
+        "fixed",
+        (),
+        policy_record(module, "planner", ready_since=1_000.0, last_used_at=0.0),
+        now=1_100.0,
+        limits=limits,
+        previous_consecutive_check_count=1,
+    )
+    never_used = module.calculate_idle_policy(
+        "planner",
+        "fixed",
+        (),
+        policy_record(module, "planner", ready_since=1_000.0, last_used_at=None),
+        now=1_400.0,
+        limits=limits,
+    )
+
+    assert (too_new.idle_seconds, too_new.residency_seconds) == (100.0, 100.0)
+    assert too_new.next_consecutive_check_count == 0
+    assert too_new.reason == "minimum_residency"
+    assert (never_used.idle_seconds, never_used.residency_seconds) == (400.0, 400.0)
+    assert never_used.next_consecutive_check_count == 1
+    assert never_used.reason == "first_idle_check"
+
+
+def test_idle_hysteresis_requires_two_checks_then_authorizes() -> None:
+    module = lifecycle()
+    limits = Limits(
+        executor_idle_minimum_seconds=10,
+        executor_idle_fallback_seconds=50,
+        executor_idle_maximum_seconds=100,
+        executor_minimum_ready_residency_seconds=10,
+    )
+    record = policy_record(module)
+    first = module.calculate_idle_policy("executor", "fixed", (), record, now=100.0, limits=limits)
+    second = module.calculate_idle_policy(
+        "executor",
+        "fixed",
+        (),
+        record,
+        now=101.0,
+        limits=limits,
+        previous_mode="fixed",
+        previous_last_activity_at=0.0,
+        previous_consecutive_check_count=first.next_consecutive_check_count,
+    )
+
+    assert (first.next_consecutive_check_count, first.would_unload, first.action_allowed) == (
+        1,
+        False,
+        False,
+    )
+    assert first.reason == "first_idle_check"
+    assert (second.next_consecutive_check_count, second.would_unload, second.action_allowed) == (
+        2,
+        True,
+        True,
+    )
+    assert second.reason == "idle_confirmed"
+
+
+@pytest.mark.parametrize(
+    ("record", "now", "has_blockers", "previous_mode", "previous_activity", "reason"),
+    [
+        ("activity", 100.0, False, "fixed", 0.0, "activity_reset"),
+        ("ready", 100.0, True, "fixed", 0.0, "blocked"),
+        ("cold", 100.0, False, "fixed", 0.0, "state_not_ready"),
+        ("below", 50.0, False, "fixed", 0.0, "below_threshold"),
+        ("ready", 100.0, False, "adaptive", 0.0, "mode_changed"),
+    ],
+)
+def test_idle_hysteresis_resets_on_activity_blocker_state_threshold_or_mode(
+    record: str,
+    now: float,
+    has_blockers: bool,
+    previous_mode: str,
+    previous_activity: float,
+    reason: str,
+) -> None:
+    module = lifecycle()
+    limits = Limits(
+        executor_idle_minimum_seconds=10,
+        executor_idle_fallback_seconds=50,
+        executor_idle_maximum_seconds=100,
+        executor_minimum_ready_residency_seconds=10,
+    )
+    lifecycle_record = (
+        policy_record(module, state="cold", ready_since=None, last_used_at=None)
+        if record == "cold"
+        else policy_record(module, last_used_at=1.0 if record == "activity" else 0.0)
+    )
+
+    decision = module.calculate_idle_policy(
+        "executor",
+        "fixed",
+        (),
+        lifecycle_record,
+        now=now,
+        limits=limits,
+        has_blockers=has_blockers,
+        previous_mode=previous_mode,
+        previous_last_activity_at=previous_activity,
+        previous_consecutive_check_count=1,
+    )
+
+    assert decision.next_consecutive_check_count == 0
+    assert decision.would_unload is False
+    assert decision.action_allowed is False
+    assert decision.reason == reason
+
+
+def test_invalid_policy_times_and_config_never_produce_an_authorized_nonfinite_decision() -> None:
+    module = lifecycle()
+    record = policy_record(module, ready_since=200.0, last_used_at=200.0)
+    for now in (-1.0, float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError):
+            module.calculate_idle_policy("executor", "fixed", (), record, now=now, limits=Limits())
+
+    invalid_limits = Limits.model_construct(executor_idle_fallback_seconds=float("inf"))
+    with pytest.raises(ValueError):
+        module.calculate_idle_policy(
+            "executor", "fixed", (), record, now=100.0, limits=invalid_limits
+        )
+
+    from dgx_moa.usage import RequestUsageStart
+
+    invalid_records = [
+        RequestUsageStart.model_construct(accepted_at=value, roles_required=("executor",))
+        for value in (-1.0, float("nan"), float("inf"), float("-inf"))
+    ]
+    decision = module.calculate_idle_policy(
+        "executor",
+        "adaptive",
+        invalid_records,
+        record,
+        now=100.0,
+        limits=Limits(),
+        previous_consecutive_check_count=1,
+    )
+
+    assert decision.sample_count == 0
+    assert decision.idle_seconds == 0.0
+    assert decision.residency_seconds == 0.0
+    assert decision.would_unload is False
+    assert decision.action_allowed is False
+    for field in (decision.threshold_seconds, decision.idle_seconds, decision.residency_seconds):
+        assert field == field and abs(field) != float("inf")
+
+
+def test_idle_policy_output_is_typed_bounded_and_content_free() -> None:
+    module = lifecycle()
+    sentinel = "SENTINEL_POLICY_CONTENT_723a55"
+    record = policy_usage(0.0)
+    record.session_id = sentinel
+
+    decision = module.calculate_idle_policy(
+        "executor",
+        "fixed",
+        (record,),
+        policy_record(module),
+        now=3_000.0,
+        limits=Limits(),
+    )
+
+    assert isinstance(decision, module.IdlePolicyDecision)
+    assert set(decision.model_dump()) == {
+        "role",
+        "mode",
+        "threshold_seconds",
+        "threshold_source",
+        "sample_count",
+        "idle_seconds",
+        "residency_seconds",
+        "next_consecutive_check_count",
+        "would_unload",
+        "action_allowed",
+        "reason",
+    }
+    assert sentinel not in decision.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    ("role", "mode", "has_blockers"),
+    [
+        ("unknown", "fixed", False),
+        ("executor", "automatic", False),
+        ("executor", "fixed", "SENTINEL_ARBITRARY_BLOCKER"),
+    ],
+)
+def test_idle_policy_rejects_unbounded_role_mode_and_blocker_inputs(
+    role: str, mode: str, has_blockers: object
+) -> None:
+    module = lifecycle()
+
+    with pytest.raises(ValueError):
+        module.calculate_idle_policy(
+            role,
+            mode,
+            (),
+            policy_record(module),
+            now=100.0,
+            limits=Limits(),
+            has_blockers=has_blockers,
+        )
 
 
 @pytest.mark.parametrize("mode", ["disabled", "observe", "fixed", "adaptive"])

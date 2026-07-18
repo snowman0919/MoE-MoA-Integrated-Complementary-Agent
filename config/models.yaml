@@ -38,6 +38,14 @@ gateway:
     usage_sample_window: 512
     usage_ewma_alpha: 0.25
     adaptive_minimum_samples: 20
+    executor_idle_fallback_seconds: 2700
+    executor_idle_minimum_seconds: 900
+    executor_idle_maximum_seconds: 7200
+    executor_minimum_ready_residency_seconds: 600
+    optional_idle_fallback_seconds: 900
+    optional_idle_minimum_seconds: 300
+    optional_idle_maximum_seconds: 2700
+    optional_minimum_ready_residency_seconds: 300
     max_steps: 100
 
 models:
