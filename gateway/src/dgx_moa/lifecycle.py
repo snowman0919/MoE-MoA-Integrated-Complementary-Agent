@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import math
 import re
 import sqlite3
 import subprocess
 import time
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import uuid4
@@ -29,7 +30,19 @@ LifecycleState = Literal[
 DriverStatus = Literal["active", "inactive", "failed"]
 DriverOperation = Literal["status", "start", "stop", "progress"]
 DriverErrorKind = Literal["timeout", "command_failed", "malformed_output"]
-ProgressQuality = Literal["measured_bytes", "measured_shards", "estimated"]
+ProgressQuality = Literal["measured_bytes", "measured_shards", "estimated", "unavailable"]
+
+MAX_PROGRESS_LINES = 1_000
+MAX_PROGRESS_LINE_CHARACTERS = 2_000
+MAX_LOAD_RETRIES = 2
+BYTE_PROGRESS = re.compile(
+    r"(?P<loaded>\d+(?:\.\d+)?)\s*/\s*(?P<total>\d+(?:\.\d+)?)\s*bytes?\b",
+    re.IGNORECASE,
+)
+SHARD_PROGRESS = re.compile(
+    r"checkpoint\s+shards?[^\r\n]*?(?P<loaded>\d+)\s*/\s*(?P<total>\d+)",
+    re.IGNORECASE,
+)
 
 LIFECYCLE_STATES: tuple[LifecycleState, ...] = (
     "cold",
@@ -84,6 +97,72 @@ class LifecycleRecord(BaseModel):
     memory_after_bytes: int | None = Field(default=None, ge=0)
 
 
+class LoadProgress(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    state: Literal["loading_weights", "initializing_engine", "warming_up"]
+    weight_load_percent: float | None = Field(default=None, ge=0, le=100)
+    progress_quality: ProgressQuality
+
+
+class LoadCheck(BaseModel):
+    record: LifecycleRecord
+    load_triggered: bool = False
+
+
+def _reported_percent(match: re.Match[str]) -> float | None:
+    loaded = float(match.group("loaded"))
+    total = float(match.group("total"))
+    if total <= 0 or loaded > total:
+        return None
+    return loaded / total * 100
+
+
+def parse_load_progress(
+    lines: Sequence[str], *, previous_percent: float | None = None
+) -> LoadProgress:
+    bytes_percent: float | None = None
+    shards_percent: float | None = None
+    stage: Literal["loading_weights", "initializing_engine", "warming_up"] = "loading_weights"
+    for raw_line in lines[-MAX_PROGRESS_LINES:]:
+        line = raw_line[:MAX_PROGRESS_LINE_CHARACTERS]
+        normalized = line.lower()
+        if "warm" in normalized and "up" in normalized:
+            stage = "warming_up"
+        elif stage == "loading_weights" and "engine" in normalized and "initializ" in normalized:
+            stage = "initializing_engine"
+        if match := BYTE_PROGRESS.search(line):
+            candidate = _reported_percent(match)
+            if candidate is not None:
+                bytes_percent = candidate
+        if match := SHARD_PROGRESS.search(line):
+            candidate = _reported_percent(match)
+            if candidate is not None:
+                shards_percent = candidate
+
+    if stage != "loading_weights":
+        return LoadProgress(
+            state=stage,
+            weight_load_percent=100.0,
+            progress_quality="estimated",
+        )
+    measured = bytes_percent if bytes_percent is not None else shards_percent
+    quality: ProgressQuality = (
+        "measured_bytes"
+        if bytes_percent is not None
+        else "measured_shards"
+        if shards_percent is not None
+        else "unavailable"
+    )
+    if measured is not None and previous_percent is not None:
+        measured = max(measured, previous_percent)
+    return LoadProgress(
+        state="loading_weights",
+        weight_load_percent=measured,
+        progress_quality=quality,
+    )
+
+
 class LifecycleError(RuntimeError):
     pass
 
@@ -105,6 +184,13 @@ class LifecycleDriverError(LifecycleError):
         self.operation = operation
         self.kind = kind
         super().__init__(f"lifecycle {operation} {kind}")
+
+
+class LifecycleLoadError(LifecycleError):
+    def __init__(self, failure_class: str, failure_detail: str):
+        self.failure_class = failure_class
+        self.failure_detail = failure_detail
+        super().__init__(failure_class)
 
 
 class LifecycleDriver(Protocol):
@@ -331,6 +417,207 @@ class LifecycleStore:
             role: self._reconcile_transition(role, target[driver.status(role)])
             for role in self._roles
         }
+
+
+class LifecycleCoordinator:
+    def __init__(
+        self,
+        store: LifecycleStore,
+        driver: LifecycleDriver,
+        *,
+        health_probe: Callable[[str], Awaitable[bool]],
+        timeout_seconds: float,
+        poll_seconds: float,
+        clock: Callable[[], float] = time.monotonic,
+        sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if not math.isfinite(poll_seconds) or poll_seconds <= 0:
+            raise ValueError("poll_seconds must be positive")
+        self.store = store
+        self.driver = driver
+        self.health_probe = health_probe
+        self.timeout_seconds = timeout_seconds
+        self.poll_seconds = poll_seconds
+        self.clock = clock
+        self.sleeper = sleeper
+        self._locks = {role: asyncio.Lock() for role in store._roles}
+        self._tasks: dict[str, asyncio.Task[None]] = {}
+
+    async def ensure_ready(self, role: str) -> LoadCheck:
+        try:
+            lock = self._locks[role]
+        except KeyError as error:
+            raise UnknownRoleError(role) from error
+        async with lock:
+            record = self.store.get(role)
+            task = self._tasks.get(role)
+            if task is not None and task.done():
+                self._tasks.pop(role)
+                task = None
+            if record.state == "ready" or task is not None:
+                return LoadCheck(record=record)
+            if record.state not in {"cold", "failed"} or record.retry_count >= MAX_LOAD_RETRIES:
+                return LoadCheck(record=record)
+            queued = self.store.transition(
+                role,
+                "load_queued",
+                expected_transition_id=record.transition_id,
+                progress_value=None,
+                progress_quality="unavailable",
+                eta_seconds=None,
+            )
+            self._tasks[role] = asyncio.create_task(self._load(role, queued.transition_id))
+            return LoadCheck(record=queued, load_triggered=True)
+
+    async def _load(self, role: str, transition_id: str) -> None:
+        started = self.clock()
+        try:
+            async with asyncio.timeout(self.timeout_seconds):
+                await self._run_load(role, transition_id, started)
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            self._fail(role, "load_timeout", "model load timed out")
+        except LifecycleLoadError as error:
+            self._fail(role, error.failure_class, error.failure_detail)
+        except LifecycleDriverError as error:
+            self._fail(role, f"{error.operation}_{error.kind}", "lifecycle driver failed")
+        except Exception as error:
+            self._fail(role, "load_failed", type(error).__name__)
+
+    async def _run_load(self, role: str, transition_id: str, started: float) -> None:
+        record = self.store.transition(
+            role,
+            "process_starting",
+            expected_transition_id=transition_id,
+        )
+        await asyncio.to_thread(self.driver.start, role)
+        while True:
+            driver_status = await asyncio.to_thread(self.driver.status, role)
+            if driver_status != "active":
+                raise LifecycleLoadError(
+                    f"service_{driver_status}", "service did not become active"
+                )
+            if record.state == "process_starting":
+                record = self.store.transition(
+                    role,
+                    "loading_weights",
+                    expected_transition_id=record.transition_id,
+                    progress_quality="unavailable",
+                )
+            lines = await asyncio.to_thread(self.driver.progress, role)
+            progress = parse_load_progress(lines, previous_percent=record.progress_value)
+            if progress.state == "initializing_engine" and record.state == "loading_weights":
+                record = self.store.transition(
+                    role,
+                    "initializing_engine",
+                    expected_transition_id=record.transition_id,
+                    progress_value=100.0,
+                    progress_quality=progress.progress_quality,
+                )
+            elif progress.state == "warming_up":
+                if record.state == "loading_weights":
+                    record = self.store.transition(
+                        role,
+                        "initializing_engine",
+                        expected_transition_id=record.transition_id,
+                        progress_value=100.0,
+                        progress_quality=progress.progress_quality,
+                    )
+                if record.state == "initializing_engine":
+                    record = self.store.transition(
+                        role,
+                        "warming_up",
+                        expected_transition_id=record.transition_id,
+                        progress_value=100.0,
+                        progress_quality=progress.progress_quality,
+                    )
+            else:
+                eta = None
+                if (
+                    record.last_load_duration_seconds is not None
+                    and progress.weight_load_percent is not None
+                ):
+                    eta = min(
+                        self.timeout_seconds,
+                        max(
+                            0.0,
+                            record.last_load_duration_seconds
+                            * (100 - progress.weight_load_percent)
+                            / 100,
+                        ),
+                    )
+                record = self.store.update(
+                    role,
+                    record.transition_id,
+                    progress_value=progress.weight_load_percent,
+                    progress_quality=progress.progress_quality,
+                    eta_seconds=eta,
+                )
+            try:
+                healthy = await self.health_probe(role)
+            except Exception as error:
+                raise LifecycleLoadError("health_probe_failed", type(error).__name__) from None
+            if healthy:
+                ready_quality: ProgressQuality = (
+                    record.progress_quality
+                    if record.progress_quality in {"measured_bytes", "measured_shards"}
+                    else "estimated"
+                )
+                if record.state == "loading_weights":
+                    record = self.store.transition(
+                        role,
+                        "initializing_engine",
+                        expected_transition_id=record.transition_id,
+                        progress_value=100.0,
+                        progress_quality=ready_quality,
+                    )
+                if record.state == "initializing_engine":
+                    record = self.store.transition(
+                        role,
+                        "warming_up",
+                        expected_transition_id=record.transition_id,
+                        progress_value=100.0,
+                        progress_quality=ready_quality,
+                    )
+                self.store.transition(
+                    role,
+                    "ready",
+                    expected_transition_id=record.transition_id,
+                    progress_value=100.0,
+                    progress_quality=ready_quality,
+                    eta_seconds=0.0 if record.last_load_duration_seconds is not None else None,
+                    last_load_duration_seconds=max(0.0, self.clock() - started),
+                )
+                return
+            try:
+                await self.sleeper(self.poll_seconds)
+            except TimeoutError:
+                raise LifecycleLoadError("health_timeout", "model health timed out") from None
+
+    def _fail(self, role: str, failure_class: str, failure_detail: str) -> None:
+        record = self.store.get(role)
+        if record.state == "failed":
+            return
+        self.store.transition(
+            role,
+            "failed",
+            expected_transition_id=record.transition_id,
+            failure_class=failure_class,
+            failure_detail=failure_detail,
+            retry_count=record.retry_count + 1,
+            eta_seconds=None,
+        )
+
+    async def close(self) -> None:
+        tasks = tuple(self._tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
 
 
 class FakeLifecycleDriver:

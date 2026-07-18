@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -17,6 +18,13 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .config import Settings, get_settings
 from .controller import Controller, DuplicateFailedCall
+from .lifecycle import (
+    LifecycleCoordinator,
+    LifecycleDriver,
+    LifecycleRecord,
+    LifecycleStore,
+    SystemdLifecycleDriver,
+)
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
 from .routing import (
@@ -82,10 +90,28 @@ def elapsed_ms(started: float) -> float:
     return round((time.monotonic() - started) * 1000, 3)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    lifecycle_driver: LifecycleDriver | None = None,
+    lifecycle_health_probe: Callable[[str], Awaitable[bool]] | None = None,
+    lifecycle_clock: Callable[[], float] = time.time,
+    lifecycle_sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> FastAPI:
     configured = settings or get_settings()
     auth = auth_dependency(configured)
     admin_auth = admin_dependency(configured)
+
+    async def default_lifecycle_health_probe(role: str) -> bool:
+        model = configured.models.get(role)
+        if model is None:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=2) as client:
+                response = await client.get(f"{model.base_url}/v1/models")
+        except httpx.HTTPError:
+            return False
+        return response.status_code == 200
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
@@ -104,11 +130,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.project_root = project_root
         app.state.provider = provider
         app.state.controller = Controller(configured, store, provider)
+        app.state.lifecycle_store = LifecycleStore(
+            configured.state_db,
+            configured.models,
+            clock=lifecycle_clock,
+        )
+        app.state.lifecycle = LifecycleCoordinator(
+            app.state.lifecycle_store,
+            lifecycle_driver or SystemdLifecycleDriver(configured.lifecycle_unit_map),
+            health_probe=lifecycle_health_probe or default_lifecycle_health_probe,
+            timeout_seconds=configured.limits.model_load_timeout_seconds,
+            poll_seconds=configured.lifecycle_poll_seconds,
+            clock=lifecycle_clock,
+            sleeper=lifecycle_sleeper,
+        )
         app.state.traces = TraceRecorder(
             configured.state_db.parent.parent / "traces", store, configured.models
         )
         app.state.profiles = ProfileManager(configured.run_dir, project_root)
-        yield
+        try:
+            yield
+        finally:
+            await app.state.lifecycle.close()
 
     app = FastAPI(title="DGX MoA Agent", version="0.1.0", lifespan=lifespan)
 
@@ -159,6 +202,120 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 {"component": "trace_archive", "error": type(error).__name__},
             )
             request.app.state.store.save(state)
+
+    def public_lifecycle_record(record: LifecycleRecord) -> dict[str, Any]:
+        return {
+            "role": record.role,
+            "state": record.state,
+            "transition_id": record.transition_id,
+            "transitioned_at": record.transitioned_at,
+            "updated_at": record.updated_at,
+            "ready_since": record.ready_since,
+            "last_used_at": record.last_used_at,
+            "weight_load_percent": record.progress_value,
+            "progress_quality": record.progress_quality or "unavailable",
+            "overall_load_percent": None,
+            "estimated_ready_seconds": record.eta_seconds,
+            "failure_class": record.failure_class,
+            "retry_count": record.retry_count,
+            "lifecycle_mode": configured.lifecycle_mode,
+            "control": ("observe_only" if configured.lifecycle_mode == "observe" else "managed"),
+        }
+
+    def status_lifecycle_record(role: str) -> dict[str, Any]:
+        if configured.lifecycle_mode != "disabled" and role in configured.lifecycle_unit_map:
+            return public_lifecycle_record(app.state.lifecycle_store.get(role))
+        return {
+            "role": role,
+            "state": "unmanaged",
+            "transition_id": None,
+            "transitioned_at": None,
+            "updated_at": None,
+            "ready_since": None,
+            "last_used_at": None,
+            "weight_load_percent": None,
+            "progress_quality": "unavailable",
+            "overall_load_percent": None,
+            "estimated_ready_seconds": None,
+            "failure_class": None,
+            "retry_count": 0,
+            "lifecycle_mode": configured.lifecycle_mode,
+            "control": "disabled" if configured.lifecycle_mode == "disabled" else "unmanaged",
+        }
+
+    def loading_response(record: LifecycleRecord) -> JSONResponse:
+        eta = record.eta_seconds
+        retry_after = 30 if eta is None else min(300, max(1, math.ceil(eta)))
+        progress = record.progress_value
+        progress_header = "unavailable" if progress is None else f"{progress:g}"
+        return JSONResponse(
+            {
+                "error": {
+                    "message": f"Model dgx-moa-{record.role} is loading. Retry later.",
+                    "type": "model_loading",
+                    "code": "model_loading",
+                    "param": None,
+                },
+                "model_state": {
+                    "role": record.role,
+                    "state": record.state,
+                    "transition_id": record.transition_id,
+                    "weight_load_percent": progress,
+                    "progress_quality": record.progress_quality or "unavailable",
+                    "overall_load_percent": None,
+                    "estimated_ready_seconds": eta,
+                },
+            },
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={
+                "Retry-After": str(retry_after),
+                "X-DGX-MOA-Model-State": record.state,
+                "X-DGX-MOA-Weight-Load-Percent": progress_header,
+            },
+        )
+
+    def unavailable_response(role: str, *, record: LifecycleRecord | None = None) -> JSONResponse:
+        state_value = record.state if record is not None else "unmanaged"
+        model_state: dict[str, Any] = {
+            "role": role,
+            "state": state_value,
+            "transition_id": record.transition_id if record is not None else None,
+            "weight_load_percent": record.progress_value if record is not None else None,
+            "progress_quality": (record.progress_quality if record is not None else None)
+            or "unavailable",
+            "overall_load_percent": None,
+            "estimated_ready_seconds": record.eta_seconds if record is not None else None,
+        }
+        if record is not None:
+            model_state.update(
+                failure_class=record.failure_class,
+                retry_count=record.retry_count,
+            )
+        return JSONResponse(
+            {
+                "error": {
+                    "message": (
+                        f"Model role {role} is not lifecycle-managed."
+                        if record is None
+                        else f"Model dgx-moa-{role} failed to load."
+                    ),
+                    "type": "model_unavailable",
+                    "code": "model_not_managed" if record is None else "model_load_failed",
+                    "param": None,
+                },
+                "model_state": model_state,
+            },
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={
+                "Retry-After": "30",
+                "X-DGX-MOA-Model-State": state_value,
+                "X-DGX-MOA-Weight-Load-Percent": (
+                    "unavailable"
+                    if record is None or record.progress_value is None
+                    else f"{record.progress_value:g}"
+                ),
+            },
+        )
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -240,6 +397,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 for alias in MODEL_MODES
             ],
         }
+
+    @app.get("/v1/model-status", dependencies=[Depends(auth)])
+    async def model_status(request: Request) -> dict[str, Any]:
+        mode = configured.lifecycle_mode
+        payload: dict[str, Any] = {
+            "object": "list",
+            "data": [status_lifecycle_record(role) for role in configured.models],
+            "lifecycle_mode": mode,
+            "control": (
+                "disabled"
+                if mode == "disabled"
+                else "observe_only"
+                if mode == "observe"
+                else "managed"
+            ),
+            "unmanaged_roles": sorted(
+                configured.models
+                if mode == "disabled"
+                else set(configured.models) - set(configured.lifecycle_unit_map)
+            ),
+        }
+        if mode == "disabled":
+            payload["external_state"] = "not_lifecycle_managed"
+        return payload
+
+    @app.get("/v1/model-status/{role}", dependencies=[Depends(auth)], response_model=None)
+    async def model_status_detail(role: str, request: Request) -> Response | dict[str, Any]:
+        if role not in configured.models:
+            return error_response(
+                status.HTTP_404_NOT_FOUND,
+                "unknown lifecycle role",
+                "invalid_request_error",
+                "model_role_not_found",
+            )
+        return status_lifecycle_record(role)
 
     @app.post("/v1/chat/completions", dependencies=[Depends(auth)])
     async def chat(
@@ -334,6 +526,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         task_id = str(raw["metadata"].get("task_id") or "")
         request_class = classify_request(mode, raw["messages"], raw.get("tools"), raw["metadata"])
         roles = required_roles(mode, request_class)
+        loading_record: LifecycleRecord | None = None
+        unavailable_record: LifecycleRecord | None = None
+        unmanaged_role: str | None = None
+        load_triggered = False
+        if configured.lifecycle_mode in {"fixed", "adaptive"}:
+            for role in roles:
+                if role not in configured.lifecycle_unit_map:
+                    if (
+                        loading_record is None
+                        and unavailable_record is None
+                        and unmanaged_role is None
+                    ):
+                        unmanaged_role = role
+                    continue
+                check = await request.app.state.lifecycle.ensure_ready(role)
+                load_triggered = load_triggered or check.load_triggered
+                if (
+                    loading_record is None
+                    and unavailable_record is None
+                    and unmanaged_role is None
+                    and check.record.state != "ready"
+                ):
+                    if check.record.state == "failed":
+                        unavailable_record = check.record
+                    else:
+                        loading_record = check.record
         request.app.state.usage.start(
             RequestUsageStart(
                 request_id=usage_request_id,
@@ -355,8 +573,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 roles_required=cast(tuple[Role, ...], roles),
                 accepted_at=accepted_at,
                 streaming=body.stream,
-                model_state="warm",
-                load_triggered=False,
+                model_state=(
+                    "loading"
+                    if loading_record is not None
+                    else "cold"
+                    if unavailable_record is not None or unmanaged_role is not None
+                    else "warm"
+                ),
+                load_triggered=load_triggered,
             )
         )
         usage_started = True
@@ -415,6 +639,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         total_tokens=token_usage.get("total_tokens"),
                     ),
                 )
+
+        if loading_record is not None:
+            finalize_request(
+                "model_loading",
+                "failed",
+                retryable_failure_class="model_loading",
+            )
+            return loading_response(loading_record)
+        if unavailable_record is not None or unmanaged_role is not None:
+            finalize_request(
+                "model_unavailable",
+                "failed",
+                retryable_failure_class="backend_error",
+            )
+            unavailable_role = unmanaged_role
+            if unavailable_role is None:
+                assert unavailable_record is not None
+                unavailable_role = unavailable_record.role
+            return unavailable_response(
+                unavailable_role,
+                record=unavailable_record,
+            )
 
         try:
             state = request.app.state.controller.session(state_session_id, raw["messages"])

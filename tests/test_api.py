@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import subprocess
 import uuid
 from contextlib import contextmanager
 
@@ -12,6 +13,7 @@ from dgx_moa import providers
 from dgx_moa.api import create_app
 from dgx_moa.config import Settings
 from dgx_moa.controller import fingerprint
+from dgx_moa.lifecycle import FakeLifecycleDriver
 from dgx_moa.schemas import ChatRequest
 from dgx_moa.state import Phase, SessionState
 from dgx_moa.streaming import forward_sse as unclosed_forward_sse
@@ -20,6 +22,15 @@ from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 from .conftest import StubProvider
+
+
+@pytest.fixture(autouse=True)
+def block_real_lifecycle_and_profile_commands(monkeypatch: pytest.MonkeyPatch) -> None:
+    def tripwire(*args: object, **kwargs: object) -> None:
+        pytest.fail(f"unexpected real lifecycle/profile command: {args!r} {kwargs!r}")
+
+    monkeypatch.setattr(subprocess, "run", tripwire)
+    monkeypatch.setattr("dgx_moa.profiles.ProfileManager.switch", tripwire)
 
 
 @contextmanager
@@ -72,6 +83,514 @@ def block_profile_control(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("dgx_moa.profiles.ProfileManager.switch", reject_control)
     monkeypatch.setattr("dgx_moa.profiles.ProfileManager.transition", reject_control)
     monkeypatch.setattr("dgx_moa.profiles.subprocess.run", reject_control)
+
+
+async def direct_chat(app, session_id: str, *, stream: bool = False):  # type: ignore[no-untyped-def]
+    return await chat_endpoint(app)(
+        ChatRequest(
+            model="dgx-moa-agent",
+            stream=stream,
+            messages=[{"role": "user", "content": "work"}],
+        ),
+        Request({"type": "http", "app": app}),
+        x_session_id=session_id,
+        x_runtime_channel=None,
+        x_trace_origin=None,
+        x_task_id=None,
+        x_workspace_path=None,
+        x_workspace_id=None,
+        x_repository_branch=None,
+        x_repository_commit=None,
+        x_dirty_state=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_cold_api_requests_return_one_json_load_and_usage_each(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    driver = FakeLifecycleDriver({"executor": "inactive"})
+    release_poll = asyncio.Event()
+
+    async def health_probe(role: str) -> bool:
+        assert role == "executor"
+        return False
+
+    async def sleeper(seconds: float) -> None:
+        assert seconds == controlled.lifecycle_poll_seconds
+        await release_poll.wait()
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health_probe,
+        lifecycle_clock=lambda: 100.0,
+        lifecycle_sleeper=sleeper,
+    )
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+
+        def reject_session(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("controller mutated before lifecycle readiness")
+
+        app.state.controller.session = reject_session
+        responses = await asyncio.gather(
+            *(direct_chat(app, f"cold-{index}", stream=index == 0) for index in range(20))
+        )
+        for _ in range(100):
+            if ("start", "executor") in driver.calls:
+                break
+            await asyncio.sleep(0)
+        usage = app.state.usage.recent_requests()
+
+    assert len(responses) == 20
+    for response in responses:
+        assert response.status_code == 503
+        assert response.media_type == "application/json"
+        assert response.headers["Retry-After"]
+        assert 1 <= int(response.headers["Retry-After"]) <= 300
+        assert response.headers["X-DGX-MOA-Model-State"] == "load_queued"
+        assert response.headers["X-DGX-MOA-Weight-Load-Percent"] == "unavailable"
+        payload = json.loads(response.body)
+        assert payload["error"]["code"] == "model_loading"
+        assert payload["model_state"]["role"] == "executor"
+        assert set(payload["model_state"]) == {
+            "role",
+            "state",
+            "transition_id",
+            "weight_load_percent",
+            "progress_quality",
+            "overall_load_percent",
+            "estimated_ready_seconds",
+        }
+        assert payload["model_state"]["weight_load_percent"] is None
+        assert payload["model_state"]["progress_quality"] == "unavailable"
+        serialized = json.dumps(payload)
+        assert "dgx-moa-dev-executor.service" not in serialized
+        assert str(controlled.models["executor"].destination) not in serialized
+        assert controlled.models["executor"].base_url not in serialized
+    assert stub_provider.calls == []
+    assert len(usage) == 20
+    assert all(record.status == "failed" for record in usage)
+    assert all(record.retryable_failure_class == "model_loading" for record in usage)
+    assert all(record.model_state == "loading" for record in usage)
+    assert sum(record.load_triggered for record in usage) == 1
+    assert driver.calls.count(("start", "executor")) == 1
+    assert not any(operation == "stop" for operation, _ in driver.calls)
+
+
+def test_observe_lifecycle_records_state_without_blocking_or_controlling(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    observed = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "observe",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    driver = FakeLifecycleDriver({"executor": "inactive"})
+
+    async def reject_health(role: str) -> bool:
+        raise AssertionError(f"observe lifecycle probed health for {role}")
+
+    async def reject_sleep(seconds: float) -> None:
+        raise AssertionError(f"observe lifecycle slept for {seconds}")
+
+    app = create_app(
+        observed,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=reject_health,
+        lifecycle_clock=lambda: 100.0,
+        lifecycle_sleeper=reject_sleep,
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        status_response = client.get(
+            "/v1/model-status", headers={"Authorization": "Bearer test-secret"}
+        )
+        lifecycle_record = app.state.lifecycle_store.get("executor")
+
+    assert response.status_code == 200
+    assert stub_provider.calls == ["executor"]
+    assert driver.calls == []
+    assert lifecycle_record.state == "cold"
+    assert status_response.json()["control"] == "observe_only"
+
+
+def test_disabled_lifecycle_bypasses_control_and_reports_external_state(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    driver = FakeLifecycleDriver({"executor": "inactive"})
+
+    async def reject_health(role: str) -> bool:
+        raise AssertionError(f"disabled lifecycle probed health for {role}")
+
+    async def reject_sleep(seconds: float) -> None:
+        raise AssertionError(f"disabled lifecycle slept for {seconds}")
+
+    app = create_app(
+        settings,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=reject_health,
+        lifecycle_clock=lambda: 100.0,
+        lifecycle_sleeper=reject_sleep,
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "stream": True,
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        status_response = client.get(
+            "/v1/model-status", headers={"Authorization": "Bearer test-secret"}
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert stub_provider.calls == ["executor"]
+    assert driver.calls == []
+    assert status_response.status_code == 200
+    payload = status_response.json()
+    assert payload["lifecycle_mode"] == "disabled"
+    assert payload["control"] == "disabled"
+    assert payload["external_state"] == "not_lifecycle_managed"
+    assert {item["role"] for item in payload["data"]} == set(settings.models)
+    assert all(item["state"] == "unmanaged" for item in payload["data"])
+    assert all(item["control"] == "disabled" for item in payload["data"])
+
+
+def test_model_status_is_authenticated_typed_and_content_free(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "observe",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    driver = FakeLifecycleDriver({"executor": "inactive"})
+    blocked = asyncio.Event()
+
+    async def health_probe(role: str) -> bool:
+        return False
+
+    async def sleeper(seconds: float) -> None:
+        await blocked.wait()
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health_probe,
+        lifecycle_clock=lambda: 100.0,
+        lifecycle_sleeper=sleeper,
+    )
+    with TestClient(app) as client:
+        record = app.state.lifecycle_store.get("executor")
+        queued = app.state.lifecycle_store.transition(
+            "executor", "load_queued", expected_transition_id=record.transition_id
+        )
+        app.state.lifecycle_store.transition(
+            "executor",
+            "failed",
+            expected_transition_id=queued.transition_id,
+            failure_class="Health Timeout",
+            failure_detail="SENTINEL_FAILURE_DETAIL /unsafe/path http://secret.invalid",
+            retry_count=1,
+        )
+        unauthorized = client.get("/v1/model-status")
+        listed = client.get("/v1/model-status", headers={"Authorization": "Bearer test-secret"})
+        detail = client.get(
+            "/v1/model-status/executor",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        unmanaged = client.get(
+            "/v1/model-status/planner",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        unknown = client.get(
+            "/v1/model-status/unsafe-role",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+
+    assert unauthorized.status_code == 401
+    assert listed.status_code == 200
+    assert {item["role"] for item in listed.json()["data"]} == set(controlled.models)
+    assert next(item for item in listed.json()["data"] if item["role"] == "executor") == (
+        detail.json()
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["role"] == "executor"
+    assert payload["state"] == "failed"
+    assert payload["failure_class"] == "health_timeout"
+    assert payload["retry_count"] == 1
+    assert payload["lifecycle_mode"] == "observe"
+    assert set(payload) == {
+        "role",
+        "state",
+        "transition_id",
+        "transitioned_at",
+        "updated_at",
+        "ready_since",
+        "last_used_at",
+        "weight_load_percent",
+        "progress_quality",
+        "overall_load_percent",
+        "estimated_ready_seconds",
+        "failure_class",
+        "retry_count",
+        "lifecycle_mode",
+        "control",
+    }
+    serialized = json.dumps(payload)
+    for unsafe in (
+        "SENTINEL_FAILURE_DETAIL",
+        "dgx-moa-dev-executor.service",
+        str(controlled.models["executor"].destination),
+        controlled.models["executor"].base_url,
+    ):
+        assert unsafe not in serialized
+    assert unmanaged.status_code == 200
+    assert unmanaged.json()["role"] == "planner"
+    assert unmanaged.json()["state"] == "unmanaged"
+    assert unmanaged.json()["transition_id"] is None
+    assert unmanaged.json()["control"] == "unmanaged"
+    assert unknown.status_code == 404
+    assert unknown.json()["error"] == {
+        "message": "unknown lifecycle role",
+        "type": "invalid_request_error",
+        "code": "model_role_not_found",
+        "param": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_health_success_marks_ready_and_later_api_retry_succeeds(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    driver = FakeLifecycleDriver({"executor": "inactive"})
+    health_ready = False
+    poll = asyncio.Event()
+
+    async def health_probe(role: str) -> bool:
+        assert role == "executor"
+        return health_ready
+
+    async def sleeper(seconds: float) -> None:
+        await poll.wait()
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health_probe,
+        lifecycle_clock=lambda: 100.0,
+        lifecycle_sleeper=sleeper,
+    )
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        first = await direct_chat(app, "cold-then-ready")
+        health_ready = True
+        poll.set()
+        for _ in range(100):
+            if app.state.lifecycle_store.get("executor").state == "ready":
+                break
+            await asyncio.sleep(0)
+        ready_record = app.state.lifecycle_store.get("executor")
+        second = await direct_chat(app, "cold-then-ready")
+        usage = app.state.usage.recent_requests()
+
+    assert first.status_code == 503
+    assert second.status_code == 200
+    assert ready_record.state == "ready"
+    assert ready_record.progress_value == 100.0
+    assert ready_record.progress_quality == "estimated"
+    assert ready_record.eta_seconds is None
+    assert driver.calls.count(("start", "executor")) == 1
+    assert stub_provider.calls == ["executor"]
+    assert [record.status for record in usage] == ["failed", "completed"]
+    assert [record.model_state for record in usage] == ["loading", "warm"]
+    assert [record.load_triggered for record in usage] == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_managed_request_rejects_an_unmapped_required_role_honestly(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    driver = FakeLifecycleDriver({"executor": "inactive"})
+
+    async def reject_health(role: str) -> bool:
+        raise AssertionError(f"unmapped request probed health for {role}")
+
+    async def reject_sleep(seconds: float) -> None:
+        raise AssertionError(f"unmapped request slept for {seconds}")
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=reject_health,
+        lifecycle_clock=lambda: 100.0,
+        lifecycle_sleeper=reject_sleep,
+    )
+    async with app.router.lifespan_context(app):
+        record = app.state.lifecycle_store.get("executor")
+        for target in (
+            "load_queued",
+            "process_starting",
+            "loading_weights",
+            "initializing_engine",
+            "warming_up",
+            "ready",
+        ):
+            record = app.state.lifecycle_store.transition(
+                "executor", target, expected_transition_id=record.transition_id
+            )
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+
+        def reject_session(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("controller mutated for an unmanaged required role")
+
+        app.state.controller.session = reject_session
+        response = await chat_endpoint(app)(
+            ChatRequest(
+                model="dgx-moa-orchestrated",
+                messages=[{"role": "user", "content": "change four files"}],
+                metadata={"expected_files": 4},
+            ),
+            Request({"type": "http", "app": app}),
+            x_session_id="unmapped-planner",
+            x_runtime_channel=None,
+            x_trace_origin=None,
+            x_task_id=None,
+            x_workspace_path=None,
+            x_workspace_id=None,
+            x_repository_branch=None,
+            x_repository_commit=None,
+            x_dirty_state=None,
+        )
+        usage = assert_usage(app, "failed")
+
+    assert response.status_code == 503
+    assert response.headers["X-DGX-MOA-Model-State"] == "unmanaged"
+    assert response.headers["X-DGX-MOA-Weight-Load-Percent"] == "unavailable"
+    payload = json.loads(response.body)
+    assert payload["error"]["code"] == "model_not_managed"
+    assert payload["model_state"] == {
+        "role": "planner",
+        "state": "unmanaged",
+        "transition_id": None,
+        "weight_load_percent": None,
+        "progress_quality": "unavailable",
+        "overall_load_percent": None,
+        "estimated_ready_seconds": None,
+    }
+    assert usage.model_state == "cold"
+    assert usage.load_triggered is False
+    assert usage.retryable_failure_class == "backend_error"
+    assert driver.calls == []
+    assert stub_provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_retry_exhaustion_returns_non_loading_model_failure(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    from dgx_moa.lifecycle import MAX_LOAD_RETRIES
+
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    driver = FakeLifecycleDriver({"executor": "failed"})
+
+    async def reject_health(role: str) -> bool:
+        raise AssertionError(f"exhausted load probed health for {role}")
+
+    async def reject_sleep(seconds: float) -> None:
+        raise AssertionError(f"exhausted load slept for {seconds}")
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=reject_health,
+        lifecycle_clock=lambda: 100.0,
+        lifecycle_sleeper=reject_sleep,
+    )
+    async with app.router.lifespan_context(app):
+        cold = app.state.lifecycle_store.get("executor")
+        queued = app.state.lifecycle_store.transition(
+            "executor", "load_queued", expected_transition_id=cold.transition_id
+        )
+        app.state.lifecycle_store.transition(
+            "executor",
+            "failed",
+            expected_transition_id=queued.transition_id,
+            failure_class="Start Timeout",
+            failure_detail="SENTINEL_FAILURE_DETAIL",
+            retry_count=MAX_LOAD_RETRIES,
+        )
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await direct_chat(app, "retry-exhausted")
+        usage = assert_usage(app, "failed")
+
+    assert response.status_code == 503
+    assert response.headers["X-DGX-MOA-Model-State"] == "failed"
+    payload = json.loads(response.body)
+    assert payload["error"]["type"] == "model_unavailable"
+    assert payload["error"]["code"] == "model_load_failed"
+    assert payload["model_state"]["state"] == "failed"
+    assert payload["model_state"]["failure_class"] == "start_timeout"
+    assert payload["model_state"]["retry_count"] == MAX_LOAD_RETRIES
+    assert "SENTINEL_FAILURE_DETAIL" not in json.dumps(payload)
+    assert usage.model_state == "cold"
+    assert usage.load_triggered is False
+    assert usage.retryable_failure_class == "backend_error"
+    assert driver.calls == []
+    assert stub_provider.calls == []
 
 
 def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

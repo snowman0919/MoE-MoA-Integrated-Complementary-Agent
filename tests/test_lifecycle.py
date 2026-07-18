@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import subprocess
 import traceback
@@ -572,3 +573,310 @@ def test_systemd_driver_bounds_timeout_and_progress_lines(
             timeout_seconds=timeout_seconds,
             journal_lines=journal_lines,
         )
+
+
+def test_progress_parser_prefers_measured_bytes_over_shards() -> None:
+    module = lifecycle()
+
+    progress = module.parse_load_progress(
+        (
+            "Loading safetensors checkpoint shards: 2/4",
+            "Loading model weights: 75/100 bytes",
+        )
+    )
+
+    assert progress.state == "loading_weights"
+    assert progress.weight_load_percent == 75.0
+    assert progress.progress_quality == "measured_bytes"
+
+
+def test_progress_parser_measures_checkpoint_shards() -> None:
+    module = lifecycle()
+
+    progress = module.parse_load_progress(("Loading safetensors checkpoint shards: 3/8",))
+
+    assert progress.state == "loading_weights"
+    assert progress.weight_load_percent == 37.5
+    assert progress.progress_quality == "measured_shards"
+
+
+@pytest.mark.parametrize(
+    ("line", "expected_state"),
+    [
+        ("Starting engine initialization", "initializing_engine"),
+        ("Warming up model runner", "warming_up"),
+    ],
+)
+def test_progress_parser_recognizes_post_weight_stages(line: str, expected_state: str) -> None:
+    module = lifecycle()
+
+    progress = module.parse_load_progress((line,), previous_percent=82.0)
+
+    assert progress.state == expected_state
+    assert progress.weight_load_percent == 100.0
+    assert progress.progress_quality == "estimated"
+
+
+def test_progress_parser_ignores_malformed_ambiguous_and_unbounded_input() -> None:
+    module = lifecycle()
+    lines = tuple("x" * 10_000 for _ in range(2_000)) + (
+        "Loading model weights: 5/0 bytes",
+        "Loading safetensors checkpoint shards: two/four",
+        "75% complete",
+    )
+
+    progress = module.parse_load_progress(lines)
+
+    assert progress.state == "loading_weights"
+    assert progress.weight_load_percent is None
+    assert progress.progress_quality == "unavailable"
+
+
+def test_progress_parser_never_decreases_weight_progress() -> None:
+    module = lifecycle()
+
+    progress = module.parse_load_progress(
+        ("Loading safetensors checkpoint shards: 1/4",), previous_percent=60.0
+    )
+
+    assert progress.weight_load_percent == 60.0
+    assert progress.progress_quality == "measured_shards"
+
+
+def test_progress_parser_does_not_erase_an_earlier_valid_measurement() -> None:
+    module = lifecycle()
+
+    progress = module.parse_load_progress(
+        (
+            "Loading model weights: 40/100 bytes",
+            "Loading model weights: 5/0 bytes",
+        )
+    )
+
+    assert progress.weight_load_percent == 40.0
+    assert progress.progress_quality == "measured_bytes"
+
+
+def test_progress_parser_never_regresses_from_warmup_to_engine_initialization() -> None:
+    module = lifecycle()
+
+    progress = module.parse_load_progress(
+        (
+            "Warming up model runner",
+            "Starting engine initialization",
+        )
+    )
+
+    assert progress.state == "warming_up"
+    assert progress.weight_load_percent == 100.0
+
+
+@pytest.mark.asyncio
+async def test_twenty_concurrent_cold_checks_share_one_load(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    clock = [100.0]
+    release_poll = asyncio.Event()
+    store = module.LifecycleStore(tmp_path / "state.db", ("executor",), clock=lambda: clock[0])
+    driver = module.FakeLifecycleDriver({"executor": "inactive"})
+
+    async def health_probe(role: str) -> bool:
+        assert role == "executor"
+        return False
+
+    async def sleeper(seconds: float) -> None:
+        assert seconds == 0.25
+        await release_poll.wait()
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=health_probe,
+        timeout_seconds=10.0,
+        poll_seconds=0.25,
+        clock=lambda: clock[0],
+        sleeper=sleeper,
+    )
+
+    checks = await asyncio.gather(*(coordinator.ensure_ready("executor") for _ in range(20)))
+    for _ in range(100):
+        if ("start", "executor") in driver.calls:
+            break
+        await asyncio.sleep(0)
+
+    assert sum(check.load_triggered for check in checks) == 1
+    assert {check.record.state for check in checks} == {"load_queued"}
+    assert len({check.record.transition_id for check in checks}) == 1
+    assert driver.calls.count(("start", "executor")) == 1
+    assert len(coordinator._tasks) == 1
+    assert not coordinator._tasks["executor"].done()
+
+    await coordinator.close()
+    assert coordinator._tasks == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "failure_class"),
+    [("timeout", "start_timeout"), ("command_failed", "start_command_failed")],
+)
+async def test_start_failure_allows_only_one_bounded_manual_retry(
+    tmp_path: Path, kind: str, failure_class: str
+) -> None:
+    module = lifecycle()
+
+    class FailingStartDriver(module.FakeLifecycleDriver):
+        def start(self, role: str) -> None:
+            self._require_role(role)
+            self.calls.append(("start", role))
+            raise module.LifecycleDriverError("start", kind)
+
+    store = module.LifecycleStore(tmp_path / f"{kind}.db", ("executor",))
+    driver = FailingStartDriver({"executor": "inactive"})
+
+    async def reject_health(role: str) -> bool:
+        raise AssertionError(f"start failure probed health for {role}")
+
+    async def reject_sleep(seconds: float) -> None:
+        raise AssertionError(f"start failure slept for {seconds}")
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=reject_health,
+        timeout_seconds=10.0,
+        poll_seconds=0.25,
+        clock=lambda: 100.0,
+        sleeper=reject_sleep,
+    )
+
+    first = await coordinator.ensure_ready("executor")
+    await coordinator._tasks["executor"]
+    first_failure = store.get("executor")
+    second = await coordinator.ensure_ready("executor")
+    await coordinator._tasks["executor"]
+    second_failure = store.get("executor")
+    blocked = await coordinator.ensure_ready("executor")
+
+    assert first.load_triggered is True
+    assert first_failure.failure_class == failure_class
+    assert first_failure.retry_count == 1
+    assert second.load_triggered is True
+    assert second_failure.failure_class == failure_class
+    assert second_failure.retry_count == module.MAX_LOAD_RETRIES
+    assert blocked.load_triggered is False
+    assert blocked.record.state == "failed"
+    assert driver.calls == [("start", "executor"), ("start", "executor")]
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("service_status", ["inactive", "failed"])
+async def test_inactive_or_failed_service_gets_a_typed_failure(
+    tmp_path: Path, service_status: str
+) -> None:
+    module = lifecycle()
+
+    class UnstartedDriver(module.FakeLifecycleDriver):
+        def start(self, role: str) -> None:
+            self._require_role(role)
+            self.calls.append(("start", role))
+
+    store = module.LifecycleStore(tmp_path / f"{service_status}.db", ("executor",))
+    driver = UnstartedDriver({"executor": service_status})
+
+    async def reject_health(role: str) -> bool:
+        raise AssertionError(f"inactive service probed health for {role}")
+
+    async def reject_sleep(seconds: float) -> None:
+        raise AssertionError(f"inactive service slept for {seconds}")
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=reject_health,
+        timeout_seconds=10.0,
+        poll_seconds=0.25,
+        clock=lambda: 100.0,
+        sleeper=reject_sleep,
+    )
+
+    await coordinator.ensure_ready("executor")
+    await coordinator._tasks["executor"]
+    failure = store.get("executor")
+
+    assert failure.state == "failed"
+    assert failure.failure_class == f"service_{service_status}"
+    assert failure.retry_count == 1
+    assert driver.calls == [("start", "executor"), ("status", "executor")]
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_health_timeout_is_typed_and_does_not_auto_retry(tmp_path: Path) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "health-timeout.db", ("executor",))
+    driver = module.FakeLifecycleDriver({"executor": "inactive"})
+
+    async def health_probe(role: str) -> bool:
+        return False
+
+    async def timeout_sleep(seconds: float) -> None:
+        raise TimeoutError
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=health_probe,
+        timeout_seconds=10.0,
+        poll_seconds=0.25,
+        clock=lambda: 100.0,
+        sleeper=timeout_sleep,
+    )
+
+    await coordinator.ensure_ready("executor")
+    await coordinator._tasks["executor"]
+    failure = store.get("executor")
+
+    assert failure.state == "failed"
+    assert failure.failure_class == "health_timeout"
+    assert failure.retry_count == 1
+    assert driver.calls.count(("start", "executor")) == 1
+    assert not any(operation == "stop" for operation, _ in driver.calls)
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_outer_model_load_deadline_is_distinct_from_health_timeout(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "load-timeout.db", ("executor",))
+    driver = module.FakeLifecycleDriver({"executor": "inactive"})
+
+    async def health_probe(role: str) -> bool:
+        return False
+
+    async def blocked_sleep(seconds: float) -> None:
+        await asyncio.Event().wait()
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=health_probe,
+        timeout_seconds=0.01,
+        poll_seconds=0.25,
+        clock=lambda: 100.0,
+        sleeper=blocked_sleep,
+    )
+
+    await coordinator.ensure_ready("executor")
+    await coordinator._tasks["executor"]
+    failure = store.get("executor")
+
+    assert failure.state == "failed"
+    assert failure.failure_class == "load_timeout"
+    assert failure.retry_count == 1
+    assert driver.calls.count(("start", "executor")) == 1
+    await coordinator.close()
