@@ -1322,7 +1322,29 @@ class LifecycleCoordinator:
                 if decision.would_unload and decision.action_allowed:
                     try:
                         await self._unload_role(role, record)
-                    finally:
+                    except asyncio.CancelledError:
+                        self._idle_state[role] = (mode, None, 0)
+                        try:
+                            current = self.store.get(role)
+                            reset_decision = calculate_idle_policy(
+                                cast(ModelRole, role),
+                                mode,
+                                cast(Sequence[RoleUsageRecord], records),
+                                current,
+                                now=now,
+                                limits=limits,
+                                has_blockers=bool(self.store.unload_blockers(role)),
+                                previous_mode=mode,
+                                previous_last_activity_at=None,
+                                previous_consecutive_check_count=(
+                                    decision.next_consecutive_check_count
+                                ),
+                            )
+                            self.store.persist_decision(reset_decision)
+                        except Exception:
+                            pass
+                        raise
+                    else:
                         current = self.store.get(role)
                         safe_decision = calculate_idle_policy(
                             cast(ModelRole, role),

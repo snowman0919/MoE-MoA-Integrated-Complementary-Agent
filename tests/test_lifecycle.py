@@ -2896,3 +2896,151 @@ async def test_scheduler_shutdown_waits_for_owned_inflight_stop_and_finishes_tra
     assert decision is not None
     assert decision.action_allowed is False
     assert decision.reason == "state_not_ready"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_cancellation_before_unload_admission_persists_hysteresis_reset(
+    tmp_path: Path,
+) -> None:
+    from dgx_moa.usage import UsageStore
+
+    module = lifecycle()
+    clock = [0.0]
+    store = module.LifecycleStore(
+        tmp_path / "cancel-before-admission.db", ("executor",), clock=lambda: clock[0]
+    )
+    reach(store, "executor", "ready")
+    clock[0] = 100.0
+    usage = UsageStore(store.path)
+    limits = Limits(
+        executor_idle_minimum_seconds=5,
+        executor_idle_fallback_seconds=10,
+        executor_idle_maximum_seconds=100,
+        executor_minimum_ready_residency_seconds=1,
+    )
+    coordinator = module.LifecycleCoordinator(
+        store,
+        module.FakeLifecycleDriver({"executor": "active"}),
+        health_probe=lambda role: asyncio.sleep(0, result=True),
+        timeout_seconds=10.0,
+        poll_seconds=1.0,
+        clock=lambda: clock[0],
+        memory_probe=lambda: 1_000,
+    )
+    await coordinator.run_scheduler_check("fixed", ("executor",), limits, usage)
+    await coordinator._locks["executor"].acquire()
+    check = asyncio.create_task(
+        coordinator.run_scheduler_check("fixed", ("executor",), limits, usage)
+    )
+    try:
+        for _ in range(1_000):
+            decision = store.latest_decision("executor")
+            if decision is not None and decision.action_allowed:
+                break
+            await asyncio.sleep(0.001)
+        assert decision is not None
+        assert decision.action_allowed is True
+
+        check.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await check
+    finally:
+        coordinator._locks["executor"].release()
+
+    reset = store.latest_decision("executor")
+    assert reset is not None
+    assert reset.action_allowed is False
+    assert reset.next_consecutive_check_count == 0
+    assert reset.reason == "state_reset"
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_safe_decision_persistence_failure_cannot_consume_scheduler_cancellation(
+    tmp_path: Path,
+) -> None:
+    from dgx_moa.usage import UsageStore
+
+    module = lifecycle()
+    clock = [0.0]
+    store = module.LifecycleStore(
+        tmp_path / "cancel-safe-persist.db", ("executor",), clock=lambda: clock[0]
+    )
+    reach(store, "executor", "ready")
+    clock[0] = 100.0
+    stop_entered = threading.Event()
+    stop_release = threading.Event()
+    resumed_after_cancel = asyncio.Event()
+
+    class BlockingStopDriver(module.FakeLifecycleDriver):
+        def stop(self, role: str) -> None:
+            self._require_role(role)
+            self.calls.append(("stop", role))
+            stop_entered.set()
+            assert stop_release.wait(timeout=2)
+            self._statuses[role] = "inactive"
+
+    sleep_calls = 0
+
+    async def sleeper(seconds: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls <= 2:
+            return
+        resumed_after_cancel.set()
+        await asyncio.Event().wait()
+
+    persist = store.persist_decision
+    persist_calls = 0
+
+    def fail_terminal_safe_persistence(decision: Any):
+        nonlocal persist_calls
+        persist_calls += 1
+        if persist_calls == 3:
+            raise sqlite3.OperationalError("SENTINEL safe persistence")
+        return persist(decision)
+
+    store.persist_decision = fail_terminal_safe_persistence  # type: ignore[method-assign]
+    coordinator = module.LifecycleCoordinator(
+        store,
+        BlockingStopDriver({"executor": "active"}),
+        health_probe=lambda role: asyncio.sleep(0, result=True),
+        timeout_seconds=10.0,
+        poll_seconds=1.0,
+        clock=lambda: clock[0],
+        sleeper=sleeper,
+        memory_probe=lambda: 1_000,
+    )
+    scheduler = coordinator.start_scheduler(
+        "fixed",
+        ("executor",),
+        Limits(
+            executor_idle_minimum_seconds=5,
+            executor_idle_fallback_seconds=10,
+            executor_idle_maximum_seconds=100,
+            executor_minimum_ready_residency_seconds=1,
+        ),
+        UsageStore(store.path),
+    )
+    assert scheduler is not None
+    for _ in range(1_000):
+        if stop_entered.is_set():
+            break
+        await asyncio.sleep(0.001)
+    assert stop_entered.is_set()
+
+    closing = asyncio.create_task(coordinator.close())
+    resumed = asyncio.create_task(resumed_after_cancel.wait())
+    stop_release.set()
+    done, _ = await asyncio.wait({closing, resumed}, return_when=asyncio.FIRST_COMPLETED, timeout=1)
+    closed_on_first_cancel = closing in done
+    if not closed_on_first_cancel:
+        scheduler.cancel()
+        await asyncio.wait_for(closing, timeout=1)
+    if not resumed.done():
+        resumed.cancel()
+    await asyncio.gather(resumed, return_exceptions=True)
+
+    assert closed_on_first_cancel
+    assert scheduler.cancelled()
+    assert persist_calls == 3
