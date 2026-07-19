@@ -156,6 +156,66 @@ def test_lifecycle_defaults_are_disabled_and_empty() -> None:
     assert settings.lifecycle_unit_map == {}
 
 
+def test_role_lifecycle_defaults_match_approved_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
+    settings = load_settings(Path("config/models.yaml"))
+
+    assert settings.lifecycle.roles["executor"].normally_resident is True
+    assert settings.lifecycle.roles["executor"].idle_unload_enabled is False
+    assert settings.lifecycle.roles["executor"].fallback_timeout_seconds == 14_400
+    assert settings.lifecycle.roles["planner"].fallback_timeout_seconds == 1_200
+    assert settings.lifecycle.roles["reviewer"].fallback_timeout_seconds == 1_200
+    assert settings.lifecycle.roles["reasoner"].fallback_timeout_seconds == 600
+    assert settings.lifecycle.roles["judge"].enabled is False
+    assert settings.lifecycle.recent_sample_window == 100
+    assert settings.lifecycle.minimum_samples == 20
+    assert settings.lifecycle.percentile == 0.75
+    assert settings.lifecycle.multiplier == 1.5
+    assert settings.lifecycle.load_unload_cooldown_seconds == 300
+    assert settings.lifecycle.continuation_lease_ttl_seconds == 900
+    assert settings.lifecycle.failure_limit == 3
+    assert settings.lifecycle.failure_window_seconds == 900
+
+
+def test_role_lifecycle_partial_environment_override_preserves_safe_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
+    monkeypatch.setenv(
+        "DGX_MOA_LIFECYCLE_POLICY",
+        '{"roles":{"planner":{"fallback_timeout_seconds":1800}}}',
+    )
+
+    settings = load_settings(Path("config/models.yaml"))
+
+    planner = settings.lifecycle.roles["planner"]
+    assert planner.minimum_timeout_seconds == 600
+    assert planner.fallback_timeout_seconds == 1_800
+    assert planner.maximum_timeout_seconds == 3_600
+    assert settings.lifecycle.roles["executor"].idle_unload_enabled is False
+    assert settings.lifecycle.roles["judge"].enabled is False
+
+
+def test_role_lifecycle_rejects_unknown_role_and_invalid_timeout_order() -> None:
+    with pytest.raises(ValidationError, match="unknown lifecycle role"):
+        Settings(auth_enabled=False, lifecycle={"roles": {"mystery": {}}})
+
+    with pytest.raises(ValidationError, match="minimum <= fallback <= maximum"):
+        Settings(
+            auth_enabled=False,
+            lifecycle={
+                "roles": {
+                    "reasoner": {
+                        "minimum_timeout_seconds": 700,
+                        "fallback_timeout_seconds": 600,
+                    }
+                }
+            },
+        )
+
+
 def test_idle_policy_limits_have_conservative_defaults_and_yaml_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

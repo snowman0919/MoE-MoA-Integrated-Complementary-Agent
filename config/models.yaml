@@ -16,6 +16,56 @@ gateway:
   lifecycle_mode: disabled
   lifecycle_poll_seconds: 30
   lifecycle_unit_map: {}
+  lifecycle:
+    minimum_samples: 20
+    recent_sample_window: 100
+    percentile: 0.75
+    multiplier: 1.5
+    load_unload_cooldown_seconds: 300
+    continuation_lease_ttl_seconds: 900
+    failure_limit: 3
+    failure_window_seconds: 900
+    roles:
+      executor:
+        enabled: true
+        normally_resident: true
+        idle_unload_enabled: false
+        fallback_timeout_seconds: 14400
+        minimum_timeout_seconds: 7200
+        maximum_timeout_seconds: 28800
+        minimum_ready_residency_seconds: 600
+      planner:
+        enabled: true
+        normally_resident: false
+        idle_unload_enabled: true
+        fallback_timeout_seconds: 1200
+        minimum_timeout_seconds: 600
+        maximum_timeout_seconds: 3600
+        minimum_ready_residency_seconds: 600
+      reviewer:
+        enabled: true
+        normally_resident: false
+        idle_unload_enabled: true
+        fallback_timeout_seconds: 1200
+        minimum_timeout_seconds: 600
+        maximum_timeout_seconds: 3600
+        minimum_ready_residency_seconds: 600
+      reasoner:
+        enabled: true
+        normally_resident: false
+        idle_unload_enabled: true
+        fallback_timeout_seconds: 600
+        minimum_timeout_seconds: 300
+        maximum_timeout_seconds: 1800
+        minimum_ready_residency_seconds: 300
+      judge:
+        enabled: false
+        normally_resident: false
+        idle_unload_enabled: false
+        fallback_timeout_seconds: 600
+        minimum_timeout_seconds: 300
+        maximum_timeout_seconds: 1800
+        minimum_ready_residency_seconds: 300
   limits:
     max_tool_output_characters: 1000
     max_retained_observations: 12

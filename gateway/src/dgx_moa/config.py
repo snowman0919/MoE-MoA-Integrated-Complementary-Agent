@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 TRUE_VALUES = {"true", "1", "yes", "on"}
 FALSE_VALUES = {"false", "0", "no", "off"}
@@ -80,6 +80,100 @@ class Limits(BaseModel):
         return self
 
 
+class LifecycleRolePolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    normally_resident: bool = False
+    idle_unload_enabled: bool = True
+    fallback_timeout_seconds: float = Field(gt=0, allow_inf_nan=False)
+    minimum_timeout_seconds: float = Field(gt=0, allow_inf_nan=False)
+    maximum_timeout_seconds: float = Field(gt=0, allow_inf_nan=False)
+    minimum_ready_residency_seconds: float = Field(gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_timeout_order(self) -> LifecycleRolePolicy:
+        if not (
+            self.minimum_timeout_seconds
+            <= self.fallback_timeout_seconds
+            <= self.maximum_timeout_seconds
+        ):
+            raise ValueError("role idle thresholds must satisfy minimum <= fallback <= maximum")
+        return self
+
+
+def default_lifecycle_roles() -> dict[str, LifecycleRolePolicy]:
+    return {
+        "executor": LifecycleRolePolicy(
+            normally_resident=True,
+            idle_unload_enabled=False,
+            minimum_timeout_seconds=7_200,
+            fallback_timeout_seconds=14_400,
+            maximum_timeout_seconds=28_800,
+            minimum_ready_residency_seconds=600,
+        ),
+        "planner": LifecycleRolePolicy(
+            minimum_timeout_seconds=600,
+            fallback_timeout_seconds=1_200,
+            maximum_timeout_seconds=3_600,
+            minimum_ready_residency_seconds=600,
+        ),
+        "reviewer": LifecycleRolePolicy(
+            minimum_timeout_seconds=600,
+            fallback_timeout_seconds=1_200,
+            maximum_timeout_seconds=3_600,
+            minimum_ready_residency_seconds=600,
+        ),
+        "reasoner": LifecycleRolePolicy(
+            minimum_timeout_seconds=300,
+            fallback_timeout_seconds=600,
+            maximum_timeout_seconds=1_800,
+            minimum_ready_residency_seconds=300,
+        ),
+        "judge": LifecycleRolePolicy(
+            enabled=False,
+            idle_unload_enabled=False,
+            minimum_timeout_seconds=300,
+            fallback_timeout_seconds=600,
+            maximum_timeout_seconds=1_800,
+            minimum_ready_residency_seconds=300,
+        ),
+    }
+
+
+class LifecyclePolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    roles: dict[str, LifecycleRolePolicy] = Field(default_factory=default_lifecycle_roles)
+    minimum_samples: int = Field(default=20, ge=1)
+    recent_sample_window: int = Field(default=100, ge=2, le=10_000)
+    percentile: float = Field(default=0.75, gt=0, lt=1, allow_inf_nan=False)
+    multiplier: float = Field(default=1.5, gt=0, allow_inf_nan=False)
+    load_unload_cooldown_seconds: float = Field(default=300, ge=0, allow_inf_nan=False)
+    continuation_lease_ttl_seconds: float = Field(default=900, gt=0, allow_inf_nan=False)
+    failure_limit: int = Field(default=3, ge=1)
+    failure_window_seconds: float = Field(default=900, gt=0, allow_inf_nan=False)
+
+    @field_validator("roles", mode="before")
+    @classmethod
+    def validate_roles(cls, value: Any) -> Any:
+        if value is None:
+            return default_lifecycle_roles()
+        if not isinstance(value, dict):
+            raise ValueError("lifecycle roles must be a mapping")
+        unknown = set(value) - MODEL_ROLES
+        if unknown:
+            raise ValueError(f"unknown lifecycle role: {sorted(unknown)[0]}")
+        merged: dict[str, Any] = {
+            role: policy.model_dump() for role, policy in default_lifecycle_roles().items()
+        }
+        for role, override in value.items():
+            if not isinstance(override, dict):
+                raise ValueError(f"lifecycle policy for {role} must be a mapping")
+            merged[role].update(override)
+        return merged
+
+
 class ModelConfig(BaseModel):
     repository: str
     revision: str
@@ -115,6 +209,7 @@ class Settings(BaseModel):
     lifecycle_mode: Literal["disabled", "observe", "fixed", "adaptive"] = "disabled"
     lifecycle_poll_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
     lifecycle_unit_map: dict[str, str] = Field(default_factory=dict)
+    lifecycle: LifecyclePolicy = Field(default_factory=LifecyclePolicy)
     models: dict[str, ModelConfig] = Field(default_factory=dict)
     limits: Limits = Field(default_factory=Limits)
 
@@ -207,6 +302,11 @@ def load_settings(path: str | Path | None = None) -> Settings:
         with suppress(json.JSONDecodeError):
             unit_map = json.loads(unit_map)
     gateway["lifecycle_unit_map"] = unit_map
+    lifecycle: Any = os.getenv("DGX_MOA_LIFECYCLE_POLICY", gateway.get("lifecycle", {}))
+    if isinstance(lifecycle, str):
+        with suppress(json.JSONDecodeError):
+            lifecycle = json.loads(lifecycle)
+    gateway["lifecycle"] = lifecycle
     return Settings.model_validate(gateway)
 
 
