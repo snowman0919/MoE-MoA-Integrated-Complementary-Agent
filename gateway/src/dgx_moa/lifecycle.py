@@ -20,6 +20,7 @@ from .config import MODEL_ROLES, SYSTEMD_UNIT_PATTERN, Limits
 from .usage import UsageStore
 
 LifecycleState = Literal[
+    "disabled",
     "cold",
     "load_queued",
     "process_starting",
@@ -28,6 +29,7 @@ LifecycleState = Literal[
     "warming_up",
     "ready",
     "sleeping",
+    "unload_queued",
     "unloading",
     "failed",
 ]
@@ -71,6 +73,7 @@ CONTINUATION_CORRELATION = re.compile(r"[0-9a-f]{64}")
 T = TypeVar("T")
 
 LIFECYCLE_STATES: tuple[LifecycleState, ...] = (
+    "disabled",
     "cold",
     "load_queued",
     "process_starting",
@@ -79,20 +82,23 @@ LIFECYCLE_STATES: tuple[LifecycleState, ...] = (
     "warming_up",
     "ready",
     "sleeping",
+    "unload_queued",
     "unloading",
     "failed",
 )
 TRANSITIONS: dict[LifecycleState, frozenset[LifecycleState]] = {
-    "cold": frozenset({"load_queued"}),
-    "load_queued": frozenset({"cold", "process_starting", "failed"}),
-    "process_starting": frozenset({"cold", "loading_weights", "failed"}),
-    "loading_weights": frozenset({"cold", "initializing_engine", "failed"}),
-    "initializing_engine": frozenset({"cold", "warming_up", "failed"}),
-    "warming_up": frozenset({"cold", "ready", "failed"}),
-    "ready": frozenset({"sleeping", "unloading", "failed"}),
-    "sleeping": frozenset({"cold", "ready", "unloading", "failed"}),
-    "unloading": frozenset({"cold", "failed"}),
-    "failed": frozenset({"cold", "load_queued"}),
+    "disabled": frozenset({"cold"}),
+    "cold": frozenset({"disabled", "load_queued"}),
+    "load_queued": frozenset({"disabled", "cold", "process_starting", "failed"}),
+    "process_starting": frozenset({"disabled", "cold", "loading_weights", "failed"}),
+    "loading_weights": frozenset({"disabled", "cold", "initializing_engine", "failed"}),
+    "initializing_engine": frozenset({"disabled", "cold", "warming_up", "failed"}),
+    "warming_up": frozenset({"disabled", "cold", "ready", "failed"}),
+    "ready": frozenset({"disabled", "sleeping", "unload_queued", "unloading", "failed"}),
+    "sleeping": frozenset({"disabled", "cold", "ready", "unloading", "failed"}),
+    "unload_queued": frozenset({"disabled", "ready", "unloading", "failed"}),
+    "unloading": frozenset({"disabled", "cold", "failed"}),
+    "failed": frozenset({"disabled", "cold", "load_queued"}),
 }
 
 
@@ -100,12 +106,17 @@ class LifecycleRecord(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
     role: str
+    generation: int = Field(default=0, ge=0)
     state: LifecycleState
     transition_id: str
     transitioned_at: float
     updated_at: float
     ready_since: float | None = None
     last_used_at: float | None = None
+    load_started_at: float | None = Field(default=None, ge=0)
+    ready_at: float | None = Field(default=None, ge=0)
+    last_requested_at: float | None = Field(default=None, ge=0)
+    last_completed_at: float | None = Field(default=None, ge=0)
     failure_class: str | None = None
     failure_detail: str | None = None
     retry_count: int = Field(default=0, ge=0)
@@ -115,12 +126,17 @@ class LifecycleRecord(BaseModel):
     evaluation_guard: bool = False
     profile_guard: bool = False
     progress_value: float | None = Field(default=None, ge=0, le=100)
+    weight_load_percent: float | None = Field(default=None, ge=0, le=100)
+    overall_load_percent: float | None = Field(default=None, ge=0, le=100)
     progress_quality: ProgressQuality | None = None
     eta_seconds: float | None = Field(default=None, ge=0)
     last_load_duration_seconds: float | None = Field(default=None, ge=0)
     last_unload_duration_seconds: float | None = Field(default=None, ge=0)
     memory_before_bytes: int | None = Field(default=None, ge=0)
     memory_after_bytes: int | None = Field(default=None, ge=0)
+    service_unit: str | None = None
+    last_error_class: str | None = None
+    last_error_message_redacted: str | None = None
 
 
 class LifecycleLease(BaseModel):
@@ -473,13 +489,27 @@ LEASE_COLUMNS = tuple(LifecycleLease.model_fields)
 DECISION_COLUMNS = tuple(PersistedIdlePolicyDecision.model_fields)
 MUTABLE_FIELDS = frozenset(COLUMNS) - {
     "role",
+    "generation",
     "state",
     "transition_id",
     "transitioned_at",
     "updated_at",
+    "service_unit",
 }
 BOOLEAN_FIELDS = {"evaluation_guard", "profile_guard"}
 FAILURE_CLASS_PATTERN = re.compile(r"[^a-z0-9]+")
+LIFECYCLE_COLUMN_MIGRATIONS = {
+    "generation": "INTEGER NOT NULL DEFAULT 0",
+    "load_started_at": "REAL",
+    "ready_at": "REAL",
+    "last_requested_at": "REAL",
+    "last_completed_at": "REAL",
+    "weight_load_percent": "REAL",
+    "overall_load_percent": "REAL",
+    "service_unit": "TEXT",
+    "last_error_class": "TEXT",
+    "last_error_message_redacted": "TEXT",
+}
 
 
 def _sanitize_failure_class(value: str) -> str:
@@ -497,28 +527,48 @@ class LifecycleStore:
         roles: Iterable[str],
         *,
         clock: Callable[[], float] = time.time,
+        unit_map: Mapping[str, str] | None = None,
     ):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._roles = tuple(dict.fromkeys(roles))
         self._role_set = set(self._roles)
         self._clock = clock
+        self._unit_map = dict(unit_map or {})
         unknown = self._role_set - MODEL_ROLES
         if unknown:
             raise UnknownRoleError(sorted(unknown)[0])
+        unknown_units = set(self._unit_map) - self._role_set
+        if unknown_units:
+            raise UnknownRoleError(sorted(unknown_units)[0])
+        if any(not SYSTEMD_UNIT_PATTERN.fullmatch(unit) for unit in self._unit_map.values()):
+            raise ValueError("invalid systemd unit")
+        if len(set(self._unit_map.values())) != len(self._unit_map):
+            raise ValueError("duplicate lifecycle unit")
         with self._connect() as database:
             database.execute(
                 "CREATE TABLE IF NOT EXISTS model_lifecycle ("
-                "role TEXT PRIMARY KEY, state TEXT NOT NULL, transition_id TEXT NOT NULL, "
+                "role TEXT PRIMARY KEY, generation INTEGER NOT NULL DEFAULT 0, "
+                "state TEXT NOT NULL, transition_id TEXT NOT NULL, "
                 "transitioned_at REAL NOT NULL, updated_at REAL NOT NULL, ready_since REAL, "
-                "last_used_at REAL, failure_class TEXT, failure_detail TEXT, "
+                "last_used_at REAL, load_started_at REAL, ready_at REAL, "
+                "last_requested_at REAL, last_completed_at REAL, "
+                "failure_class TEXT, failure_detail TEXT, "
                 "retry_count INTEGER NOT NULL, active_request_count INTEGER NOT NULL, "
                 "open_stream_count INTEGER NOT NULL, continuation_lease_count INTEGER NOT NULL, "
                 "evaluation_guard INTEGER NOT NULL, profile_guard INTEGER NOT NULL, "
-                "progress_value REAL, progress_quality TEXT, eta_seconds REAL, "
+                "progress_value REAL, weight_load_percent REAL, overall_load_percent REAL, "
+                "progress_quality TEXT, eta_seconds REAL, "
                 "last_load_duration_seconds REAL, last_unload_duration_seconds REAL, "
-                "memory_before_bytes INTEGER, memory_after_bytes INTEGER)"
+                "memory_before_bytes INTEGER, memory_after_bytes INTEGER, service_unit TEXT, "
+                "last_error_class TEXT, last_error_message_redacted TEXT)"
             )
+            existing_columns = {
+                row[1] for row in database.execute("PRAGMA table_info(model_lifecycle)")
+            }
+            for name, definition in LIFECYCLE_COLUMN_MIGRATIONS.items():
+                if name not in existing_columns:
+                    database.execute(f"ALTER TABLE model_lifecycle ADD COLUMN {name} {definition}")
             database.execute(
                 "CREATE TABLE IF NOT EXISTS model_lifecycle_leases ("
                 "lease_id TEXT PRIMARY KEY, role TEXT NOT NULL, kind TEXT NOT NULL "
@@ -542,16 +592,22 @@ class LifecycleStore:
                 now = self._clock()
                 record = LifecycleRecord(
                     role=role,
-                    state="cold",
+                    state="disabled" if unit_map is not None else "cold",
                     transition_id=str(uuid4()),
                     transitioned_at=now,
                     updated_at=now,
+                    service_unit=self._unit_map.get(role),
                 )
                 database.execute(
                     f"INSERT OR IGNORE INTO model_lifecycle ({', '.join(COLUMNS)}) "
                     f"VALUES ({', '.join('?' for _ in COLUMNS)})",
                     self._values(record),
                 )
+                if role in self._unit_map:
+                    database.execute(
+                        "UPDATE model_lifecycle SET service_unit = ? WHERE role = ?",
+                        (self._unit_map[role], role),
+                    )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30)
@@ -720,6 +776,17 @@ class LifecycleStore:
         )
         with self._connect() as database:
             database.execute("BEGIN IMMEDIATE")
+            first_request_roles = {
+                role
+                for role in requested_roles
+                if kind in {"active_request", "open_stream"}
+                and database.execute(
+                    "SELECT COUNT(*) FROM model_lifecycle_leases "
+                    "WHERE role = ? AND kind IN ('active_request', 'open_stream')",
+                    (role,),
+                ).fetchone()[0]
+                == 0
+            }
             if require_ready:
                 for role in requested_roles:
                     record = self._read(database, role)
@@ -733,6 +800,12 @@ class LifecycleStore:
                     self._lease_values(lease),
                 )
             self._sync_lease_counts(database, requested_roles, now)
+            for role in first_request_roles:
+                database.execute(
+                    "UPDATE model_lifecycle SET last_requested_at = ?, updated_at = ? "
+                    "WHERE role = ?",
+                    (now, now, role),
+                )
             return tuple(
                 self._lease(
                     database.execute(
@@ -934,7 +1007,7 @@ class LifecycleStore:
             self._sync_lease_counts(database, (*expired_roles, role), now)
             current = self._read(database, role)
             if (
-                current.state != "ready"
+                current.state not in {"ready", "unload_queued"}
                 or current.transition_id != expected_transition_id
                 or (
                     expected_ready_since is not None and current.ready_since != expected_ready_since
@@ -997,12 +1070,23 @@ class LifecycleStore:
                 f"DELETE FROM model_lifecycle_leases WHERE lease_id IN ({placeholders})",
                 requested,
             )
-            for role in dict.fromkeys(row[0] for row in owned if row[1] == "active_request"):
-                database.execute(
-                    "UPDATE model_lifecycle SET last_used_at = ?, updated_at = ? WHERE role = ?",
-                    (now, now, role),
-                )
             self._sync_lease_counts(database, roles, now)
+            request_roles = dict.fromkeys(
+                row[0] for row in owned if row[1] in {"active_request", "open_stream"}
+            )
+            for role in request_roles:
+                remaining = database.execute(
+                    "SELECT active_request_count, open_stream_count "
+                    "FROM model_lifecycle WHERE role = ?",
+                    (role,),
+                ).fetchone()
+                assert remaining is not None
+                if remaining[0] == 0 and remaining[1] == 0:
+                    database.execute(
+                        "UPDATE model_lifecycle SET last_used_at = ?, last_completed_at = ?, "
+                        "updated_at = ? WHERE role = ?",
+                        (now, now, now, role),
+                    )
 
     def _updated_record(
         self, current: LifecycleRecord, changes: Mapping[str, Any], now: float
@@ -1012,10 +1096,16 @@ class LifecycleStore:
             raise ValueError(f"immutable lifecycle fields: {sorted(unknown)}")
         values = current.model_dump()
         values.update(changes)
+        if "progress_value" in changes and "weight_load_percent" not in changes:
+            values["weight_load_percent"] = changes["progress_value"]
         if values.get("failure_class") is not None:
             values["failure_class"] = _sanitize_failure_class(str(values["failure_class"]))
         if values.get("failure_detail") is not None:
             values["failure_detail"] = _sanitize_failure_detail(str(values["failure_detail"]))
+        if "failure_class" in changes and "last_error_class" not in changes:
+            values["last_error_class"] = values["failure_class"]
+        if "failure_detail" in changes and "last_error_message_redacted" not in changes:
+            values["last_error_message_redacted"] = values["failure_detail"]
         values["updated_at"] = now
         return LifecycleRecord.model_validate(values)
 
@@ -1055,14 +1145,36 @@ class LifecycleStore:
                 transitioned_at=now,
                 updated_at=now,
             )
+            if state == "load_queued" and current.state in {"cold", "failed"}:
+                values.update(
+                    generation=current.generation + 1,
+                    load_started_at=None,
+                    ready_at=None,
+                    progress_value=None,
+                    weight_load_percent=None,
+                    overall_load_percent=0.0,
+                    progress_quality="unavailable",
+                    eta_seconds=None,
+                )
+            elif state == "process_starting":
+                values.update(load_started_at=now, overall_load_percent=5.0)
             if state == "ready":
-                values["ready_since"] = now
-            elif state == "cold":
+                values.update(
+                    ready_since=current.ready_since if current.state == "unload_queued" else now,
+                    ready_at=current.ready_at if current.state == "unload_queued" else now,
+                    weight_load_percent=100.0,
+                    overall_load_percent=100.0,
+                )
+            elif state in {"cold", "disabled"}:
                 values.update(
                     ready_since=None,
+                    ready_at=None,
+                    load_started_at=None,
                     failure_class=None,
                     failure_detail=None,
                     progress_value=None,
+                    weight_load_percent=None,
+                    overall_load_percent=None,
                     progress_quality=None,
                     eta_seconds=None,
                 )
@@ -1072,6 +1184,44 @@ class LifecycleStore:
             transitioned = LifecycleRecord.model_validate(values)
             self._write(database, transitioned)
             return transitioned
+
+    def queue_unload(
+        self,
+        role: str,
+        *,
+        expected_transition_id: str,
+    ) -> LifecycleRecord:
+        return self.transition(
+            role,
+            "unload_queued",
+            expected_transition_id=expected_transition_id,
+        )
+
+    def cancel_queued_unload(
+        self,
+        role: str,
+        *,
+        expected_transition_id: str,
+    ) -> LifecycleRecord:
+        return self.transition(
+            role,
+            "ready",
+            expected_transition_id=expected_transition_id,
+        )
+
+    def disable_all(self) -> dict[str, LifecycleRecord]:
+        disabled: dict[str, LifecycleRecord] = {}
+        for role in self._roles:
+            current = self.get(role)
+            if current.state == "disabled":
+                disabled[role] = current
+                continue
+            disabled[role] = self.transition(
+                role,
+                "disabled",
+                expected_transition_id=current.transition_id,
+            )
+        return disabled
 
     def complete_unload(
         self,
@@ -1107,9 +1257,13 @@ class LifecycleStore:
                 transitioned_at=now,
                 updated_at=now,
                 ready_since=None,
+                ready_at=None,
+                load_started_at=None,
                 failure_class=None,
                 failure_detail=None,
                 progress_value=None,
+                weight_load_percent=None,
+                overall_load_percent=None,
                 progress_quality=None,
                 eta_seconds=None,
             )
@@ -1142,11 +1296,25 @@ class LifecycleStore:
                 transitioned_at=now,
                 updated_at=now,
                 ready_since=None,
+                ready_at=None,
+                load_started_at=(
+                    now
+                    if state == "process_starting"
+                    else current.load_started_at
+                    if state == "failed"
+                    else None
+                ),
                 progress_value=None,
+                weight_load_percent=None,
+                overall_load_percent=5.0 if state == "process_starting" else None,
                 progress_quality=None,
                 eta_seconds=None,
                 failure_class="service_failed" if state == "failed" else None,
                 failure_detail=None,
+                last_error_class=(
+                    "service_failed" if state == "failed" else current.last_error_class
+                ),
+                last_error_message_redacted=current.last_error_message_redacted,
             )
             reconciled = LifecycleRecord.model_validate(values)
             self._write(database, reconciled)
@@ -1188,9 +1356,25 @@ class LifecycleStore:
                     if state == "ready"
                     else None
                 ),
+                ready_at=(
+                    current.ready_at
+                    if state == "ready" and current.state == "ready"
+                    else now
+                    if state == "ready"
+                    else None
+                ),
+                load_started_at=current.load_started_at if state == "failed" else None,
                 failure_class=(failure_class or "service_failed") if state == "failed" else None,
                 failure_detail=None,
+                last_error_class=(
+                    failure_class or "service_failed"
+                    if state == "failed"
+                    else current.last_error_class
+                ),
+                last_error_message_redacted=current.last_error_message_redacted,
                 progress_value=None,
+                weight_load_percent=100.0 if state == "ready" else None,
+                overall_load_percent=100.0 if state == "ready" else None,
                 progress_quality=None,
                 eta_seconds=None,
             )
@@ -1382,18 +1566,31 @@ class LifecycleCoordinator:
     ) -> bool:
         async with self._locks[role]:
             try:
+                queued = self.store.queue_unload(
+                    role,
+                    expected_transition_id=policy_record.transition_id,
+                )
+            except (InvalidTransitionError, StaleTransitionError):
+                return False
+            try:
                 memory_before = await asyncio.to_thread(self._memory_sample)
             except Exception as error:
                 self._fail_unload(role, "memory_before_failed", type(error).__name__)
                 return False
             admitted = self.store.admit_unload(
                 role,
-                expected_transition_id=policy_record.transition_id,
+                expected_transition_id=queued.transition_id,
                 expected_ready_since=policy_record.ready_since,
                 expected_last_used_at=policy_record.last_used_at,
                 memory_before_bytes=memory_before,
             )
             if admitted is None:
+                current = self.store.get(role)
+                if current.state == "unload_queued":
+                    self.store.cancel_queued_unload(
+                        role,
+                        expected_transition_id=current.transition_id,
+                    )
                 return False
             task = asyncio.create_task(self._complete_unload(role, admitted))
             self._stop_tasks[role] = task

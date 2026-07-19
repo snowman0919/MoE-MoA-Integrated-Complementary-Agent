@@ -15,6 +15,7 @@ from dgx_moa.config import Limits, Settings, load_settings
 from pydantic import ValidationError
 
 STATES = {
+    "disabled",
     "cold",
     "load_queued",
     "process_starting",
@@ -23,22 +24,26 @@ STATES = {
     "warming_up",
     "ready",
     "sleeping",
+    "unload_queued",
     "unloading",
     "failed",
 }
 TRANSITIONS = {
-    "cold": {"load_queued"},
-    "load_queued": {"cold", "process_starting", "failed"},
-    "process_starting": {"cold", "loading_weights", "failed"},
-    "loading_weights": {"cold", "initializing_engine", "failed"},
-    "initializing_engine": {"cold", "warming_up", "failed"},
-    "warming_up": {"cold", "ready", "failed"},
-    "ready": {"sleeping", "unloading", "failed"},
-    "sleeping": {"cold", "ready", "unloading", "failed"},
-    "unloading": {"cold", "failed"},
-    "failed": {"cold", "load_queued"},
+    "disabled": {"cold"},
+    "cold": {"disabled", "load_queued"},
+    "load_queued": {"disabled", "cold", "process_starting", "failed"},
+    "process_starting": {"disabled", "cold", "loading_weights", "failed"},
+    "loading_weights": {"disabled", "cold", "initializing_engine", "failed"},
+    "initializing_engine": {"disabled", "cold", "warming_up", "failed"},
+    "warming_up": {"disabled", "cold", "ready", "failed"},
+    "ready": {"disabled", "sleeping", "unload_queued", "unloading", "failed"},
+    "sleeping": {"disabled", "cold", "ready", "unloading", "failed"},
+    "unload_queued": {"disabled", "ready", "unloading", "failed"},
+    "unloading": {"disabled", "cold", "failed"},
+    "failed": {"disabled", "cold", "load_queued"},
 }
 PATHS = {
+    "disabled": ("disabled",),
     "cold": (),
     "load_queued": ("load_queued",),
     "process_starting": ("load_queued", "process_starting"),
@@ -81,6 +86,15 @@ PATHS = {
         "warming_up",
         "ready",
         "unloading",
+    ),
+    "unload_queued": (
+        "load_queued",
+        "process_starting",
+        "loading_weights",
+        "initializing_engine",
+        "warming_up",
+        "ready",
+        "unload_queued",
     ),
     "failed": ("load_queued", "failed"),
 }
@@ -214,6 +228,123 @@ def test_role_lifecycle_rejects_unknown_role_and_invalid_timeout_order() -> None
                 }
             },
         )
+
+
+def test_lifecycle_schema_migrates_generation_and_required_fields(tmp_path: Path) -> None:
+    module = lifecycle()
+    database_path = tmp_path / "state.db"
+    with sqlite3.connect(database_path) as database:
+        database.execute(
+            "CREATE TABLE model_lifecycle ("
+            "role TEXT PRIMARY KEY, state TEXT NOT NULL, transition_id TEXT NOT NULL, "
+            "transitioned_at REAL NOT NULL, updated_at REAL NOT NULL, ready_since REAL, "
+            "last_used_at REAL, failure_class TEXT, failure_detail TEXT, "
+            "retry_count INTEGER NOT NULL, active_request_count INTEGER NOT NULL, "
+            "open_stream_count INTEGER NOT NULL, continuation_lease_count INTEGER NOT NULL, "
+            "evaluation_guard INTEGER NOT NULL, profile_guard INTEGER NOT NULL, "
+            "progress_value REAL, progress_quality TEXT, eta_seconds REAL, "
+            "last_load_duration_seconds REAL, last_unload_duration_seconds REAL, "
+            "memory_before_bytes INTEGER, memory_after_bytes INTEGER)"
+        )
+
+    store = module.LifecycleStore(
+        database_path,
+        ("planner",),
+        unit_map={"planner": "dgx-moa-dev-planner.service"},
+    )
+    record = store.get("planner")
+
+    assert record.state == "disabled"
+    assert record.generation == 0
+    assert record.service_unit == "dgx-moa-dev-planner.service"
+    assert record.load_started_at is None
+    assert record.ready_at is None
+    assert record.last_requested_at is None
+    assert record.last_completed_at is None
+    assert record.weight_load_percent is None
+    assert record.overall_load_percent is None
+    assert record.last_error_class is None
+    assert record.last_error_message_redacted is None
+
+    restarted = module.LifecycleStore(
+        database_path,
+        ("planner",),
+        unit_map={"planner": "dgx-moa-dev-planner.service"},
+    )
+    assert restarted.get("planner") == record
+
+
+def test_unload_queue_is_explicit_and_reversible(tmp_path: Path) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "state.db", ("planner",))
+    ready = store.recover_state("planner", "ready")
+
+    queued = store.queue_unload("planner", expected_transition_id=ready.transition_id)
+    assert queued.state == "unload_queued"
+
+    restored = store.cancel_queued_unload("planner", expected_transition_id=queued.transition_id)
+    assert restored.state == "ready"
+    assert restored.ready_at == ready.ready_at
+
+
+def test_load_generation_increments_once_per_cold_queue(tmp_path: Path) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "state.db", ("planner",))
+    cold = store.get("planner")
+
+    queued = store.transition("planner", "load_queued", expected_transition_id=cold.transition_id)
+
+    assert queued.generation == cold.generation + 1
+    assert queued.overall_load_percent == 0.0
+    with pytest.raises(module.StaleTransitionError):
+        store.transition("planner", "load_queued", expected_transition_id=cold.transition_id)
+    assert store.get("planner").generation == queued.generation
+
+    starting = store.transition(
+        "planner", "process_starting", expected_transition_id=queued.transition_id
+    )
+    assert starting.load_started_at is not None
+    assert starting.overall_load_percent == 5.0
+
+
+def test_new_load_generation_resets_progress_and_disable_all_is_durable(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    path = tmp_path / "state.db"
+    store = module.LifecycleStore(path, ("planner", "reviewer"))
+    planner = store.get("planner")
+    first = store.transition("planner", "load_queued", expected_transition_id=planner.transition_id)
+    progressed = store.update(
+        "planner",
+        first.transition_id,
+        progress_value=42.0,
+        overall_load_percent=34.0,
+        progress_quality="measured_bytes",
+    )
+    failed = store.transition(
+        "planner",
+        "failed",
+        expected_transition_id=progressed.transition_id,
+        failure_class="LOAD Timeout",
+        failure_detail="secret\nredacted",
+    )
+
+    second = store.transition("planner", "load_queued", expected_transition_id=failed.transition_id)
+    assert second.generation == first.generation + 1
+    assert second.weight_load_percent is None
+    assert second.overall_load_percent == 0.0
+    assert second.last_error_class == "load_timeout"
+    assert second.last_error_message_redacted == "secret redacted"
+
+    disabled = store.disable_all()
+    assert {role: record.state for role, record in disabled.items()} == {
+        "planner": "disabled",
+        "reviewer": "disabled",
+    }
+    restarted = module.LifecycleStore(path, ("planner", "reviewer"))
+    assert restarted.get("planner").state == "disabled"
+    assert restarted.get("planner").generation == second.generation
 
 
 def test_idle_policy_limits_have_conservative_defaults_and_yaml_values(
@@ -781,12 +912,17 @@ def test_schema_persists_every_lifecycle_field_without_changing_usage_tables(
     assert isinstance(executor, module.LifecycleRecord)
     assert executor.model_dump() == {
         "role": "executor",
+        "generation": 0,
         "state": "cold",
         "transition_id": executor.transition_id,
         "transitioned_at": 100.0,
         "updated_at": 100.0,
         "ready_since": None,
         "last_used_at": None,
+        "load_started_at": None,
+        "ready_at": None,
+        "last_requested_at": None,
+        "last_completed_at": None,
         "failure_class": None,
         "failure_detail": None,
         "retry_count": 0,
@@ -796,12 +932,17 @@ def test_schema_persists_every_lifecycle_field_without_changing_usage_tables(
         "evaluation_guard": False,
         "profile_guard": False,
         "progress_value": None,
+        "weight_load_percent": None,
+        "overall_load_percent": None,
         "progress_quality": None,
         "eta_seconds": None,
         "last_load_duration_seconds": None,
         "last_unload_duration_seconds": None,
         "memory_before_bytes": None,
         "memory_after_bytes": None,
+        "service_unit": None,
+        "last_error_class": None,
+        "last_error_message_redacted": None,
     }
     UUID(executor.transition_id)
 
@@ -1001,11 +1142,15 @@ def test_active_release_marks_activity_once_at_terminal_cleanup(tmp_path: Path) 
         ("executor", "planner"),
         kind="active_request",
     )
+    assert store.get("executor").last_requested_at == 100.0
+    assert store.get("planner").last_requested_at == 100.0
 
     clock[0] = 125.0
     store.release_leases(lease.lease_id for lease in leases)
     assert store.get("executor").last_used_at == 125.0
     assert store.get("planner").last_used_at == 125.0
+    assert store.get("executor").last_completed_at == 125.0
+    assert store.get("planner").last_completed_at == 125.0
 
     clock[0] = 150.0
     store.release_leases(lease.lease_id for lease in leases)
