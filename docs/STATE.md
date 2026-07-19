@@ -150,7 +150,8 @@ Updated: 2026-07-20
   adaptive policy filters `success=1` before limiting the recent window; Observe
   reconciles status/health read-only so it can calculate candidates; and journal
   parser overflow/exception degrades progress without failing a healthy load.
-  Final independent re-review remains the authority for the zero-finding gate.
+  Final independent re-review of `f7d90cf..9508e97` reported Critical 0,
+  Important 0, and Minor 0.
 
 - Phase 3 serialized pre-commit publication gates: `533 passed`, one existing
   Starlette TestClient warning; Ruff format/check passed for 53 files; MyPy

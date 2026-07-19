@@ -1467,6 +1467,12 @@ prior progress or `unavailable` while readiness continues. Focused red/green
 tests cover both paths. The post-fix full suite passed 572 tests with the same
 warning; Ruff and MyPy were clean.
 
+The final independent read-only re-review of `f7d90cf..9508e97` confirmed all
+three fixes and reported Critical 0, Important 0, and Minor 0. It separately
+confirmed that the never-started-unit fallback takes only an opaque global
+journal cursor and keeps all subsequent progress reads scoped to the exact
+authorized unit.
+
 ## Phase 4 Physical Client and PR Gate — 2026-07-19
 
 The content-free summary is
