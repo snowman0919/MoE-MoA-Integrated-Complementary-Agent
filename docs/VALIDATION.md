@@ -1545,3 +1545,51 @@ normalized output SHA-256 and content-free usage metadata are retained instead.
 GPU used/free byte fields remained null, so no GPU percentage is claimed. This
 remains undeployed development evidence; production was not started, stopped,
 restarted, edited, or deployed.
+
+## Phase 3 Selected Full-Stop Repetition and Resident Handoff — 2026-07-19
+
+The authoritative independently reviewed result is
+`/tmp/dgx-moa-phase3-1vjxvw8w/selected.json`, SHA-256
+`fb2fc9261509acf4b51fad4b201b5210bd5a9bcb6c578006c45856e2692e7f9b`.
+It has schema `phase3-selected-systemd-v1`, `passed=true`, no failures, selected
+candidate `baseline`, and mechanism `A_full_systemd_stop_start`. The earlier
+direct-process repetition at `/tmp/dgx-moa-phase3-kp3gj7ms/selected.json`,
+SHA-256 `09fc8090771c4f665b8943c9e410b5e21595dc03bf422be833866f637b79655e`,
+is retained as non-authoritative failed evidence: it proved exact process
+teardown but did not execute the selected transient-systemd mechanism.
+
+All three authoritative cycles used transient unit
+`dgx-moa-dev-phase3-e6a0d509.service` with distinct invocations and PIDs
+`2368754`, `2395854`, and `2442335`. In every row PID, PGID, and session ID were
+equal; cwd, exact baseline argv, and unit-named cgroup were recorded; identity
+revalidation passed immediately before stop; and the collected unit was absent.
+
+| Cycle | ready | near-64K latency / backend tokens | PSS growth | post PGID PSS/RSS | post cgroup PSS/RSS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | `938.3187154009938s` | `17.752001809887588s` / `63786` | `45056` bytes | `0` / `0` | `0` / `0` |
+| 2 | `270.0974161340855s` | `17.56501955492422s` / `63786` | `2690048` bytes | `0` / `0` | `0` / `0` |
+| 3 | `274.08552565216087s` | `17.564852259820327s` / `63786` | `2891776` bytes | `0` / `0` | `0` / `0` |
+
+Each cycle passed five short cases, the expected near-limit needle,
+the 1,100-item ascending numeric response, three native tool calls, restricted
+code validation, and strict reviewer JSON. Port 19301 was unbound after every
+stop. The post-third-cycle isolated gateway request on port 19300 returned 200
+and advertised context length 65,536 for all three public aliases; only status
+and configuration metadata were retained.
+
+The final fingerprint records dev `6f8ab4d`, clean production `main` at
+`c2a9af0`, unchanged model revision `27a8f16` and metadata SHA-256
+`8077dc0ac131f7ae208132823c06b58d3410eba670ff511e3e42b9daf790c077`,
+all scoped ports unbound, and runtime count zero. The transient unit currently
+has `LoadState=not-found` and MainPID zero. Results are content-free; the
+independent review passed after rejecting and preserving the first mechanism
+mismatch.
+
+The tracked resident target change is undeployed. It requires only gateway and
+executor, waits only for executor readiness, and verifies all optional resident
+services/ports stopped on profile stop. Optional services retain `PartOf` for
+cleanup. Lifecycle remains disabled with an empty unit map; a later
+human-reviewed deployment is required for fixed/adaptive on-demand loading and
+typed cold-role `503` behavior. Rollback restores the previous gateway,
+executor, planner, and reviewer target requirements plus the prior script
+arrays. No production process, unit, worktree, or deployment was mutated.

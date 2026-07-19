@@ -19,10 +19,19 @@ both 1,000,000 bytes. Streaming review is deferred. Non-streaming review uses at
 most 16,000 characters of external evidence; low-risk review failure preserves
 valid executor output, while high-risk orchestration may fail closed.
 
-Resident runs the Qwen3-Coder-Next executor, 30B planner, and 30B reviewer.
-Judge runs only `nvidia/Mistral-Medium-3.5-128B-NVFP4`; coding requests return
-retryable `503` while judge profile is active. Health is public; inference uses
+The checked-in, undeployed resident target requires only the Qwen3-Coder-Next
+executor and gateway. Planner, reviewer, and reasoner remain optional services;
+their `PartOf=dgx-moa-resident.target` relationship ensures a resident stop also
+stops any optional role loaded separately. Judge runs only
+`nvidia/Mistral-Medium-3.5-128B-NVFP4`; coding requests return retryable `503`
+while judge profile is active. Health is public; inference uses
 `DGX_MOA_AUTH_ENABLED`, and admin profile switching is disabled by default.
+
+This topology is a development handoff, not a deployed production change.
+Checked-in lifecycle control remains disabled with an empty unit map, so the
+target alone does not activate optional on-demand loading. A later reviewed
+fixed/adaptive deployment with authorized unit mappings is required before cold
+optional roles can use the typed loading/unavailable `503` contract.
 
 `main` is the reviewed production control plane and trace producer. `dev` is the
 integration branch. Future recursive work follows `main` MoA -> OpenCode -> an

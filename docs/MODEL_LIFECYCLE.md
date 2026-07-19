@@ -152,13 +152,35 @@ Safe rollback is configuration-only: restore disabled + empty unit map, then
 start a fresh isolated dev gateway under its normal test owner. Disabled mode
 does not reconcile or control model services.
 
+## Measured full-stop and resident topology handoff
+
+Phase 3 selected the existing 65,536-token executor configuration and exact
+full transient-systemd stop/start. The independently reviewed result at
+`/tmp/dgx-moa-phase3-1vjxvw8w/selected.json` proves three isolated cycles. Each
+cycle revalidated its transient unit identity and cgroup before stop, collected
+the unit, left recorded PGID and unit-cgroup PSS/RSS at zero, released port
+19301, reported 63,786 backend prompt tokens, and passed the complete quality
+contract. This is development evidence only; production units were not
+started, stopped, restarted, edited, or deployed.
+
+The checked-in resident target now requires only gateway and executor, while
+optional services retain `PartOf` for cleanup. This target is undeployed and
+does not alter the canonical disabled lifecycle setting. Optional-role
+on-demand loading and its typed `503` responses require a later approved
+fixed/adaptive configuration with an exact validated unit map. Rollback restores
+the previous four-service target dependency set and associated readiness/stop
+script arrays.
+
 ## Pending physical evidence
 
-All items below remain explicitly pending; automated tests do not prove them:
+Items below remain explicitly pending; automated tests do not prove them:
 
-- cold-load and progress behavior against real isolated model services;
-- memory bytes recovered by a real full stop;
+- broader cold-load and progress behavior beyond the isolated executor matrix;
+- memory bytes for additional roles, model versions, and hardware beyond the
+  measured executor full stop;
 - idle-unload guards under physical client traffic;
-- mechanism comparison among full stop, sleep, KV eviction, and offload;
-- 64K physical quality near the context limit;
+- mechanism comparison replication across later runtime/model versions beyond
+  the completed Phase 3 study;
+- 64K physical quality under the later client matrix and soak beyond the
+  completed fixed-contract executor trials;
 - any production recommendation, enablement, topology, or threshold change.

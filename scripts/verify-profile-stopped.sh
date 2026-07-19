@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 profile=${1:?resident or judge required}
 case "$profile" in
-  resident) services=(executor planner reviewer); ports=(8101 8102 8103) ;;
+  resident) services=(executor planner reviewer reasoner); ports=(8101 8102 8103 8104) ;;
   judge) services=(judge); ports=(8110) ;;
   *) exit 64 ;;
 esac

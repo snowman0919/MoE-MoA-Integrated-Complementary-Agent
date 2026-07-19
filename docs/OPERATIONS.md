@@ -59,6 +59,29 @@ replacement, restart, or enablement procedure.
 
 ## Profiles
 
+The checked-in resident target is an undeployed executor-only proposal: it
+requires `dgx-moa-gateway.service` and `dgx-moa-executor.service`. Planner,
+reviewer, and reasoner remain optional and retain
+`PartOf=dgx-moa-resident.target`, so stopping resident cleans up any optional
+role that was started separately. Resident readiness waits only for port 8101;
+resident stop verification requires services executor/planner/reviewer/reasoner
+inactive and ports 8101-8104 unbound.
+
+Do not copy the target into production or restart production units as part of
+this repository change. Migration requires a later human-reviewed PR/deployment
+that verifies the installed unit diff, daemon reload, profile transition,
+readiness, typed cold-role behavior, and rollback. Checked-in lifecycle remains
+disabled, so this target change alone does not provide on-demand optional-role
+startup. With a separately approved fixed/adaptive lifecycle and validated unit
+map, a request that requires a cold optional role receives the typed retryable
+loading/unavailable `503` contract.
+
+Rollback restores the previous resident target requirements for gateway,
+executor, planner, and reviewer, restores the previous readiness/stop script
+arrays, reloads units, and verifies the prior profile. Rollback must be reviewed
+and deployed through the same production process; do not edit installed units
+in place.
+
 ```bash
 scripts/switch-profile.sh resident
 scripts/switch-profile.sh judge

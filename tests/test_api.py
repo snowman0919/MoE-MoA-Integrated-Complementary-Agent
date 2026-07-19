@@ -2939,7 +2939,7 @@ def test_profile_aware_readiness(settings, stub_provider: StubProvider, monkeypa
             return None
 
         async def get(self, url: str) -> httpx.Response:
-            status_code = 503 if url.endswith(":8110/v1/models") else 200
+            status_code = 200 if url.endswith(":8101/v1/models") else 503
             return httpx.Response(status_code, request=httpx.Request("GET", url))
 
     monkeypatch.setattr("dgx_moa.api.httpx.AsyncClient", FakeAsyncClient)
@@ -2955,9 +2955,9 @@ def test_profile_aware_readiness(settings, stub_provider: StubProvider, monkeypa
             "profile": "resident",
             "services": {
                 "executor": "ready",
-                "planner": "ready",
-                "reviewer": "ready",
-                "reasoner": "ready",
+                "planner": "stopped",
+                "reviewer": "stopped",
+                "reasoner": "stopped",
                 "judge": "stopped",
             },
             "auth_enabled": True,

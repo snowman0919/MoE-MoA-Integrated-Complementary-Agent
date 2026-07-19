@@ -420,7 +420,7 @@ def create_app(
                 status_code=503,
             )
         roles = {
-            "resident": ("executor", "planner", "reviewer"),
+            "resident": ("executor",),
             "judge": ("judge",),
         }.get(current, ())
         if not roles:
