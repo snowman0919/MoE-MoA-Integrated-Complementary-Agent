@@ -119,7 +119,7 @@ Updated: 2026-07-20
 
 ### Role-aware lifecycle gap closure
 
-- Final pre-commit gates passed: `568 passed` with one existing third-party
+- Final pre-commit gates passed: `572 passed` with one existing third-party
   warning; Ruff format/check, MyPy for 29 source files, user-systemd unit verify,
   every shell syntax check, trace audit 10/10 at 100%, and `git diff --check`.
 - `dev` now persists generation-aware role lifecycle state, role-specific
@@ -146,6 +146,11 @@ Updated: 2026-07-20
 - Production stayed at clean `e63fa6f` with gateway PID `3352392`, executor PID
   `3323765`, and listeners 9000/8101 identical before and after. No production
   unit, file, process, listener, or configuration was mutated.
+- Independent review found three Important defects and each now has a regression:
+  adaptive policy filters `success=1` before limiting the recent window; Observe
+  reconciles status/health read-only so it can calculate candidates; and journal
+  parser overflow/exception degrades progress without failing a healthy load.
+  Final independent re-review remains the authority for the zero-finding gate.
 
 - Phase 3 serialized pre-commit publication gates: `533 passed`, one existing
   Starlette TestClient warning; Ruff format/check passed for 53 files; MyPy

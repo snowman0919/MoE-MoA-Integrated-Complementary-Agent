@@ -470,7 +470,7 @@ async def test_request_after_idle_full_stop_returns_typed_loading_and_starts_onc
     ("mode", "expected_scheduler", "expected_driver_calls"),
     [
         ("disabled", False, []),
-        ("observe", True, []),
+        ("observe", True, [("status", "executor")]),
         ("fixed", True, [("status", "executor")]),
         ("adaptive", True, [("status", "executor")]),
     ],
@@ -511,7 +511,7 @@ async def test_lifespan_mode_contract_controls_recovery_and_one_scheduler(
         if scheduler is not None:
             assert not scheduler.done()
         assert driver.calls == expected_driver_calls
-        assert health_calls == (["executor"] if mode in {"fixed", "adaptive"} else [])
+        assert health_calls == (["executor"] if mode in {"observe", "fixed", "adaptive"} else [])
 
     assert app.state.lifecycle._scheduler_task is None
 
@@ -1560,10 +1560,11 @@ def test_observe_lifecycle_records_state_without_blocking_or_controlling(
             "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
         }
     )
-    driver = FakeLifecycleDriver({"executor": "inactive"})
+    driver = FakeLifecycleDriver({"executor": "active"})
 
-    async def reject_health(role: str) -> bool:
-        raise AssertionError(f"observe lifecycle probed health for {role}")
+    async def health(role: str) -> bool:
+        assert role == "executor"
+        return True
 
     async def reject_sleep(seconds: float) -> None:
         raise AssertionError(f"observe lifecycle slept for {seconds}")
@@ -1571,7 +1572,7 @@ def test_observe_lifecycle_records_state_without_blocking_or_controlling(
     app = create_app(
         observed,
         lifecycle_driver=driver,
-        lifecycle_health_probe=reject_health,
+        lifecycle_health_probe=health,
         lifecycle_clock=lambda: 100.0,
         lifecycle_sleeper=reject_sleep,
     )
@@ -1593,9 +1594,52 @@ def test_observe_lifecycle_records_state_without_blocking_or_controlling(
 
     assert response.status_code == 200
     assert stub_provider.calls == ["executor"]
-    assert driver.calls == []
-    assert lifecycle_record.state == "cold"
+    assert driver.calls == [("status", "executor")]
+    assert lifecycle_record.state == "ready"
     assert status_response.json()["control"] == "observe_only"
+
+
+@pytest.mark.asyncio
+async def test_observe_reconciles_read_only_and_records_unload_candidate(settings) -> None:  # type: ignore[no-untyped-def]
+    observed = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "observe",
+            "lifecycle_unit_map": {"planner": "dgx-moa-dev-planner.service"},
+        }
+    )
+    driver = FakeLifecycleDriver({"planner": "active"})
+    clock = [100.0]
+
+    async def health(role: str) -> bool:
+        assert role == "planner"
+        return True
+
+    app = create_app(
+        observed,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health,
+        lifecycle_clock=lambda: clock[0],
+        lifecycle_sleeper=lambda seconds: asyncio.Event().wait(),
+        lifecycle_memory_probe=lambda: (_ for _ in ()).throw(
+            AssertionError("observe sampled memory")
+        ),
+    )
+    async with app.router.lifespan_context(app):
+        assert app.state.lifecycle_store.get("planner").state == "ready"
+        clock[0] = 5_000.0
+        await app.state.lifecycle.run_scheduler_check(
+            "observe", ("planner",), observed.lifecycle, app.state.usage
+        )
+        await app.state.lifecycle.run_scheduler_check(
+            "observe", ("planner",), observed.lifecycle, app.state.usage
+        )
+        decision = app.state.lifecycle_store.latest_decision("planner")
+
+    assert decision is not None
+    assert decision.would_unload is True
+    assert decision.action_allowed is False
+    assert driver.calls == [("status", "planner")]
 
 
 def test_disabled_lifecycle_bypasses_control_and_reports_external_state(

@@ -86,16 +86,16 @@ never relabeled as measured weight progress.
 | Mode | Restart and runtime behavior |
 | --- | --- |
 | `disabled` | No scheduler, reconciliation, load, unload, memory probe, or lifecycle driver call. Status reports external state as unmanaged. |
-| `observe` | Lease recovery and a first-sleep scheduler persist decisions only. No startup reconciliation, memory probe, or lifecycle driver call. |
+| `observe` | Read-only status/health reconciliation and a first-sleep scheduler persist candidate decisions. No start, stop, or memory mutation occurs. |
 | `fixed` | Managed roles reconcile exact service state, then use fixed thresholds and executable load/unload. |
 | `adaptive` | Same control path as fixed, but enough role-local request gaps select a bounded adaptive threshold. |
 
 Restart always removes stale active-request and open-stream leases and prunes
-expired continuations. `fixed` and `adaptive` reconcile authorized roles:
+expired continuations. `observe`, `fixed`, and `adaptive` reconcile authorized roles:
 inactive becomes `cold`, failed service becomes `failed`, healthy active becomes
-`ready`, and unhealthy or unreadable state becomes `failed`. Observe keeps its
-persisted lifecycle state without driver reconciliation. In-memory hysteresis
-resets on every restart. Gateway shutdown cancels and joins scheduler and load
+`ready`, and unhealthy or unreadable state becomes `failed`. Observe uses these
+read-only facts only to calculate candidates; it never starts or stops a unit.
+In-memory hysteresis resets on every restart. Gateway shutdown cancels and joins scheduler and load
 tasks, waits for owned load driver capture/start work, and waits for any admitted
 unload stop task. Bounded read-only status/progress probes and memory reads use
 worker threads and may finish after parent cancellation; they do not control

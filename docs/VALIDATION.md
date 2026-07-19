@@ -1397,7 +1397,7 @@ The first full regression after implementation passed `567` tests with the one
 existing third-party Starlette TestClient deprecation warning.
 
 After the never-started-unit fix and documentation contract update, the final
-serialized gates all exited zero: `568 passed` with the same warning; 55 files
+serialized gates all exited zero: `572 passed` with the same warning; 55 files
 Ruff-formatted; Ruff lint clean; MyPy clean for 29 source files; user-systemd
 unit verification clean; every `scripts/*.sh` syntax check clean; checked-in
 trace audit 10/10, zero legacy/incomplete and 100%; and `git diff --check` clean.
@@ -1448,6 +1448,24 @@ This result adds no real-weight memory or load-time claim. Duplicating the activ
 45G production executor would have violated the safety floor, and production was
 not stopped or altered. Phase 3 remains authoritative for real executor
 full-stop memory recovery.
+
+Independent review then identified that the adaptive scheduler read the newest
+overall role rows before filtering successes. A sufficiently large burst of 503
+or failed rows could therefore displace valid successful gaps despite the
+required “recent successful requests” window. Commit `87f45e3` moved the
+`success=1` predicate into SQLite before the policy limit and added a regression
+with newer failures hiding older successes. The post-fix full suite passed 569
+tests with the same third-party warning; Ruff and MyPy were clean.
+
+The next review pass found two more Important contract gaps. Observe mode had
+kept managed records cold without reading actual service state, so it could only
+record `state_not_ready`; it now performs exact-unit status and health reads but
+still cannot start, stop, or sample unload memory. A separate parser gap allowed
+nonfinite journal counters or an unexpected parser exception to fail the load;
+numeric counters now require finite values and all parser exceptions preserve
+prior progress or `unavailable` while readiness continues. Focused red/green
+tests cover both paths. The post-fix full suite passed 572 tests with the same
+warning; Ruff and MyPy were clean.
 
 ## Phase 4 Physical Client and PR Gate — 2026-07-19
 

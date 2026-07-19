@@ -211,15 +211,6 @@ def create_app(
                 else None
             ),
         )
-        if configured.lifecycle_mode == "observe":
-            for role in configured.lifecycle_unit_map:
-                record = app.state.lifecycle_store.get(role)
-                if record.state == "disabled":
-                    app.state.lifecycle_store.transition(
-                        role,
-                        "cold",
-                        expected_transition_id=record.transition_id,
-                    )
         app.state.lifecycle_store.recover_leases()
         app.state.lifecycle = LifecycleCoordinator(
             app.state.lifecycle_store,
@@ -234,7 +225,7 @@ def create_app(
         )
         try:
             managed_roles = tuple(configured.lifecycle_unit_map)
-            if configured.lifecycle_mode in {"fixed", "adaptive"}:
+            if configured.lifecycle_mode in {"observe", "fixed", "adaptive"}:
                 await app.state.lifecycle.reconcile_managed(managed_roles)
             app.state.lifecycle.start_scheduler(
                 configured.lifecycle_mode,

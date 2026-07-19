@@ -78,6 +78,9 @@ keep an unused reasoner resident or cause a planner unload. Three lifecycle
 mutation failures inside the configured window latch automation off; status and
 already-ready inference remain available, but new start/stop mutations do not.
 Rollback atomically restores disabled mode and an empty authorization map.
+Observe mode reconciles exact-unit status and health read-only so candidate
+deadlines use real ready/residency facts; its decisions cannot call start/stop or
+sample unload memory.
 
 The gateway remains Python. Its isolated five-minute peak process-group PSS was
 `48741376` bytes, idle CPU was `0.24998221036527596%`, and loopback health p99

@@ -428,9 +428,12 @@ def calculate_idle_policy(
 
 
 def _reported_percent(match: re.Match[str]) -> float | None:
-    loaded = float(match.group("loaded"))
-    total = float(match.group("total"))
-    if total <= 0 or loaded > total:
+    try:
+        loaded = float(match.group("loaded"))
+        total = float(match.group("total"))
+    except (OverflowError, ValueError):
+        return None
+    if not math.isfinite(loaded) or not math.isfinite(total) or total <= 0 or loaded > total:
         return None
     return loaded / total * 100
 
@@ -2149,11 +2152,18 @@ class LifecycleCoordinator:
                     progress_quality="unavailable",
                 )
             lines = await asyncio.to_thread(self.driver.progress, role, cursor)
-            progress = parse_load_progress(
-                lines,
-                previous_percent=record.progress_value,
-                previous_quality=record.progress_quality,
-            )
+            try:
+                progress = parse_load_progress(
+                    lines,
+                    previous_percent=record.progress_value,
+                    previous_quality=record.progress_quality,
+                )
+            except Exception:
+                progress = LoadProgress(
+                    state="loading_weights",
+                    weight_load_percent=record.progress_value,
+                    progress_quality=record.progress_quality or "unavailable",
+                )
             if progress.state == "initializing_engine" and record.state == "loading_weights":
                 record = self.store.transition(
                     role,

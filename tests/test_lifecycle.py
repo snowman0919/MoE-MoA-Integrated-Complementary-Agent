@@ -2126,6 +2126,16 @@ def test_progress_parser_measures_checkpoint_shards() -> None:
     assert progress.progress_quality == "measured_shards"
 
 
+def test_progress_parser_rejects_nonfinite_numeric_overflow() -> None:
+    module = lifecycle()
+    huge = "9" * 500
+
+    progress = module.parse_load_progress((f"Loading model weights: {huge}/{huge} bytes",))
+
+    assert progress.weight_load_percent is None
+    assert progress.progress_quality == "unavailable"
+
+
 @pytest.mark.parametrize(
     ("line", "expected_state"),
     [
@@ -2310,6 +2320,42 @@ async def test_coordinator_preserves_prior_progress_when_new_logs_are_invalid(
     assert record.progress_value == 60.0
     assert record.overall_load_percent == 41.0
     assert record.progress_quality == "measured_shards"
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_progress_parser_exception_does_not_fail_a_healthy_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "parser-exception.db", ("executor",))
+    driver = module.FakeLifecycleDriver({"executor": "inactive"})
+
+    def fail_parser(*args: object, **kwargs: object) -> None:
+        raise ValueError("untrusted journal parser failure")
+
+    async def health_probe(role: str) -> bool:
+        assert role == "executor"
+        return True
+
+    monkeypatch.setattr(module, "parse_load_progress", fail_parser)
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=health_probe,
+        timeout_seconds=10.0,
+        poll_seconds=0.25,
+        clock=lambda: 100.0,
+    )
+
+    await coordinator.ensure_ready("executor")
+    await coordinator._tasks["executor"]
+    record = store.get("executor")
+
+    assert record.state == "ready"
+    assert record.progress_value == 100.0
+    assert record.progress_quality == "estimated"
+    assert record.failure_class is None
     await coordinator.close()
 
 
