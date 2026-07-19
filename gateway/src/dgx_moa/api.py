@@ -230,6 +230,7 @@ def create_app(
             clock=lifecycle_clock,
             sleeper=lifecycle_sleeper,
             memory_probe=lifecycle_memory_probe,
+            lifecycle_policy=configured.lifecycle,
         )
         try:
             managed_roles = tuple(configured.lifecycle_unit_map)
@@ -238,7 +239,7 @@ def create_app(
             app.state.lifecycle.start_scheduler(
                 configured.lifecycle_mode,
                 managed_roles,
-                configured.limits,
+                configured.lifecycle,
                 app.state.usage,
             )
             app.state.reviewer_evaluation_lock = asyncio.Lock()
@@ -302,6 +303,7 @@ def create_app(
 
     def public_lifecycle_record(record: LifecycleRecord) -> dict[str, Any]:
         decision = app.state.lifecycle_store.latest_decision(record.role)
+        automation = app.state.lifecycle_store.automation_status()
         if decision is not None and decision.mode != configured.lifecycle_mode:
             decision = None
         return {
@@ -330,6 +332,9 @@ def create_app(
             "retry_count": record.retry_count,
             "adaptive_timeout_seconds": decision.threshold_seconds if decision else None,
             "idle_seconds": decision.idle_seconds if decision else None,
+            "automation_disabled": automation.automation_disabled,
+            "lifecycle_failure_count": automation.failure_count,
+            "automation_disabled_at": automation.disabled_at,
             "idle_decision": decision.model_dump(mode="json") if decision else None,
             "lifecycle_mode": configured.lifecycle_mode,
             "control": ("observe_only" if configured.lifecycle_mode == "observe" else "managed"),
@@ -338,6 +343,7 @@ def create_app(
     def status_lifecycle_record(role: str) -> dict[str, Any]:
         if configured.lifecycle_mode != "disabled" and role in configured.lifecycle_unit_map:
             return public_lifecycle_record(app.state.lifecycle_store.get(role))
+        automation = app.state.lifecycle_store.automation_status()
         return {
             "role": role,
             "state": "unmanaged",
@@ -364,6 +370,9 @@ def create_app(
             "retry_count": 0,
             "adaptive_timeout_seconds": None,
             "idle_seconds": None,
+            "automation_disabled": automation.automation_disabled,
+            "lifecycle_failure_count": automation.failure_count,
+            "automation_disabled_at": automation.disabled_at,
             "idle_decision": None,
             "lifecycle_mode": configured.lifecycle_mode,
             "control": "disabled" if configured.lifecycle_mode == "disabled" else "unmanaged",
@@ -405,6 +414,7 @@ def create_app(
         )
 
     def unavailable_response(role: str, *, record: LifecycleRecord | None = None) -> JSONResponse:
+        automation_disabled = app.state.lifecycle_store.automation_status().automation_disabled
         state_value = record.state if record is not None else "unmanaged"
         model_state: dict[str, Any] = {
             "role": role,
@@ -429,10 +439,18 @@ def create_app(
                     "message": (
                         f"Model role {role} is not lifecycle-managed."
                         if record is None
+                        else "Lifecycle automation is disabled after repeated failures."
+                        if automation_disabled
                         else f"Model dgx-moa-{role} failed to load."
                     ),
                     "type": "model_unavailable",
-                    "code": "model_not_managed" if record is None else "model_load_failed",
+                    "code": (
+                        "model_not_managed"
+                        if record is None
+                        else "lifecycle_automation_disabled"
+                        if automation_disabled
+                        else "model_load_failed"
+                    ),
                     "param": None,
                 },
                 "model_state": model_state,
@@ -560,6 +578,9 @@ def create_app(
                 is not None
                 and decision.mode == mode
             },
+            "automation": request.app.state.lifecycle_store.automation_status().model_dump(
+                mode="json"
+            ),
         }
         if mode == "disabled":
             payload["external_state"] = "not_lifecycle_managed"
@@ -714,7 +735,10 @@ def create_app(
                     and unmanaged_role is None
                     and check.record.state != "ready"
                 ):
-                    if check.record.state == "failed":
+                    if (
+                        request.app.state.lifecycle_store.automation_status().automation_disabled
+                        or check.record.state == "failed"
+                    ):
                         unavailable_record = check.record
                     else:
                         loading_record = check.record
@@ -990,7 +1014,7 @@ def create_app(
                                     continuation_owner,
                                     expires_at=(
                                         lifecycle_clock()
-                                        + configured.limits.tool_continuation_timeout_seconds
+                                        + configured.lifecycle.continuation_lease_ttl_seconds
                                     ),
                                 )
                             request.app.state.store.event(
@@ -1153,7 +1177,7 @@ def create_app(
                     "executor",
                     continuation_owner,
                     expires_at=(
-                        lifecycle_clock() + configured.limits.tool_continuation_timeout_seconds
+                        lifecycle_clock() + configured.lifecycle.continuation_lease_ttl_seconds
                     ),
                 )
             finalize_request(None, "completed", current_state=state)

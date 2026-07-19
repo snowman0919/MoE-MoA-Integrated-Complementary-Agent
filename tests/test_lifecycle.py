@@ -413,6 +413,143 @@ def test_idle_policy_limits_have_conservative_defaults_and_yaml_values(
         assert getattr(configured, field) == value
 
 
+def test_executor_long_idle_is_disabled_while_optional_roles_adapt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = lifecycle()
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
+    settings = load_settings(Path("config/models.yaml"))
+    records = policy_usage_from_gaps(
+        [600.0] * 100,
+        ("executor", "planner", "reasoner"),
+    )
+
+    executor = module.calculate_idle_policy(
+        "executor",
+        "adaptive",
+        records,
+        policy_record(module, "executor"),
+        policy=settings.lifecycle.roles["executor"],
+        lifecycle=settings.lifecycle,
+        now=100_000.0,
+    )
+    planner = module.calculate_idle_policy(
+        "planner",
+        "adaptive",
+        records,
+        policy_record(module, "planner"),
+        policy=settings.lifecycle.roles["planner"],
+        lifecycle=settings.lifecycle,
+        now=100_000.0,
+    )
+    reasoner = module.calculate_idle_policy(
+        "reasoner",
+        "adaptive",
+        records,
+        policy_record(module, "reasoner"),
+        policy=settings.lifecycle.roles["reasoner"],
+        lifecycle=settings.lifecycle,
+        now=100_000.0,
+    )
+
+    assert executor.action_allowed is False
+    assert executor.reason == "idle_unload_disabled"
+    assert planner.threshold_seconds == 900.0
+    assert planner.threshold_seconds <= 3_600
+    assert reasoner.threshold_seconds == 900.0
+    assert reasoner.threshold_seconds <= 1_800
+
+
+def test_role_policy_cooldown_blocks_otherwise_eligible_unload() -> None:
+    module = lifecycle()
+    from dgx_moa.config import LifecyclePolicy, LifecycleRolePolicy
+
+    lifecycle_policy = LifecyclePolicy(load_unload_cooldown_seconds=300)
+    role_policy = LifecycleRolePolicy(
+        minimum_timeout_seconds=1,
+        fallback_timeout_seconds=10,
+        maximum_timeout_seconds=100,
+        minimum_ready_residency_seconds=1,
+    )
+    record = policy_record(module, "planner", ready_since=0.0, last_used_at=0.0)
+
+    decision = module.calculate_idle_policy(
+        "planner",
+        "fixed",
+        (),
+        record,
+        policy=role_policy,
+        lifecycle=lifecycle_policy,
+        now=100.0,
+        previous_mode="fixed",
+        previous_last_activity_at=0.0,
+        previous_consecutive_check_count=1,
+    )
+
+    assert decision.action_allowed is False
+    assert decision.reason == "cooldown"
+
+
+@pytest.mark.asyncio
+async def test_failure_circuit_trips_after_three_mutations_and_blocks_fourth(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    from dgx_moa.config import LifecyclePolicy
+
+    class FailingStartDriver(module.FakeLifecycleDriver):
+        def start(self, role: str) -> None:
+            self._require_role(role)
+            self.calls.append(("start", role))
+            raise module.LifecycleDriverError("start", "command_failed")
+
+    roles = ("planner", "reviewer", "reasoner", "executor")
+    store = module.LifecycleStore(tmp_path / "state.db", roles, clock=lambda: 100.0)
+    driver = FailingStartDriver({role: "inactive" for role in roles})
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=lambda role: asyncio.sleep(0, result=False),
+        timeout_seconds=10,
+        poll_seconds=0.1,
+        clock=lambda: 100.0,
+        lifecycle_policy=LifecyclePolicy(failure_limit=3, failure_window_seconds=900),
+    )
+
+    for role in roles[:3]:
+        check = await coordinator.ensure_ready(role)
+        assert check.load_triggered is True
+        await coordinator._tasks[role]
+
+    circuit = store.automation_status()
+    assert circuit.automation_disabled is True
+    assert circuit.failure_count == 3
+    assert circuit.disabled_at == 100.0
+    fourth = await coordinator.ensure_ready("executor")
+
+    assert fourth.load_triggered is False
+    assert store.get("executor").state == "cold"
+    assert driver.calls.count(("start", "executor")) == 0
+    assert sum(operation == "start" for operation, _ in driver.calls) == 3
+    assert len(store.recent_failure_events()) == 3
+
+    reset = store.reset_automation()
+    assert reset.automation_disabled is False
+    assert reset.failure_count == 0
+    assert len(store.recent_failure_events()) == 3
+    after_reset = store.record_failure(
+        "executor",
+        "manual_probe",
+        "probe_failed",
+        0,
+        failure_limit=3,
+        failure_window_seconds=900,
+    )
+    assert after_reset.automation_disabled is False
+    assert after_reset.failure_count == 1
+    await coordinator.close()
+
+
 @pytest.mark.parametrize(
     "field",
     [
@@ -1005,6 +1142,8 @@ def test_schema_persists_every_lifecycle_field_without_changing_usage_tables(
         "request_usage",
         "role_request_usage",
         "lifecycle_samples",
+        "lifecycle_failure_events",
+        "lifecycle_automation",
         "model_lifecycle",
         "model_lifecycle_decisions",
         "model_lifecycle_leases",

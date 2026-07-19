@@ -1267,7 +1267,7 @@ def test_expired_continuation_is_not_revived_by_a_late_tool_result(
                 "SELECT expires_at FROM model_lifecycle_leases WHERE kind = 'continuation'"
             ).fetchone()
 
-        clock[0] = 701.0
+        clock[0] = 1_001.0
         assert app.state.lifecycle_store.unload_blockers("executor") == frozenset()
         late = client.post(
             "/v1/chat/completions",
@@ -1287,7 +1287,7 @@ def test_expired_continuation_is_not_revived_by_a_late_tool_result(
         )
         record = app.state.lifecycle_store.get("executor")
 
-    assert expires_at == (700.0,)
+    assert expires_at == (1_000.0,)
     assert late.status_code == 200
     assert record.continuation_lease_count == 0
 
@@ -1483,6 +1483,71 @@ def test_explicit_ready_reasoner_is_used_only_when_selected(
     assert stub_provider.calls[:3] == ["reasoner", "planner", "executor"]
     assert len(reasoner_usage) == 1
     assert reasoner_usage[0].success is True
+
+
+@pytest.mark.parametrize(
+    ("driver_state", "expected_status"),
+    [("inactive", 503), ("active", 200)],
+)
+def test_failure_circuit_blocks_mutation_but_preserves_ready_traffic(
+    settings,
+    stub_provider: StubProvider,
+    driver_state: str,
+    expected_status: int,
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    driver = FakeLifecycleDriver({"executor": driver_state})
+
+    async def health_probe(role: str) -> bool:
+        return True
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health_probe,
+        lifecycle_clock=lambda: 100.0,
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        generation = app.state.lifecycle_store.get("executor").generation
+        for index in range(3):
+            app.state.lifecycle_store.record_failure(
+                "executor",
+                "injected_start",
+                f"injected_{index}",
+                generation,
+                failure_limit=3,
+                failure_window_seconds=900,
+            )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        model_status = client.get(
+            "/v1/model-status",
+            headers={"Authorization": "Bearer test-secret"},
+        ).json()
+
+    assert response.status_code == expected_status
+    assert model_status["automation"]["automation_disabled"] is True
+    assert model_status["automation"]["failure_count"] == 3
+    assert driver.calls.count(("start", "executor")) == 0
+    if expected_status == 503:
+        assert response.json()["error"]["code"] == "lifecycle_automation_disabled"
+        assert stub_provider.calls == []
+    else:
+        assert stub_provider.calls == ["executor"]
 
 
 def test_observe_lifecycle_records_state_without_blocking_or_controlling(
@@ -1690,6 +1755,9 @@ def test_model_status_is_authenticated_typed_and_content_free(
         "retry_count",
         "adaptive_timeout_seconds",
         "idle_seconds",
+        "automation_disabled",
+        "lifecycle_failure_count",
+        "automation_disabled_at",
         "idle_decision",
         "lifecycle_mode",
         "control",
