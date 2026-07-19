@@ -1593,3 +1593,40 @@ human-reviewed deployment is required for fixed/adaptive on-demand loading and
 typed cold-role `503` behavior. Rollback restores the previous gateway,
 executor, planner, and reviewer target requirements plus the prior script
 arrays. No production process, unit, worktree, or deployment was mutated.
+
+## Phase 3 Python Gateway Residency and Rust Decision — 2026-07-19
+
+The authoritative five-minute content-free result is
+`/tmp/dgx-moa-phase3-gateway-nzacnu_v/gateway-probe.json`, SHA-256
+`4513ca3f6980f7fcfb81d7f7a360851325fcd7f90cddcb475f2612c17f2f6d62`.
+It reports `passed=true`, no failures, 600 samples at 500 ms intervals, and
+`300.02134908083826` seconds measured. The isolated gateway became ready in
+`0.20371862896718085` seconds.
+
+Peak process-group PSS/RSS was `48741376` / `56139776` bytes. Idle CPU was
+`0.24998221036527596%` of one core. Loopback `/healthz` latency
+p50/p95/p99/max was `1.5531240496784449` / `1.894660061225295` /
+`2.1657010074704885` / `2.8134610038250685` ms. Schedule-drift
+p50/p95/p99/max was `0.16089505515992641` / `0.685602892190218` /
+`0.7837000302970409` / `1.084138872101903` ms.
+
+The predeclared Rust rejection thresholds were PSS at most 256 MiB, CPU at most
+1%, p99 at most 50 ms, and no remaining Python-attributable correctness gap.
+The focused lifecycle/API/runtime-status recovery run passed `360` tests with
+only the existing Starlette TestClient deprecation warning. All conditions
+therefore reject a Rust rewrite for Phase 3; no crate or improvised prototype
+was created. The gateway peak PSS is about 1.07% of the selected executor's
+`4545508352`-byte warm owned PSS.
+
+PID, PGID, and session were all `2478575`; identity was revalidated before the
+exact group stop. Post-stop owned member count, PSS, and RSS were zero, the port
+was unbound, and runtime process count was zero. Production stayed clean and
+unchanged at `c2a9af0d6b5db8dd940842c56a7236ac867061ff`.
+
+The first executable smoke root,
+`/tmp/dgx-moa-phase3-gateway-r8uzjlp_`, is retained as non-authoritative failed
+evidence: a probe-only log-directory ordering defect occurred before child
+start, with the port still unbound. The corrected three-second smoke passed at
+`/tmp/dgx-moa-phase3-gateway-rf8b296y/gateway-probe.json`, SHA-256
+`4cdcf0f40e124818236d52175c9dd29a9e47880017a697d796752a260405d1da`.
+Detailed responsibilities and limitations are in `docs/RUST_EVALUATION.md`.
