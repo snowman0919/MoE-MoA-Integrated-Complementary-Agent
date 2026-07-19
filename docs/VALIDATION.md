@@ -1446,6 +1446,29 @@ Independent review concluded `Critical=0`, `Important=0`. The gate authorizes
 only a draft `dev`-to-`main` PR; it does not authorize merge, deployment, unit
 changes, or production restart.
 
+### Final publication verification
+
+The publication gate requires the following results on the final committed
+tree; they were rerun after this record was committed and before push:
+
+1. `uv run pytest -q`: `533 passed`, one existing deprecation warning.
+2. `uv run ruff format --check .`: `53 files already formatted`.
+3. `uv run ruff check .`: all checks passed.
+4. `uv run mypy`: no issues in 28 source files.
+5. `systemd-analyze --user verify systemd/*`: exit zero, no output. This is the
+   repository's existing systemd gate; the plan's named
+   `scripts/validate-systemd.sh` does not exist.
+6. `for file in scripts/*.sh; do bash -n "$file"; done`: exit zero, no output.
+7. `scripts/audit-trace-completeness.sh data/traces`: 10/10 complete, zero
+   incomplete/legacy, 100% mandatory-field completeness.
+8. `git diff --check origin/main...HEAD`: exit zero, no output.
+9. Ignored Phase 4 harness: `16 passed`; Ruff format/check and MyPy passed.
+10. Retained-root audit: summary passed with no blockers; source validator
+    errors, forbidden fields/values, JSON parse errors, raw DB/log files,
+    production mutation, leaked ports/processes, Critical findings, and
+    Important findings were all zero. The current production full snapshot
+    equaled the lifecycle post-snapshot.
+
 ## Phase 3 Unload Mechanism Study — 2026-07-19
 
 ### Pre-execution gates and scope
