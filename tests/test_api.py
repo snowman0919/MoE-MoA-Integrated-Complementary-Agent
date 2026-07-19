@@ -1336,6 +1336,7 @@ async def test_concurrent_cold_api_requests_return_one_json_load_and_usage_each(
                 break
             await asyncio.sleep(0.001)
         usage = app.state.usage.recent_requests()
+        role_usage = app.state.usage.recent_role_requests("executor")
         assert_no_request_leases(app)
 
     assert len(responses) == 20
@@ -1370,6 +1371,10 @@ async def test_concurrent_cold_api_requests_return_one_json_load_and_usage_each(
     assert all(record.retryable_failure_class == "model_loading" for record in usage)
     assert all(record.model_state == "loading" for record in usage)
     assert sum(record.load_triggered for record in usage) == 1
+    assert len(role_usage) == 20
+    assert all(record.success is False for record in role_usage)
+    assert all(record.failure_class == "model_loading" for record in role_usage)
+    assert sum(record.load_triggered for record in role_usage) == 1
     assert driver.calls.count(("start", "executor")) == 1
     assert not any(operation == "stop" for operation, _ in driver.calls)
 
@@ -1935,6 +1940,8 @@ def test_nonstream_usage_is_content_free_and_uses_opaque_server_ids(
         )
         with sqlite3.connect(settings.state_db) as database:
             usage_row = database.execute("SELECT * FROM request_usage").fetchone()
+            role_usage_row = database.execute("SELECT * FROM role_request_usage").fetchone()
+        role_usage = client.app.state.usage.recent_role_requests("executor")
 
     assert response.status_code == 200
     assert response.json()["choices"][0]["message"]["content"] == raw_response
@@ -1951,8 +1958,14 @@ def test_nonstream_usage_is_content_free_and_uses_opaque_server_ids(
     assert record.load_triggered is False
     assert record.retryable_failure_class is None
     assert (record.prompt_tokens, record.completion_tokens, record.total_tokens) == (2, 3, 5)
+    assert len(role_usage) == 1
+    assert role_usage[0].request_id == record.request_id
+    assert role_usage[0].role == "executor"
+    assert role_usage[0].success is True
+    assert role_usage[0].cold_or_warm == "warm"
+    assert role_usage[0].session_id_hash != raw_session
     assert report.status_code == 404
-    persisted_usage = repr(usage_row)
+    persisted_usage = repr((usage_row, role_usage_row))
     serialized_record = record.model_dump_json()
     for sentinel in (
         raw_session,
@@ -2904,6 +2917,7 @@ def test_runtime_status_requires_admin_auth_and_returns_safe_usage(
     assert payload["usage"]["active_request_count"] == 0
     assert payload["usage"]["last_request"]["client_class"] == "curl"
     assert payload["usage"]["request_statistics"]["request_count"] == 1
+    assert payload["usage"]["role_statistics"]["executor"]["request_count"] == 1
     assert payload["usage"]["adaptive_idle_timeout_seconds"] is None
     serialized = json.dumps(payload, sort_keys=True)
     for sentinel in (

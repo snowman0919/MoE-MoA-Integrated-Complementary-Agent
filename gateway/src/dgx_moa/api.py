@@ -203,7 +203,21 @@ def create_app(
             configured.state_db,
             configured.models,
             clock=lifecycle_clock,
+            unit_map=(
+                configured.lifecycle_unit_map
+                if configured.lifecycle_mode in {"observe", "fixed", "adaptive"}
+                else None
+            ),
         )
+        if configured.lifecycle_mode == "observe":
+            for role in configured.lifecycle_unit_map:
+                record = app.state.lifecycle_store.get(role)
+                if record.state == "disabled":
+                    app.state.lifecycle_store.transition(
+                        role,
+                        "cold",
+                        expected_transition_id=record.transition_id,
+                    )
         app.state.lifecycle_store.recover_leases()
         app.state.lifecycle = LifecycleCoordinator(
             app.state.lifecycle_store,
@@ -625,9 +639,13 @@ def create_app(
         unavailable_record: LifecycleRecord | None = None
         unmanaged_role: str | None = None
         load_triggered = False
+        role_states = {role: "warm" for role in roles}
+        role_load_triggered = {role: False for role in roles}
+        role_ready_at: dict[str, float | None] = {role: None for role in roles}
         if configured.lifecycle_mode in {"fixed", "adaptive"}:
             for role in roles:
                 if role not in configured.lifecycle_unit_map:
+                    role_states[role] = "cold"
                     if (
                         loading_record is None
                         and unavailable_record is None
@@ -636,6 +654,9 @@ def create_app(
                         unmanaged_role = role
                     continue
                 check = await request.app.state.lifecycle.ensure_ready(role)
+                role_states[role] = check.record.state
+                role_load_triggered[role] = check.load_triggered
+                role_ready_at[role] = check.record.ready_at
                 load_triggered = load_triggered or check.load_triggered
                 if (
                     loading_record is None
@@ -677,6 +698,17 @@ def create_app(
                 ),
                 load_triggered=load_triggered,
             )
+        )
+        request.app.state.usage.start_roles(
+            usage_request_id,
+            roles,
+            session_id=state_session_id,
+            requested_at=accepted_at,
+            client_mode=mode,
+            request_class=request_class,
+            states=role_states,
+            load_triggered=role_load_triggered,
+            ready_at=role_ready_at,
         )
         usage_started = True
 
@@ -726,11 +758,12 @@ def create_app(
                     request.app.state.store.save(current)
                     record_trace_safely(request, current, task_id)
                 if usage_started:
+                    completed_at = time.time()
                     request.app.state.usage.finalize(
                         usage_request_id,
                         RequestUsageFinalization(
                             first_byte_at=first_byte_at,
-                            completed_at=time.time(),
+                            completed_at=completed_at,
                             active_duration_seconds=time.monotonic() - accepted,
                             status=status_value,
                             retryable_failure_class=retryable_failure_class,
@@ -738,6 +771,17 @@ def create_app(
                             completion_tokens=token_usage.get("completion_tokens"),
                             total_tokens=token_usage.get("total_tokens"),
                         ),
+                    )
+                    request.app.state.usage.finalize_roles(
+                        usage_request_id,
+                        completed_at=completed_at,
+                        first_byte_at=first_byte_at,
+                        success=status_value == "completed",
+                        failure_class=retryable_failure_class or stage,
+                        ready_at={
+                            role: request.app.state.lifecycle_store.get(role).ready_at
+                            for role in roles
+                        },
                     )
             finally:
                 request.app.state.lifecycle_store.release_leases(

@@ -588,6 +588,12 @@ class LifecycleStore:
                 "next_consecutive_check_count INTEGER NOT NULL, would_unload INTEGER NOT NULL, "
                 "action_allowed INTEGER NOT NULL, reason TEXT NOT NULL, decided_at REAL NOT NULL)"
             )
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS lifecycle_samples ("
+                "sample_id INTEGER PRIMARY KEY, role TEXT NOT NULL, kind TEXT NOT NULL, "
+                "duration_seconds REAL NOT NULL, memory_before_bytes INTEGER, "
+                "memory_after_bytes INTEGER)"
+            )
             for role in self._roles:
                 now = self._clock()
                 record = LifecycleRecord(
@@ -1183,6 +1189,18 @@ class LifecycleStore:
                 values["failure_detail"] = None
             transitioned = LifecycleRecord.model_validate(values)
             self._write(database, transitioned)
+            if state == "ready" and transitioned.last_load_duration_seconds is not None:
+                database.execute(
+                    "INSERT INTO lifecycle_samples "
+                    "(role, kind, duration_seconds, memory_before_bytes, memory_after_bytes) "
+                    "VALUES (?, 'load', ?, ?, ?)",
+                    (
+                        role,
+                        transitioned.last_load_duration_seconds,
+                        transitioned.memory_before_bytes,
+                        transitioned.memory_after_bytes,
+                    ),
+                )
             return transitioned
 
     def queue_unload(

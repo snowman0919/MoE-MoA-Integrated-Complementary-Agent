@@ -112,6 +112,7 @@ def test_runtime_report_contains_bounded_content_free_usage(tmp_path: Path, monk
             },
             "cold_starts": 0,
         },
+        "role_statistics": {},
         "role_states": {"executor": "warm"},
         "adaptive_idle_timeout_seconds": None,
         "idle_decisions": {},

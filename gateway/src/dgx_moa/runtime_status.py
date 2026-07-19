@@ -99,6 +99,11 @@ def usage_status(
     store = UsageStore(path)
     requests = store.recent_requests()
     statistics = store.report()
+    role_statistics = {
+        role: role_report
+        for role, role_report in store.all_role_statistics().items()
+        if role_report["request_count"]
+    }
     lifecycle_samples = store.recent_lifecycle_samples()
     decisions = (
         {
@@ -123,6 +128,7 @@ def usage_status(
             for key, value in statistics.items()
             if key not in {"load_duration_seconds", "unload_duration_seconds"}
         },
+        "role_statistics": role_statistics,
         "role_states": role_states,
         "adaptive_idle_timeout_seconds": (
             decisions["executor"].threshold_seconds if "executor" in decisions else None

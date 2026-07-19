@@ -960,6 +960,7 @@ def test_schema_persists_every_lifecycle_field_without_changing_usage_tables(
 
     assert tables == {
         "request_usage",
+        "role_request_usage",
         "lifecycle_samples",
         "model_lifecycle",
         "model_lifecycle_decisions",
