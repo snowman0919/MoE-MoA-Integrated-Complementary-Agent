@@ -60,6 +60,9 @@ leases, evaluation/profile guards, current idle decisions, and lifecycle samples
 and runs a first-sleep scheduler. Optional roles are considered before executor.
 `SystemdLifecycleDriver` accepts only the exact validated role-to-unit map and
 uses argument vectors for status/start/stop and bounded progress reads.
+For a never-started unit with no journal entries, it captures the current global
+user-journal cursor and still reads subsequent progress only from the exact unit;
+malformed or unsafe cursors fail closed.
 
 Managed requests acquire active and stream leases under the same role locks used
 by unloading. Policy checks use activity and content-free usage gaps; atomic
@@ -68,6 +71,13 @@ Executable unload is exact-unit full service stop, inactive verification, memory
 sampling, then a `cold` transition and sample. Failures become sanitized
 `failed` state. Full state, mode, race, recovery, and API contracts are in
 `docs/MODEL_LIFECYCLE.md`.
+
+Usage is stored once per request and once per participating role. Idle decisions
+consume only recent successful gaps for that role, so executor traffic cannot
+keep an unused reasoner resident or cause a planner unload. Three lifecycle
+mutation failures inside the configured window latch automation off; status and
+already-ready inference remain available, but new start/stop mutations do not.
+Rollback atomically restores disabled mode and an empty authorization map.
 
 The gateway remains Python. Its isolated five-minute peak process-group PSS was
 `48741376` bytes, idle CPU was `0.24998221036527596%`, and loopback health p99

@@ -26,8 +26,9 @@ Lifecycle states and safety rules are canonical in
 
 ## Isolated lifecycle development
 
-These are environment examples, not executed evidence. Use them only with an
-isolated development config and development-owned process:
+Use these only with an isolated development config and development-owned
+process. The 2026-07-20 validation exercised this shape through runtime-linked
+user-systemd units; the literal values below remain examples:
 
 ```bash
 DGX_MOA_CONFIG=/path/to/dev-models.yaml
@@ -35,9 +36,9 @@ DGX_MOA_RUNTIME_CHANNEL=dev
 DGX_MOA_STATE_DB=/path/to/isolated-dev/gateway.db
 DGX_MOA_BIND_HOST=127.0.0.1
 DGX_MOA_BIND_PORT=19000
-DGX_MOA_LIFECYCLE_MODE=observe
+DGX_MOA_LIFECYCLE_MODE=adaptive
 DGX_MOA_LIFECYCLE_POLL_SECONDS=30
-DGX_MOA_LIFECYCLE_UNIT_MAP='{"executor":"dgx-moa-dev-executor.service"}'
+DGX_MOA_LIFECYCLE_UNIT_MAP='{"executor":"dgx-moa-dev-executor.service","planner":"dgx-moa-dev-planner.service","reviewer":"dgx-moa-dev-reviewer.service","reasoner":"dgx-moa-dev-reasoner.service"}'
 ```
 
 `DGX_MOA_CONFIG` selects the development YAML. Set the isolated run directory
@@ -52,10 +53,24 @@ Use unique validated `dgx-moa-dev-*` units, a loopback port, state database, and
 run directory that share nothing with production. `DGX_MOA_ADMIN_API_ENABLED`
 remains false unless the isolated test needs protected admin routes.
 
-Rollback example: set `DGX_MOA_LIFECYCLE_MODE=disabled` and
-`DGX_MOA_LIFECYCLE_UNIT_MAP='{}'` before starting a fresh isolated dev gateway.
-Disabled mode makes no lifecycle driver calls. This task provides no production
-replacement, restart, or enablement procedure.
+Do not set lifecycle environment overrides when using the rollback command;
+they intentionally make validation fail if they defeat the file change. For one
+explicit reviewed configuration, rollback is:
+
+```bash
+scripts/rollback-lifecycle.sh /absolute/path/to/models.yaml
+```
+
+The script atomically writes mode `disabled` and `{}` unit map with file and
+directory fsync, validates the result, resets the automation latch while
+retaining failure history, restarts only `dgx-moa-gateway.service`, restores the
+resident profile, runs health, and verifies protected model status. It is
+idempotent. It does not authorize a production invocation.
+
+Use `GET /v1/model-status` for safe role state, generation, progress, idle
+decisions, and circuit status. Runtime reporting adds content-free role request
+counts, last-used time, UTC hourly/weekday-hour distribution, EWMA/percentile
+gaps, and cold/load timing statistics.
 
 ## Phase 4 validation and PR boundary
 

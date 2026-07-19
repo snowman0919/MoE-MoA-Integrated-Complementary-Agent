@@ -1,6 +1,6 @@
 # State
 
-Updated: 2026-07-19
+Updated: 2026-07-20
 
 ## Branch and deployment
 
@@ -116,6 +116,36 @@ Updated: 2026-07-19
   merge, deploy, restart production, or make the resident target active.
 
 ## Validation baseline
+
+### Role-aware lifecycle gap closure
+
+- Final pre-commit gates passed: `568 passed` with one existing third-party
+  warning; Ruff format/check, MyPy for 29 source files, user-systemd unit verify,
+  every shell syntax check, trace audit 10/10 at 100%, and `git diff --check`.
+- `dev` now persists generation-aware role lifecycle state, role-specific
+  request usage and gaps, UTC hourly/weekday-hour counts, EWMA and percentiles,
+  cold/load/unload samples, bounded failure events, and the automation circuit.
+- Recommended defaults keep executor resident with idle unload disabled.
+  Planner and reviewer use 600/1200/3600-second minimum/fallback/maximum idle
+  thresholds and 600-second minimum residency; reasoner uses
+  300/600/1800 and 300 seconds. Judge lifecycle automation is disabled.
+- A cold request returns JSON `503`, `Retry-After`, role, state, generation, and
+  honest weight progress. The body also carries monotonic overall progress,
+  readiness, and ETA. Concurrent cold requests share one generation/load.
+- The isolated user-systemd control result is
+  `/tmp/dgx-moa-systemd-control-wbakbkm9/physical-result.json`, SHA-256
+  `83ecea14eec43543f22bddf00dccff0e208d45e2e84609820891d54a939c8fdf`.
+  Four cold roles each reached ready, all four idled to inactive, executor
+  reloaded once at generation 2, three cross-role failures opened the circuit,
+  the fourth mutation count was zero, ready executor traffic stayed HTTP 200,
+  and two rollback invocations ended disabled with an empty unit map.
+- That run used loopback fake weights with the real gateway and real user-systemd
+  lifecycle driver. It validates the control path, not real-weight memory return
+  or load duration. Earlier selected full-stop executor trials remain the only
+  real-weight memory evidence.
+- Production stayed at clean `e63fa6f` with gateway PID `3352392`, executor PID
+  `3323765`, and listeners 9000/8101 identical before and after. No production
+  unit, file, process, listener, or configuration was mutated.
 
 - Phase 3 serialized pre-commit publication gates: `533 passed`, one existing
   Starlette TestClient warning; Ruff format/check passed for 53 files; MyPy

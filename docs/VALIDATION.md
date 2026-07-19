@@ -1388,6 +1388,67 @@ eight commands:
    incomplete, 0 legacy, and 100.0% mandatory-field completeness.
 8. `git diff --check`: no output.
 
+## Role-Aware Lifecycle Gap Closure — 2026-07-20
+
+The implementation commits add strict role policies, persisted generations and
+unload queues, content-free per-role usage statistics, the complete cold 503
+progress contract, a bounded global automation circuit, and atomic rollback.
+The first full regression after implementation passed `567` tests with the one
+existing third-party Starlette TestClient deprecation warning.
+
+After the never-started-unit fix and documentation contract update, the final
+serialized gates all exited zero: `568 passed` with the same warning; 55 files
+Ruff-formatted; Ruff lint clean; MyPy clean for 29 source files; user-systemd
+unit verification clean; every `scripts/*.sh` syntax check clean; checked-in
+trace audit 10/10, zero legacy/incomplete and 100%; and `git diff --check` clean.
+
+The physical control-plane harness used a fresh `/tmp` root, random loopback
+ports, a separate config/state/run tree, and PID-unique runtime-linked user
+systemd units for gateway, executor, planner, reviewer, and reasoner. It used
+the real gateway/lifecycle/systemd/journal path with fake model weights; no
+production unit was a command target.
+
+Two retained failed attempts improved the validation itself:
+
+- `/tmp/dgx-moa-systemd-control-20bt5iys` queried nonexistent `/health` instead
+  of `/healthz`; the gateway was healthy and cleanup/production equality passed.
+- `/tmp/dgx-moa-systemd-control-rvw5v3od` found a real fresh-install defect:
+  a never-started unit had no unit journal cursor and failed with
+  `cursor_malformed_output`. Commit `9fa2801` added a tested global
+  user-journal cursor fallback while keeping subsequent reads exact-unit scoped.
+- `/tmp/dgx-moa-systemd-control-9947ve4w` passed cold, MoA, unload, and reload;
+  its circuit fixture incorrectly expected three retries from one role despite
+  the role-local retry cap of two. The final fixture injected two reasoner and
+  one reviewer failures to test the actual global circuit contract.
+
+The authoritative result is
+`/tmp/dgx-moa-systemd-control-wbakbkm9/physical-result.json`, SHA-256
+`83ecea14eec43543f22bddf00dccff0e208d45e2e84609820891d54a939c8fdf`,
+with `passed=true`:
+
+- initial executor/planner/reviewer/reasoner states were all `cold`;
+- five concurrent cold requests all returned JSON 503, generation 1 and
+  unavailable honest weight progress, with exactly one executor start;
+- all four roles reached `ready`, each with one start, and orchestration returned
+  HTTP 200;
+- all four roles idled to systemd `inactive` under the accelerated isolated
+  policy;
+- executor request/retry produced generation 2, exactly two cumulative starts,
+  and HTTP 200;
+- three cross-role start failures opened the circuit; the fourth request returned
+  `lifecycle_automation_disabled`, performed zero mutation, and ready executor
+  traffic still returned HTTP 200;
+- rollback passed twice, removed the unit map, reset the latch, restarted the
+  isolated gateway, and reported lifecycle disabled;
+- production commit `e63fa6f`, clean state, gateway/executor PIDs, and listeners
+  9000/8101 were byte-for-byte equal before and after; all dev runtime units were
+  removed.
+
+This result adds no real-weight memory or load-time claim. Duplicating the active
+45G production executor would have violated the safety floor, and production was
+not stopped or altered. Phase 3 remains authoritative for real executor
+full-stop memory recovery.
+
 ## Phase 4 Physical Client and PR Gate — 2026-07-19
 
 The content-free summary is
