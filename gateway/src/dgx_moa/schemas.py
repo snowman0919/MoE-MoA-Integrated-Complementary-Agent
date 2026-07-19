@@ -21,13 +21,26 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage]
     stream: bool = False
     tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+    parallel_tool_calls: bool | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    top_p: float | None = Field(default=None, ge=0, le=1)
     max_tokens: int | None = Field(default=None, gt=0)
+    stop: str | list[str] | None = None
+    stream_options: dict[str, Any] | None = None
+    response_format: dict[str, Any] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def require_messages(self) -> ChatRequest:
         if not self.messages:
             raise ValueError("messages must not be empty")
+        if self.tool_choice is not None and not self.tools:
+            raise ValueError("tool_choice requires tools")
+        if self.parallel_tool_calls is not None and not self.tools:
+            raise ValueError("parallel_tool_calls requires tools")
+        if self.stream_options is not None and not self.stream:
+            raise ValueError("stream_options requires stream=true")
         return self
 
 

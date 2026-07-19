@@ -6,7 +6,6 @@ import os
 import re
 import subprocess
 import time
-from itertools import product
 from pathlib import Path
 from typing import Any, cast
 
@@ -27,12 +26,7 @@ PORTS = {"executor": 8101, "planner": 8102, "reviewer": 8103, "reasoner": 8104, 
 
 
 def weighted_context_score(contexts: dict[str, int]) -> float:
-    return (
-        0.60 * contexts["executor"]
-        + 0.20 * contexts["planner"]
-        + 0.15 * contexts["reviewer"]
-        + 0.05 * contexts["reasoner"]
-    )
+    return float(contexts["executor"])
 
 
 def candidate_vectors(profile: str, native_limits: dict[str, int]) -> list[dict[str, int]]:
@@ -44,15 +38,7 @@ def candidate_vectors(profile: str, native_limits: dict[str, int]) -> list[dict[
         ]
     if profile != "resident":
         raise ValueError("profile must be resident or judge")
-    values = [
-        [value for value in CONTEXT_CANDIDATES[role] if value <= native_limits[role]]
-        for role in ("executor", "planner", "reviewer", "reasoner")
-    ]
-    candidates = [
-        {"executor": executor, "planner": planner, "reviewer": reviewer, "reasoner": reasoner}
-        for executor, planner, reviewer, reasoner in product(*values)
-    ]
-    return sorted(candidates, key=weighted_context_score)
+    return [{"executor": 65_536}] if native_limits["executor"] >= 65_536 else []
 
 
 def parse_vllm_capacity(log: str) -> dict[str, int | float | None]:
@@ -228,7 +214,7 @@ def journal(unit: str, since: int) -> str:
 
 def run_trial(profile: str) -> dict[str, Any]:
     settings = load_settings()
-    roles = ("executor", "planner", "reviewer", "reasoner") if profile == "resident" else ("judge",)
+    roles = ("executor",) if profile == "resident" else ("judge",)
     contexts = {
         role: max(
             model.context_length,

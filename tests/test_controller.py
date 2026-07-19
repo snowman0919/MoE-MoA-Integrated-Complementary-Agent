@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from dgx_moa.controller import Controller, DuplicateFailedCall, classify_failure, fingerprint
 from dgx_moa.state import Phase, SessionState, StateStore
@@ -143,7 +145,9 @@ async def test_planner_and_reviewer_routing(settings, stub_provider: StubProvide
     controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
     state = controller.session("x", [{"role": "user", "content": "nontrivial task"}])
     await controller.prepare_executor(
-        state, {"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]}
+        state,
+        {"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
+        ("planner", "executor"),
     )
     assert state.plan and state.phase == Phase.EXECUTING
     result = await controller.review(state, "diff")
@@ -158,7 +162,7 @@ async def test_planner_retries_one_malformed_structured_response(  # type: ignor
     original = stub_provider.complete
     calls = 0
 
-    async def malformed_then_valid(role, model, request):  # type: ignore[no-untyped-def]
+    async def malformed_then_valid(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         nonlocal calls
         if role == "planner":
             calls += 1
@@ -169,7 +173,9 @@ async def test_planner_retries_one_malformed_structured_response(  # type: ignor
     stub_provider.complete = malformed_then_valid  # type: ignore[method-assign]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
     state = controller.session("retry-plan", [{"role": "user", "content": "nontrivial task"}])
-    await controller.prepare_executor(state, {"model": "dgx-moa-agent", "messages": []})
+    await controller.prepare_executor(
+        state, {"model": "dgx-moa-agent", "messages": []}, ("planner", "executor")
+    )
     assert calls == 2
     assert state.plan == [{"step": "change"}]
 
@@ -178,7 +184,7 @@ async def test_planner_retries_one_malformed_structured_response(  # type: ignor
 async def test_reviewer_rejection_enters_correction(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 
-    async def reject(role, model, request):  # type: ignore[no-untyped-def]
+    async def reject(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         if role == "reviewer":
             return {
                 "choices": [{"message": {"content": '{"status":"rejected","findings":["bug"]}'}}]
@@ -306,3 +312,111 @@ def test_reviewer_prompt_uses_requirements_not_raw_objective(settings, stub_prov
     assert prompt.endswith(
         '{"status":"approved","findings":[]} or {"status":"rejected","findings":["..."]}'
     )
+
+
+def test_executor_prompt_does_not_force_json(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    prompt = controller.prompt_sandwich(
+        "executor", SessionState(session_id="executor", objective="answer"), "", "Answer"
+    )
+    assert "Return one JSON object only" not in prompt
+    assert "Use native OpenAI tool calls" in prompt
+
+
+def test_review_requires_external_evidence(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    assert controller.has_review_evidence(SessionState(session_id="chat"), {}) is False
+    assert (
+        controller.has_review_evidence(
+            SessionState(session_id="edit", tool_results=[{"changed_paths": ["a.py"]}]), {}
+        )
+        is True
+    )
+    assert (
+        controller.has_review_evidence(
+            SessionState(session_id="complete"),
+            {"completion_evidence": {"tests": "exit 0"}},
+        )
+        is True
+    )
+    assert (
+        controller.has_review_evidence(
+            SessionState(session_id="claim"), {"completion_evidence": "claimed"}
+        )
+        is False
+    )
+
+
+def test_review_observation_is_bounded_redacted_and_complete(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="review-evidence",
+        objective="fix api_key=sk-1234567890123456",
+        acceptance_criteria=["tests pass"],
+        tool_results=[{"stdout": f"result-{index}"} for index in range(5)],
+        approved_scope=["gateway/src"],
+        completion_evidence={"tests": "exit 0"},
+        failures=[{"root_cause_summary": f"failure-{index}"} for index in range(5)],
+    )
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Authorization: Bearer another-secret",
+                },
+                "finish_reason": "stop",
+            }
+        ]
+    }
+
+    observation = controller.review_observation(
+        state,
+        response,
+        {
+            "changed_paths": ["gateway/src/dgx_moa/api.py"],
+            "completion_evidence": {"lint": "exit 0"},
+            "diff_summary": "one focused change",
+            "validation_results": ["pytest: pass"],
+        },
+    )
+    evidence = json.loads(observation)
+
+    assert evidence == {
+        "acceptance_criteria": ["tests pass"],
+        "assistant_message": {
+            "content": "Authorization: Bearer [REDACTED]",
+            "role": "assistant",
+        },
+        "changed_paths": ["gateway/src/dgx_moa/api.py"],
+        "completion_evidence": {"lint": "exit 0", "tests": "exit 0"},
+        "diff_summary": "one focused change",
+        "finish_reason": "stop",
+        "known_failures": [
+            {"root_cause_summary": "failure-1"},
+            {"root_cause_summary": "failure-2"},
+            {"root_cause_summary": "failure-3"},
+            {"root_cause_summary": "failure-4"},
+        ],
+        "original_objective": "fix api_key=[REDACTED]",
+        "scope_evidence": ["gateway/src"],
+        "tool_results": [
+            {"stdout": "result-1"},
+            {"stdout": "result-2"},
+            {"stdout": "result-3"},
+            {"stdout": "result-4"},
+        ],
+        "validation_results": ["pytest: pass"],
+    }
+    bounded_observation = controller.review_observation(
+        state, response, {"diff_summary": "x" * 20_000}
+    )
+    bounded_evidence = json.loads(bounded_observation)
+
+    assert len(bounded_observation) <= 16_000
+    assert set(bounded_evidence) == set(evidence)
+    assert bounded_evidence["original_objective"] == "fix api_key=[REDACTED]"
+    assert bounded_evidence["finish_reason"] == "stop"

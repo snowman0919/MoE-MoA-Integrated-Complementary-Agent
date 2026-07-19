@@ -23,6 +23,18 @@ Tool failure observations are classified deterministically where recognizable
 (`NONEXISTENT_PATH`, syntax/type, context, timeout, model-backend, or repeated
 action); unrecognized failures remain `TEST_FAILURE`.
 
+Phase-one request metrics are content-free. `metrics` records
+`request_timing_ms`, `runtime_mode`, `request_class`, `roles_required`, and
+`truncated`. Timing keys can include acceptance, upstream start, first upstream
+byte, first downstream byte, planner/reviewer duration, executor total, and
+request completion. The separate `request_timing` event records per-stage
+completed, timed-out, failed, deferred, cancelled, or aborted status. A
+`finish_reason` of `length` sets `truncated: true` and never proves completion.
+
+Streaming observations retain at most 1,000,000 bytes and are used only for
+bounded state/evidence; SSE events are forwarded before review. Native content
+and tool deltas are not copied into request timing metrics.
+
 `scripts/export-agentic-traces.sh` exports stable file-order JSONL. Training
 export is separate from collection and includes only explicit eligible v2 traces.
 Full source, authorization headers, and environment secrets are excluded.
@@ -34,3 +46,20 @@ Frontier decisions use events `frontier_eligible`, `frontier_profile_selected`,
 Events retain profile names and bounded result summaries only, never credentials.
 When frontier is connected but disabled, eligibility records `FRONTIER_DISABLED`
 without invoking Codex.
+
+## Content-free runtime tables
+
+Agent traces describe decision trajectories. SQLite `request_usage` describes
+request timing, status, roles, token counts, streaming, model state, and bounded
+failure classes; its `load_triggered` flag supplies the cold-start count.
+`model_lifecycle_decisions` records per-role mode, threshold, sample count,
+idle/residency values, hysteresis, action eligibility, reason, and timestamp.
+`lifecycle_samples` records role, load/unload kind, duration, and optional
+before/after memory integers.
+
+These tables and lifecycle status never store raw prompt, response, tool output,
+authorization, unit, path, command, environment value, or hidden reasoning.
+Trace/session IDs may correlate a request across stores; lifecycle rows remain
+content-free and are not training transcripts. Status exposes only decisions
+matching current mode. See `docs/MODEL_LIFECYCLE.md` for retention boundaries
+and lifecycle behavior.

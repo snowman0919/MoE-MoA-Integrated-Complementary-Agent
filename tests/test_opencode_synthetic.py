@@ -18,9 +18,16 @@ def synthetic_client(settings, provider: StubProvider) -> Iterator[TestClient]: 
         yield client
 
 
-def request(session: str, messages: list[dict], metadata: dict, *, stream: bool = False) -> dict:  # type: ignore[type-arg]
+def request(
+    session: str,
+    messages: list[dict],
+    metadata: dict,
+    *,
+    stream: bool = False,
+    model: str = "dgx-moa-agent",
+) -> dict:  # type: ignore[type-arg]
     return {
-        "model": "dgx-moa-agent",
+        "model": model,
         "stream": stream,
         "messages": messages,
         "metadata": metadata,
@@ -106,7 +113,7 @@ def test_synthetic_opencode_all_mvp_shapes(settings) -> None:  # type: ignore[no
         original = provider.complete
         reviews = 0
 
-        async def reject_once(role, model, body):  # type: ignore[no-untyped-def]
+        async def reject_once(role, model, body, **kwargs):  # type: ignore[no-untyped-def]
             nonlocal reviews
             if role == "reviewer":
                 reviews += 1
@@ -127,10 +134,10 @@ def test_synthetic_opencode_all_mvp_shapes(settings) -> None:  # type: ignore[no
                     "review-correction",
                     [{"role": "user", "content": message}],
                     {
-                        "expected_files": 3,
                         "executor_complete": True,
                         "completion_evidence": {"tests": "0"},
                     },
+                    model="dgx-moa-orchestrated",
                 ),
             )
             assert response.status_code == 200

@@ -83,6 +83,14 @@ class SessionState(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     session_id: str
+    runtime_mode: Literal["chat", "agent", "orchestrated"] = "agent"
+    request_class: str = "native_agent_turn"
+    roles_required: list[str] = Field(default_factory=lambda: ["executor"])
+    review_fail_closed: bool = False
+    review_deferred: bool = False
+    finish_reasons: list[str] = Field(default_factory=list)
+    truncated: bool = False
+    timings_ms: dict[str, float] = Field(default_factory=dict)
     task_id: str = ""
     objective: str = ""
     repository: dict[str, str] = Field(default_factory=dict)

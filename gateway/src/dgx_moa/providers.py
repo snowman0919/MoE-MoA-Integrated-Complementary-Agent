@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any, cast
@@ -7,6 +8,60 @@ from typing import Any, cast
 import httpx
 
 from .config import ModelConfig
+
+
+class StageTimeout(TimeoutError):
+    def __init__(self, stage: str):
+        super().__init__(f"{stage} timed out")
+        self.stage = stage
+
+
+class OwnedByteStream:
+    def __init__(
+        self,
+        first: bytes | None,
+        iterator: AsyncIterator[bytes],
+        response: httpx.Response,
+        client: httpx.AsyncClient,
+    ) -> None:
+        self._first = first
+        self._first_pending = first is not None
+        self._iterator = iterator
+        self._response = response
+        self._client = client
+        self._close_lock = asyncio.Lock()
+        self._closed = False
+
+    def __aiter__(self) -> OwnedByteStream:
+        return self
+
+    async def __anext__(self) -> bytes:
+        if self._closed:
+            raise StopAsyncIteration
+        try:
+            if self._first_pending:
+                self._first_pending = False
+                assert self._first is not None
+                return self._first
+            return await anext(self._iterator)
+        except StopAsyncIteration:
+            await self.aclose()
+            raise
+        except BaseException:
+            await self.aclose()
+            raise
+
+    async def aclose(self) -> None:
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                if not self._response.is_closed:
+                    await self._response.aclose()
+            finally:
+                if not self._client.is_closed:
+                    await self._client.aclose()
 
 
 class ModelProvider:
@@ -25,43 +80,72 @@ class ModelProvider:
         return body
 
     async def complete(
-        self, role: str, model: ModelConfig, request: dict[str, Any]
+        self,
+        role: str,
+        model: ModelConfig,
+        request: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+        stage: str | None = None,
     ) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{model.base_url.rstrip('/')}/v1/chat/completions",
-                json=self.body(role, model, request),
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        timeout_seconds = self.timeout if timeout_seconds is None else timeout_seconds
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                async with httpx.AsyncClient(timeout=None) as client:
+                    response = await client.post(
+                        f"{model.base_url.rstrip('/')}/v1/chat/completions",
+                        json=self.body(role, model, request),
+                    )
+                    response.raise_for_status()
+                    return cast(dict[str, Any], response.json())
+        except (TimeoutError, httpx.TimeoutException) as error:
+            raise StageTimeout(stage or role) from error
 
     async def stream(
-        self, role: str, model: ModelConfig, request: dict[str, Any]
+        self,
+        role: str,
+        model: ModelConfig,
+        request: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+        stage: str | None = None,
     ) -> AsyncIterator[bytes]:
         body = self.body(role, model, request)
         body["stream"] = True
-        client = httpx.AsyncClient(timeout=self.timeout)
+        timeout_seconds = self.timeout if timeout_seconds is None else timeout_seconds
+        timeout_stage = stage or role
+        client = httpx.AsyncClient(timeout=None)
+        response: httpx.Response | None = None
         try:
-            response = await client.send(
-                client.build_request(
-                    "POST", f"{model.base_url.rstrip('/')}/v1/chat/completions", json=body
-                ),
-                stream=True,
-            )
-            response.raise_for_status()
+            async with asyncio.timeout(timeout_seconds):
+                response = await client.send(
+                    client.build_request(
+                        "POST", f"{model.base_url.rstrip('/')}/v1/chat/completions", json=body
+                    ),
+                    stream=True,
+                )
+                if response.is_error:
+                    await response.aread()
+                response.raise_for_status()
+                iterator = response.aiter_bytes()
+                first = await anext(iterator, None)
+        except asyncio.CancelledError:
+            if response is not None:
+                await response.aclose()
+            await client.aclose()
+            raise
+        except (TimeoutError, httpx.TimeoutException) as error:
+            if response is not None:
+                await response.aclose()
+            await client.aclose()
+            raise StageTimeout(timeout_stage) from error
         except Exception:
+            if response is not None:
+                await response.aclose()
             await client.aclose()
             raise
 
-        async def chunks() -> AsyncIterator[bytes]:
-            try:
-                async for chunk in response.aiter_bytes():
-                    yield chunk
-            finally:
-                await response.aclose()
-                await client.aclose()
-
-        return chunks()
+        return OwnedByteStream(first, iterator, response, client)
 
 
 def response_message(response: dict[str, Any]) -> dict[str, Any]:

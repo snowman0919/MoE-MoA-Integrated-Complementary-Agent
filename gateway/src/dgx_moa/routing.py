@@ -1,9 +1,87 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from .state import Phase, SessionState
+
+RuntimeMode = Literal["chat", "agent", "orchestrated"]
+RequestClass = Literal[
+    "plain_chat",
+    "read_only_question",
+    "native_agent_turn",
+    "small_clear_edit",
+    "multi_file_task",
+    "recovery_task",
+    "high_risk_task",
+    "explicit_orchestrated",
+]
+
+MODEL_MODES: dict[str, RuntimeMode] = {
+    "dgx-moa-chat": "chat",
+    "dgx-moa-agent": "agent",
+    "dgx-moa-orchestrated": "orchestrated",
+}
+HIGH_RISK_FIELDS = (
+    "authentication",
+    "cryptography",
+    "database_schema",
+    "deployment_security",
+    "public_api",
+    "heavy_review",
+)
+
+
+def resolve_runtime_mode(model: str, configured_name: str) -> RuntimeMode:
+    if model in MODEL_MODES:
+        return MODEL_MODES[model]
+    if model == configured_name:
+        return "agent"
+    raise ValueError("unknown model")
+
+
+def classify_request(
+    mode: RuntimeMode,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    metadata: dict[str, Any],
+) -> RequestClass:
+    if any(bool(metadata.get(field)) for field in HIGH_RISK_FIELDS):
+        return "high_risk_task"
+    if bool(metadata.get("recovery_task") or metadata.get("no_progress")):
+        return "recovery_task"
+    if mode == "agent" or any(message.get("role") == "tool" for message in messages):
+        return "native_agent_turn"
+    files = int(metadata.get("expected_files", metadata.get("files_changed", 0)) or 0)
+    if files > 2 or bool(metadata.get("scope_uncertain")):
+        return "multi_file_task"
+    if mode == "orchestrated" and bool(metadata.get("target_clear")) and files in {1, 2}:
+        return "small_clear_edit"
+    if mode == "orchestrated":
+        return "explicit_orchestrated"
+    latest = next(
+        (
+            str(message.get("content", "")).strip()
+            for message in reversed(messages)
+            if message.get("role") == "user"
+        ),
+        "",
+    )
+    return "read_only_question" if latest.endswith("?") else "plain_chat"
+
+
+def required_roles(mode: RuntimeMode, request_class: RequestClass) -> tuple[str, ...]:
+    if mode != "orchestrated":
+        return ("executor",)
+    if request_class in {"multi_file_task", "recovery_task"}:
+        return ("planner", "executor")
+    if request_class in {"high_risk_task", "explicit_orchestrated"}:
+        return ("planner", "executor", "reviewer")
+    return ("executor",)
+
+
+def review_fails_closed(request_class: RequestClass) -> bool:
+    return request_class == "high_risk_task"
 
 
 @dataclass(frozen=True)

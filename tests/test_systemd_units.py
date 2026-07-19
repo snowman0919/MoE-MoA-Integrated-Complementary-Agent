@@ -37,6 +37,25 @@ def test_targets_and_services_are_mutually_exclusive() -> None:
     assert "After=dgx-moa-planner.service" in (SYSTEMD / "dgx-moa-reasoner.service").read_text()
 
 
+def test_resident_target_requires_only_gateway_and_executor() -> None:
+    resident = (SYSTEMD / "dgx-moa-resident.target").read_text()
+    assert "Requires=dgx-moa-gateway.service dgx-moa-executor.service" in resident
+    requires = next(line for line in resident.splitlines() if line.startswith("Requires="))
+    assert "planner" not in requires
+    assert "reviewer" not in requires
+    assert "reasoner" not in requires
+
+
+def test_profile_scripts_wait_for_executor_and_verify_all_resident_roles_stop() -> None:
+    wait = (ROOT / "scripts/wait-profile.sh").read_text()
+    verify_stopped = (ROOT / "scripts/verify-profile-stopped.sh").read_text()
+
+    assert "resident) ports=(8101); minimum=5368709120 ;;" in wait
+    assert (
+        "resident) services=(executor planner reviewer reasoner); ports=(8101 8102 8103 8104) ;;"
+    ) in verify_stopped
+
+
 def test_unit_environment_and_hardening() -> None:
     for path in SYSTEMD.glob("dgx-moa-*.service"):
         unit = path.read_text()

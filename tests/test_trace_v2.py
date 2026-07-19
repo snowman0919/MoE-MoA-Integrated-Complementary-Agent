@@ -120,6 +120,37 @@ def test_v2_provenance_training_and_schema() -> None:
     assert trace["vllm_version"] == "0.22.1"
 
 
+def test_trace_metrics_include_content_free_runtime_timing() -> None:
+    state = complete_state()
+    state.runtime_mode = "orchestrated"
+    state.request_class = "multi_file_task"
+    state.roles_required = ["planner", "executor"]
+    state.truncated = True
+    state.timings_ms = {
+        "accepted": 0.0,
+        "upstream_start": 1.0,
+        "first_upstream_byte": 2.0,
+        "first_downstream_byte": 3.0,
+        "completed": 4.0,
+        "planner": 0.5,
+        "executor_total": 3.0,
+    }
+
+    metrics = trace_record(state, metrics={"existing": 1})["metrics"]
+
+    assert metrics == {
+        "existing": 1,
+        "request_timing_ms": state.timings_ms,
+        "runtime_mode": "orchestrated",
+        "request_class": "multi_file_task",
+        "roles_required": ["planner", "executor"],
+        "truncated": True,
+    }
+    serialized = json.dumps(metrics)
+    assert state.objective not in serialized
+    assert "assistant_tool_call" not in serialized
+
+
 def test_failure_record_values_are_strict() -> None:
     validate_failure_record({"suspected_layer": "harness", "resolution_status": "resolved"})
     with pytest.raises(ValueError, match="suspected_layer"):
@@ -156,6 +187,64 @@ def test_incomplete_and_legacy_traces_are_not_promoted(tmp_path) -> None:  # typ
     assert report["legacy_sessions"] == 1
     dataset = build(traces, tmp_path / "set.jsonl", tmp_path / "manifest.json")
     assert dataset["count"] == 0 and dataset["legacy_excluded"] == 1
+
+
+def test_audit_prefers_v2_over_duplicate_legacy_session(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    state = complete_state()
+    complete_v2 = trace_record(
+        state,
+        events=[
+            {"event_type": event_type}
+            for event_type in (
+                "session_started",
+                "route_selected",
+                "assistant_stream_finished",
+                "session_ended",
+            )
+        ],
+        models=settings.models,
+    )
+    (traces / "a-v2.jsonl").write_text(json.dumps(complete_v2) + "\n")
+    (traces / "z-v1.jsonl").write_text(
+        json.dumps({"schema_version": "agent-trace-v1", "session_id": state.session_id}) + "\n"
+    )
+
+    report = audit_traces(traces)
+
+    assert report["total_sessions"] == 1
+    assert report["complete_sessions"] == 1
+    assert report["legacy_sessions"] == 0
+
+
+def test_audit_uses_later_read_sequence_within_same_schema(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    state = complete_state()
+    complete_v2 = trace_record(
+        state,
+        events=[
+            {"event_type": event_type}
+            for event_type in (
+                "session_started",
+                "route_selected",
+                "assistant_stream_finished",
+                "session_ended",
+            )
+        ],
+        models=settings.models,
+    )
+    incomplete_v2 = complete_v2 | {"task_id": ""}
+    (traces / "records.jsonl").write_text(
+        json.dumps(complete_v2) + "\n" + json.dumps(incomplete_v2) + "\n"
+    )
+
+    report = audit_traces(traces)
+
+    assert report["total_sessions"] == 1
+    assert report["incomplete_sessions"] == 1
+    assert report["missing_fields"] == {"task_id": 1}
 
 
 def test_tool_linkage_and_stricter_training_override(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

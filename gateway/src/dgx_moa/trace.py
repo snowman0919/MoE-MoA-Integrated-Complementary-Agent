@@ -205,7 +205,14 @@ def trace_record(
         "training_eligibility": state.training_eligibility,
         "observability_status": state.observability_status,
         "observability_degraded": state.observability_degraded,
-        "metrics": metrics or {},
+        "metrics": (metrics or {})
+        | {
+            "request_timing_ms": state.timings_ms,
+            "runtime_mode": state.runtime_mode,
+            "request_class": state.request_class,
+            "roles_required": state.roles_required,
+            "truncated": state.truncated,
+        },
         "verified_state": state.verified_facts[-8:],
         "planner_output": state.plan,
         "tool_schema": {},
@@ -359,13 +366,22 @@ def trace_missing(trace: dict[str, Any]) -> list[str]:
 
 
 def audit_traces(directory: str | Path) -> dict[str, Any]:
-    latest: dict[str, dict[str, Any]] = {}
+    latest: dict[str, tuple[int, int, dict[str, Any]]] = {}
+    read_sequence = 0
     for path in sorted(Path(directory).rglob("*.jsonl")):
         for line in path.read_text().splitlines():
             if line:
+                read_sequence += 1
                 trace = json.loads(line)
-                latest[str(trace.get("session_id") or f"legacy:{path}:{len(latest)}")] = trace
-    traces = list(latest.values())
+                session_id = str(trace.get("session_id") or f"legacy:{read_sequence}")
+                candidate = (
+                    int(trace.get("schema_version") == "agent-trace-v2"),
+                    read_sequence,
+                    trace,
+                )
+                if session_id not in latest or candidate[:2] > latest[session_id][:2]:
+                    latest[session_id] = candidate
+    traces = [candidate[2] for candidate in latest.values()]
     missing_by_path: dict[str, int] = {}
     missing_events: dict[str, int] = {}
     incomplete = 0

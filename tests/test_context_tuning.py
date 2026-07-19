@@ -35,12 +35,9 @@ def result(contexts, *, headroom=30 * 1024**3, failure=None):  # type: ignore[no
     return value
 
 
-def test_candidate_generation_respects_native_limits() -> None:
-    candidates = candidate_vectors(
-        "resident", {"executor": 32768, "planner": 16384, "reviewer": 12288, "reasoner": 8192}
-    )
-    assert {"executor": 32768, "planner": 16384, "reviewer": 12288, "reasoner": 8192} in candidates
-    assert all(candidate["executor"] <= 32768 for candidate in candidates)
+def test_resident_candidates_keep_public_executor_at_64k() -> None:
+    assert candidate_vectors("resident", {"executor": 262144}) == [{"executor": 65536}]
+    assert candidate_vectors("resident", {"executor": 65535}) == []
 
 
 def test_vllm_result_parsing() -> None:

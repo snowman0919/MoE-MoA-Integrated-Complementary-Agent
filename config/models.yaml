@@ -13,15 +13,39 @@ gateway:
   vllm_version: 0.22.1
   frontier_enabled: false
   frontier_disabled_reason: host_sandbox_capability_blocked
+  lifecycle_mode: disabled
+  lifecycle_poll_seconds: 30
+  lifecycle_unit_map: {}
   limits:
     max_tool_output_characters: 1000
     max_retained_observations: 12
     max_error_lines: 40
     max_diff_summary_lines: 100
     planner_tokens: 1500
-    executor_tokens: 1000
+    executor_tokens: 4096
+    executor_max_tokens: 16384
     reviewer_tokens: 1500
     judge_tokens: 2500
+    max_stream_capture_bytes: 1000000
+    max_sse_event_bytes: 1000000
+    max_review_evidence_characters: 16000
+    planner_timeout_seconds: 120
+    executor_first_byte_timeout_seconds: 120
+    executor_total_timeout_seconds: 900
+    reviewer_timeout_seconds: 120
+    model_load_timeout_seconds: 1200
+    tool_continuation_timeout_seconds: 600
+    usage_sample_window: 512
+    usage_ewma_alpha: 0.25
+    adaptive_minimum_samples: 20
+    executor_idle_fallback_seconds: 2700
+    executor_idle_minimum_seconds: 900
+    executor_idle_maximum_seconds: 7200
+    executor_minimum_ready_residency_seconds: 600
+    optional_idle_fallback_seconds: 900
+    optional_idle_minimum_seconds: 300
+    optional_idle_maximum_seconds: 2700
+    optional_minimum_ready_residency_seconds: 300
     max_steps: 100
 
 models:
