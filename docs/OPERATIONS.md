@@ -57,6 +57,24 @@ Rollback example: set `DGX_MOA_LIFECYCLE_MODE=disabled` and
 Disabled mode makes no lifecycle driver calls. This task provides no production
 replacement, restart, or enablement procedure.
 
+## Phase 4 validation and PR boundary
+
+The passing ignored Phase 4 summary is
+`/tmp/dgx-moa-phase4-s5gy6ydh/summary.json`, SHA-256
+`5249dd396c4ac8b6ed85e4474fb7c631f504055685138be90791999f03928a8f`.
+The isolated executor/gateway and lifecycle stub used loopback ports
+`19301`/`19300`/`19302`; no production or tailnet listener was opened.
+
+Every owned process was stopped after identity revalidation. The full
+production Git, index, tracked-file metadata, user-unit, port, and runtime
+snapshots were equal before and after both warm and lifecycle runs. The
+validation harness is not a production runbook: do not point it at production
+units or copy its two-second idle threshold into production configuration.
+
+This gate authorizes only a draft `dev`-to-`main` PR. Merge, deployment,
+systemd installation, lifecycle enablement, resident-target activation, and
+production restart remain separate operations requiring explicit approval.
+
 ## Phase 3 measured runtime decision
 
 The selected executor command remains `--max-model-len 65536`,

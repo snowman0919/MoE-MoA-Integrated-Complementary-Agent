@@ -96,6 +96,25 @@ Updated: 2026-07-19
   `/healthz` p99 `2.1657010074704885` ms. All Rust rejection gates passed, so
   no crate was created.
 
+## Phase 4 draft-PR gate
+
+- The ignored summary at `/tmp/dgx-moa-phase4-s5gy6ydh/summary.json`, SHA-256
+  `5249dd396c4ac8b6ed85e4474fb7c631f504055685138be90791999f03928a8f`,
+  reports `passed=true` with no blockers.
+- Generic non-stream/stream/long counts are `5/10/3`; native
+  tool/continuation/multi-step counts are `5/3/1`; OpenCode
+  read/small-edit/multi-file/bounded-engineering counts are `2/2/1/1`; Hermes
+  normal/stream/tool/multi-step counts are `2/1/1/1`.
+- SSE malformed and duplicate-DONE counts are zero. Cold 503/single-load,
+  progress, ready retry, guard, idle unload, memory return, next cold 503,
+  reload, and retry contracts all passed.
+- The explicit serial validation window was `3064.0628089904785` seconds
+  (`51m 4.063s`), not a continuous-load or 24-hour soak claim.
+- Production mutation, listener leak, process leak, Critical review, and
+  Important review counts are all zero.
+- This result permits only a draft PR. It does not activate lifecycle mode,
+  merge, deploy, restart production, or make the resident target active.
+
 ## Validation baseline
 
 - Phase 3 serialized pre-commit publication gates: `533 passed`, one existing
@@ -189,7 +208,7 @@ Updated: 2026-07-19
   harness bound; their failed traces are retained for later analysis.
 - The 7.5-hour soak includes classified startup rollback incidents before the
   memory-settle fix; the final resident state is healthy with no active loop.
-- Promotion still requires human review of PR #2 and a later main deployment.
-- The overall runtime-reliability Goal still requires the Phase 4 extended
-  client matrices and soak, followed by the separately approved push/PR
-  workflow. Phase 3 evidence does not authorize deployment.
+- Phase 4 does not replace a longer continuous reliability soak.
+- Promotion still requires draft-PR review, a separate merge decision, and a
+  later separately approved production deployment. Phase 4 evidence does not
+  authorize deployment.

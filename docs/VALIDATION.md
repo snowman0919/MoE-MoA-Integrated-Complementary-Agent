@@ -1388,6 +1388,64 @@ eight commands:
    incomplete, 0 legacy, and 100.0% mandatory-field completeness.
 8. `git diff --check`: no output.
 
+## Phase 4 Physical Client and PR Gate — 2026-07-19
+
+The content-free summary is
+`/tmp/dgx-moa-phase4-s5gy6ydh/summary.json`, SHA-256
+`5249dd396c4ac8b6ed85e4474fb7c631f504055685138be90791999f03928a8f`.
+It has schema `phase4-pr-gate-summary-v1`, `passed=true`, and no blockers.
+Source SHA-256 values are:
+
+- client matrix:
+  `a805eba3314ef3dee96646eea687def52238a40184543e38fc15c8e715e74cdc`;
+- lifecycle result:
+  `9f2412e59641a667bacc475b22d1bc90fa0f616becb2fb45ee4b34509154c9f3`;
+- retained-root sanitization:
+  `e4561c6620bf6607d52b77149a63e3c87ee9ad363c3a76c40718dcfad76147e4`.
+
+| Contract | Physical pass count |
+| --- | ---: |
+| Generic non-stream / stream / >1,000-token long | `5` / `10` / `3` |
+| Native forced tools / continuations / multi-step loops | `5` / `3` / `1` |
+| OpenCode read / small edit / multi-file / bounded engineering | `2` / `2` / `1` / `1` |
+| Hermes normal / stream / tool / multi-step | `2` / `1` / `1` / `1` |
+
+All ten Generic streams recorded `malformed=0`, exactly one `[DONE]`, and the
+first event before completion. Each long case used `max_tokens=5000`, returned
+`4393` completion tokens, and parsed 1,100 finite numeric items. The linked
+near-limit authority remained the Phase 3 selected result: three HTTP 200
+cycles at 63,786 prompt tokens and executor context 65,536.
+
+OpenCode `1.17.18` ran six physical cases with isolated HOME/XDG/TMP roots.
+Read cases had no effects; edit cases matched exact allowed paths and hashes;
+the bounded task modified only `calc.py` plus known test cache artifacts and
+passed independent pytest. Hermes Agent `0.18.2` ran five cases with isolated
+HOME/XDG/TMP and `HERMES_HOME`. Gateway observation proved the designated
+stream case sent `stream=true`; file-tool effects and API-call counts matched.
+Other measured clients were curl 8.5.0, HTTPX 0.28.1, and OpenAI Python 2.6.1.
+
+The final lifecycle run returned twelve typed loading 503 responses with one
+executor start, reached ready with nondecreasing progress in
+`269.0157511299476` seconds, and retried with 200. Active-request, stream, and
+continuation leases blocked unload. Idle policy stopped planner before executor,
+returned the executor to cold, and raised MemAvailable from `66538033152` to
+`121120661504` bytes. The next request returned 503, produced exactly the
+second executor start, reached ready in `270.9573212391697` seconds, and
+retried with 200. Success/disconnect/timeout traces were each 1/1 complete and
+the checked-in corpus remained 10/10 complete at 100% mandatory fields.
+
+The explicit serial validation window was `3064.0628089904785` seconds
+(`51m 4.063s`) and included chat, stream, tool, OpenCode, Hermes, idle, unload,
+and reload. It is not a continuous-load or 24-hour soak claim. Production
+pre/post Git/index, tracked-file metadata, unit, port, and runtime snapshots
+were equal. Production mutation and leaked process/listener counts were zero.
+
+After evidence extraction, retained client stores, DBs, logs, forbidden
+fields/values, unparseable JSON, and raw DB/log files all audited to zero.
+Independent review concluded `Critical=0`, `Important=0`. The gate authorizes
+only a draft `dev`-to-`main` PR; it does not authorize merge, deployment, unit
+changes, or production restart.
+
 ## Phase 3 Unload Mechanism Study — 2026-07-19
 
 ### Pre-execution gates and scope
