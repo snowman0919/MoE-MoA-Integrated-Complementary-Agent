@@ -22,8 +22,18 @@ resolving it in the shell. Tailscale Serve and Funnel are not required.
 
 See `docs/API_CLIENT_MODES.md` for the model aliases, standard request and SSE
 contracts, typed errors, curl/OpenAI SDK/OpenCode examples, and output limits.
-See `docs/HERMES_AGENT.md` for the environment-only Hermes configuration. New
-physical lifecycle validation remains pending.
+See `docs/HERMES_AGENT.md` for the environment-only Hermes configuration.
+
+Phase 3 physically selected exact full process stop/start and retained the
+existing 65,536-token executor settings. Three selected transient-systemd
+cycles passed the complete quality and teardown contract. The measured Python
+gateway stayed below the predeclared Rust thresholds, so no Rust rewrite is
+planned. These are isolated development results: the executor-only checked-in
+resident target is undeployed, lifecycle remains `disabled` with an empty unit
+map, and production was not restarted or changed. See
+`docs/MEMORY_OPTIMIZATION.md` and `docs/RUST_EVALUATION.md` for the exact
+measurements and limitations. The broader Phase 4 client matrix and soak remain
+pending.
 
 See `docs/MODEL_LIFECYCLE.md` for model states, retryable loading responses,
 idle policy, blockers, status routes, and isolated-development rules. Checked-in

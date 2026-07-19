@@ -19,6 +19,12 @@ recovery suite found no remaining Python-attributable correctness gap.
 All required conditions passed, so the plan's fail-closed branch for a separate
 approved Rust prototype specification was not entered.
 
+This decision accompanies the undeployed gateway+executor resident-source
+handoff. It does not enable lifecycle control, change the empty unit map, deploy
+optional on-demand roles, or modify the trace schema. Phase 4 client matrices
+and soak may add performance evidence, but a Rust prototype still requires a
+separate approved specification and a newly crossed threshold.
+
 ## Authoritative measurement
 
 The content-free result is

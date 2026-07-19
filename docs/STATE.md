@@ -1,6 +1,6 @@
 # State
 
-Updated: 2026-07-18
+Updated: 2026-07-19
 
 ## Branch and deployment
 
@@ -45,11 +45,64 @@ Updated: 2026-07-18
   setting changed. It physically passed cold single-flight, measured-shard
   progress, active/stream/continuation guards, ordered full-stop unload, memory
   return within host-snapshot noise, timeout, and one reload at 64K
-  configuration. Mechanism comparison, near-limit 64K quality, and any
-  production recommendation remain pending.
+  configuration.
+- Phase 3 physically selected exact full transient-systemd stop/start and the
+  unchanged executor baseline: context `65536`, `max_num_seqs=1`,
+  `1700000000` KV bytes, `gpu_memory_utilization=0.5`, and MARLIN. A later
+  three-cycle run passed the complete short, long, native-tool, code, review,
+  near-64K, teardown, and gateway-advertisement contract. This selection is not
+  deployed or enabled in production.
+
+## Phase 3 memory and topology decision
+
+- Authoritative mechanism result:
+  `/tmp/dgx-moa-phase3-9l7a3ayp/mechanisms-resumed.json`, SHA-256
+  `625b25afbadbb1e8ef42f95e836df627ec22e37c87e07301102eaaa6194b6af9`.
+  Full stop was selected. Sleep level 1 returned only 47.12% of full-stop
+  MemAvailable and failed PSS stability; sleep level 2 and live reset each
+  failed their first exact post-wake/reset short check.
+- Authoritative 64K candidate result:
+  `/tmp/dgx-moa-phase3-7vfm7bzv/candidates-confirmed.json`, SHA-256
+  `10f233b47acfb52e54ee41532963d68e38831e7337818d4335b57f3bc2eaad03`.
+  Baseline was selected. FP8 and chunked prefill had no material PSS benefit,
+  eager lost `612888576` bytes of matched MemAvailable beyond the noise band,
+  CPU offload worsened PSS, KV offload was incompatible with the installed
+  hybrid layout, and prefix-off was an exact no-op.
+- Authoritative three-cycle result:
+  `/tmp/dgx-moa-phase3-1vjxvw8w/selected.json`, SHA-256
+  `fb2fc9261509acf4b51fad4b201b5210bd5a9bcb6c578006c45856e2692e7f9b`.
+  Ready times were `938.3187154009938`, `270.0974161340855`, and
+  `274.08552565216087` seconds. Each backend near-limit request reported
+  `63786` prompt tokens; every exact PGID and unit-cgroup PSS/RSS was zero
+  after stop.
+- The contemporaneous checked-in record for the original three-role 64K
+  resident ended with `18525147136` bytes MemAvailable after planner start; its
+  raw artifact was unavailable to the final independent review. The isolated
+  Task 10 executor-only row measured `65156329472` bytes warm-ready MemAvailable and
+  `4532602880` bytes owned PSS; its initial cold snapshot was `120509042688`
+  bytes and its best post-unload settle was `120564150272` bytes with owned
+  PSS/RSS zero. These host snapshots are noisy comparisons, not GPU-byte
+  measurements.
+- The checked-in, undeployed resident target now requires gateway+executor only;
+  planner, reviewer, and reasoner are optional and retain `PartOf` cleanup.
+  On-demand loading still requires a separately reviewed fixed/adaptive
+  deployment and validated unit map. Rollback restores the prior
+  gateway+executor+planner+reviewer dependencies and prior readiness/stop
+  arrays.
+- The isolated five-minute Python gateway result is
+  `/tmp/dgx-moa-phase3-gateway-nzacnu_v/gateway-probe.json`, SHA-256
+  `4513ca3f6980f7fcfb81d7f7a360851325fcd7f90cddcb475f2612c17f2f6d62`.
+  Peak PSS was `48741376` bytes, idle CPU `0.24998221036527596%`, and
+  `/healthz` p99 `2.1657010074704885` ms. All Rust rejection gates passed, so
+  no crate was created.
 
 ## Validation baseline
 
+- Phase 3 serialized pre-commit publication gates: `533 passed`, one existing
+  Starlette TestClient warning; Ruff format/check passed for 53 files; MyPy
+  passed for 28 source files; user-unit verification and all shell syntax checks
+  passed; the checked-in trace corpus remained 10/10 complete at 100.0%; and
+  `git diff --check` passed.
 - Earlier phase-two automated scheduling gate: `527 passed`; it remains the
   pre-physical historical baseline.
 - Phase-two Task 10 gate after the tool-continuation compatibility fix:
@@ -137,6 +190,6 @@ Updated: 2026-07-18
 - The 7.5-hour soak includes classified startup rollback incidents before the
   memory-settle fix; the final resident state is healthy with no active loop.
 - Promotion still requires human review of PR #2 and a later main deployment.
-- The overall runtime-reliability Goal still requires the memory-mechanism
-  study, a near-limit 64K request, extended client matrices, soak, remaining
-  publication, push, and PR work.
+- The overall runtime-reliability Goal still requires the Phase 4 extended
+  client matrices and soak, followed by the separately approved push/PR
+  workflow. Phase 3 evidence does not authorize deployment.

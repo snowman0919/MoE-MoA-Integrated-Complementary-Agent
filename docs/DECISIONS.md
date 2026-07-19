@@ -65,3 +65,24 @@
 - Keep sleep, KV eviction, offload, mechanism selection, production enablement,
   and threshold recommendations pending physical measurement. Canonical states,
   routes, blockers, and pending evidence are in `docs/MODEL_LIFECYCLE.md`.
+
+## 2026-07-19
+
+- Select exact transient-systemd full process stop/start for executor unload and
+  retain it as mandatory fallback. Sleep level 1 returned only 47.12% of the
+  matched full-stop MemAvailable delta and failed owned-PSS stability; sleep
+  level 2 and live reset failed exact post-wake/reset quality.
+- Keep the executor baseline unchanged at context 65,536, one sequence,
+  1,700,000,000 KV bytes, `gpu_memory_utilization=0.5`, and MARLIN. FP8,
+  prefix-off, eager, chunked prefill, CPU offload, and KV offload did not beat
+  the deterministic memory/safety/quality rule.
+- Change only the undeployed checked-in resident target to gateway+executor.
+  Planner, reviewer, and reasoner remain optional with target cleanup. Keep
+  lifecycle disabled and the unit map empty until a separate human-reviewed
+  fixed/adaptive deployment proves migration and rollback.
+- Keep the gateway in Python. Its five-minute isolated peak PSS, idle CPU, and
+  health p99 were 46.48 MiB, 0.250%, and 2.166 ms, all below the predeclared
+  256 MiB, 1%, and 50 ms Rust thresholds; focused recovery tests passed.
+- Preserve all failed/partial Phase 3 roots and content-free evidence. Host
+  MemAvailable remains noisy, unified-memory GPU-byte fields remain null, and
+  model equality remains a metadata fingerprint rather than a content hash.

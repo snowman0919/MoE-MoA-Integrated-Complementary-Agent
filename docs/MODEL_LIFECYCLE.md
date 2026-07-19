@@ -2,7 +2,9 @@
 
 This is the canonical lifecycle contract. Checked-in configuration remains
 `lifecycle_mode: disabled` with `lifecycle_unit_map: {}`. Lifecycle control is
-not a production recommendation; physical evidence listed below is pending.
+not a production recommendation. Phase 3 physically selected the unload and
+executor configuration below, but production enablement and later client/soak
+evidence remain pending.
 
 ## States
 
@@ -156,7 +158,10 @@ does not reconcile or control model services.
 
 Phase 3 selected the existing 65,536-token executor configuration and exact
 full transient-systemd stop/start. The independently reviewed result at
-`/tmp/dgx-moa-phase3-1vjxvw8w/selected.json` proves three isolated cycles. Each
+`/tmp/dgx-moa-phase3-1vjxvw8w/selected.json`, SHA-256
+`fb2fc9261509acf4b51fad4b201b5210bd5a9bcb6c578006c45856e2692e7f9b`,
+proves three isolated cycles. Ready times were `938.3187154009938`,
+`270.0974161340855`, and `274.08552565216087` seconds. Each
 cycle revalidated its transient unit identity and cgroup before stop, collected
 the unit, left recorded PGID and unit-cgroup PSS/RSS at zero, released port
 19301, reported 63,786 backend prompt tokens, and passed the complete quality
@@ -170,6 +175,17 @@ on-demand loading and its typed `503` responses require a later approved
 fixed/adaptive configuration with an exact validated unit map. Rollback restores
 the previous four-service target dependency set and associated readiness/stop
 script arrays.
+
+The original Task 10 executor-only lifecycle evidence measured cold-load,
+warm-reload, and unload durations of `942.7537190914154`,
+`273.00104479002766`, and `1.361647605895996` seconds. Its warm-ready row had
+`65156329472` bytes MemAvailable and `4532602880` bytes owned PSS; its initial
+cold and best post-unload settled MemAvailable values were `120509042688` and
+`120564150272` bytes with owned PSS/RSS zero after unload. The contemporaneous
+checked-in record for the older three-role 64K resident says
+`18525147136` bytes remained after planner start; its raw artifact was not
+available to the final independent review. These are system-wide host snapshots
+and not device-only memory measurements.
 
 ## Pending physical evidence
 

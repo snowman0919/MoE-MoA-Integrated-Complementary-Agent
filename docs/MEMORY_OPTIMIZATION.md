@@ -128,6 +128,63 @@ preserved, and only exact regenerable experiment `cache/` directories were
 removed. After the confirmed run, the current harness gained a 10-GiB disk
 preflight gate for later studies; the confirmed artifact did not exercise it.
 
+## Selected repetition and resident handoff
+
+The authoritative independently reviewed repetition is
+`/tmp/dgx-moa-phase3-1vjxvw8w/selected.json`, SHA-256
+`fb2fc9261509acf4b51fad4b201b5210bd5a9bcb6c578006c45856e2692e7f9b`.
+It ran the selected baseline through exact transient user unit
+`dgx-moa-dev-phase3-e6a0d509.service` three times. Ready times were
+`938.3187154009938`, `270.0974161340855`, and `274.08552565216087` seconds;
+near-64K latency was `17.752001809887588`, `17.56501955492422`, and
+`17.564852259820327` seconds with exactly `63786` backend prompt tokens in
+every cycle. Each cycle also passed all short, long, native-tool, restricted-code,
+and strict-review checks. Process-group and unit-cgroup PSS/RSS were all zero
+after every stop, and port 19301 was released.
+
+The earlier repetition at
+`/tmp/dgx-moa-phase3-kp3gj7ms/selected.json`, SHA-256
+`09fc8090771c4f665b8943c9e410b5e21595dc03bf422be833866f637b79655e`,
+is retained as non-authoritative failed evidence. Its direct process cycles
+passed quality and exact teardown, but they did not execute the selected
+transient-systemd mechanism. It was rejected rather than relabeled.
+
+For the resident comparison, the contemporaneous checked-in validation record
+says the older three-role 64K profile measured `18525147136` bytes MemAvailable
+after planner start; no retained raw artifact was available to the final
+independent review for that historical row. The isolated Task 10 executor-only
+lifecycle row measured `65156329472` bytes warm-ready
+MemAvailable, `4532602880` bytes owned PSS, and `4947398656` bytes owned RSS.
+Its initial cold snapshot was `120509042688` bytes; best post-unload settled
+MemAvailable was `120564150272` bytes with owned PSS/RSS zero. Its lifecycle
+cold load, warm reload, and executor unload were `942.7537190914154`,
+`273.00104479002766`, and `1.361647605895996` seconds. These host snapshots
+compare topologies but are not device-only memory measurements.
+
+The checked-in resident target now requires only gateway and executor. Planner,
+reviewer, and reasoner are optional and retain `PartOf` cleanup. This is an
+undeployed source handoff: lifecycle remains disabled with an empty unit map,
+so optional on-demand loading and typed cold-role `503` behavior are not active.
+A later human-reviewed deployment must validate installed-unit diff, authorized
+fixed/adaptive mappings, profile transition, readiness, cold-role behavior, and
+rollback. Rollback restores gateway+executor+planner+reviewer requirements and
+the prior readiness/stop script arrays.
+
+## Gateway residency boundary
+
+The five-minute Python gateway result is
+`/tmp/dgx-moa-phase3-gateway-nzacnu_v/gateway-probe.json`, SHA-256
+`4513ca3f6980f7fcfb81d7f7a360851325fcd7f90cddcb475f2612c17f2f6d62`.
+Peak PSS/RSS was `48741376` / `56139776` bytes, idle CPU was
+`0.24998221036527596%`, and loopback health p99 was
+`2.1657010074704885` ms. These values and 360 passing focused recovery tests
+rejected a Rust rewrite under the predeclared thresholds. The first executable
+probe root `/tmp/dgx-moa-phase3-gateway-r8uzjlp_` is retained as a failed
+probe-only directory-order result; the corrected three-second smoke is
+`/tmp/dgx-moa-phase3-gateway-rf8b296y/gateway-probe.json`, SHA-256
+`4cdcf0f40e124818236d52175c9dd29a9e47880017a697d796752a260405d1da`.
+Neither replaces the authoritative five-minute result.
+
 ## Selection rule
 
 A live mechanism had to return at least 90% of A's matched MemAvailable delta,

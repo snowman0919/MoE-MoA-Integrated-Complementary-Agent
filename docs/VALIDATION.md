@@ -1630,3 +1630,63 @@ start, with the port still unbound. The corrected three-second smoke passed at
 `/tmp/dgx-moa-phase3-gateway-rf8b296y/gateway-probe.json`, SHA-256
 `4cdcf0f40e124818236d52175c9dd29a9e47880017a697d796752a260405d1da`.
 Detailed responsibilities and limitations are in `docs/RUST_EVALUATION.md`.
+
+## Phase 3 Publication Cross-check — 2026-07-19
+
+The published topology comparison preserves the earlier measured rows rather
+than substituting the later candidate run. The contemporaneous checked-in
+validation record says the older three-role 64K resident profile recorded
+`18525147136` bytes MemAvailable after planner start. No retained raw artifact
+was available to the final independent review for that historical row. Task 10's
+isolated executor-only lifecycle row recorded `65156329472` bytes warm-ready
+MemAvailable, `4532602880` bytes owned PSS, and `4947398656` bytes owned RSS.
+Its initial cold snapshot was `120509042688` bytes; the best post-unload settle
+was `120564150272` bytes with owned PSS/RSS zero. Cold load, warm reload, and
+executor unload were `942.7537190914154`, `273.00104479002766`, and
+`1.361647605895996` seconds. The separate full-stop mechanism stops were
+`1.146820979192853` and `1.118467804044485` seconds. Sleep-level-1 sleep/wake
+times were `21.733480336144567` / `38.78946190699935` and
+`2.1252455201465636` / `7.454574962845072` seconds; speed could not overcome
+its memory/stability rejection.
+
+Retained Phase 3 roots and their roles are explicit:
+
+- `/tmp/dgx-moa-phase3-52ffwbov`: empty retained path from the pre-process
+  tokenizer-count failure. Its cause comes from the contemporaneous run record
+  and cannot be independently reconstructed from this raw root.
+- `/tmp/dgx-moa-phase3-9l7a3ayp`: original mechanism failures plus the linked
+  authoritative resumed result; the original was not rewritten.
+- `/tmp/dgx-moa-phase3-dktd_9pv`: content-free long-fixture diagnostic.
+- `/tmp/dgx-moa-phase3-7vfm7bzv`: candidate generations and partials, including
+  the retained `ENOSPC` attempt, plus the authoritative confirmed selection.
+- `/tmp/dgx-moa-phase3-kp3gj7ms`: quality-passing direct-process repetition
+  rejected as non-authoritative because it did not run the selected transient
+  systemd mechanism.
+- `/tmp/dgx-moa-phase3-1vjxvw8w`: authoritative three-cycle transient-systemd
+  repetition and gateway advertisement probe.
+- `/tmp/dgx-moa-phase3-gateway-r8uzjlp_`: probe-only directory-order failure
+  before child process start.
+- `/tmp/dgx-moa-phase3-gateway-rf8b296y`: corrected three-second probe smoke.
+- `/tmp/dgx-moa-phase3-gateway-nzacnu_v`: authoritative five-minute Python
+  residency measurement.
+
+Every selected physical result is content-free and reports exact teardown. Host
+MemAvailable remains system-wide and noisy; GPU used/free bytes remain null;
+the executor equality check is revision plus path/count/size/mtime metadata,
+not a model-content hash. The checked-in resident target and lifecycle contract
+are undeployed, and Phase 3 made no tracked trace-schema change.
+
+### Serialized pre-commit publication gates
+
+All eight commands ran sequentially and exited zero:
+
+1. `uv run pytest -q`: `533 passed`, one existing third-party Starlette
+   TestClient deprecation warning.
+2. `uv run ruff format --check .`: 53 files already formatted.
+3. `uv run ruff check .`: all checks passed.
+4. `uv run mypy`: no issues in 28 source files.
+5. `systemd-analyze --user verify systemd/*`: no output.
+6. `for file in scripts/*.sh; do bash -n "$file"; done`: no output.
+7. `scripts/audit-trace-completeness.sh data/traces`: 10/10 complete, zero
+   incomplete/legacy, 100.0% mandatory-field completeness.
+8. `git diff --check`: no output.

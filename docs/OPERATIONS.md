@@ -57,6 +57,30 @@ Rollback example: set `DGX_MOA_LIFECYCLE_MODE=disabled` and
 Disabled mode makes no lifecycle driver calls. This task provides no production
 replacement, restart, or enablement procedure.
 
+## Phase 3 measured runtime decision
+
+The selected executor command remains `--max-model-len 65536`,
+`--max-num-seqs 1`, `--kv-cache-memory-bytes 1700000000`,
+`--gpu-memory-utilization 0.5`, and `--moe-backend MARLIN`. Do not add the
+rejected FP8, eager, prefix, chunked-prefill, CPU-offload, or KV-offload settings
+to production from this study.
+
+Exact full service stop/start is the selected unload and mandatory fallback.
+The original isolated lifecycle row measured a `942.7537190914154`-second cold
+load, `273.00104479002766`-second warm reload, and
+`1.361647605895996`-second executor unload. The separate mechanism matrix
+measured full-stop times `1.146820979192853` and `1.118467804044485` seconds.
+Sleep level 1 slept in `21.733480336144567` / `2.1252455201465636` seconds and
+woke in `38.78946190699935` / `7.454574962845072` seconds, but returned only
+47.12% of full-stop memory and was unstable. Those timings do not authorize a
+sleep deployment.
+
+The selected three-cycle transient-unit result reached ready in
+`938.3187154009938`, `270.0974161340855`, and `274.08552565216087` seconds and
+left exact owned PSS/RSS zero after every stop. The operational source of truth
+for limitations and artifact hashes is `docs/MEMORY_OPTIMIZATION.md`; these
+numbers are evidence, not an instruction to act on production units.
+
 ## Profiles
 
 The checked-in resident target is an undeployed executor-only proposal: it

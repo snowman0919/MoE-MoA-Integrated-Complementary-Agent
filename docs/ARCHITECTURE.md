@@ -33,6 +33,15 @@ target alone does not activate optional on-demand loading. A later reviewed
 fixed/adaptive deployment with authorized unit mappings is required before cold
 optional roles can use the typed loading/unavailable `503` contract.
 
+The topology follows physical Phase 3 evidence. Exact full process stop/start
+is the selected executor unload and mandatory fallback. The retained executor
+runtime remains context 65,536, one sequence, 1,700,000,000 KV bytes,
+`gpu_memory_utilization=0.5`, and MARLIN. Three transient-systemd cycles passed
+the complete quality contract and left both process-group and unit-cgroup
+PSS/RSS at zero after every stop. Sleep levels, live cache reset, and the
+one-variable memory candidates did not satisfy the same memory/stability/quality
+selection rule. Exact rows are in `MEMORY_OPTIMIZATION.md`.
+
 `main` is the reviewed production control plane and trace producer. `dev` is the
 integration branch. Future recursive work follows `main` MoA -> OpenCode -> an
 isolated `auto/*` worktree created from `dev`; candidate code runs only as an
@@ -59,3 +68,8 @@ Executable unload is exact-unit full service stop, inactive verification, memory
 sampling, then a `cold` transition and sample. Failures become sanitized
 `failed` state. Full state, mode, race, recovery, and API contracts are in
 `docs/MODEL_LIFECYCLE.md`.
+
+The gateway remains Python. Its isolated five-minute peak process-group PSS was
+`48741376` bytes, idle CPU was `0.24998221036527596%`, and loopback health p99
+was `2.1657010074704885` ms. These values passed the predeclared no-Rust
+thresholds; `RUST_EVALUATION.md` records the boundary and limitations.
