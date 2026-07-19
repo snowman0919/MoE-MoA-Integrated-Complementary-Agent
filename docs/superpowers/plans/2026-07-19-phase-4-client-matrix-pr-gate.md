@@ -181,12 +181,14 @@ and the exactly owned temporary relay only if Hermes cannot address loopback in
 the selected configuration. Run two normal cases, one streamed case, one tool
 case, and one multi-step case; verify API-call counts and filesystem hashes.
 
-- [ ] **Step 7: Recheck near-64K context and write content-free evidence**
+- [ ] **Step 7: Link the authoritative near-64K context evidence and write content-free evidence**
 
-Reuse the Phase 3 deterministic target-prompt helper to submit one 63,000–64,500
-token templated request without lowering context. Write atomic JSON containing
-only contract fields, counts, statuses, token counts, timing, hashes, booleans,
-versions, and artifact paths.
+Hash and link the retained Phase 3 selected result that submitted the deterministic
+63,000–64,500-token prompt directly to the same executor baseline in all three
+physical cycles. Do not reinterpret a gateway agent request with added controller
+context as an executor-capacity test. Write atomic JSON containing only contract
+fields, counts, statuses, token counts, timing, hashes, booleans, versions, and
+artifact paths.
 
 - [ ] **Step 8: Tear down all owned warm processes**
 
