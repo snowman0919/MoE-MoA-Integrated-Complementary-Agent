@@ -2436,11 +2436,18 @@ class SystemdLifecycleDriver:
                 "--show-cursor",
             ],
         )
+        if output.splitlines() == ["-- No entries --"]:
+            output = self._run(
+                "cursor",
+                ["journalctl", "--user", "--no-pager", "-n", "0", "--show-cursor"],
+            )
         lines = output.splitlines()
         prefix = "-- cursor: "
-        if len(lines) != 1 or not lines[0].startswith(prefix):
+        cursor_lines = [line for line in lines if line.startswith(prefix)]
+        other_lines = [line for line in lines if not line.startswith(prefix)]
+        if len(cursor_lines) != 1 or any(line != "-- No entries --" for line in other_lines):
             raise LifecycleDriverError("cursor", "malformed_output")
-        cursor = lines[0][len(prefix) :]
+        cursor = cursor_lines[0][len(prefix) :]
         if not self._valid_cursor(cursor):
             raise LifecycleDriverError("cursor", "malformed_output")
         return cursor

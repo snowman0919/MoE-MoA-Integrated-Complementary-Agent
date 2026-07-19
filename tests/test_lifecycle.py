@@ -1843,6 +1843,40 @@ def test_systemd_driver_uses_only_exact_argument_vectors(
     assert all("shell" not in kwargs for _, kwargs in calls)
 
 
+def test_systemd_driver_uses_global_cursor_for_never_started_unit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = lifecycle()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        output = (
+            "-- No entries --\n"
+            if "-u" in args
+            else "-- No entries --\n-- cursor: s=global123;i=5\n"
+        )
+        return subprocess.CompletedProcess(args, 0, stdout=output, stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    driver = module.SystemdLifecycleDriver({"executor": "dgx-moa-dev-executor.service"})
+
+    assert driver.capture_progress_cursor("executor") == "s=global123;i=5"
+    assert calls == [
+        [
+            "journalctl",
+            "--user",
+            "-u",
+            "dgx-moa-dev-executor.service",
+            "--no-pager",
+            "-n",
+            "0",
+            "--show-cursor",
+        ],
+        ["journalctl", "--user", "--no-pager", "-n", "0", "--show-cursor"],
+    ]
+
+
 def test_systemd_progress_is_scoped_to_a_valid_bounded_cursor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
