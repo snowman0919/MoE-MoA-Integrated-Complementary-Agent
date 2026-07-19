@@ -6,6 +6,7 @@ from typing import Any, Literal
 from .state import Phase, SessionState
 
 RuntimeMode = Literal["chat", "agent", "orchestrated"]
+ReasonerMode = Literal["required", "optional"]
 RequestClass = Literal[
     "plain_chat",
     "read_only_question",
@@ -70,14 +71,30 @@ def classify_request(
     return "read_only_question" if latest.endswith("?") else "plain_chat"
 
 
-def required_roles(mode: RuntimeMode, request_class: RequestClass) -> tuple[str, ...]:
+def required_roles(
+    mode: RuntimeMode,
+    request_class: RequestClass,
+    *,
+    reasoner_mode: ReasonerMode | None = None,
+) -> tuple[str, ...]:
     if mode != "orchestrated":
         return ("executor",)
+    roles: tuple[str, ...]
     if request_class in {"multi_file_task", "recovery_task"}:
-        return ("planner", "executor")
-    if request_class in {"high_risk_task", "explicit_orchestrated"}:
-        return ("planner", "executor", "reviewer")
-    return ("executor",)
+        roles = ("planner", "executor")
+    elif request_class in {"high_risk_task", "explicit_orchestrated"}:
+        roles = ("planner", "executor", "reviewer")
+    else:
+        roles = ("executor",)
+    return roles + (("reasoner",) if reasoner_mode == "required" else ())
+
+
+def optional_roles(
+    mode: RuntimeMode,
+    *,
+    reasoner_mode: ReasonerMode | None = None,
+) -> tuple[str, ...]:
+    return ("reasoner",) if mode == "orchestrated" and reasoner_mode == "optional" else ()
 
 
 def review_fails_closed(request_class: RequestClass) -> bool:

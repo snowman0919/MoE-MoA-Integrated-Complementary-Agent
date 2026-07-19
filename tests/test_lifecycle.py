@@ -347,6 +347,49 @@ def test_new_load_generation_resets_progress_and_disable_all_is_durable(
     assert restarted.get("planner").generation == second.generation
 
 
+def test_progress_bands_are_monotonic_within_a_generation(tmp_path: Path) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "state.db", ("planner",))
+    record = store.get("planner")
+    queued = store.transition("planner", "load_queued", expected_transition_id=record.transition_id)
+    starting = store.transition(
+        "planner", "process_starting", expected_transition_id=queued.transition_id
+    )
+    loading = store.transition(
+        "planner", "loading_weights", expected_transition_id=starting.transition_id
+    )
+    measured = store.update(
+        "planner",
+        loading.transition_id,
+        progress_value=50.0,
+        overall_load_percent=35.0,
+        progress_quality="measured_shards",
+    )
+    stale_log = store.update(
+        "planner",
+        measured.transition_id,
+        progress_value=40.0,
+        overall_load_percent=29.0,
+        progress_quality="measured_shards",
+    )
+    initialized = store.transition(
+        "planner", "initializing_engine", expected_transition_id=stale_log.transition_id
+    )
+    warmed = store.transition(
+        "planner", "warming_up", expected_transition_id=initialized.transition_id
+    )
+    ready = store.transition("planner", "ready", expected_transition_id=warmed.transition_id)
+
+    assert queued.overall_load_percent == 0.0
+    assert starting.overall_load_percent == 5.0
+    assert loading.overall_load_percent == 5.0
+    assert stale_log.weight_load_percent == 50.0
+    assert stale_log.overall_load_percent == 35.0
+    assert initialized.overall_load_percent == 70.0
+    assert warmed.overall_load_percent == 90.0
+    assert ready.overall_load_percent == 100.0
+
+
 def test_idle_policy_limits_have_conservative_defaults_and_yaml_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1924,7 +1967,7 @@ def test_progress_parser_recognizes_post_weight_stages(line: str, expected_state
 
     assert progress.state == expected_state
     assert progress.weight_load_percent == 100.0
-    assert progress.progress_quality == "estimated"
+    assert progress.progress_quality == "measured_phase"
 
 
 @pytest.mark.parametrize(
@@ -1955,7 +1998,7 @@ def test_progress_parser_recognizes_post_weight_stages(line: str, expected_state
             None,
             None,
             "warming_up",
-            "estimated",
+            "measured_phase",
         ),
     ],
 )
@@ -2092,6 +2135,7 @@ async def test_coordinator_preserves_prior_progress_when_new_logs_are_invalid(
     record = store.get("executor")
 
     assert record.progress_value == 60.0
+    assert record.overall_load_percent == 41.0
     assert record.progress_quality == "measured_shards"
     await coordinator.close()
 

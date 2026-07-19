@@ -36,7 +36,9 @@ LifecycleState = Literal[
 DriverStatus = Literal["active", "inactive", "failed"]
 DriverOperation = Literal["status", "start", "stop", "cursor", "progress"]
 DriverErrorKind = Literal["timeout", "command_failed", "malformed_output"]
-ProgressQuality = Literal["measured_bytes", "measured_shards", "estimated", "unavailable"]
+ProgressQuality = Literal[
+    "measured_bytes", "measured_shards", "measured_phase", "estimated", "unavailable"
+]
 LeaseKind = Literal["active_request", "open_stream", "continuation"]
 RequestLeaseKind = Literal["active_request", "open_stream"]
 GuardKind = Literal["evaluation_guard", "profile_guard"]
@@ -393,7 +395,7 @@ def parse_load_progress(
             progress_quality=(
                 quality
                 if measured == 100.0 and quality in {"measured_bytes", "measured_shards"}
-                else "estimated"
+                else "measured_phase"
             ),
         )
     return LoadProgress(
@@ -1104,6 +1106,21 @@ class LifecycleStore:
         values.update(changes)
         if "progress_value" in changes and "weight_load_percent" not in changes:
             values["weight_load_percent"] = changes["progress_value"]
+        if "progress_value" in changes or "weight_load_percent" in changes:
+            weight_progress = values["weight_load_percent"]
+            if weight_progress is not None and current.weight_load_percent is not None:
+                weight_progress = max(current.weight_load_percent, float(weight_progress))
+            values["progress_value"] = weight_progress
+            values["weight_load_percent"] = weight_progress
+        if (
+            "overall_load_percent" in changes
+            and changes["overall_load_percent"] is not None
+            and current.overall_load_percent is not None
+        ):
+            values["overall_load_percent"] = max(
+                current.overall_load_percent,
+                float(changes["overall_load_percent"]),
+            )
         if values.get("failure_class") is not None:
             values["failure_class"] = _sanitize_failure_class(str(values["failure_class"]))
         if values.get("failure_detail") is not None:
@@ -1164,6 +1181,10 @@ class LifecycleStore:
                 )
             elif state == "process_starting":
                 values.update(load_started_at=now, overall_load_percent=5.0)
+            elif state == "initializing_engine":
+                values["overall_load_percent"] = 70.0
+            elif state == "warming_up":
+                values["overall_load_percent"] = 90.0
             if state == "ready":
                 values.update(
                     ready_since=current.ready_since if current.state == "unload_queued" else now,
@@ -1885,6 +1906,11 @@ class LifecycleCoordinator:
                     role,
                     record.transition_id,
                     progress_value=progress.weight_load_percent,
+                    overall_load_percent=(
+                        5.0 + 0.60 * progress.weight_load_percent
+                        if progress.weight_load_percent is not None
+                        else record.overall_load_percent
+                    ),
                     progress_quality=progress.progress_quality,
                     eta_seconds=eta,
                 )
@@ -1896,7 +1922,8 @@ class LifecycleCoordinator:
                 ready_quality: ProgressQuality = (
                     record.progress_quality
                     if record.progress_value == 100.0
-                    and record.progress_quality in {"measured_bytes", "measured_shards"}
+                    and record.progress_quality
+                    in {"measured_bytes", "measured_shards", "measured_phase"}
                     else "estimated"
                 )
                 if record.state == "loading_weights":

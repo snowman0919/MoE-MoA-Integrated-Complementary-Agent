@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import sqlite3
 import time
 from collections import Counter
@@ -387,10 +388,14 @@ class UsageStore:
         success: bool,
         failure_class: str | None,
         ready_at: Mapping[str, float | None] | None = None,
+        role_failures: Mapping[str, str] | None = None,
     ) -> None:
-        safe_failure = (
-            "_".join(failure_class.lower().split())[:64] if failure_class is not None else None
-        )
+        def safe_failure_class(value: str | None) -> str | None:
+            if value is None:
+                return None
+            return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")[:64] or "unknown"
+
+        safe_failure = safe_failure_class(failure_class)
         with self._connect() as database:
             database.execute("BEGIN IMMEDIATE")
             rows = database.execute(
@@ -405,12 +410,13 @@ class UsageStore:
                     continue
                 requested_at = float(row["requested_at"])
                 role_ready_at = (ready_at or {}).get(row["role"], row["ready_at"])
+                role_failure = safe_failure_class((role_failures or {}).get(row["role"]))
                 finalization = RoleRequestUsageFinalization(
                     ready_at=role_ready_at,
                     first_byte_at=first_byte_at,
                     completed_at=completed_at,
-                    success=success,
-                    failure_class=safe_failure,
+                    success=success and role_failure is None,
+                    failure_class=role_failure or safe_failure,
                     active_duration_ms=round((completed_at - requested_at) * 1_000),
                 )
                 if finalization.completed_at < requested_at:

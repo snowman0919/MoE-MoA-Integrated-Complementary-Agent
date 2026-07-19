@@ -5,6 +5,7 @@ import json
 import sqlite3
 import subprocess
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 
@@ -1346,19 +1347,26 @@ async def test_concurrent_cold_api_requests_return_one_json_load_and_usage_each(
         assert response.headers["Retry-After"]
         assert 1 <= int(response.headers["Retry-After"]) <= 300
         assert response.headers["X-DGX-MOA-Model-State"] == "load_queued"
+        assert response.headers["X-DGX-MOA-Model-Role"] == "executor"
+        assert response.headers["X-DGX-MOA-Load-Generation"] == "1"
         assert response.headers["X-DGX-MOA-Weight-Load-Percent"] == "unavailable"
         payload = json.loads(response.body)
         assert payload["error"]["code"] == "model_loading"
         assert payload["model_state"]["role"] == "executor"
         assert set(payload["model_state"]) == {
             "role",
+            "generation",
             "state",
             "transition_id",
             "weight_load_percent",
             "progress_quality",
             "overall_load_percent",
             "estimated_ready_seconds",
+            "ready",
         }
+        assert payload["model_state"]["generation"] == 1
+        assert payload["model_state"]["ready"] is False
+        assert payload["model_state"]["overall_load_percent"] == 0.0
         assert payload["model_state"]["weight_load_percent"] is None
         assert payload["model_state"]["progress_quality"] == "unavailable"
         serialized = json.dumps(payload)
@@ -1377,6 +1385,104 @@ async def test_concurrent_cold_api_requests_return_one_json_load_and_usage_each(
     assert sum(record.load_triggered for record in role_usage) == 1
     assert driver.calls.count(("start", "executor")) == 1
     assert not any(operation == "stop" for operation, _ in driver.calls)
+
+
+@pytest.mark.parametrize(
+    "reasoner_mode",
+    ["required", "optional"],
+)
+def test_explicit_reasoner_policy_is_required_or_degraded_when_cold(
+    settings,
+    stub_provider: StubProvider,
+    reasoner_mode: str,
+) -> None:  # type: ignore[no-untyped-def]
+    managed = ("planner", "executor", "reviewer", "reasoner")
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {role: f"dgx-moa-dev-{role}.service" for role in managed},
+        }
+    )
+    driver = FakeLifecycleDriver(
+        {
+            "planner": "active",
+            "executor": "active",
+            "reviewer": "active",
+            "reasoner": "inactive",
+        }
+    )
+
+    async def health_probe(role: str) -> bool:
+        return role != "reasoner"
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health_probe,
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": reasoner_mode},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "analyze explicitly"}],
+                "metadata": {"reasoner_mode": reasoner_mode},
+            },
+        )
+        for _ in range(1_000):
+            if ("start", "reasoner") in driver.calls:
+                break
+            time.sleep(0.001)
+        role_usage = app.state.usage.recent_role_requests("reasoner")
+        events = app.state.store.events(reasoner_mode)
+
+    assert len(role_usage) == 1
+    assert role_usage[0].load_triggered is True
+    assert driver.calls.count(("start", "reasoner")) == 1
+    if reasoner_mode == "required":
+        assert response.status_code == 503
+        assert response.headers["X-DGX-MOA-Model-Role"] == "reasoner"
+        assert role_usage[0].failure_class == "model_loading"
+        assert "reasoner" not in stub_provider.calls
+    else:
+        assert response.status_code == 200
+        assert "reasoner" not in stub_provider.calls
+        assert role_usage[0].failure_class == "reasoner_unavailable"
+        assert any(
+            event["event_type"] == "role_degraded"
+            and event["payload"]
+            == {
+                "role": "reasoner",
+                "reason": "reasoner_unavailable",
+            }
+            for event in events
+        )
+
+
+def test_explicit_ready_reasoner_is_used_only_when_selected(
+    settings,
+    stub_provider: StubProvider,
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "analyze explicitly"}],
+                "metadata": {"reasoner_mode": "required"},
+            },
+        )
+        reasoner_usage = client.app.state.usage.recent_role_requests("reasoner")
+
+    assert response.status_code == 200
+    assert stub_provider.calls[:3] == ["reasoner", "planner", "executor"]
+    assert len(reasoner_usage) == 1
+    assert reasoner_usage[0].success is True
 
 
 def test_observe_lifecycle_records_state_without_blocking_or_controlling(
@@ -1551,24 +1657,39 @@ def test_model_status_is_authenticated_typed_and_content_free(
     payload = detail.json()
     assert payload["role"] == "executor"
     assert payload["state"] == "failed"
+    assert payload["generation"] == 1
+    assert payload["ready"] is False
     assert payload["failure_class"] == "health_timeout"
+    assert payload["last_error_class"] == "health_timeout"
     assert payload["retry_count"] == 1
     assert payload["idle_decision"] == decision.model_dump(mode="json") | {"decided_at": 100.0}
     assert payload["lifecycle_mode"] == "observe"
     assert set(payload) == {
         "role",
         "state",
+        "generation",
+        "ready",
         "transition_id",
         "transitioned_at",
         "updated_at",
         "ready_since",
         "last_used_at",
+        "load_started_at",
+        "ready_at",
+        "last_requested_at",
+        "last_completed_at",
+        "active_requests",
+        "open_streams",
+        "pending_continuations",
         "weight_load_percent",
         "progress_quality",
         "overall_load_percent",
         "estimated_ready_seconds",
         "failure_class",
+        "last_error_class",
         "retry_count",
+        "adaptive_timeout_seconds",
+        "idle_seconds",
         "idle_decision",
         "lifecycle_mode",
         "control",
@@ -1785,6 +1906,8 @@ async def test_managed_request_rejects_an_unmapped_required_role_honestly(
     assert payload["model_state"] == {
         "role": "planner",
         "state": "unmanaged",
+        "generation": None,
+        "ready": False,
         "transition_id": None,
         "weight_load_percent": None,
         "progress_quality": "unavailable",
@@ -2185,6 +2308,44 @@ def test_invalid_request_field_combinations_return_typed_validation_errors(
     assert response.json()["error"]["message"] == message
     assert response.json()["error"]["type"] == "invalid_request_error"
     assert response.json()["error"]["code"] == "invalid_request"
+
+
+@pytest.mark.parametrize(
+    ("model", "reasoner_mode", "message"),
+    [
+        (
+            "dgx-moa-agent",
+            "required",
+            "metadata.reasoner_mode requires dgx-moa-orchestrated",
+        ),
+        (
+            "dgx-moa-orchestrated",
+            "automatic",
+            "metadata.reasoner_mode must be required or optional",
+        ),
+    ],
+)
+def test_reasoner_policy_requires_explicit_valid_orchestrated_mode(
+    settings,
+    stub_provider: StubProvider,
+    model: str,
+    reasoner_mode: str,
+    message: str,
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "work"}],
+                "metadata": {"reasoner_mode": reasoner_mode},
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["message"] == message
+    assert stub_provider.calls == []
 
 
 @pytest.mark.parametrize("model", ["dgx-moa-chat", "dgx-moa-agent"])
