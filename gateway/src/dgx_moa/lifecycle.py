@@ -1784,7 +1784,12 @@ class LifecycleCoordinator:
             try:
                 if isinstance(policy_config, LifecyclePolicy):
                     records: Sequence[RoleUsageRecord] = cast(
-                        Sequence[RoleUsageRecord], usage.recent_role_requests(role)
+                        Sequence[RoleUsageRecord],
+                        usage.recent_role_requests(
+                            role,
+                            success=True,
+                            limit=policy_config.recent_sample_window,
+                        ),
                     )
                     policy_arguments: dict[str, Any] = {
                         "policy": policy_config.roles[role],

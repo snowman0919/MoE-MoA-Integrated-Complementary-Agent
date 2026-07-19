@@ -305,6 +305,37 @@ def test_role_aggregate_counts_are_not_limited_by_adaptive_sample_window(
     assert sum(statistics["requests_by_hour_utc"].values()) == 5
 
 
+def test_recent_successful_role_window_ignores_newer_failures(tmp_path: Path) -> None:
+    module = usage_module()
+    store = module.UsageStore(tmp_path / "state.db", sample_window=2)
+    outcomes = (True, True, True, False, False, False, False)
+    for index, success in enumerate(outcomes):
+        request_id = f"request-{index}"
+        store.start_roles(
+            request_id,
+            ("planner",),
+            session_id=f"session-{index}",
+            requested_at=float(index),
+            client_mode="orchestrated",
+            request_class="explicit_orchestrated",
+            states={"planner": "warm"},
+            load_triggered={"planner": False},
+        )
+        store.finalize_roles(
+            request_id,
+            completed_at=float(index) + 0.5,
+            first_byte_at=float(index) + 0.25,
+            success=success,
+            failure_class=None if success else "model_loading",
+        )
+
+    recent = store.recent_role_requests("planner")
+    successful = store.recent_role_requests("planner", success=True, limit=3)
+
+    assert [row.success for row in recent] == [False, False]
+    assert [row.requested_at for row in successful] == [0.0, 1.0, 2.0]
+
+
 def test_token_counts_are_bounded_to_sqlite_signed_integer_range() -> None:
     module = usage_module()
     maximum = 2**63 - 1

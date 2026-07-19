@@ -498,24 +498,39 @@ class UsageStore:
             ).fetchall()
         return [self._record(row) for row in reversed(rows)]
 
-    def recent_role_requests(self, role: str) -> list[RoleRequestUsageRecord]:
+    def recent_role_requests(
+        self,
+        role: str,
+        *,
+        success: bool | None = None,
+        limit: int | None = None,
+    ) -> list[RoleRequestUsageRecord]:
         if role not in {"executor", "planner", "reviewer", "reasoner", "judge"}:
             raise ValueError("unknown role")
+        bounded_limit = self.sample_window if limit is None else limit
+        if (
+            not isinstance(bounded_limit, int)
+            or isinstance(bounded_limit, bool)
+            or not 1 <= bounded_limit <= 10_000
+        ):
+            raise ValueError("role request limit must be between 1 and 10000")
+        where = "WHERE role = ?"
+        parameters: tuple[Any, ...] = (role, bounded_limit)
+        if success is not None:
+            where += " AND success = ?"
+            parameters = (role, int(success), bounded_limit)
         with self._connect() as database:
             rows = database.execute(
                 f"SELECT {ROLE_REQUEST_COLUMNS} FROM role_request_usage "
-                "WHERE role = ? ORDER BY requested_at DESC, rowid DESC LIMIT ?",
-                (role, self.sample_window),
+                f"{where} ORDER BY requested_at DESC, rowid DESC LIMIT ?",
+                parameters,
             ).fetchall()
         return [self._role_record(row) for row in reversed(rows)]
 
     def role_statistics(self, role: str, *, now: float | None = None) -> dict[str, Any]:
         records = self.recent_role_requests(role)
         current_time = time.time() if now is None else now
-        successful = sorted(
-            (record for record in records if record.success is True),
-            key=lambda record: record.requested_at,
-        )
+        successful = self.recent_role_requests(role, success=True)
         requested = [record.requested_at for record in successful]
         gaps = [
             later - earlier
