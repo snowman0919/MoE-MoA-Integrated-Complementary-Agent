@@ -238,7 +238,7 @@ true, `stream_malformed == 0`, `stream_duplicate_done == 0`,
 - Modify: `docs/VALIDATION.md`
 - Modify: `docs/STATE.md`
 - Modify: `docs/OPERATIONS.md`
-- Modify: `docs/SECURITY_REVIEW.md`
+- Modify: `docs/SECURITY.md`
 
 - [ ] **Step 1: Record the exact measured matrix and soak result**
 
@@ -264,7 +264,7 @@ git status --short
 - [ ] **Step 4: Commit the evidence**
 
 ```bash
-git add docs/VALIDATION.md docs/STATE.md docs/OPERATIONS.md docs/SECURITY_REVIEW.md
+git add docs/VALIDATION.md docs/STATE.md docs/OPERATIONS.md docs/SECURITY.md
 git commit -m "docs(validation): record phase four client gate"
 ```
 

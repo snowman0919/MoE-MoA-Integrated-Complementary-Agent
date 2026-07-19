@@ -18,7 +18,7 @@ dev driver. No external queue/database/service is added.
 **Tech stack:** Python 3.12, FastAPI, Pydantic, SQLite, httpx, asyncio, existing
 systemd user services, pytest, Ruff, MyPy.
 
-**Starting dev commit:** `08cb8ff`  
+**Starting dev commit:** `08cb8ff`
 **Production reference:** `c2a9af0d6b5db8dd940842c56a7236ac867061ff`
 
 **Design:** `docs/superpowers/specs/2026-07-18-lifecycle-usage-trace-design.md`
