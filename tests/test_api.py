@@ -5,6 +5,7 @@ import json
 import sqlite3
 import subprocess
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 
@@ -469,7 +470,7 @@ async def test_request_after_idle_full_stop_returns_typed_loading_and_starts_onc
     ("mode", "expected_scheduler", "expected_driver_calls"),
     [
         ("disabled", False, []),
-        ("observe", True, []),
+        ("observe", True, [("status", "executor")]),
         ("fixed", True, [("status", "executor")]),
         ("adaptive", True, [("status", "executor")]),
     ],
@@ -510,7 +511,7 @@ async def test_lifespan_mode_contract_controls_recovery_and_one_scheduler(
         if scheduler is not None:
             assert not scheduler.done()
         assert driver.calls == expected_driver_calls
-        assert health_calls == (["executor"] if mode in {"fixed", "adaptive"} else [])
+        assert health_calls == (["executor"] if mode in {"observe", "fixed", "adaptive"} else [])
 
     assert app.state.lifecycle._scheduler_task is None
 
@@ -1266,7 +1267,7 @@ def test_expired_continuation_is_not_revived_by_a_late_tool_result(
                 "SELECT expires_at FROM model_lifecycle_leases WHERE kind = 'continuation'"
             ).fetchone()
 
-        clock[0] = 701.0
+        clock[0] = 1_001.0
         assert app.state.lifecycle_store.unload_blockers("executor") == frozenset()
         late = client.post(
             "/v1/chat/completions",
@@ -1286,7 +1287,7 @@ def test_expired_continuation_is_not_revived_by_a_late_tool_result(
         )
         record = app.state.lifecycle_store.get("executor")
 
-    assert expires_at == (700.0,)
+    assert expires_at == (1_000.0,)
     assert late.status_code == 200
     assert record.continuation_lease_count == 0
 
@@ -1336,6 +1337,7 @@ async def test_concurrent_cold_api_requests_return_one_json_load_and_usage_each(
                 break
             await asyncio.sleep(0.001)
         usage = app.state.usage.recent_requests()
+        role_usage = app.state.usage.recent_role_requests("executor")
         assert_no_request_leases(app)
 
     assert len(responses) == 20
@@ -1345,19 +1347,26 @@ async def test_concurrent_cold_api_requests_return_one_json_load_and_usage_each(
         assert response.headers["Retry-After"]
         assert 1 <= int(response.headers["Retry-After"]) <= 300
         assert response.headers["X-DGX-MOA-Model-State"] == "load_queued"
+        assert response.headers["X-DGX-MOA-Model-Role"] == "executor"
+        assert response.headers["X-DGX-MOA-Load-Generation"] == "1"
         assert response.headers["X-DGX-MOA-Weight-Load-Percent"] == "unavailable"
         payload = json.loads(response.body)
         assert payload["error"]["code"] == "model_loading"
         assert payload["model_state"]["role"] == "executor"
         assert set(payload["model_state"]) == {
             "role",
+            "generation",
             "state",
             "transition_id",
             "weight_load_percent",
             "progress_quality",
             "overall_load_percent",
             "estimated_ready_seconds",
+            "ready",
         }
+        assert payload["model_state"]["generation"] == 1
+        assert payload["model_state"]["ready"] is False
+        assert payload["model_state"]["overall_load_percent"] == 0.0
         assert payload["model_state"]["weight_load_percent"] is None
         assert payload["model_state"]["progress_quality"] == "unavailable"
         serialized = json.dumps(payload)
@@ -1370,8 +1379,175 @@ async def test_concurrent_cold_api_requests_return_one_json_load_and_usage_each(
     assert all(record.retryable_failure_class == "model_loading" for record in usage)
     assert all(record.model_state == "loading" for record in usage)
     assert sum(record.load_triggered for record in usage) == 1
+    assert len(role_usage) == 20
+    assert all(record.success is False for record in role_usage)
+    assert all(record.failure_class == "model_loading" for record in role_usage)
+    assert sum(record.load_triggered for record in role_usage) == 1
     assert driver.calls.count(("start", "executor")) == 1
     assert not any(operation == "stop" for operation, _ in driver.calls)
+
+
+@pytest.mark.parametrize(
+    "reasoner_mode",
+    ["required", "optional"],
+)
+def test_explicit_reasoner_policy_is_required_or_degraded_when_cold(
+    settings,
+    stub_provider: StubProvider,
+    reasoner_mode: str,
+) -> None:  # type: ignore[no-untyped-def]
+    managed = ("planner", "executor", "reviewer", "reasoner")
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {role: f"dgx-moa-dev-{role}.service" for role in managed},
+        }
+    )
+    driver = FakeLifecycleDriver(
+        {
+            "planner": "active",
+            "executor": "active",
+            "reviewer": "active",
+            "reasoner": "inactive",
+        }
+    )
+
+    async def health_probe(role: str) -> bool:
+        return role != "reasoner"
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health_probe,
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": reasoner_mode},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "analyze explicitly"}],
+                "metadata": {"reasoner_mode": reasoner_mode},
+            },
+        )
+        for _ in range(1_000):
+            if ("start", "reasoner") in driver.calls:
+                break
+            time.sleep(0.001)
+        role_usage = app.state.usage.recent_role_requests("reasoner")
+        events = app.state.store.events(reasoner_mode)
+
+    assert len(role_usage) == 1
+    assert role_usage[0].load_triggered is True
+    assert driver.calls.count(("start", "reasoner")) == 1
+    if reasoner_mode == "required":
+        assert response.status_code == 503
+        assert response.headers["X-DGX-MOA-Model-Role"] == "reasoner"
+        assert role_usage[0].failure_class == "model_loading"
+        assert "reasoner" not in stub_provider.calls
+    else:
+        assert response.status_code == 200
+        assert "reasoner" not in stub_provider.calls
+        assert role_usage[0].failure_class == "reasoner_unavailable"
+        assert any(
+            event["event_type"] == "role_degraded"
+            and event["payload"]
+            == {
+                "role": "reasoner",
+                "reason": "reasoner_unavailable",
+            }
+            for event in events
+        )
+
+
+def test_explicit_ready_reasoner_is_used_only_when_selected(
+    settings,
+    stub_provider: StubProvider,
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "analyze explicitly"}],
+                "metadata": {"reasoner_mode": "required"},
+            },
+        )
+        reasoner_usage = client.app.state.usage.recent_role_requests("reasoner")
+
+    assert response.status_code == 200
+    assert stub_provider.calls[:3] == ["reasoner", "planner", "executor"]
+    assert len(reasoner_usage) == 1
+    assert reasoner_usage[0].success is True
+
+
+@pytest.mark.parametrize(
+    ("driver_state", "expected_status"),
+    [("inactive", 503), ("active", 200)],
+)
+def test_failure_circuit_blocks_mutation_but_preserves_ready_traffic(
+    settings,
+    stub_provider: StubProvider,
+    driver_state: str,
+    expected_status: int,
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    driver = FakeLifecycleDriver({"executor": driver_state})
+
+    async def health_probe(role: str) -> bool:
+        return True
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health_probe,
+        lifecycle_clock=lambda: 100.0,
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        generation = app.state.lifecycle_store.get("executor").generation
+        for index in range(3):
+            app.state.lifecycle_store.record_failure(
+                "executor",
+                "injected_start",
+                f"injected_{index}",
+                generation,
+                failure_limit=3,
+                failure_window_seconds=900,
+            )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        model_status = client.get(
+            "/v1/model-status",
+            headers={"Authorization": "Bearer test-secret"},
+        ).json()
+
+    assert response.status_code == expected_status
+    assert model_status["automation"]["automation_disabled"] is True
+    assert model_status["automation"]["failure_count"] == 3
+    assert driver.calls.count(("start", "executor")) == 0
+    if expected_status == 503:
+        assert response.json()["error"]["code"] == "lifecycle_automation_disabled"
+        assert stub_provider.calls == []
+    else:
+        assert stub_provider.calls == ["executor"]
 
 
 def test_observe_lifecycle_records_state_without_blocking_or_controlling(
@@ -1384,10 +1560,11 @@ def test_observe_lifecycle_records_state_without_blocking_or_controlling(
             "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
         }
     )
-    driver = FakeLifecycleDriver({"executor": "inactive"})
+    driver = FakeLifecycleDriver({"executor": "active"})
 
-    async def reject_health(role: str) -> bool:
-        raise AssertionError(f"observe lifecycle probed health for {role}")
+    async def health(role: str) -> bool:
+        assert role == "executor"
+        return True
 
     async def reject_sleep(seconds: float) -> None:
         raise AssertionError(f"observe lifecycle slept for {seconds}")
@@ -1395,7 +1572,7 @@ def test_observe_lifecycle_records_state_without_blocking_or_controlling(
     app = create_app(
         observed,
         lifecycle_driver=driver,
-        lifecycle_health_probe=reject_health,
+        lifecycle_health_probe=health,
         lifecycle_clock=lambda: 100.0,
         lifecycle_sleeper=reject_sleep,
     )
@@ -1417,9 +1594,52 @@ def test_observe_lifecycle_records_state_without_blocking_or_controlling(
 
     assert response.status_code == 200
     assert stub_provider.calls == ["executor"]
-    assert driver.calls == []
-    assert lifecycle_record.state == "cold"
+    assert driver.calls == [("status", "executor")]
+    assert lifecycle_record.state == "ready"
     assert status_response.json()["control"] == "observe_only"
+
+
+@pytest.mark.asyncio
+async def test_observe_reconciles_read_only_and_records_unload_candidate(settings) -> None:  # type: ignore[no-untyped-def]
+    observed = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "observe",
+            "lifecycle_unit_map": {"planner": "dgx-moa-dev-planner.service"},
+        }
+    )
+    driver = FakeLifecycleDriver({"planner": "active"})
+    clock = [100.0]
+
+    async def health(role: str) -> bool:
+        assert role == "planner"
+        return True
+
+    app = create_app(
+        observed,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health,
+        lifecycle_clock=lambda: clock[0],
+        lifecycle_sleeper=lambda seconds: asyncio.Event().wait(),
+        lifecycle_memory_probe=lambda: (_ for _ in ()).throw(
+            AssertionError("observe sampled memory")
+        ),
+    )
+    async with app.router.lifespan_context(app):
+        assert app.state.lifecycle_store.get("planner").state == "ready"
+        clock[0] = 5_000.0
+        await app.state.lifecycle.run_scheduler_check(
+            "observe", ("planner",), observed.lifecycle, app.state.usage
+        )
+        await app.state.lifecycle.run_scheduler_check(
+            "observe", ("planner",), observed.lifecycle, app.state.usage
+        )
+        decision = app.state.lifecycle_store.latest_decision("planner")
+
+    assert decision is not None
+    assert decision.would_unload is True
+    assert decision.action_allowed is False
+    assert driver.calls == [("status", "planner")]
 
 
 def test_disabled_lifecycle_bypasses_control_and_reports_external_state(
@@ -1546,24 +1766,42 @@ def test_model_status_is_authenticated_typed_and_content_free(
     payload = detail.json()
     assert payload["role"] == "executor"
     assert payload["state"] == "failed"
+    assert payload["generation"] == 1
+    assert payload["ready"] is False
     assert payload["failure_class"] == "health_timeout"
+    assert payload["last_error_class"] == "health_timeout"
     assert payload["retry_count"] == 1
     assert payload["idle_decision"] == decision.model_dump(mode="json") | {"decided_at": 100.0}
     assert payload["lifecycle_mode"] == "observe"
     assert set(payload) == {
         "role",
         "state",
+        "generation",
+        "ready",
         "transition_id",
         "transitioned_at",
         "updated_at",
         "ready_since",
         "last_used_at",
+        "load_started_at",
+        "ready_at",
+        "last_requested_at",
+        "last_completed_at",
+        "active_requests",
+        "open_streams",
+        "pending_continuations",
         "weight_load_percent",
         "progress_quality",
         "overall_load_percent",
         "estimated_ready_seconds",
         "failure_class",
+        "last_error_class",
         "retry_count",
+        "adaptive_timeout_seconds",
+        "idle_seconds",
+        "automation_disabled",
+        "lifecycle_failure_count",
+        "automation_disabled_at",
         "idle_decision",
         "lifecycle_mode",
         "control",
@@ -1780,6 +2018,8 @@ async def test_managed_request_rejects_an_unmapped_required_role_honestly(
     assert payload["model_state"] == {
         "role": "planner",
         "state": "unmanaged",
+        "generation": None,
+        "ready": False,
         "transition_id": None,
         "weight_load_percent": None,
         "progress_quality": "unavailable",
@@ -1935,6 +2175,8 @@ def test_nonstream_usage_is_content_free_and_uses_opaque_server_ids(
         )
         with sqlite3.connect(settings.state_db) as database:
             usage_row = database.execute("SELECT * FROM request_usage").fetchone()
+            role_usage_row = database.execute("SELECT * FROM role_request_usage").fetchone()
+        role_usage = client.app.state.usage.recent_role_requests("executor")
 
     assert response.status_code == 200
     assert response.json()["choices"][0]["message"]["content"] == raw_response
@@ -1951,8 +2193,14 @@ def test_nonstream_usage_is_content_free_and_uses_opaque_server_ids(
     assert record.load_triggered is False
     assert record.retryable_failure_class is None
     assert (record.prompt_tokens, record.completion_tokens, record.total_tokens) == (2, 3, 5)
+    assert len(role_usage) == 1
+    assert role_usage[0].request_id == record.request_id
+    assert role_usage[0].role == "executor"
+    assert role_usage[0].success is True
+    assert role_usage[0].cold_or_warm == "warm"
+    assert role_usage[0].session_id_hash != raw_session
     assert report.status_code == 404
-    persisted_usage = repr(usage_row)
+    persisted_usage = repr((usage_row, role_usage_row))
     serialized_record = record.model_dump_json()
     for sentinel in (
         raw_session,
@@ -2172,6 +2420,44 @@ def test_invalid_request_field_combinations_return_typed_validation_errors(
     assert response.json()["error"]["message"] == message
     assert response.json()["error"]["type"] == "invalid_request_error"
     assert response.json()["error"]["code"] == "invalid_request"
+
+
+@pytest.mark.parametrize(
+    ("model", "reasoner_mode", "message"),
+    [
+        (
+            "dgx-moa-agent",
+            "required",
+            "metadata.reasoner_mode requires dgx-moa-orchestrated",
+        ),
+        (
+            "dgx-moa-orchestrated",
+            "automatic",
+            "metadata.reasoner_mode must be required or optional",
+        ),
+    ],
+)
+def test_reasoner_policy_requires_explicit_valid_orchestrated_mode(
+    settings,
+    stub_provider: StubProvider,
+    model: str,
+    reasoner_mode: str,
+    message: str,
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "work"}],
+                "metadata": {"reasoner_mode": reasoner_mode},
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["message"] == message
+    assert stub_provider.calls == []
 
 
 @pytest.mark.parametrize("model", ["dgx-moa-chat", "dgx-moa-agent"])
@@ -2904,6 +3190,7 @@ def test_runtime_status_requires_admin_auth_and_returns_safe_usage(
     assert payload["usage"]["active_request_count"] == 0
     assert payload["usage"]["last_request"]["client_class"] == "curl"
     assert payload["usage"]["request_statistics"]["request_count"] == 1
+    assert payload["usage"]["role_statistics"]["executor"]["request_count"] == 1
     assert payload["usage"]["adaptive_idle_timeout_seconds"] is None
     serialized = json.dumps(payload, sort_keys=True)
     for sentinel in (

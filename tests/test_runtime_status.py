@@ -112,9 +112,18 @@ def test_runtime_report_contains_bounded_content_free_usage(tmp_path: Path, monk
             },
             "cold_starts": 0,
         },
+        "role_statistics": {},
         "role_states": {"executor": "warm"},
         "adaptive_idle_timeout_seconds": None,
         "idle_decisions": {},
+        "automation": {
+            "automation_disabled": False,
+            "disabled_at": None,
+            "failure_count": 0,
+            "window_started_at": None,
+            "last_failure_at": None,
+            "last_reset_at": 0.0,
+        },
         "cold_starts": 0,
         "loading_failures": 0,
         "lifecycle": {
@@ -200,6 +209,15 @@ def test_runtime_usage_exposes_only_latest_bounded_idle_decisions(tmp_path: Path
         ),
     )
     store.persist_decision(decision)
+    for index in range(3):
+        store.record_failure(
+            "executor",
+            "injected_start",
+            f"injected_{index}",
+            0,
+            failure_limit=3,
+            failure_window_seconds=900,
+        )
 
     assert runtime_status.usage_status(state_db)["idle_decisions"] == {}
     result = runtime_status.usage_status(
@@ -212,6 +230,8 @@ def test_runtime_usage_exposes_only_latest_bounded_idle_decisions(tmp_path: Path
     assert result["idle_decisions"] == {
         "executor": decision.model_dump(mode="json") | {"decided_at": 100.0}
     }
+    assert result["automation"]["automation_disabled"] is True
+    assert result["automation"]["failure_count"] == 3
     serialized = json.dumps(result)
     assert str(state_db) not in serialized
     assert "service" not in serialized

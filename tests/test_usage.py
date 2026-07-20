@@ -125,7 +125,7 @@ def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
             row[1] for row in database.execute("PRAGMA table_info(lifecycle_samples)")
         }
 
-    assert tables == {"request_usage", "lifecycle_samples"}
+    assert tables == {"request_usage", "role_request_usage", "lifecycle_samples"}
     assert request_columns == {
         "request_id",
         "session_id",
@@ -155,6 +155,185 @@ def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
         "memory_before_bytes",
         "memory_after_bytes",
     }
+
+
+def test_role_usage_is_independent_and_content_free(tmp_path: Path) -> None:
+    module = usage_module()
+    path = tmp_path / "state.db"
+    store = module.UsageStore(path, sample_window=100)
+    session_secret = "raw-session-must-not-be-stored"
+
+    store.start_roles(
+        "request-1",
+        ("planner", "reviewer"),
+        session_id=session_secret,
+        requested_at=1_000.0,
+        client_mode="orchestrated",
+        request_class="explicit_orchestrated",
+        states={"planner": "cold", "reviewer": "warm"},
+        load_triggered={"planner": True, "reviewer": False},
+    )
+    store.finalize_roles(
+        "request-1",
+        completed_at=1_010.0,
+        first_byte_at=1_005.0,
+        success=True,
+        failure_class=None,
+    )
+
+    rows = store.recent_role_requests("planner") + store.recent_role_requests("reviewer")
+    assert [row.role for row in rows] == ["planner", "reviewer"]
+    assert rows[0].load_triggered is True
+    assert rows[0].cold_or_warm == "cold"
+    assert rows[1].load_triggered is False
+    assert rows[1].cold_or_warm == "warm"
+    assert rows[0].active_duration_ms == 10_000
+    assert rows[0].session_id_hash != session_secret
+    assert len(rows[0].session_id_hash) == 64
+
+    with sqlite3.connect(path) as database:
+        columns = {row[1] for row in database.execute("PRAGMA table_info(role_request_usage)")}
+    assert columns == {
+        "request_id",
+        "session_id_hash",
+        "role",
+        "client_mode",
+        "request_class",
+        "requested_at",
+        "load_triggered",
+        "cold_or_warm",
+        "ready_at",
+        "first_byte_at",
+        "completed_at",
+        "success",
+        "failure_class",
+        "active_duration_ms",
+    }
+    persisted = b"".join(
+        candidate.read_bytes() for candidate in (path, Path(f"{path}-wal")) if candidate.exists()
+    )
+    assert session_secret.encode() not in persisted
+
+
+def test_role_statistics_use_only_successful_role_local_gaps(tmp_path: Path) -> None:
+    module = usage_module()
+    store = module.UsageStore(
+        tmp_path / "state.db",
+        sample_window=100,
+        ewma_alpha=0.5,
+        adaptive_minimum_samples=2,
+    )
+    requested_times = (1_000.0, 1_010.0, 1_030.0, 1_060.0)
+    for index, requested_at in enumerate(requested_times):
+        request_id = f"request-{index}"
+        cold = index == 0
+        store.start_roles(
+            request_id,
+            ("planner",),
+            session_id=f"session-{index}",
+            requested_at=requested_at,
+            client_mode="orchestrated",
+            request_class="explicit_orchestrated",
+            states={"planner": "cold" if cold else "warm"},
+            load_triggered={"planner": cold},
+            ready_at={"planner": requested_at + 5 if cold else requested_at},
+        )
+        store.finalize_roles(
+            request_id,
+            completed_at=requested_at + 3,
+            first_byte_at=requested_at + 2,
+            success=index < 3,
+            failure_class=None if index < 3 else "backend_error",
+        )
+
+    statistics = store.role_statistics("planner", now=1_100.0)
+
+    assert statistics["request_count"] == 4
+    assert statistics["failure_count"] == 1
+    assert statistics["inter_arrival_gaps_seconds"] == [10.0, 20.0]
+    assert statistics["inter_arrival_ewma_seconds"] == 15.0
+    assert statistics["inter_arrival_percentiles_seconds"] == {
+        "p50": 15.0,
+        "p75": 17.5,
+        "p90": 19.0,
+        "p95": 19.5,
+    }
+    assert statistics["adaptive_policy_samples"] == {
+        "usable": 2,
+        "minimum": 2,
+        "sufficient": True,
+    }
+    assert statistics["cold_start_count"] == 1
+    assert statistics["cold_start_frequency"] == 0.25
+    assert statistics["average_load_duration_seconds"] == 5.0
+    assert statistics["average_warm_latency_seconds"] == 2.0
+    assert statistics["last_used_at"] == 1_063.0
+    assert sum(statistics["requests_by_hour_utc"].values()) == 4
+    assert sum(statistics["requests_by_weekday_hour_utc"].values()) == 4
+    assert store.role_statistics("reviewer", now=1_100.0)["request_count"] == 0
+
+
+def test_role_aggregate_counts_are_not_limited_by_adaptive_sample_window(
+    tmp_path: Path,
+) -> None:
+    module = usage_module()
+    store = module.UsageStore(tmp_path / "state.db", sample_window=2)
+    for index in range(5):
+        request_id = f"request-{index}"
+        store.start_roles(
+            request_id,
+            ("reasoner",),
+            session_id=f"session-{index}",
+            requested_at=float(index),
+            client_mode="orchestrated",
+            request_class="high_risk_task",
+            states={"reasoner": "warm"},
+            load_triggered={"reasoner": False},
+        )
+        store.finalize_roles(
+            request_id,
+            completed_at=float(index + 1),
+            first_byte_at=float(index) + 0.5,
+            success=True,
+            failure_class=None,
+        )
+
+    statistics = store.role_statistics("reasoner", now=10.0)
+
+    assert statistics["request_count"] == 5
+    assert statistics["inter_arrival_gaps_seconds"] == [1.0]
+    assert sum(statistics["requests_by_hour_utc"].values()) == 5
+
+
+def test_recent_successful_role_window_ignores_newer_failures(tmp_path: Path) -> None:
+    module = usage_module()
+    store = module.UsageStore(tmp_path / "state.db", sample_window=2)
+    outcomes = (True, True, True, False, False, False, False)
+    for index, success in enumerate(outcomes):
+        request_id = f"request-{index}"
+        store.start_roles(
+            request_id,
+            ("planner",),
+            session_id=f"session-{index}",
+            requested_at=float(index),
+            client_mode="orchestrated",
+            request_class="explicit_orchestrated",
+            states={"planner": "warm"},
+            load_triggered={"planner": False},
+        )
+        store.finalize_roles(
+            request_id,
+            completed_at=float(index) + 0.5,
+            first_byte_at=float(index) + 0.25,
+            success=success,
+            failure_class=None if success else "model_loading",
+        )
+
+    recent = store.recent_role_requests("planner")
+    successful = store.recent_role_requests("planner", success=True, limit=3)
+
+    assert [row.success for row in recent] == [False, False]
+    assert [row.requested_at for row in successful] == [0.0, 1.0, 2.0]
 
 
 def test_token_counts_are_bounded_to_sqlite_signed_integer_range() -> None:

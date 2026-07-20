@@ -31,7 +31,9 @@ from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
 from .routing import (
     MODEL_MODES,
+    ReasonerMode,
     classify_request,
+    optional_roles,
     required_roles,
     resolve_runtime_mode,
     review_fails_closed,
@@ -203,6 +205,11 @@ def create_app(
             configured.state_db,
             configured.models,
             clock=lifecycle_clock,
+            unit_map=(
+                configured.lifecycle_unit_map
+                if configured.lifecycle_mode in {"observe", "fixed", "adaptive"}
+                else None
+            ),
         )
         app.state.lifecycle_store.recover_leases()
         app.state.lifecycle = LifecycleCoordinator(
@@ -214,15 +221,16 @@ def create_app(
             clock=lifecycle_clock,
             sleeper=lifecycle_sleeper,
             memory_probe=lifecycle_memory_probe,
+            lifecycle_policy=configured.lifecycle,
         )
         try:
             managed_roles = tuple(configured.lifecycle_unit_map)
-            if configured.lifecycle_mode in {"fixed", "adaptive"}:
+            if configured.lifecycle_mode in {"observe", "fixed", "adaptive"}:
                 await app.state.lifecycle.reconcile_managed(managed_roles)
             app.state.lifecycle.start_scheduler(
                 configured.lifecycle_mode,
                 managed_roles,
-                configured.limits,
+                configured.lifecycle,
                 app.state.usage,
             )
             app.state.reviewer_evaluation_lock = asyncio.Lock()
@@ -286,22 +294,38 @@ def create_app(
 
     def public_lifecycle_record(record: LifecycleRecord) -> dict[str, Any]:
         decision = app.state.lifecycle_store.latest_decision(record.role)
+        automation = app.state.lifecycle_store.automation_status()
         if decision is not None and decision.mode != configured.lifecycle_mode:
             decision = None
         return {
             "role": record.role,
             "state": record.state,
+            "generation": record.generation,
+            "ready": record.state == "ready",
             "transition_id": record.transition_id,
             "transitioned_at": record.transitioned_at,
             "updated_at": record.updated_at,
             "ready_since": record.ready_since,
             "last_used_at": record.last_used_at,
-            "weight_load_percent": record.progress_value,
+            "load_started_at": record.load_started_at,
+            "ready_at": record.ready_at,
+            "last_requested_at": record.last_requested_at,
+            "last_completed_at": record.last_completed_at,
+            "active_requests": record.active_request_count,
+            "open_streams": record.open_stream_count,
+            "pending_continuations": record.continuation_lease_count,
+            "weight_load_percent": record.weight_load_percent,
             "progress_quality": record.progress_quality or "unavailable",
-            "overall_load_percent": None,
+            "overall_load_percent": record.overall_load_percent,
             "estimated_ready_seconds": record.eta_seconds,
             "failure_class": record.failure_class,
+            "last_error_class": record.last_error_class,
             "retry_count": record.retry_count,
+            "adaptive_timeout_seconds": decision.threshold_seconds if decision else None,
+            "idle_seconds": decision.idle_seconds if decision else None,
+            "automation_disabled": automation.automation_disabled,
+            "lifecycle_failure_count": automation.failure_count,
+            "automation_disabled_at": automation.disabled_at,
             "idle_decision": decision.model_dump(mode="json") if decision else None,
             "lifecycle_mode": configured.lifecycle_mode,
             "control": ("observe_only" if configured.lifecycle_mode == "observe" else "managed"),
@@ -310,20 +334,36 @@ def create_app(
     def status_lifecycle_record(role: str) -> dict[str, Any]:
         if configured.lifecycle_mode != "disabled" and role in configured.lifecycle_unit_map:
             return public_lifecycle_record(app.state.lifecycle_store.get(role))
+        automation = app.state.lifecycle_store.automation_status()
         return {
             "role": role,
             "state": "unmanaged",
+            "generation": None,
+            "ready": False,
             "transition_id": None,
             "transitioned_at": None,
             "updated_at": None,
             "ready_since": None,
             "last_used_at": None,
+            "load_started_at": None,
+            "ready_at": None,
+            "last_requested_at": None,
+            "last_completed_at": None,
+            "active_requests": 0,
+            "open_streams": 0,
+            "pending_continuations": 0,
             "weight_load_percent": None,
             "progress_quality": "unavailable",
             "overall_load_percent": None,
             "estimated_ready_seconds": None,
             "failure_class": None,
+            "last_error_class": None,
             "retry_count": 0,
+            "adaptive_timeout_seconds": None,
+            "idle_seconds": None,
+            "automation_disabled": automation.automation_disabled,
+            "lifecycle_failure_count": automation.failure_count,
+            "automation_disabled_at": automation.disabled_at,
             "idle_decision": None,
             "lifecycle_mode": configured.lifecycle_mode,
             "control": "disabled" if configured.lifecycle_mode == "disabled" else "unmanaged",
@@ -332,44 +372,51 @@ def create_app(
     def loading_response(record: LifecycleRecord) -> JSONResponse:
         eta = record.eta_seconds
         retry_after = 30 if eta is None else min(300, max(1, math.ceil(eta)))
-        progress = record.progress_value
+        progress = record.weight_load_percent
         progress_header = "unavailable" if progress is None else f"{progress:g}"
         return JSONResponse(
             {
                 "error": {
-                    "message": f"Model dgx-moa-{record.role} is loading. Retry later.",
+                    "message": "Required model role is loading. Retry later.",
                     "type": "model_loading",
                     "code": "model_loading",
                     "param": None,
                 },
                 "model_state": {
                     "role": record.role,
+                    "generation": record.generation,
                     "state": record.state,
                     "transition_id": record.transition_id,
                     "weight_load_percent": progress,
                     "progress_quality": record.progress_quality or "unavailable",
-                    "overall_load_percent": None,
+                    "overall_load_percent": record.overall_load_percent,
                     "estimated_ready_seconds": eta,
+                    "ready": False,
                 },
             },
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             headers={
                 "Retry-After": str(retry_after),
+                "X-DGX-MOA-Model-Role": record.role,
                 "X-DGX-MOA-Model-State": record.state,
+                "X-DGX-MOA-Load-Generation": str(record.generation),
                 "X-DGX-MOA-Weight-Load-Percent": progress_header,
             },
         )
 
     def unavailable_response(role: str, *, record: LifecycleRecord | None = None) -> JSONResponse:
+        automation_disabled = app.state.lifecycle_store.automation_status().automation_disabled
         state_value = record.state if record is not None else "unmanaged"
         model_state: dict[str, Any] = {
             "role": role,
             "state": state_value,
+            "generation": record.generation if record is not None else None,
+            "ready": False,
             "transition_id": record.transition_id if record is not None else None,
-            "weight_load_percent": record.progress_value if record is not None else None,
+            "weight_load_percent": record.weight_load_percent if record is not None else None,
             "progress_quality": (record.progress_quality if record is not None else None)
             or "unavailable",
-            "overall_load_percent": None,
+            "overall_load_percent": (record.overall_load_percent if record is not None else None),
             "estimated_ready_seconds": record.eta_seconds if record is not None else None,
         }
         if record is not None:
@@ -383,21 +430,33 @@ def create_app(
                     "message": (
                         f"Model role {role} is not lifecycle-managed."
                         if record is None
+                        else "Lifecycle automation is disabled after repeated failures."
+                        if automation_disabled
                         else f"Model dgx-moa-{role} failed to load."
                     ),
                     "type": "model_unavailable",
-                    "code": "model_not_managed" if record is None else "model_load_failed",
+                    "code": (
+                        "model_not_managed"
+                        if record is None
+                        else "lifecycle_automation_disabled"
+                        if automation_disabled
+                        else "model_load_failed"
+                    ),
                     "param": None,
                 },
                 "model_state": model_state,
             },
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             headers={
+                "X-DGX-MOA-Model-Role": role,
                 "X-DGX-MOA-Model-State": state_value,
+                "X-DGX-MOA-Load-Generation": (
+                    str(record.generation) if record is not None else "unavailable"
+                ),
                 "X-DGX-MOA-Weight-Load-Percent": (
                     "unavailable"
-                    if record is None or record.progress_value is None
-                    else f"{record.progress_value:g}"
+                    if record is None or record.weight_load_percent is None
+                    else f"{record.weight_load_percent:g}"
                 ),
             },
         )
@@ -510,6 +569,9 @@ def create_app(
                 is not None
                 and decision.mode == mode
             },
+            "automation": request.app.state.lifecycle_store.automation_status().model_dump(
+                mode="json"
+            ),
         }
         if mode == "disabled":
             payload["external_state"] = "not_lifecycle_managed"
@@ -620,14 +682,27 @@ def create_app(
             state_session_id = session_id
         task_id = str(raw["metadata"].get("task_id") or "")
         request_class = classify_request(mode, raw["messages"], raw.get("tools"), raw["metadata"])
-        roles = required_roles(mode, request_class)
+        reasoner_mode = cast(ReasonerMode | None, raw["metadata"].get("reasoner_mode"))
+        required = required_roles(mode, request_class, reasoner_mode=reasoner_mode)
+        optional = optional_roles(mode, reasoner_mode=reasoner_mode)
+        candidate_roles = required + optional
+        roles = required if configured.lifecycle_mode in {"fixed", "adaptive"} else candidate_roles
+        degraded_roles: dict[str, str] = {}
         loading_record: LifecycleRecord | None = None
         unavailable_record: LifecycleRecord | None = None
         unmanaged_role: str | None = None
         load_triggered = False
+        role_states = {role: "warm" for role in candidate_roles}
+        role_load_triggered = {role: False for role in candidate_roles}
+        role_ready_at: dict[str, float | None] = {role: None for role in candidate_roles}
         if configured.lifecycle_mode in {"fixed", "adaptive"}:
-            for role in roles:
+            for role in candidate_roles:
+                is_optional = role in optional
                 if role not in configured.lifecycle_unit_map:
+                    role_states[role] = "cold"
+                    if is_optional:
+                        degraded_roles[role] = f"{role}_unavailable"
+                        continue
                     if (
                         loading_record is None
                         and unavailable_record is None
@@ -636,14 +711,25 @@ def create_app(
                         unmanaged_role = role
                     continue
                 check = await request.app.state.lifecycle.ensure_ready(role)
+                role_states[role] = check.record.state
+                role_load_triggered[role] = check.load_triggered
+                role_ready_at[role] = check.record.ready_at
                 load_triggered = load_triggered or check.load_triggered
+                if is_optional and check.record.state != "ready":
+                    degraded_roles[role] = f"{role}_unavailable"
+                    continue
+                if is_optional:
+                    roles += (role,)
                 if (
                     loading_record is None
                     and unavailable_record is None
                     and unmanaged_role is None
                     and check.record.state != "ready"
                 ):
-                    if check.record.state == "failed":
+                    if (
+                        request.app.state.lifecycle_store.automation_status().automation_disabled
+                        or check.record.state == "failed"
+                    ):
                         unavailable_record = check.record
                     else:
                         loading_record = check.record
@@ -665,7 +751,7 @@ def create_app(
                 ),
                 runtime_mode=mode,
                 request_class=request_class,
-                roles_required=cast(tuple[Role, ...], roles),
+                roles_required=cast(tuple[Role, ...], candidate_roles),
                 accepted_at=accepted_at,
                 streaming=body.stream,
                 model_state=(
@@ -677,6 +763,17 @@ def create_app(
                 ),
                 load_triggered=load_triggered,
             )
+        )
+        request.app.state.usage.start_roles(
+            usage_request_id,
+            candidate_roles,
+            session_id=state_session_id,
+            requested_at=accepted_at,
+            client_mode=mode,
+            request_class=request_class,
+            states=role_states,
+            load_triggered=role_load_triggered,
+            ready_at=role_ready_at,
         )
         usage_started = True
 
@@ -726,11 +823,12 @@ def create_app(
                     request.app.state.store.save(current)
                     record_trace_safely(request, current, task_id)
                 if usage_started:
+                    completed_at = time.time()
                     request.app.state.usage.finalize(
                         usage_request_id,
                         RequestUsageFinalization(
                             first_byte_at=first_byte_at,
-                            completed_at=time.time(),
+                            completed_at=completed_at,
                             active_duration_seconds=time.monotonic() - accepted,
                             status=status_value,
                             retryable_failure_class=retryable_failure_class,
@@ -738,6 +836,18 @@ def create_app(
                             completion_tokens=token_usage.get("completion_tokens"),
                             total_tokens=token_usage.get("total_tokens"),
                         ),
+                    )
+                    request.app.state.usage.finalize_roles(
+                        usage_request_id,
+                        completed_at=completed_at,
+                        first_byte_at=first_byte_at,
+                        success=status_value == "completed",
+                        failure_class=retryable_failure_class or stage,
+                        ready_at={
+                            role: request.app.state.lifecycle_store.get(role).ready_at
+                            for role in candidate_roles
+                        },
+                        role_failures=degraded_roles,
                     )
             finally:
                 request.app.state.lifecycle_store.release_leases(
@@ -799,6 +909,13 @@ def create_app(
             task_id = task_id or state.task_id or state_session_id
             raw["metadata"]["task_id"] = task_id
             state.timings_ms = {"accepted": 0.0}
+            for role, reason in degraded_roles.items():
+                stage_status[role] = "unavailable"
+                request.app.state.store.event(
+                    state_session_id,
+                    "role_degraded",
+                    {"role": role, "reason": reason},
+                )
             request.app.state.store.event(
                 state_session_id,
                 "request_received",
@@ -888,7 +1005,7 @@ def create_app(
                                     continuation_owner,
                                     expires_at=(
                                         lifecycle_clock()
-                                        + configured.limits.tool_continuation_timeout_seconds
+                                        + configured.lifecycle.continuation_lease_ttl_seconds
                                     ),
                                 )
                             request.app.state.store.event(
@@ -1051,7 +1168,7 @@ def create_app(
                     "executor",
                     continuation_owner,
                     expires_at=(
-                        lifecycle_clock() + configured.limits.tool_continuation_timeout_seconds
+                        lifecycle_clock() + configured.lifecycle.continuation_lease_ttl_seconds
                     ),
                 )
             finalize_request(None, "completed", current_state=state)

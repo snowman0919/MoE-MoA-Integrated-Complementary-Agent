@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import re
 import sqlite3
 import time
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from statistics import fmean
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -46,6 +48,11 @@ REQUEST_COLUMNS = (
     "roles_required, accepted_at, first_byte_at, completed_at, active_duration_seconds, "
     "status, streaming, model_state, load_triggered, retryable_failure_class, "
     "prompt_tokens, completion_tokens, total_tokens"
+)
+ROLE_REQUEST_COLUMNS = (
+    "request_id, session_id_hash, role, client_mode, request_class, requested_at, "
+    "load_triggered, cold_or_warm, ready_at, first_byte_at, completed_at, success, "
+    "failure_class, active_duration_ms"
 )
 
 
@@ -95,6 +102,39 @@ class RequestUsageRecord(RequestUsageStart):
     prompt_tokens: int | None = Field(default=None, ge=0, le=SQLITE_MAX_INTEGER)
     completion_tokens: int | None = Field(default=None, ge=0, le=SQLITE_MAX_INTEGER)
     total_tokens: int | None = Field(default=None, ge=0, le=SQLITE_MAX_INTEGER)
+
+
+class RoleRequestUsageStart(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    request_id: str
+    session_id_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    role: Role
+    client_mode: RuntimeMode
+    request_class: RequestClass
+    requested_at: float = Field(ge=0, allow_inf_nan=False)
+    load_triggered: bool
+    cold_or_warm: Literal["cold", "warm"]
+    ready_at: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+
+
+class RoleRequestUsageFinalization(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    ready_at: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    first_byte_at: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    completed_at: float = Field(ge=0, allow_inf_nan=False)
+    success: bool
+    failure_class: str | None = Field(default=None, max_length=64)
+    active_duration_ms: int | None = Field(default=None, ge=0, le=SQLITE_MAX_INTEGER)
+
+
+class RoleRequestUsageRecord(RoleRequestUsageStart):
+    first_byte_at: float | None = None
+    completed_at: float | None = None
+    success: bool | None = None
+    failure_class: str | None = None
+    active_duration_ms: int | None = Field(default=None, ge=0, le=SQLITE_MAX_INTEGER)
 
 
 class LifecycleSample(BaseModel):
@@ -239,6 +279,25 @@ class UsageStore:
                     memory_before_bytes INTEGER,
                     memory_after_bytes INTEGER
                 );
+                CREATE TABLE IF NOT EXISTS role_request_usage (
+                    request_id TEXT NOT NULL,
+                    session_id_hash TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    client_mode TEXT NOT NULL,
+                    request_class TEXT NOT NULL,
+                    requested_at REAL NOT NULL,
+                    load_triggered INTEGER NOT NULL,
+                    cold_or_warm TEXT NOT NULL,
+                    ready_at REAL,
+                    first_byte_at REAL,
+                    completed_at REAL,
+                    success INTEGER,
+                    failure_class TEXT,
+                    active_duration_ms INTEGER,
+                    PRIMARY KEY (request_id, role)
+                );
+                CREATE INDEX IF NOT EXISTS role_request_usage_role_time
+                    ON role_request_usage(role, requested_at);
                 """
             )
 
@@ -269,6 +328,118 @@ class UsageStore:
                     int(record.load_triggered),
                 ),
             )
+
+    def start_roles(
+        self,
+        request_id: str,
+        roles: Sequence[str],
+        *,
+        session_id: str,
+        requested_at: float,
+        client_mode: RuntimeMode,
+        request_class: RequestClass,
+        states: Mapping[str, str],
+        load_triggered: Mapping[str, bool],
+        ready_at: Mapping[str, float | None] | None = None,
+    ) -> None:
+        unique_roles = tuple(dict.fromkeys(roles))
+        session_id_hash = hashlib.sha256(session_id.encode()).hexdigest()
+        records = tuple(
+            RoleRequestUsageStart(
+                request_id=request_id,
+                session_id_hash=session_id_hash,
+                role=cast(Role, role),
+                client_mode=client_mode,
+                request_class=request_class,
+                requested_at=requested_at,
+                load_triggered=load_triggered[role],
+                cold_or_warm="warm" if states[role] in {"ready", "warm"} else "cold",
+                ready_at=(ready_at or {}).get(role),
+            )
+            for role in unique_roles
+        )
+        with self._connect() as database:
+            database.executemany(
+                "INSERT OR IGNORE INTO role_request_usage "
+                "(request_id, session_id_hash, role, client_mode, request_class, requested_at, "
+                "load_triggered, cold_or_warm, ready_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    (
+                        record.request_id,
+                        record.session_id_hash,
+                        record.role,
+                        record.client_mode,
+                        record.request_class,
+                        record.requested_at,
+                        int(record.load_triggered),
+                        record.cold_or_warm,
+                        record.ready_at,
+                    )
+                    for record in records
+                ),
+            )
+
+    def finalize_roles(
+        self,
+        request_id: str,
+        *,
+        completed_at: float,
+        first_byte_at: float | None,
+        success: bool,
+        failure_class: str | None,
+        ready_at: Mapping[str, float | None] | None = None,
+        role_failures: Mapping[str, str] | None = None,
+    ) -> None:
+        def safe_failure_class(value: str | None) -> str | None:
+            if value is None:
+                return None
+            return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")[:64] or "unknown"
+
+        safe_failure = safe_failure_class(failure_class)
+        with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            rows = database.execute(
+                "SELECT role, requested_at, ready_at, completed_at FROM role_request_usage "
+                "WHERE request_id = ?",
+                (request_id,),
+            ).fetchall()
+            if not rows:
+                raise KeyError(request_id)
+            for row in rows:
+                if row["completed_at"] is not None:
+                    continue
+                requested_at = float(row["requested_at"])
+                role_ready_at = (ready_at or {}).get(row["role"], row["ready_at"])
+                role_failure = safe_failure_class((role_failures or {}).get(row["role"]))
+                finalization = RoleRequestUsageFinalization(
+                    ready_at=role_ready_at,
+                    first_byte_at=first_byte_at,
+                    completed_at=completed_at,
+                    success=success and role_failure is None,
+                    failure_class=role_failure or safe_failure,
+                    active_duration_ms=round((completed_at - requested_at) * 1_000),
+                )
+                if finalization.completed_at < requested_at:
+                    raise ValueError("completed_at cannot precede requested_at")
+                if finalization.first_byte_at is not None and not (
+                    requested_at <= finalization.first_byte_at <= finalization.completed_at
+                ):
+                    raise ValueError("first_byte_at must fall within the active request")
+                database.execute(
+                    "UPDATE role_request_usage SET ready_at = ?, first_byte_at = ?, "
+                    "completed_at = ?, success = ?, failure_class = ?, active_duration_ms = ? "
+                    "WHERE request_id = ? AND role = ? AND completed_at IS NULL",
+                    (
+                        finalization.ready_at,
+                        finalization.first_byte_at,
+                        finalization.completed_at,
+                        int(finalization.success),
+                        finalization.failure_class,
+                        finalization.active_duration_ms,
+                        request_id,
+                        row["role"],
+                    ),
+                )
 
     def finalize(self, request_id: str, finalization: RequestUsageFinalization) -> None:
         with self._connect() as database:
@@ -326,6 +497,121 @@ class UsageStore:
                 (self.sample_window,),
             ).fetchall()
         return [self._record(row) for row in reversed(rows)]
+
+    def recent_role_requests(
+        self,
+        role: str,
+        *,
+        success: bool | None = None,
+        limit: int | None = None,
+    ) -> list[RoleRequestUsageRecord]:
+        if role not in {"executor", "planner", "reviewer", "reasoner", "judge"}:
+            raise ValueError("unknown role")
+        bounded_limit = self.sample_window if limit is None else limit
+        if (
+            not isinstance(bounded_limit, int)
+            or isinstance(bounded_limit, bool)
+            or not 1 <= bounded_limit <= 10_000
+        ):
+            raise ValueError("role request limit must be between 1 and 10000")
+        where = "WHERE role = ?"
+        parameters: tuple[Any, ...] = (role, bounded_limit)
+        if success is not None:
+            where += " AND success = ?"
+            parameters = (role, int(success), bounded_limit)
+        with self._connect() as database:
+            rows = database.execute(
+                f"SELECT {ROLE_REQUEST_COLUMNS} FROM role_request_usage "
+                f"{where} ORDER BY requested_at DESC, rowid DESC LIMIT ?",
+                parameters,
+            ).fetchall()
+        return [self._role_record(row) for row in reversed(rows)]
+
+    def role_statistics(self, role: str, *, now: float | None = None) -> dict[str, Any]:
+        records = self.recent_role_requests(role)
+        current_time = time.time() if now is None else now
+        successful = self.recent_role_requests(role, success=True)
+        requested = [record.requested_at for record in successful]
+        gaps = [
+            later - earlier
+            for earlier, later in zip(requested, requested[1:], strict=False)
+            if later > earlier
+        ]
+        load_durations = [
+            record.ready_at - record.requested_at
+            for record in records
+            if record.load_triggered
+            and record.ready_at is not None
+            and record.ready_at >= record.requested_at
+        ]
+        with self._connect() as database:
+            summary = database.execute(
+                "SELECT COUNT(*), "
+                "SUM(CASE WHEN requested_at BETWEEN ? AND ? THEN 1 ELSE 0 END), "
+                "SUM(load_triggered), SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), "
+                "MAX(COALESCE(completed_at, requested_at)), "
+                "AVG(CASE WHEN cold_or_warm = 'warm' AND first_byte_at >= requested_at "
+                "THEN first_byte_at - requested_at END) "
+                "FROM role_request_usage WHERE role = ?",
+                (current_time - 3_600, current_time, role),
+            ).fetchone()
+            assert summary is not None
+            hourly = {
+                str(int(row[0])): int(row[1])
+                for row in database.execute(
+                    "SELECT strftime('%H', requested_at, 'unixepoch'), COUNT(*) "
+                    "FROM role_request_usage WHERE role = ? GROUP BY 1 ORDER BY 1",
+                    (role,),
+                )
+            }
+            weekday_hour = {
+                f"{int(row[0])}:{int(row[1])}": int(row[2])
+                for row in database.execute(
+                    "SELECT strftime('%w', requested_at, 'unixepoch'), "
+                    "strftime('%H', requested_at, 'unixepoch'), COUNT(*) "
+                    "FROM role_request_usage WHERE role = ? GROUP BY 1, 2 ORDER BY 1, 2",
+                    (role,),
+                )
+            }
+            sampled_load_durations = [
+                float(row[0])
+                for row in database.execute(
+                    "SELECT duration_seconds FROM lifecycle_samples "
+                    "WHERE role = ? AND kind = 'load' ORDER BY sample_id DESC LIMIT ?",
+                    (role, self.sample_window),
+                )
+            ]
+        if sampled_load_durations:
+            load_durations = sampled_load_durations
+        request_count = int(summary[0])
+        cold_starts = int(summary[2] or 0)
+        return {
+            "role": role,
+            "request_count": request_count,
+            "requests_last_hour": int(summary[1] or 0),
+            "requests_by_hour_utc": hourly,
+            "requests_by_weekday_hour_utc": weekday_hour,
+            "inter_arrival_gaps_seconds": gaps,
+            "inter_arrival_ewma_seconds": _ewma(gaps, self.ewma_alpha),
+            "inter_arrival_percentiles_seconds": _percentiles(gaps),
+            "adaptive_policy_samples": {
+                "usable": len(gaps),
+                "minimum": self.adaptive_minimum_samples,
+                "sufficient": len(gaps) >= self.adaptive_minimum_samples,
+            },
+            "cold_start_count": cold_starts,
+            "cold_start_frequency": cold_starts / request_count if request_count else 0.0,
+            "average_load_duration_seconds": (fmean(load_durations) if load_durations else None),
+            "average_warm_latency_seconds": summary[5],
+            "last_used_at": summary[4],
+            "failure_count": int(summary[3] or 0),
+        }
+
+    def all_role_statistics(self, *, now: float | None = None) -> dict[str, dict[str, Any]]:
+        return {
+            role: self.role_statistics(role, now=now)
+            for role in ("executor", "planner", "reviewer", "reasoner", "judge")
+        }
 
     def active_request_count(self) -> int:
         with self._connect() as database:
@@ -397,4 +683,23 @@ class UsageStore:
             prompt_tokens=row["prompt_tokens"],
             completion_tokens=row["completion_tokens"],
             total_tokens=row["total_tokens"],
+        )
+
+    @staticmethod
+    def _role_record(row: sqlite3.Row) -> RoleRequestUsageRecord:
+        return RoleRequestUsageRecord(
+            request_id=row["request_id"],
+            session_id_hash=row["session_id_hash"],
+            role=row["role"],
+            client_mode=row["client_mode"],
+            request_class=row["request_class"],
+            requested_at=row["requested_at"],
+            load_triggered=bool(row["load_triggered"]),
+            cold_or_warm=row["cold_or_warm"],
+            ready_at=row["ready_at"],
+            first_byte_at=row["first_byte_at"],
+            completed_at=row["completed_at"],
+            success=None if row["success"] is None else bool(row["success"]),
+            failure_class=row["failure_class"],
+            active_duration_ms=row["active_duration_ms"],
         )

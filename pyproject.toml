@@ -24,6 +24,7 @@ dev = [
 
 [project.scripts]
 dgx-moa = "dgx_moa.api:main"
+dgx-moa-lifecycle = "dgx_moa.lifecycle_admin:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -86,3 +86,19 @@
 - Preserve all failed/partial Phase 3 roots and content-free evidence. Host
   MemAvailable remains noisy, unified-memory GPU-byte fields remain null, and
   model equality remains a metadata fingerprint rather than a content hash.
+
+## 2026-07-20
+
+- Adopt role-aware adaptive lifecycle as the `dev` release candidate, with
+  executor normally resident and idle unload disabled. Planner, reviewer, and
+  reasoner may unload by their own bounded successful-request gaps; judge stays
+  outside automation.
+- Return an immediate typed JSON `503` for a required cold role and expose honest
+  role/state/generation/weight/overall/ETA data. Explicit optional reasoner use
+  may degrade and continue; ordinary chat/agent requests never add reasoner.
+- Latch lifecycle mutations off after three failures in the configured window,
+  while preserving status and already-ready traffic. Use atomic, idempotent
+  disabled-mode rollback as the recovery boundary.
+- Treat the passing four-role user-systemd fake-weight result as control-plane
+  evidence only. Do not infer real-weight memory savings or call production
+  deployed until a separately approved migration runs the real model matrix.

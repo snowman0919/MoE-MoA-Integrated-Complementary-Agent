@@ -41,6 +41,11 @@ class ChatRequest(BaseModel):
             raise ValueError("parallel_tool_calls requires tools")
         if self.stream_options is not None and not self.stream:
             raise ValueError("stream_options requires stream=true")
+        reasoner_mode = self.metadata.get("reasoner_mode")
+        if reasoner_mode is not None and reasoner_mode not in {"required", "optional"}:
+            raise ValueError("metadata.reasoner_mode must be required or optional")
+        if reasoner_mode is not None and self.model != "dgx-moa-orchestrated":
+            raise ValueError("metadata.reasoner_mode requires dgx-moa-orchestrated")
         return self
 
 

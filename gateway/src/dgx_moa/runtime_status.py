@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .lifecycle import read_latest_decisions
+from .lifecycle import read_automation_status, read_latest_decisions
 from .usage import UsageStore
 
 SERVICES = ("gateway", "executor", "planner", "reviewer", "reasoner", "judge")
@@ -99,6 +99,11 @@ def usage_status(
     store = UsageStore(path)
     requests = store.recent_requests()
     statistics = store.report()
+    role_statistics = {
+        role: role_report
+        for role, role_report in store.all_role_statistics().items()
+        if role_report["request_count"]
+    }
     lifecycle_samples = store.recent_lifecycle_samples()
     decisions = (
         {
@@ -109,6 +114,7 @@ def usage_status(
         if lifecycle_mode != "disabled"
         else {}
     )
+    automation = read_automation_status(path)
     role_states = {
         role: record.model_state for record in requests for role in record.roles_required
     }
@@ -123,6 +129,7 @@ def usage_status(
             for key, value in statistics.items()
             if key not in {"load_duration_seconds", "unload_duration_seconds"}
         },
+        "role_statistics": role_statistics,
         "role_states": role_states,
         "adaptive_idle_timeout_seconds": (
             decisions["executor"].threshold_seconds if "executor" in decisions else None
@@ -130,6 +137,7 @@ def usage_status(
         "idle_decisions": {
             role: decision.model_dump(mode="json") for role, decision in decisions.items()
         },
+        "automation": automation.model_dump(mode="json"),
         "cold_starts": statistics["cold_starts"],
         "loading_failures": sum(
             record.retryable_failure_class == "model_loading" for record in requests
@@ -240,7 +248,9 @@ def main() -> None:
         f"usage_requests={usage['request_statistics']['request_count']} "
         f"active={usage['active_request_count']} cold_starts={usage['cold_starts']} "
         f"loading_failures={usage['loading_failures']} "
-        f"idle_timeout={usage['adaptive_idle_timeout_seconds']}"
+        f"idle_timeout={usage['adaptive_idle_timeout_seconds']} "
+        f"automation_disabled={usage['automation']['automation_disabled']} "
+        f"lifecycle_failures={usage['automation']['failure_count']}"
     )
 
 

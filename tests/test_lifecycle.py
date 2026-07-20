@@ -15,6 +15,7 @@ from dgx_moa.config import Limits, Settings, load_settings
 from pydantic import ValidationError
 
 STATES = {
+    "disabled",
     "cold",
     "load_queued",
     "process_starting",
@@ -23,22 +24,26 @@ STATES = {
     "warming_up",
     "ready",
     "sleeping",
+    "unload_queued",
     "unloading",
     "failed",
 }
 TRANSITIONS = {
-    "cold": {"load_queued"},
-    "load_queued": {"cold", "process_starting", "failed"},
-    "process_starting": {"cold", "loading_weights", "failed"},
-    "loading_weights": {"cold", "initializing_engine", "failed"},
-    "initializing_engine": {"cold", "warming_up", "failed"},
-    "warming_up": {"cold", "ready", "failed"},
-    "ready": {"sleeping", "unloading", "failed"},
-    "sleeping": {"cold", "ready", "unloading", "failed"},
-    "unloading": {"cold", "failed"},
-    "failed": {"cold", "load_queued"},
+    "disabled": {"cold"},
+    "cold": {"disabled", "load_queued"},
+    "load_queued": {"disabled", "cold", "process_starting", "failed"},
+    "process_starting": {"disabled", "cold", "loading_weights", "failed"},
+    "loading_weights": {"disabled", "cold", "initializing_engine", "failed"},
+    "initializing_engine": {"disabled", "cold", "warming_up", "failed"},
+    "warming_up": {"disabled", "cold", "ready", "failed"},
+    "ready": {"disabled", "sleeping", "unload_queued", "unloading", "failed"},
+    "sleeping": {"disabled", "cold", "ready", "unloading", "failed"},
+    "unload_queued": {"disabled", "ready", "unloading", "failed"},
+    "unloading": {"disabled", "cold", "failed"},
+    "failed": {"disabled", "cold", "load_queued"},
 }
 PATHS = {
+    "disabled": ("disabled",),
     "cold": (),
     "load_queued": ("load_queued",),
     "process_starting": ("load_queued", "process_starting"),
@@ -81,6 +86,15 @@ PATHS = {
         "warming_up",
         "ready",
         "unloading",
+    ),
+    "unload_queued": (
+        "load_queued",
+        "process_starting",
+        "loading_weights",
+        "initializing_engine",
+        "warming_up",
+        "ready",
+        "unload_queued",
     ),
     "failed": ("load_queued", "failed"),
 }
@@ -156,6 +170,226 @@ def test_lifecycle_defaults_are_disabled_and_empty() -> None:
     assert settings.lifecycle_unit_map == {}
 
 
+def test_role_lifecycle_defaults_match_approved_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
+    settings = load_settings(Path("config/models.yaml"))
+
+    assert settings.lifecycle.roles["executor"].normally_resident is True
+    assert settings.lifecycle.roles["executor"].idle_unload_enabled is False
+    assert settings.lifecycle.roles["executor"].fallback_timeout_seconds == 14_400
+    assert settings.lifecycle.roles["planner"].fallback_timeout_seconds == 1_200
+    assert settings.lifecycle.roles["reviewer"].fallback_timeout_seconds == 1_200
+    assert settings.lifecycle.roles["reasoner"].fallback_timeout_seconds == 600
+    assert settings.lifecycle.roles["judge"].enabled is False
+    assert settings.lifecycle.recent_sample_window == 100
+    assert settings.lifecycle.minimum_samples == 20
+    assert settings.lifecycle.percentile == 0.75
+    assert settings.lifecycle.multiplier == 1.5
+    assert settings.lifecycle.load_unload_cooldown_seconds == 300
+    assert settings.lifecycle.continuation_lease_ttl_seconds == 900
+    assert settings.lifecycle.failure_limit == 3
+    assert settings.lifecycle.failure_window_seconds == 900
+
+
+def test_role_lifecycle_partial_environment_override_preserves_safe_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
+    monkeypatch.setenv(
+        "DGX_MOA_LIFECYCLE_POLICY",
+        '{"roles":{"planner":{"fallback_timeout_seconds":1800}}}',
+    )
+
+    settings = load_settings(Path("config/models.yaml"))
+
+    planner = settings.lifecycle.roles["planner"]
+    assert planner.minimum_timeout_seconds == 600
+    assert planner.fallback_timeout_seconds == 1_800
+    assert planner.maximum_timeout_seconds == 3_600
+    assert settings.lifecycle.roles["executor"].idle_unload_enabled is False
+    assert settings.lifecycle.roles["judge"].enabled is False
+
+
+def test_role_lifecycle_rejects_unknown_role_and_invalid_timeout_order() -> None:
+    with pytest.raises(ValidationError, match="unknown lifecycle role"):
+        Settings(auth_enabled=False, lifecycle={"roles": {"mystery": {}}})
+
+    with pytest.raises(ValidationError, match="minimum <= fallback <= maximum"):
+        Settings(
+            auth_enabled=False,
+            lifecycle={
+                "roles": {
+                    "reasoner": {
+                        "minimum_timeout_seconds": 700,
+                        "fallback_timeout_seconds": 600,
+                    }
+                }
+            },
+        )
+
+
+def test_lifecycle_schema_migrates_generation_and_required_fields(tmp_path: Path) -> None:
+    module = lifecycle()
+    database_path = tmp_path / "state.db"
+    with sqlite3.connect(database_path) as database:
+        database.execute(
+            "CREATE TABLE model_lifecycle ("
+            "role TEXT PRIMARY KEY, state TEXT NOT NULL, transition_id TEXT NOT NULL, "
+            "transitioned_at REAL NOT NULL, updated_at REAL NOT NULL, ready_since REAL, "
+            "last_used_at REAL, failure_class TEXT, failure_detail TEXT, "
+            "retry_count INTEGER NOT NULL, active_request_count INTEGER NOT NULL, "
+            "open_stream_count INTEGER NOT NULL, continuation_lease_count INTEGER NOT NULL, "
+            "evaluation_guard INTEGER NOT NULL, profile_guard INTEGER NOT NULL, "
+            "progress_value REAL, progress_quality TEXT, eta_seconds REAL, "
+            "last_load_duration_seconds REAL, last_unload_duration_seconds REAL, "
+            "memory_before_bytes INTEGER, memory_after_bytes INTEGER)"
+        )
+
+    store = module.LifecycleStore(
+        database_path,
+        ("planner",),
+        unit_map={"planner": "dgx-moa-dev-planner.service"},
+    )
+    record = store.get("planner")
+
+    assert record.state == "disabled"
+    assert record.generation == 0
+    assert record.service_unit == "dgx-moa-dev-planner.service"
+    assert record.load_started_at is None
+    assert record.ready_at is None
+    assert record.last_requested_at is None
+    assert record.last_completed_at is None
+    assert record.weight_load_percent is None
+    assert record.overall_load_percent is None
+    assert record.last_error_class is None
+    assert record.last_error_message_redacted is None
+
+    restarted = module.LifecycleStore(
+        database_path,
+        ("planner",),
+        unit_map={"planner": "dgx-moa-dev-planner.service"},
+    )
+    assert restarted.get("planner") == record
+
+
+def test_unload_queue_is_explicit_and_reversible(tmp_path: Path) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "state.db", ("planner",))
+    ready = store.recover_state("planner", "ready")
+
+    queued = store.queue_unload("planner", expected_transition_id=ready.transition_id)
+    assert queued.state == "unload_queued"
+
+    restored = store.cancel_queued_unload("planner", expected_transition_id=queued.transition_id)
+    assert restored.state == "ready"
+    assert restored.ready_at == ready.ready_at
+
+
+def test_load_generation_increments_once_per_cold_queue(tmp_path: Path) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "state.db", ("planner",))
+    cold = store.get("planner")
+
+    queued = store.transition("planner", "load_queued", expected_transition_id=cold.transition_id)
+
+    assert queued.generation == cold.generation + 1
+    assert queued.overall_load_percent == 0.0
+    with pytest.raises(module.StaleTransitionError):
+        store.transition("planner", "load_queued", expected_transition_id=cold.transition_id)
+    assert store.get("planner").generation == queued.generation
+
+    starting = store.transition(
+        "planner", "process_starting", expected_transition_id=queued.transition_id
+    )
+    assert starting.load_started_at is not None
+    assert starting.overall_load_percent == 5.0
+
+
+def test_new_load_generation_resets_progress_and_disable_all_is_durable(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    path = tmp_path / "state.db"
+    store = module.LifecycleStore(path, ("planner", "reviewer"))
+    planner = store.get("planner")
+    first = store.transition("planner", "load_queued", expected_transition_id=planner.transition_id)
+    progressed = store.update(
+        "planner",
+        first.transition_id,
+        progress_value=42.0,
+        overall_load_percent=34.0,
+        progress_quality="measured_bytes",
+    )
+    failed = store.transition(
+        "planner",
+        "failed",
+        expected_transition_id=progressed.transition_id,
+        failure_class="LOAD Timeout",
+        failure_detail="secret\nredacted",
+    )
+
+    second = store.transition("planner", "load_queued", expected_transition_id=failed.transition_id)
+    assert second.generation == first.generation + 1
+    assert second.weight_load_percent is None
+    assert second.overall_load_percent == 0.0
+    assert second.last_error_class == "load_timeout"
+    assert second.last_error_message_redacted == "secret redacted"
+
+    disabled = store.disable_all()
+    assert {role: record.state for role, record in disabled.items()} == {
+        "planner": "disabled",
+        "reviewer": "disabled",
+    }
+    restarted = module.LifecycleStore(path, ("planner", "reviewer"))
+    assert restarted.get("planner").state == "disabled"
+    assert restarted.get("planner").generation == second.generation
+
+
+def test_progress_bands_are_monotonic_within_a_generation(tmp_path: Path) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "state.db", ("planner",))
+    record = store.get("planner")
+    queued = store.transition("planner", "load_queued", expected_transition_id=record.transition_id)
+    starting = store.transition(
+        "planner", "process_starting", expected_transition_id=queued.transition_id
+    )
+    loading = store.transition(
+        "planner", "loading_weights", expected_transition_id=starting.transition_id
+    )
+    measured = store.update(
+        "planner",
+        loading.transition_id,
+        progress_value=50.0,
+        overall_load_percent=35.0,
+        progress_quality="measured_shards",
+    )
+    stale_log = store.update(
+        "planner",
+        measured.transition_id,
+        progress_value=40.0,
+        overall_load_percent=29.0,
+        progress_quality="measured_shards",
+    )
+    initialized = store.transition(
+        "planner", "initializing_engine", expected_transition_id=stale_log.transition_id
+    )
+    warmed = store.transition(
+        "planner", "warming_up", expected_transition_id=initialized.transition_id
+    )
+    ready = store.transition("planner", "ready", expected_transition_id=warmed.transition_id)
+
+    assert queued.overall_load_percent == 0.0
+    assert starting.overall_load_percent == 5.0
+    assert loading.overall_load_percent == 5.0
+    assert stale_log.weight_load_percent == 50.0
+    assert stale_log.overall_load_percent == 35.0
+    assert initialized.overall_load_percent == 70.0
+    assert warmed.overall_load_percent == 90.0
+    assert ready.overall_load_percent == 100.0
+
+
 def test_idle_policy_limits_have_conservative_defaults_and_yaml_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -177,6 +411,143 @@ def test_idle_policy_limits_have_conservative_defaults_and_yaml_values(
     for field, value in expected.items():
         assert getattr(limits, field) == value
         assert getattr(configured, field) == value
+
+
+def test_executor_long_idle_is_disabled_while_optional_roles_adapt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = lifecycle()
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
+    settings = load_settings(Path("config/models.yaml"))
+    records = policy_usage_from_gaps(
+        [600.0] * 100,
+        ("executor", "planner", "reasoner"),
+    )
+
+    executor = module.calculate_idle_policy(
+        "executor",
+        "adaptive",
+        records,
+        policy_record(module, "executor"),
+        policy=settings.lifecycle.roles["executor"],
+        lifecycle=settings.lifecycle,
+        now=100_000.0,
+    )
+    planner = module.calculate_idle_policy(
+        "planner",
+        "adaptive",
+        records,
+        policy_record(module, "planner"),
+        policy=settings.lifecycle.roles["planner"],
+        lifecycle=settings.lifecycle,
+        now=100_000.0,
+    )
+    reasoner = module.calculate_idle_policy(
+        "reasoner",
+        "adaptive",
+        records,
+        policy_record(module, "reasoner"),
+        policy=settings.lifecycle.roles["reasoner"],
+        lifecycle=settings.lifecycle,
+        now=100_000.0,
+    )
+
+    assert executor.action_allowed is False
+    assert executor.reason == "idle_unload_disabled"
+    assert planner.threshold_seconds == 900.0
+    assert planner.threshold_seconds <= 3_600
+    assert reasoner.threshold_seconds == 900.0
+    assert reasoner.threshold_seconds <= 1_800
+
+
+def test_role_policy_cooldown_blocks_otherwise_eligible_unload() -> None:
+    module = lifecycle()
+    from dgx_moa.config import LifecyclePolicy, LifecycleRolePolicy
+
+    lifecycle_policy = LifecyclePolicy(load_unload_cooldown_seconds=300)
+    role_policy = LifecycleRolePolicy(
+        minimum_timeout_seconds=1,
+        fallback_timeout_seconds=10,
+        maximum_timeout_seconds=100,
+        minimum_ready_residency_seconds=1,
+    )
+    record = policy_record(module, "planner", ready_since=0.0, last_used_at=0.0)
+
+    decision = module.calculate_idle_policy(
+        "planner",
+        "fixed",
+        (),
+        record,
+        policy=role_policy,
+        lifecycle=lifecycle_policy,
+        now=100.0,
+        previous_mode="fixed",
+        previous_last_activity_at=0.0,
+        previous_consecutive_check_count=1,
+    )
+
+    assert decision.action_allowed is False
+    assert decision.reason == "cooldown"
+
+
+@pytest.mark.asyncio
+async def test_failure_circuit_trips_after_three_mutations_and_blocks_fourth(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    from dgx_moa.config import LifecyclePolicy
+
+    class FailingStartDriver(module.FakeLifecycleDriver):
+        def start(self, role: str) -> None:
+            self._require_role(role)
+            self.calls.append(("start", role))
+            raise module.LifecycleDriverError("start", "command_failed")
+
+    roles = ("planner", "reviewer", "reasoner", "executor")
+    store = module.LifecycleStore(tmp_path / "state.db", roles, clock=lambda: 100.0)
+    driver = FailingStartDriver({role: "inactive" for role in roles})
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=lambda role: asyncio.sleep(0, result=False),
+        timeout_seconds=10,
+        poll_seconds=0.1,
+        clock=lambda: 100.0,
+        lifecycle_policy=LifecyclePolicy(failure_limit=3, failure_window_seconds=900),
+    )
+
+    for role in roles[:3]:
+        check = await coordinator.ensure_ready(role)
+        assert check.load_triggered is True
+        await coordinator._tasks[role]
+
+    circuit = store.automation_status()
+    assert circuit.automation_disabled is True
+    assert circuit.failure_count == 3
+    assert circuit.disabled_at == 100.0
+    fourth = await coordinator.ensure_ready("executor")
+
+    assert fourth.load_triggered is False
+    assert store.get("executor").state == "cold"
+    assert driver.calls.count(("start", "executor")) == 0
+    assert sum(operation == "start" for operation, _ in driver.calls) == 3
+    assert len(store.recent_failure_events()) == 3
+
+    reset = store.reset_automation()
+    assert reset.automation_disabled is False
+    assert reset.failure_count == 0
+    assert len(store.recent_failure_events()) == 3
+    after_reset = store.record_failure(
+        "executor",
+        "manual_probe",
+        "probe_failed",
+        0,
+        failure_limit=3,
+        failure_window_seconds=900,
+    )
+    assert after_reset.automation_disabled is False
+    assert after_reset.failure_count == 1
+    await coordinator.close()
 
 
 @pytest.mark.parametrize(
@@ -721,12 +1092,17 @@ def test_schema_persists_every_lifecycle_field_without_changing_usage_tables(
     assert isinstance(executor, module.LifecycleRecord)
     assert executor.model_dump() == {
         "role": "executor",
+        "generation": 0,
         "state": "cold",
         "transition_id": executor.transition_id,
         "transitioned_at": 100.0,
         "updated_at": 100.0,
         "ready_since": None,
         "last_used_at": None,
+        "load_started_at": None,
+        "ready_at": None,
+        "last_requested_at": None,
+        "last_completed_at": None,
         "failure_class": None,
         "failure_detail": None,
         "retry_count": 0,
@@ -736,12 +1112,17 @@ def test_schema_persists_every_lifecycle_field_without_changing_usage_tables(
         "evaluation_guard": False,
         "profile_guard": False,
         "progress_value": None,
+        "weight_load_percent": None,
+        "overall_load_percent": None,
         "progress_quality": None,
         "eta_seconds": None,
         "last_load_duration_seconds": None,
         "last_unload_duration_seconds": None,
         "memory_before_bytes": None,
         "memory_after_bytes": None,
+        "service_unit": None,
+        "last_error_class": None,
+        "last_error_message_redacted": None,
     }
     UUID(executor.transition_id)
 
@@ -759,7 +1140,10 @@ def test_schema_persists_every_lifecycle_field_without_changing_usage_tables(
 
     assert tables == {
         "request_usage",
+        "role_request_usage",
         "lifecycle_samples",
+        "lifecycle_failure_events",
+        "lifecycle_automation",
         "model_lifecycle",
         "model_lifecycle_decisions",
         "model_lifecycle_leases",
@@ -941,11 +1325,15 @@ def test_active_release_marks_activity_once_at_terminal_cleanup(tmp_path: Path) 
         ("executor", "planner"),
         kind="active_request",
     )
+    assert store.get("executor").last_requested_at == 100.0
+    assert store.get("planner").last_requested_at == 100.0
 
     clock[0] = 125.0
     store.release_leases(lease.lease_id for lease in leases)
     assert store.get("executor").last_used_at == 125.0
     assert store.get("planner").last_used_at == 125.0
+    assert store.get("executor").last_completed_at == 125.0
+    assert store.get("planner").last_completed_at == 125.0
 
     clock[0] = 150.0
     store.release_leases(lease.lease_id for lease in leases)
@@ -1455,6 +1843,40 @@ def test_systemd_driver_uses_only_exact_argument_vectors(
     assert all("shell" not in kwargs for _, kwargs in calls)
 
 
+def test_systemd_driver_uses_global_cursor_for_never_started_unit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = lifecycle()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        output = (
+            "-- No entries --\n"
+            if "-u" in args
+            else "-- No entries --\n-- cursor: s=global123;i=5\n"
+        )
+        return subprocess.CompletedProcess(args, 0, stdout=output, stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    driver = module.SystemdLifecycleDriver({"executor": "dgx-moa-dev-executor.service"})
+
+    assert driver.capture_progress_cursor("executor") == "s=global123;i=5"
+    assert calls == [
+        [
+            "journalctl",
+            "--user",
+            "-u",
+            "dgx-moa-dev-executor.service",
+            "--no-pager",
+            "-n",
+            "0",
+            "--show-cursor",
+        ],
+        ["journalctl", "--user", "--no-pager", "-n", "0", "--show-cursor"],
+    ]
+
+
 def test_systemd_progress_is_scoped_to_a_valid_bounded_cursor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1704,6 +2126,16 @@ def test_progress_parser_measures_checkpoint_shards() -> None:
     assert progress.progress_quality == "measured_shards"
 
 
+def test_progress_parser_rejects_nonfinite_numeric_overflow() -> None:
+    module = lifecycle()
+    huge = "9" * 500
+
+    progress = module.parse_load_progress((f"Loading model weights: {huge}/{huge} bytes",))
+
+    assert progress.weight_load_percent is None
+    assert progress.progress_quality == "unavailable"
+
+
 @pytest.mark.parametrize(
     ("line", "expected_state"),
     [
@@ -1718,7 +2150,7 @@ def test_progress_parser_recognizes_post_weight_stages(line: str, expected_state
 
     assert progress.state == expected_state
     assert progress.weight_load_percent == 100.0
-    assert progress.progress_quality == "estimated"
+    assert progress.progress_quality == "measured_phase"
 
 
 @pytest.mark.parametrize(
@@ -1749,7 +2181,7 @@ def test_progress_parser_recognizes_post_weight_stages(line: str, expected_state
             None,
             None,
             "warming_up",
-            "estimated",
+            "measured_phase",
         ),
     ],
 )
@@ -1886,7 +2318,44 @@ async def test_coordinator_preserves_prior_progress_when_new_logs_are_invalid(
     record = store.get("executor")
 
     assert record.progress_value == 60.0
+    assert record.overall_load_percent == 41.0
     assert record.progress_quality == "measured_shards"
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_progress_parser_exception_does_not_fail_a_healthy_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "parser-exception.db", ("executor",))
+    driver = module.FakeLifecycleDriver({"executor": "inactive"})
+
+    def fail_parser(*args: object, **kwargs: object) -> None:
+        raise ValueError("untrusted journal parser failure")
+
+    async def health_probe(role: str) -> bool:
+        assert role == "executor"
+        return True
+
+    monkeypatch.setattr(module, "parse_load_progress", fail_parser)
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=health_probe,
+        timeout_seconds=10.0,
+        poll_seconds=0.25,
+        clock=lambda: 100.0,
+    )
+
+    await coordinator.ensure_ready("executor")
+    await coordinator._tasks["executor"]
+    record = store.get("executor")
+
+    assert record.state == "ready"
+    assert record.progress_value == 100.0
+    assert record.progress_quality == "estimated"
+    assert record.failure_class is None
     await coordinator.close()
 
 

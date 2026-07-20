@@ -13,6 +13,16 @@
 - The checked-in gateway+executor resident target is undeployed. Do not describe
   optional-role on-demand loading as active while lifecycle mode is `disabled`
   and its unit map is empty.
+- Keep executor normally resident and idle unload disabled unless new physical
+  evidence explicitly changes that policy. Planner/reviewer/reasoner use their
+  own successful request gaps; never substitute aggregate gateway traffic.
+- Cold responses must report honest role/state/generation and unavailable
+  progress when journals expose no trustworthy weight counter. Never synthesize
+  a weight percentage from elapsed time.
+- Lifecycle rollback is `scripts/rollback-lifecycle.sh <one-config>`: atomically
+  set disabled + empty unit map, reset only the automation latch, restart the
+  fixed gateway unit, restore resident, and verify protected status. Do not aim
+  it at production without separate deployment approval.
 - Keep the gateway in Python unless a separately approved study crosses the
   measured Rust thresholds documented in `docs/RUST_EVALUATION.md`.
 - Prefer standard-library implementations and small focused diffs.

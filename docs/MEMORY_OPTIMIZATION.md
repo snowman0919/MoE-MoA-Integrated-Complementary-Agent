@@ -1,6 +1,6 @@
 # Memory Optimization
 
-Updated: 2026-07-19
+Updated: 2026-07-20
 
 ## Decision
 
@@ -17,6 +17,11 @@ MARLIN. No new runtime flag is justified.
 This is isolated development evidence, not a deployment. Checked-in lifecycle
 mode remains `disabled`; production was not started, stopped, restarted,
 modified, or deployed.
+
+The recommended role policy does not idle-unload executor. It targets the
+optional planner, reviewer, and reasoner using role-local request gaps, so the
+selected executor full-stop result remains a fallback/mechanism proof rather
+than a default executor residency change.
 
 ## Evidence boundary
 
@@ -213,3 +218,6 @@ alone cannot select a live mechanism, and A remains the fail-closed choice.
   the exact bad text cannot be independently re-inspected. Shutdown logs include
   one vLLM `resource_tracker` semaphore-cleanup warning, but final exact checks
   found no surviving process, port, PSS, or RSS. Model equality is metadata-only.
+- The 2026-07-20 four-role user-systemd lifecycle result used fake weights. It
+  proves exact control, idle stop, reload, circuit, and rollback behavior but
+  contributes no optional-role or aggregate real-weight memory measurement.

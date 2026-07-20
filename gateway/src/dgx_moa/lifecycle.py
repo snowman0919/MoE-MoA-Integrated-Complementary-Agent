@@ -10,16 +10,22 @@ import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from pathlib import Path
-from statistics import quantiles
 from typing import Any, Literal, Protocol, TypeVar, cast
 from uuid import UUID, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .config import MODEL_ROLES, SYSTEMD_UNIT_PATTERN, Limits
+from .config import (
+    MODEL_ROLES,
+    SYSTEMD_UNIT_PATTERN,
+    LifecyclePolicy,
+    LifecycleRolePolicy,
+    Limits,
+)
 from .usage import UsageStore
 
 LifecycleState = Literal[
+    "disabled",
     "cold",
     "load_queued",
     "process_starting",
@@ -28,13 +34,16 @@ LifecycleState = Literal[
     "warming_up",
     "ready",
     "sleeping",
+    "unload_queued",
     "unloading",
     "failed",
 ]
 DriverStatus = Literal["active", "inactive", "failed"]
 DriverOperation = Literal["status", "start", "stop", "cursor", "progress"]
 DriverErrorKind = Literal["timeout", "command_failed", "malformed_output"]
-ProgressQuality = Literal["measured_bytes", "measured_shards", "estimated", "unavailable"]
+ProgressQuality = Literal[
+    "measured_bytes", "measured_shards", "measured_phase", "estimated", "unavailable"
+]
 LeaseKind = Literal["active_request", "open_stream", "continuation"]
 RequestLeaseKind = Literal["active_request", "open_stream"]
 GuardKind = Literal["evaluation_guard", "profile_guard"]
@@ -43,11 +52,14 @@ LifecycleMode = Literal["disabled", "observe", "fixed", "adaptive"]
 IdleThresholdSource = Literal["disabled", "fixed", "sparse_fallback", "adaptive_p75"]
 IdlePolicyReason = Literal[
     "mode_disabled",
+    "role_disabled",
+    "idle_unload_disabled",
     "mode_changed",
     "state_reset",
     "state_not_ready",
     "blocked",
     "minimum_residency",
+    "cooldown",
     "activity_reset",
     "below_threshold",
     "first_idle_check",
@@ -71,6 +83,7 @@ CONTINUATION_CORRELATION = re.compile(r"[0-9a-f]{64}")
 T = TypeVar("T")
 
 LIFECYCLE_STATES: tuple[LifecycleState, ...] = (
+    "disabled",
     "cold",
     "load_queued",
     "process_starting",
@@ -79,20 +92,23 @@ LIFECYCLE_STATES: tuple[LifecycleState, ...] = (
     "warming_up",
     "ready",
     "sleeping",
+    "unload_queued",
     "unloading",
     "failed",
 )
 TRANSITIONS: dict[LifecycleState, frozenset[LifecycleState]] = {
-    "cold": frozenset({"load_queued"}),
-    "load_queued": frozenset({"cold", "process_starting", "failed"}),
-    "process_starting": frozenset({"cold", "loading_weights", "failed"}),
-    "loading_weights": frozenset({"cold", "initializing_engine", "failed"}),
-    "initializing_engine": frozenset({"cold", "warming_up", "failed"}),
-    "warming_up": frozenset({"cold", "ready", "failed"}),
-    "ready": frozenset({"sleeping", "unloading", "failed"}),
-    "sleeping": frozenset({"cold", "ready", "unloading", "failed"}),
-    "unloading": frozenset({"cold", "failed"}),
-    "failed": frozenset({"cold", "load_queued"}),
+    "disabled": frozenset({"cold"}),
+    "cold": frozenset({"disabled", "load_queued"}),
+    "load_queued": frozenset({"disabled", "cold", "process_starting", "failed"}),
+    "process_starting": frozenset({"disabled", "cold", "loading_weights", "failed"}),
+    "loading_weights": frozenset({"disabled", "cold", "initializing_engine", "failed"}),
+    "initializing_engine": frozenset({"disabled", "cold", "warming_up", "failed"}),
+    "warming_up": frozenset({"disabled", "cold", "ready", "failed"}),
+    "ready": frozenset({"disabled", "sleeping", "unload_queued", "unloading", "failed"}),
+    "sleeping": frozenset({"disabled", "cold", "ready", "unloading", "failed"}),
+    "unload_queued": frozenset({"disabled", "ready", "unloading", "failed"}),
+    "unloading": frozenset({"disabled", "cold", "failed"}),
+    "failed": frozenset({"disabled", "cold", "load_queued"}),
 }
 
 
@@ -100,12 +116,17 @@ class LifecycleRecord(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
     role: str
+    generation: int = Field(default=0, ge=0)
     state: LifecycleState
     transition_id: str
     transitioned_at: float
     updated_at: float
     ready_since: float | None = None
     last_used_at: float | None = None
+    load_started_at: float | None = Field(default=None, ge=0)
+    ready_at: float | None = Field(default=None, ge=0)
+    last_requested_at: float | None = Field(default=None, ge=0)
+    last_completed_at: float | None = Field(default=None, ge=0)
     failure_class: str | None = None
     failure_detail: str | None = None
     retry_count: int = Field(default=0, ge=0)
@@ -115,12 +136,17 @@ class LifecycleRecord(BaseModel):
     evaluation_guard: bool = False
     profile_guard: bool = False
     progress_value: float | None = Field(default=None, ge=0, le=100)
+    weight_load_percent: float | None = Field(default=None, ge=0, le=100)
+    overall_load_percent: float | None = Field(default=None, ge=0, le=100)
     progress_quality: ProgressQuality | None = None
     eta_seconds: float | None = Field(default=None, ge=0)
     last_load_duration_seconds: float | None = Field(default=None, ge=0)
     last_unload_duration_seconds: float | None = Field(default=None, ge=0)
     memory_before_bytes: int | None = Field(default=None, ge=0)
     memory_after_bytes: int | None = Field(default=None, ge=0)
+    service_unit: str | None = None
+    last_error_class: str | None = None
+    last_error_message_redacted: str | None = None
 
 
 class LifecycleLease(BaseModel):
@@ -174,6 +200,28 @@ class PersistedIdlePolicyDecision(IdlePolicyDecision):
     decided_at: float = Field(ge=0)
 
 
+class LifecycleFailureEvent(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid")
+
+    event_id: int = Field(ge=1)
+    role: ModelRole
+    operation_stage: str
+    failure_class: str
+    generation: int = Field(ge=0)
+    occurred_at: float = Field(ge=0)
+
+
+class LifecycleAutomationStatus(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid")
+
+    automation_disabled: bool = False
+    disabled_at: float | None = Field(default=None, ge=0)
+    failure_count: int = Field(default=0, ge=0)
+    window_started_at: float | None = Field(default=None, ge=0)
+    last_failure_at: float | None = Field(default=None, ge=0)
+    last_reset_at: float = Field(default=0, ge=0)
+
+
 def _idle_bounds(role: str, limits: Limits) -> tuple[float, float, float, float]:
     prefix = "executor" if role == "executor" else "optional"
     minimum = float(getattr(limits, f"{prefix}_idle_minimum_seconds"))
@@ -199,10 +247,21 @@ def _role_usage_gaps(
     timestamps: list[float] = []
     for record in records:
         try:
-            accepted_at = float(record.accepted_at)
+            raw_timestamp = getattr(record, "requested_at", getattr(record, "accepted_at", None))
+            if raw_timestamp is None:
+                continue
+            accepted_at = float(raw_timestamp)
         except (AttributeError, TypeError, ValueError):
             continue
-        if role in record.roles_required and math.isfinite(accepted_at) and accepted_at >= 0:
+        record_role = getattr(record, "role", None)
+        record_roles = getattr(record, "roles_required", ())
+        successful = getattr(record, "success", True) is not False
+        if (
+            successful
+            and (record_role == role or role in record_roles)
+            and math.isfinite(accepted_at)
+            and accepted_at >= 0
+        ):
             timestamps.append(accepted_at)
     timestamps = sorted(timestamps)[-sample_window:]
     return [
@@ -212,6 +271,16 @@ def _role_usage_gaps(
     ]
 
 
+def _configured_quantile(values: Sequence[float], quantile: float) -> float:
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * quantile
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
+
+
 def calculate_idle_policy(
     role: ModelRole,
     mode: LifecycleMode,
@@ -219,7 +288,9 @@ def calculate_idle_policy(
     record: LifecycleRecord,
     *,
     now: float,
-    limits: Limits,
+    limits: Limits | None = None,
+    policy: LifecycleRolePolicy | None = None,
+    lifecycle: LifecyclePolicy | None = None,
     has_blockers: bool = False,
     previous_mode: LifecycleMode | None = None,
     previous_last_activity_at: float | None = None,
@@ -245,19 +316,43 @@ def calculate_idle_policy(
         not math.isfinite(previous_last_activity_at) or previous_last_activity_at < 0
     ):
         raise ValueError("previous activity time must be finite and nonnegative")
+    if (policy is None) != (lifecycle is None):
+        raise ValueError("role and lifecycle policy must be provided together")
+    if limits is None and lifecycle is None:
+        raise ValueError("idle policy configuration is required")
+    if lifecycle is not None:
+        minimum_samples = lifecycle.minimum_samples
+        sample_window = lifecycle.recent_sample_window
+        multiplier = lifecycle.multiplier
+        percentile = lifecycle.percentile
+        cooldown = lifecycle.load_unload_cooldown_seconds
+    else:
+        assert limits is not None
+        minimum_samples = limits.adaptive_minimum_samples
+        sample_window = limits.usage_sample_window
+        multiplier = 1.5
+        percentile = 0.75
+        cooldown = 0.0
     if (
-        not isinstance(limits.adaptive_minimum_samples, int)
-        or isinstance(limits.adaptive_minimum_samples, bool)
-        or limits.adaptive_minimum_samples < 1
+        not isinstance(minimum_samples, int)
+        or isinstance(minimum_samples, bool)
+        or minimum_samples < 1
     ):
         raise ValueError("adaptive minimum samples must be positive")
 
-    minimum, fallback, maximum, minimum_residency = _idle_bounds(role, limits)
-    gaps = _role_usage_gaps(records, role, limits.usage_sample_window)
-    adaptive = mode in {"observe", "adaptive"} and len(gaps) >= limits.adaptive_minimum_samples
+    if policy is not None:
+        minimum = policy.minimum_timeout_seconds
+        fallback = policy.fallback_timeout_seconds
+        maximum = policy.maximum_timeout_seconds
+        minimum_residency = policy.minimum_ready_residency_seconds
+    else:
+        assert limits is not None
+        minimum, fallback, maximum, minimum_residency = _idle_bounds(role, limits)
+    gaps = _role_usage_gaps(records, role, sample_window)
+    adaptive = mode in {"observe", "adaptive"} and len(gaps) >= minimum_samples
     if adaptive:
-        p75 = gaps[0] if len(gaps) == 1 else quantiles(gaps, n=4, method="inclusive")[2]
-        threshold = min(maximum, max(minimum, 1.5 * p75))
+        selected = _configured_quantile(gaps, percentile)
+        threshold = min(maximum, max(minimum, multiplier * selected))
         source: IdleThresholdSource = "adaptive_p75"
     else:
         threshold = fallback
@@ -287,6 +382,10 @@ def calculate_idle_policy(
     would_unload = False
     if mode == "disabled":
         reason = "mode_disabled"
+    elif policy is not None and not policy.enabled:
+        reason = "role_disabled"
+    elif policy is not None and not policy.idle_unload_enabled:
+        reason = "idle_unload_disabled"
     elif previous_mode is not None and previous_mode != mode:
         reason = "mode_changed"
     elif record.state != "ready" or ready_since is None or activity_at is None:
@@ -295,6 +394,8 @@ def calculate_idle_policy(
         reason = "blocked"
     elif residency_seconds < minimum_residency:
         reason = "minimum_residency"
+    elif now - record.transitioned_at < cooldown:
+        reason = "cooldown"
     elif previous_last_activity_at is not None and previous_last_activity_at != activity_at:
         reason = "activity_reset"
     elif idle_seconds <= threshold:
@@ -327,9 +428,12 @@ def calculate_idle_policy(
 
 
 def _reported_percent(match: re.Match[str]) -> float | None:
-    loaded = float(match.group("loaded"))
-    total = float(match.group("total"))
-    if total <= 0 or loaded > total:
+    try:
+        loaded = float(match.group("loaded"))
+        total = float(match.group("total"))
+    except (OverflowError, ValueError):
+        return None
+    if not math.isfinite(loaded) or not math.isfinite(total) or total <= 0 or loaded > total:
         return None
     return loaded / total * 100
 
@@ -377,7 +481,7 @@ def parse_load_progress(
             progress_quality=(
                 quality
                 if measured == 100.0 and quality in {"measured_bytes", "measured_shards"}
-                else "estimated"
+                else "measured_phase"
             ),
         )
     return LoadProgress(
@@ -456,6 +560,22 @@ def read_latest_decisions(path: str | Path) -> dict[str, PersistedIdlePolicyDeci
     return decisions
 
 
+def read_automation_status(path: str | Path) -> LifecycleAutomationStatus:
+    database_path = Path(path)
+    if not database_path.exists():
+        return LifecycleAutomationStatus()
+    try:
+        with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True) as database:
+            database.row_factory = sqlite3.Row
+            row = database.execute(
+                f"SELECT {', '.join(AUTOMATION_COLUMNS)} FROM lifecycle_automation "
+                "WHERE singleton = 1"
+            ).fetchone()
+    except sqlite3.Error:
+        return LifecycleAutomationStatus()
+    return LifecycleStore._automation(row) if row is not None else LifecycleAutomationStatus()
+
+
 class LifecycleDriver(Protocol):
     def status(self, role: str) -> DriverStatus: ...
 
@@ -471,15 +591,31 @@ class LifecycleDriver(Protocol):
 COLUMNS = tuple(LifecycleRecord.model_fields)
 LEASE_COLUMNS = tuple(LifecycleLease.model_fields)
 DECISION_COLUMNS = tuple(PersistedIdlePolicyDecision.model_fields)
+FAILURE_EVENT_COLUMNS = tuple(LifecycleFailureEvent.model_fields)
+AUTOMATION_COLUMNS = tuple(LifecycleAutomationStatus.model_fields)
 MUTABLE_FIELDS = frozenset(COLUMNS) - {
     "role",
+    "generation",
     "state",
     "transition_id",
     "transitioned_at",
     "updated_at",
+    "service_unit",
 }
 BOOLEAN_FIELDS = {"evaluation_guard", "profile_guard"}
 FAILURE_CLASS_PATTERN = re.compile(r"[^a-z0-9]+")
+LIFECYCLE_COLUMN_MIGRATIONS = {
+    "generation": "INTEGER NOT NULL DEFAULT 0",
+    "load_started_at": "REAL",
+    "ready_at": "REAL",
+    "last_requested_at": "REAL",
+    "last_completed_at": "REAL",
+    "weight_load_percent": "REAL",
+    "overall_load_percent": "REAL",
+    "service_unit": "TEXT",
+    "last_error_class": "TEXT",
+    "last_error_message_redacted": "TEXT",
+}
 
 
 def _sanitize_failure_class(value: str) -> str:
@@ -497,28 +633,48 @@ class LifecycleStore:
         roles: Iterable[str],
         *,
         clock: Callable[[], float] = time.time,
+        unit_map: Mapping[str, str] | None = None,
     ):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._roles = tuple(dict.fromkeys(roles))
         self._role_set = set(self._roles)
         self._clock = clock
+        self._unit_map = dict(unit_map or {})
         unknown = self._role_set - MODEL_ROLES
         if unknown:
             raise UnknownRoleError(sorted(unknown)[0])
+        unknown_units = set(self._unit_map) - self._role_set
+        if unknown_units:
+            raise UnknownRoleError(sorted(unknown_units)[0])
+        if any(not SYSTEMD_UNIT_PATTERN.fullmatch(unit) for unit in self._unit_map.values()):
+            raise ValueError("invalid systemd unit")
+        if len(set(self._unit_map.values())) != len(self._unit_map):
+            raise ValueError("duplicate lifecycle unit")
         with self._connect() as database:
             database.execute(
                 "CREATE TABLE IF NOT EXISTS model_lifecycle ("
-                "role TEXT PRIMARY KEY, state TEXT NOT NULL, transition_id TEXT NOT NULL, "
+                "role TEXT PRIMARY KEY, generation INTEGER NOT NULL DEFAULT 0, "
+                "state TEXT NOT NULL, transition_id TEXT NOT NULL, "
                 "transitioned_at REAL NOT NULL, updated_at REAL NOT NULL, ready_since REAL, "
-                "last_used_at REAL, failure_class TEXT, failure_detail TEXT, "
+                "last_used_at REAL, load_started_at REAL, ready_at REAL, "
+                "last_requested_at REAL, last_completed_at REAL, "
+                "failure_class TEXT, failure_detail TEXT, "
                 "retry_count INTEGER NOT NULL, active_request_count INTEGER NOT NULL, "
                 "open_stream_count INTEGER NOT NULL, continuation_lease_count INTEGER NOT NULL, "
                 "evaluation_guard INTEGER NOT NULL, profile_guard INTEGER NOT NULL, "
-                "progress_value REAL, progress_quality TEXT, eta_seconds REAL, "
+                "progress_value REAL, weight_load_percent REAL, overall_load_percent REAL, "
+                "progress_quality TEXT, eta_seconds REAL, "
                 "last_load_duration_seconds REAL, last_unload_duration_seconds REAL, "
-                "memory_before_bytes INTEGER, memory_after_bytes INTEGER)"
+                "memory_before_bytes INTEGER, memory_after_bytes INTEGER, service_unit TEXT, "
+                "last_error_class TEXT, last_error_message_redacted TEXT)"
             )
+            existing_columns = {
+                row[1] for row in database.execute("PRAGMA table_info(model_lifecycle)")
+            }
+            for name, definition in LIFECYCLE_COLUMN_MIGRATIONS.items():
+                if name not in existing_columns:
+                    database.execute(f"ALTER TABLE model_lifecycle ADD COLUMN {name} {definition}")
             database.execute(
                 "CREATE TABLE IF NOT EXISTS model_lifecycle_leases ("
                 "lease_id TEXT PRIMARY KEY, role TEXT NOT NULL, kind TEXT NOT NULL "
@@ -538,20 +694,59 @@ class LifecycleStore:
                 "next_consecutive_check_count INTEGER NOT NULL, would_unload INTEGER NOT NULL, "
                 "action_allowed INTEGER NOT NULL, reason TEXT NOT NULL, decided_at REAL NOT NULL)"
             )
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS lifecycle_samples ("
+                "sample_id INTEGER PRIMARY KEY, role TEXT NOT NULL, kind TEXT NOT NULL, "
+                "duration_seconds REAL NOT NULL, memory_before_bytes INTEGER, "
+                "memory_after_bytes INTEGER)"
+            )
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS lifecycle_failure_events ("
+                "event_id INTEGER PRIMARY KEY, role TEXT NOT NULL, "
+                "operation_stage TEXT NOT NULL, failure_class TEXT NOT NULL, "
+                "generation INTEGER NOT NULL, occurred_at REAL NOT NULL)"
+            )
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS lifecycle_automation ("
+                "singleton INTEGER PRIMARY KEY CHECK(singleton = 1), "
+                "automation_disabled INTEGER NOT NULL, disabled_at REAL, "
+                "failure_count INTEGER NOT NULL, window_started_at REAL, "
+                "last_failure_at REAL, last_reset_at REAL NOT NULL, "
+                "last_reset_event_id INTEGER NOT NULL DEFAULT 0)"
+            )
+            automation_columns = {
+                row[1] for row in database.execute("PRAGMA table_info(lifecycle_automation)")
+            }
+            if "last_reset_event_id" not in automation_columns:
+                database.execute(
+                    "ALTER TABLE lifecycle_automation ADD COLUMN "
+                    "last_reset_event_id INTEGER NOT NULL DEFAULT 0"
+                )
+            database.execute(
+                "INSERT OR IGNORE INTO lifecycle_automation "
+                "(singleton, automation_disabled, failure_count, last_reset_at) "
+                "VALUES (1, 0, 0, 0)"
+            )
             for role in self._roles:
                 now = self._clock()
                 record = LifecycleRecord(
                     role=role,
-                    state="cold",
+                    state="disabled" if unit_map is not None else "cold",
                     transition_id=str(uuid4()),
                     transitioned_at=now,
                     updated_at=now,
+                    service_unit=self._unit_map.get(role),
                 )
                 database.execute(
                     f"INSERT OR IGNORE INTO model_lifecycle ({', '.join(COLUMNS)}) "
                     f"VALUES ({', '.join('?' for _ in COLUMNS)})",
                     self._values(record),
                 )
+                if role in self._unit_map:
+                    database.execute(
+                        "UPDATE model_lifecycle SET service_unit = ? WHERE role = ?",
+                        (self._unit_map[role], role),
+                    )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30)
@@ -672,6 +867,122 @@ class LifecycleStore:
             ).fetchall()
         return {row["role"]: self._decision(row) for row in rows}
 
+    @staticmethod
+    def _automation(row: sqlite3.Row) -> LifecycleAutomationStatus:
+        values = {column: row[column] for column in AUTOMATION_COLUMNS}
+        values["automation_disabled"] = bool(values["automation_disabled"])
+        return LifecycleAutomationStatus.model_validate(values)
+
+    def automation_status(self) -> LifecycleAutomationStatus:
+        with self._connect() as database:
+            row = database.execute(
+                f"SELECT {', '.join(AUTOMATION_COLUMNS)} FROM lifecycle_automation "
+                "WHERE singleton = 1"
+            ).fetchone()
+        assert row is not None
+        return self._automation(row)
+
+    def record_failure(
+        self,
+        role: str,
+        operation_stage: str,
+        failure_class: str,
+        generation: int,
+        *,
+        failure_limit: int,
+        failure_window_seconds: float,
+    ) -> LifecycleAutomationStatus:
+        self._require_role(role)
+        if (
+            failure_limit < 1
+            or not math.isfinite(failure_window_seconds)
+            or failure_window_seconds <= 0
+        ):
+            raise ValueError("invalid lifecycle failure policy")
+        if generation < 0:
+            raise ValueError("invalid lifecycle generation")
+        now = self._lease_now()
+        safe_stage = _sanitize_failure_class(operation_stage)
+        safe_class = _sanitize_failure_class(failure_class)
+        with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            row = database.execute(
+                f"SELECT {', '.join(AUTOMATION_COLUMNS)} FROM lifecycle_automation "
+                "WHERE singleton = 1"
+            ).fetchone()
+            assert row is not None
+            current = self._automation(row)
+            if current.automation_disabled:
+                return current
+            reset_event_id = int(
+                database.execute(
+                    "SELECT last_reset_event_id FROM lifecycle_automation WHERE singleton = 1"
+                ).fetchone()[0]
+            )
+            database.execute(
+                "INSERT INTO lifecycle_failure_events "
+                "(role, operation_stage, failure_class, generation, occurred_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (role, safe_stage, safe_class, generation, now),
+            )
+            window_start = max(now - failure_window_seconds, current.last_reset_at)
+            aggregate = database.execute(
+                "SELECT COUNT(*), MIN(occurred_at), MAX(occurred_at) "
+                "FROM lifecycle_failure_events WHERE occurred_at >= ? AND event_id > ?",
+                (window_start, reset_event_id),
+            ).fetchone()
+            assert aggregate is not None
+            count = int(aggregate[0])
+            disabled = count >= failure_limit
+            database.execute(
+                "UPDATE lifecycle_automation SET automation_disabled = ?, disabled_at = ?, "
+                "failure_count = ?, window_started_at = ?, last_failure_at = ? "
+                "WHERE singleton = 1",
+                (
+                    int(disabled),
+                    now if disabled else None,
+                    count,
+                    aggregate[1],
+                    aggregate[2],
+                ),
+            )
+            updated = database.execute(
+                f"SELECT {', '.join(AUTOMATION_COLUMNS)} FROM lifecycle_automation "
+                "WHERE singleton = 1"
+            ).fetchone()
+        assert updated is not None
+        return self._automation(updated)
+
+    def recent_failure_events(self, limit: int = 100) -> tuple[LifecycleFailureEvent, ...]:
+        if not 1 <= limit <= 1_000:
+            raise ValueError("failure event limit must be between 1 and 1000")
+        with self._connect() as database:
+            rows = database.execute(
+                f"SELECT {', '.join(FAILURE_EVENT_COLUMNS)} FROM lifecycle_failure_events "
+                "ORDER BY event_id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return tuple(LifecycleFailureEvent.model_validate(dict(row)) for row in reversed(rows))
+
+    def reset_automation(self) -> LifecycleAutomationStatus:
+        now = self._lease_now()
+        with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            database.execute(
+                "UPDATE lifecycle_automation SET automation_disabled = 0, disabled_at = NULL, "
+                "failure_count = 0, window_started_at = NULL, last_failure_at = NULL, "
+                "last_reset_at = ?, last_reset_event_id = "
+                "COALESCE((SELECT MAX(event_id) FROM lifecycle_failure_events), 0) "
+                "WHERE singleton = 1",
+                (now,),
+            )
+            row = database.execute(
+                f"SELECT {', '.join(AUTOMATION_COLUMNS)} FROM lifecycle_automation "
+                "WHERE singleton = 1"
+            ).fetchone()
+        assert row is not None
+        return self._automation(row)
+
     def _sync_lease_counts(
         self,
         database: sqlite3.Connection,
@@ -720,6 +1031,17 @@ class LifecycleStore:
         )
         with self._connect() as database:
             database.execute("BEGIN IMMEDIATE")
+            first_request_roles = {
+                role
+                for role in requested_roles
+                if kind in {"active_request", "open_stream"}
+                and database.execute(
+                    "SELECT COUNT(*) FROM model_lifecycle_leases "
+                    "WHERE role = ? AND kind IN ('active_request', 'open_stream')",
+                    (role,),
+                ).fetchone()[0]
+                == 0
+            }
             if require_ready:
                 for role in requested_roles:
                     record = self._read(database, role)
@@ -733,6 +1055,12 @@ class LifecycleStore:
                     self._lease_values(lease),
                 )
             self._sync_lease_counts(database, requested_roles, now)
+            for role in first_request_roles:
+                database.execute(
+                    "UPDATE model_lifecycle SET last_requested_at = ?, updated_at = ? "
+                    "WHERE role = ?",
+                    (now, now, role),
+                )
             return tuple(
                 self._lease(
                     database.execute(
@@ -934,7 +1262,7 @@ class LifecycleStore:
             self._sync_lease_counts(database, (*expired_roles, role), now)
             current = self._read(database, role)
             if (
-                current.state != "ready"
+                current.state not in {"ready", "unload_queued"}
                 or current.transition_id != expected_transition_id
                 or (
                     expected_ready_since is not None and current.ready_since != expected_ready_since
@@ -997,12 +1325,23 @@ class LifecycleStore:
                 f"DELETE FROM model_lifecycle_leases WHERE lease_id IN ({placeholders})",
                 requested,
             )
-            for role in dict.fromkeys(row[0] for row in owned if row[1] == "active_request"):
-                database.execute(
-                    "UPDATE model_lifecycle SET last_used_at = ?, updated_at = ? WHERE role = ?",
-                    (now, now, role),
-                )
             self._sync_lease_counts(database, roles, now)
+            request_roles = dict.fromkeys(
+                row[0] for row in owned if row[1] in {"active_request", "open_stream"}
+            )
+            for role in request_roles:
+                remaining = database.execute(
+                    "SELECT active_request_count, open_stream_count "
+                    "FROM model_lifecycle WHERE role = ?",
+                    (role,),
+                ).fetchone()
+                assert remaining is not None
+                if remaining[0] == 0 and remaining[1] == 0:
+                    database.execute(
+                        "UPDATE model_lifecycle SET last_used_at = ?, last_completed_at = ?, "
+                        "updated_at = ? WHERE role = ?",
+                        (now, now, now, role),
+                    )
 
     def _updated_record(
         self, current: LifecycleRecord, changes: Mapping[str, Any], now: float
@@ -1012,10 +1351,31 @@ class LifecycleStore:
             raise ValueError(f"immutable lifecycle fields: {sorted(unknown)}")
         values = current.model_dump()
         values.update(changes)
+        if "progress_value" in changes and "weight_load_percent" not in changes:
+            values["weight_load_percent"] = changes["progress_value"]
+        if "progress_value" in changes or "weight_load_percent" in changes:
+            weight_progress = values["weight_load_percent"]
+            if weight_progress is not None and current.weight_load_percent is not None:
+                weight_progress = max(current.weight_load_percent, float(weight_progress))
+            values["progress_value"] = weight_progress
+            values["weight_load_percent"] = weight_progress
+        if (
+            "overall_load_percent" in changes
+            and changes["overall_load_percent"] is not None
+            and current.overall_load_percent is not None
+        ):
+            values["overall_load_percent"] = max(
+                current.overall_load_percent,
+                float(changes["overall_load_percent"]),
+            )
         if values.get("failure_class") is not None:
             values["failure_class"] = _sanitize_failure_class(str(values["failure_class"]))
         if values.get("failure_detail") is not None:
             values["failure_detail"] = _sanitize_failure_detail(str(values["failure_detail"]))
+        if "failure_class" in changes and "last_error_class" not in changes:
+            values["last_error_class"] = values["failure_class"]
+        if "failure_detail" in changes and "last_error_message_redacted" not in changes:
+            values["last_error_message_redacted"] = values["failure_detail"]
         values["updated_at"] = now
         return LifecycleRecord.model_validate(values)
 
@@ -1055,14 +1415,40 @@ class LifecycleStore:
                 transitioned_at=now,
                 updated_at=now,
             )
+            if state == "load_queued" and current.state in {"cold", "failed"}:
+                values.update(
+                    generation=current.generation + 1,
+                    load_started_at=None,
+                    ready_at=None,
+                    progress_value=None,
+                    weight_load_percent=None,
+                    overall_load_percent=0.0,
+                    progress_quality="unavailable",
+                    eta_seconds=None,
+                )
+            elif state == "process_starting":
+                values.update(load_started_at=now, overall_load_percent=5.0)
+            elif state == "initializing_engine":
+                values["overall_load_percent"] = 70.0
+            elif state == "warming_up":
+                values["overall_load_percent"] = 90.0
             if state == "ready":
-                values["ready_since"] = now
-            elif state == "cold":
+                values.update(
+                    ready_since=current.ready_since if current.state == "unload_queued" else now,
+                    ready_at=current.ready_at if current.state == "unload_queued" else now,
+                    weight_load_percent=100.0,
+                    overall_load_percent=100.0,
+                )
+            elif state in {"cold", "disabled"}:
                 values.update(
                     ready_since=None,
+                    ready_at=None,
+                    load_started_at=None,
                     failure_class=None,
                     failure_detail=None,
                     progress_value=None,
+                    weight_load_percent=None,
+                    overall_load_percent=None,
                     progress_quality=None,
                     eta_seconds=None,
                 )
@@ -1071,7 +1457,57 @@ class LifecycleStore:
                 values["failure_detail"] = None
             transitioned = LifecycleRecord.model_validate(values)
             self._write(database, transitioned)
+            if state == "ready" and transitioned.last_load_duration_seconds is not None:
+                database.execute(
+                    "INSERT INTO lifecycle_samples "
+                    "(role, kind, duration_seconds, memory_before_bytes, memory_after_bytes) "
+                    "VALUES (?, 'load', ?, ?, ?)",
+                    (
+                        role,
+                        transitioned.last_load_duration_seconds,
+                        transitioned.memory_before_bytes,
+                        transitioned.memory_after_bytes,
+                    ),
+                )
             return transitioned
+
+    def queue_unload(
+        self,
+        role: str,
+        *,
+        expected_transition_id: str,
+    ) -> LifecycleRecord:
+        return self.transition(
+            role,
+            "unload_queued",
+            expected_transition_id=expected_transition_id,
+        )
+
+    def cancel_queued_unload(
+        self,
+        role: str,
+        *,
+        expected_transition_id: str,
+    ) -> LifecycleRecord:
+        return self.transition(
+            role,
+            "ready",
+            expected_transition_id=expected_transition_id,
+        )
+
+    def disable_all(self) -> dict[str, LifecycleRecord]:
+        disabled: dict[str, LifecycleRecord] = {}
+        for role in self._roles:
+            current = self.get(role)
+            if current.state == "disabled":
+                disabled[role] = current
+                continue
+            disabled[role] = self.transition(
+                role,
+                "disabled",
+                expected_transition_id=current.transition_id,
+            )
+        return disabled
 
     def complete_unload(
         self,
@@ -1107,9 +1543,13 @@ class LifecycleStore:
                 transitioned_at=now,
                 updated_at=now,
                 ready_since=None,
+                ready_at=None,
+                load_started_at=None,
                 failure_class=None,
                 failure_detail=None,
                 progress_value=None,
+                weight_load_percent=None,
+                overall_load_percent=None,
                 progress_quality=None,
                 eta_seconds=None,
             )
@@ -1142,11 +1582,25 @@ class LifecycleStore:
                 transitioned_at=now,
                 updated_at=now,
                 ready_since=None,
+                ready_at=None,
+                load_started_at=(
+                    now
+                    if state == "process_starting"
+                    else current.load_started_at
+                    if state == "failed"
+                    else None
+                ),
                 progress_value=None,
+                weight_load_percent=None,
+                overall_load_percent=5.0 if state == "process_starting" else None,
                 progress_quality=None,
                 eta_seconds=None,
                 failure_class="service_failed" if state == "failed" else None,
                 failure_detail=None,
+                last_error_class=(
+                    "service_failed" if state == "failed" else current.last_error_class
+                ),
+                last_error_message_redacted=current.last_error_message_redacted,
             )
             reconciled = LifecycleRecord.model_validate(values)
             self._write(database, reconciled)
@@ -1188,9 +1642,25 @@ class LifecycleStore:
                     if state == "ready"
                     else None
                 ),
+                ready_at=(
+                    current.ready_at
+                    if state == "ready" and current.state == "ready"
+                    else now
+                    if state == "ready"
+                    else None
+                ),
+                load_started_at=current.load_started_at if state == "failed" else None,
                 failure_class=(failure_class or "service_failed") if state == "failed" else None,
                 failure_detail=None,
+                last_error_class=(
+                    failure_class or "service_failed"
+                    if state == "failed"
+                    else current.last_error_class
+                ),
+                last_error_message_redacted=current.last_error_message_redacted,
                 progress_value=None,
+                weight_load_percent=100.0 if state == "ready" else None,
+                overall_load_percent=100.0 if state == "ready" else None,
                 progress_quality=None,
                 eta_seconds=None,
             )
@@ -1213,6 +1683,7 @@ class LifecycleCoordinator:
         clock: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
         memory_probe: Callable[[], int] | None = None,
+        lifecycle_policy: LifecyclePolicy | None = None,
     ) -> None:
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
@@ -1226,12 +1697,31 @@ class LifecycleCoordinator:
         self.clock = clock
         self.sleeper = sleeper
         self.memory_probe = memory_probe or self._memory_unavailable
+        self.lifecycle_policy = lifecycle_policy or LifecyclePolicy()
+        self._mutation_disabled = False
         self._locks = {role: asyncio.Lock() for role in store._roles}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._load_driver_tasks: set[asyncio.Task[Any]] = set()
         self._scheduler_task: asyncio.Task[None] | None = None
         self._stop_tasks: dict[str, asyncio.Task[None]] = {}
         self._idle_state: dict[str, tuple[LifecycleMode, float | None, int]] = {}
+
+    def _automation_disabled(self) -> bool:
+        return self._mutation_disabled or self.store.automation_status().automation_disabled
+
+    def _record_failure(self, role: str, operation_stage: str, failure_class: str) -> None:
+        record = self.store.get(role)
+        try:
+            self.store.record_failure(
+                role,
+                operation_stage,
+                failure_class,
+                record.generation,
+                failure_limit=self.lifecycle_policy.failure_limit,
+                failure_window_seconds=self.lifecycle_policy.failure_window_seconds,
+            )
+        except Exception:
+            self._mutation_disabled = True
 
     @staticmethod
     def _memory_unavailable() -> int:
@@ -1254,7 +1744,7 @@ class LifecycleCoordinator:
         self,
         mode: LifecycleMode,
         roles: Iterable[str],
-        limits: Limits,
+        policy_config: Limits | LifecyclePolicy,
         usage: UsageStore,
     ) -> asyncio.Task[None] | None:
         if mode == "disabled":
@@ -1266,7 +1756,7 @@ class LifecycleCoordinator:
             raise UnknownRoleError(next(role for role in managed_roles if role not in self._locks))
         if self._scheduler_task is None or self._scheduler_task.done():
             self._scheduler_task = asyncio.create_task(
-                self._run_scheduler(mode, managed_roles, limits, usage)
+                self._run_scheduler(mode, managed_roles, policy_config, usage)
             )
         return self._scheduler_task
 
@@ -1274,27 +1764,43 @@ class LifecycleCoordinator:
         self,
         mode: LifecycleMode,
         roles: tuple[str, ...],
-        limits: Limits,
+        policy_config: Limits | LifecyclePolicy,
         usage: UsageStore,
     ) -> None:
         while True:
             await self.sleeper(self.poll_seconds)
-            await self.run_scheduler_check(mode, roles, limits, usage)
+            await self.run_scheduler_check(mode, roles, policy_config, usage)
             await asyncio.sleep(0)
 
     async def run_scheduler_check(
         self,
         mode: LifecycleMode,
         roles: Iterable[str],
-        limits: Limits,
+        policy_config: Limits | LifecyclePolicy,
         usage: UsageStore,
     ) -> None:
-        records = usage.recent_requests()
+        legacy_records = usage.recent_requests() if isinstance(policy_config, Limits) else None
         now = float(self.clock())
         if not math.isfinite(now) or now < 0:
             raise ValueError("scheduler clock must be finite and nonnegative")
         for role in self._ordered_roles(roles):
             try:
+                if isinstance(policy_config, LifecyclePolicy):
+                    records: Sequence[RoleUsageRecord] = cast(
+                        Sequence[RoleUsageRecord],
+                        usage.recent_role_requests(
+                            role,
+                            success=True,
+                            limit=policy_config.recent_sample_window,
+                        ),
+                    )
+                    policy_arguments: dict[str, Any] = {
+                        "policy": policy_config.roles[role],
+                        "lifecycle": policy_config,
+                    }
+                else:
+                    records = cast(Sequence[RoleUsageRecord], legacy_records)
+                    policy_arguments = {"limits": policy_config}
                 record = self.store.get(role)
                 previous_mode, previous_activity, previous_count = self._idle_state.get(
                     role, (None, None, 0)
@@ -1303,10 +1809,10 @@ class LifecycleCoordinator:
                 decision = calculate_idle_policy(
                     cast(ModelRole, role),
                     mode,
-                    cast(Sequence[RoleUsageRecord], records),
+                    records,
                     record,
                     now=now,
-                    limits=limits,
+                    **policy_arguments,
                     has_blockers=blockers,
                     previous_mode=previous_mode,
                     previous_last_activity_at=previous_activity,
@@ -1329,10 +1835,10 @@ class LifecycleCoordinator:
                             reset_decision = calculate_idle_policy(
                                 cast(ModelRole, role),
                                 mode,
-                                cast(Sequence[RoleUsageRecord], records),
+                                records,
                                 current,
                                 now=now,
-                                limits=limits,
+                                **policy_arguments,
                                 has_blockers=bool(self.store.unload_blockers(role)),
                                 previous_mode=mode,
                                 previous_last_activity_at=None,
@@ -1349,10 +1855,10 @@ class LifecycleCoordinator:
                         safe_decision = calculate_idle_policy(
                             cast(ModelRole, role),
                             mode,
-                            cast(Sequence[RoleUsageRecord], records),
+                            records,
                             current,
                             now=now,
-                            limits=limits,
+                            **policy_arguments,
                             has_blockers=bool(self.store.unload_blockers(role)),
                             previous_mode=mode,
                             previous_last_activity_at=activity,
@@ -1366,8 +1872,9 @@ class LifecycleCoordinator:
                         )
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as error:
                 self._idle_state[role] = (mode, None, 0)
+                self._record_failure(role, "adaptive_decision", type(error).__name__)
 
     def _memory_sample(self) -> int:
         value = self.memory_probe()
@@ -1381,6 +1888,15 @@ class LifecycleCoordinator:
         policy_record: LifecycleRecord,
     ) -> bool:
         async with self._locks[role]:
+            if self._automation_disabled():
+                return False
+            try:
+                queued = self.store.queue_unload(
+                    role,
+                    expected_transition_id=policy_record.transition_id,
+                )
+            except (InvalidTransitionError, StaleTransitionError):
+                return False
             try:
                 memory_before = await asyncio.to_thread(self._memory_sample)
             except Exception as error:
@@ -1388,12 +1904,18 @@ class LifecycleCoordinator:
                 return False
             admitted = self.store.admit_unload(
                 role,
-                expected_transition_id=policy_record.transition_id,
+                expected_transition_id=queued.transition_id,
                 expected_ready_since=policy_record.ready_since,
                 expected_last_used_at=policy_record.last_used_at,
                 memory_before_bytes=memory_before,
             )
             if admitted is None:
+                current = self.store.get(role)
+                if current.state == "unload_queued":
+                    self.store.cancel_queued_unload(
+                        role,
+                        expected_transition_id=current.transition_id,
+                    )
                 return False
             task = asyncio.create_task(self._complete_unload(role, admitted))
             self._stop_tasks[role] = task
@@ -1413,6 +1935,9 @@ class LifecycleCoordinator:
     ) -> None:
         started = float(self.clock())
         try:
+            if self._automation_disabled():
+                self.store.recover_state(role, "ready")
+                return
             await asyncio.to_thread(self.driver.stop, role)
             driver_status = await asyncio.to_thread(self.driver.status, role)
             if driver_status != "inactive":
@@ -1451,6 +1976,7 @@ class LifecycleCoordinator:
             failure_class=failure_class,
             failure_detail=failure_detail,
         )
+        self._record_failure(role, f"unload_{failure_class}", failure_class)
 
     async def acquire_request_leases(
         self,
@@ -1569,6 +2095,8 @@ class LifecycleCoordinator:
                 task = None
             if record.state == "ready" or task is not None:
                 return LoadCheck(record=record)
+            if self._automation_disabled():
+                return LoadCheck(record=record)
             if record.state not in {"cold", "failed"} or record.retry_count >= MAX_LOAD_RETRIES:
                 return LoadCheck(record=record)
             queued = self.store.transition(
@@ -1606,6 +2134,9 @@ class LifecycleCoordinator:
             expected_transition_id=transition_id,
         )
         cursor = await self._owned_load_driver_call(self.driver.capture_progress_cursor, role)
+        if self._automation_disabled():
+            self.store.recover_state(role, "cold")
+            return
         await self._owned_load_driver_call(self.driver.start, role)
         while True:
             driver_status = await asyncio.to_thread(self.driver.status, role)
@@ -1621,11 +2152,18 @@ class LifecycleCoordinator:
                     progress_quality="unavailable",
                 )
             lines = await asyncio.to_thread(self.driver.progress, role, cursor)
-            progress = parse_load_progress(
-                lines,
-                previous_percent=record.progress_value,
-                previous_quality=record.progress_quality,
-            )
+            try:
+                progress = parse_load_progress(
+                    lines,
+                    previous_percent=record.progress_value,
+                    previous_quality=record.progress_quality,
+                )
+            except Exception:
+                progress = LoadProgress(
+                    state="loading_weights",
+                    weight_load_percent=record.progress_value,
+                    progress_quality=record.progress_quality or "unavailable",
+                )
             if progress.state == "initializing_engine" and record.state == "loading_weights":
                 record = self.store.transition(
                     role,
@@ -1670,6 +2208,11 @@ class LifecycleCoordinator:
                     role,
                     record.transition_id,
                     progress_value=progress.weight_load_percent,
+                    overall_load_percent=(
+                        5.0 + 0.60 * progress.weight_load_percent
+                        if progress.weight_load_percent is not None
+                        else record.overall_load_percent
+                    ),
                     progress_quality=progress.progress_quality,
                     eta_seconds=eta,
                 )
@@ -1681,7 +2224,8 @@ class LifecycleCoordinator:
                 ready_quality: ProgressQuality = (
                     record.progress_quality
                     if record.progress_value == 100.0
-                    and record.progress_quality in {"measured_bytes", "measured_shards"}
+                    and record.progress_quality
+                    in {"measured_bytes", "measured_shards", "measured_phase"}
                     else "estimated"
                 )
                 if record.state == "loading_weights":
@@ -1739,6 +2283,7 @@ class LifecycleCoordinator:
             retry_count=record.retry_count + 1,
             eta_seconds=None,
         )
+        self._record_failure(role, f"load_{failure_class}", failure_class)
 
     async def close(self) -> None:
         scheduler = self._scheduler_task
@@ -1906,11 +2451,18 @@ class SystemdLifecycleDriver:
                 "--show-cursor",
             ],
         )
+        if output.splitlines() == ["-- No entries --"]:
+            output = self._run(
+                "cursor",
+                ["journalctl", "--user", "--no-pager", "-n", "0", "--show-cursor"],
+            )
         lines = output.splitlines()
         prefix = "-- cursor: "
-        if len(lines) != 1 or not lines[0].startswith(prefix):
+        cursor_lines = [line for line in lines if line.startswith(prefix)]
+        other_lines = [line for line in lines if not line.startswith(prefix)]
+        if len(cursor_lines) != 1 or any(line != "-- No entries --" for line in other_lines):
             raise LifecycleDriverError("cursor", "malformed_output")
-        cursor = lines[0][len(prefix) :]
+        cursor = cursor_lines[0][len(prefix) :]
         if not self._valid_cursor(cursor):
             raise LifecycleDriverError("cursor", "malformed_output")
         return cursor

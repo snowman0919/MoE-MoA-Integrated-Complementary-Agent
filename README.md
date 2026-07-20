@@ -24,20 +24,22 @@ See `docs/API_CLIENT_MODES.md` for the model aliases, standard request and SSE
 contracts, typed errors, curl/OpenAI SDK/OpenCode examples, and output limits.
 See `docs/HERMES_AGENT.md` for the environment-only Hermes configuration.
 
-Phase 3 physically selected exact full process stop/start and retained the
-existing 65,536-token executor settings. Three selected transient-systemd
-cycles passed the complete quality and teardown contract. The measured Python
-gateway stayed below the predeclared Rust thresholds, so no Rust rewrite is
-planned. These are isolated development results: the executor-only checked-in
-resident target is undeployed, lifecycle remains `disabled` with an empty unit
-map, and production was not restarted or changed. See
-`docs/MEMORY_OPTIMIZATION.md` and `docs/RUST_EVALUATION.md` for the exact
-measurements and limitations. The broader Phase 4 client matrix and soak remain
-pending.
+The `dev` release candidate implements role-aware request statistics and adaptive
+full-stop lifecycle control. The recommended policy keeps the 65,536-token
+executor resident by default, while planner, reviewer, and reasoner may unload
+after bounded role-local idle periods. A cold request returns retryable `503`
+state, generation, weight progress, overall progress, and ETA fields while one
+load owns the role. An isolated user-systemd run physically passed the four-role
+control path, idle unload/reload, circuit breaker, and idempotent rollback. It
+used fake weights to avoid duplicating the active 45G production executor, so it
+does not add a new real-weight memory claim. Checked-in and production lifecycle
+settings remain `disabled` with an empty unit map; production was not restarted
+or changed.
 
-See `docs/MODEL_LIFECYCLE.md` for model states, retryable loading responses,
-idle policy, blockers, status routes, and isolated-development rules. Checked-in
-lifecycle control is deliberately `disabled` with an empty unit map.
+See `docs/MODEL_LIFECYCLE.md` for model states, role policies and statistics,
+retryable loading responses, blockers, status routes, circuit breaker, and
+rollback. Checked-in lifecycle control is deliberately `disabled` with an empty
+unit map until a reviewed deployment supplies exact authorized units.
 
 Authoritative references: `docs/STATE.md` for current state,
 `docs/OPERATIONS.md` for operation, `docs/VALIDATION.md` for measured evidence,

@@ -61,8 +61,11 @@ def test_model_lifecycle_documentation_contract() -> None:
     assert "inclusive p75" in lifecycle.lower()
     assert "1.5" in lifecycle
     assert "20 usable positive role-local gaps" in lifecycle
-    assert "| Executor | 900 | 2700 | 7200 | 600 |" in lifecycle
-    assert "| Optional role | 300 | 900 | 2700 | 300 |" in lifecycle
+    assert "| Executor | 7200 | 14400 | 28800 | 600 |" in lifecycle
+    assert "| Planner | 600 | 1200 | 3600 | 600 |" in lifecycle
+    assert "| Reviewer | 600 | 1200 | 3600 | 600 |" in lifecycle
+    assert "| Reasoner | 300 | 600 | 1800 | 300 |" in lifecycle
+    assert "idle unload is disabled by default" in lifecycle
     assert "30-second" in lifecycle
     assert "`lifecycle_mode: disabled`" in lifecycle
     assert "`lifecycle_unit_map: {}`" in lifecycle
@@ -100,7 +103,7 @@ def test_model_lifecycle_safety_and_status_contract() -> None:
     assert "only implemented unload action" in lifecycle.lower()
     assert "status reads never call the lifecycle driver" in lifecycle.lower()
     assert "failed" in lifecycle and "unmanaged" in lifecycle and "503" in lifecycle
-    assert "disabled + empty unit map" in lifecycle.lower()
+    assert "disabled mode and an empty unit map" in lifecycle.lower()
     normalized_lifecycle = " ".join(lifecycle.lower().split())
     assert "no detached lifecycle work remains" not in normalized_lifecycle
     for boundary in (
@@ -182,9 +185,9 @@ def test_lifecycle_docs_link_canonical_contract_and_keep_evidence_pending() -> N
     pending = lifecycle.split("## Pending physical evidence", 1)
     assert len(pending) == 2
     for evidence in (
-        "cold-load and progress",
+        "real-weight cold-load and progress",
         "memory bytes",
-        "idle-unload guards",
+        "idle-unload guards under real-weight",
         "mechanism comparison",
         "64K physical quality",
         "production recommendation",

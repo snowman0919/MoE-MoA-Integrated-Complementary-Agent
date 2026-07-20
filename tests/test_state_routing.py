@@ -7,6 +7,7 @@ from dgx_moa.routing import (
     heavy_eligible,
     needs_planner,
     needs_reviewer,
+    optional_roles,
     required_roles,
     resolve_runtime_mode,
     review_fails_closed,
@@ -102,5 +103,13 @@ def test_request_classes_and_roles() -> None:
     assert required_roles("agent", "high_risk_task") == ("executor",)
     assert required_roles("orchestrated", "multi_file_task") == ("planner", "executor")
     assert required_roles("orchestrated", "high_risk_task") == ("planner", "executor", "reviewer")
+    assert required_roles("orchestrated", "explicit_orchestrated", reasoner_mode="required") == (
+        "planner",
+        "executor",
+        "reviewer",
+        "reasoner",
+    )
+    assert optional_roles("orchestrated", reasoner_mode="optional") == ("reasoner",)
+    assert optional_roles("agent", reasoner_mode=None) == ()
     assert review_fails_closed("high_risk_task") is True
     assert review_fails_closed("explicit_orchestrated") is False
