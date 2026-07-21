@@ -1914,6 +1914,17 @@ eight commands:
   selected default. The assertion was added. The final review returned
   `approve`, Critical 0, Important 0, missing tests 0, confidence 0.99, in
   `10961.058` ms with `15564` tokens.
+- A pre-restart production status check exposed legacy SQLite rows whose
+  historical `runtime_mode` and per-role `client_mode` were `chat`; the current
+  typed reader accepts only `fast`, `moa`, `agent`, or `orchestrated`. Read-time
+  compatibility now maps only the exact legacy value `chat` to `fast`. A
+  SQLite backup of the production database then completed the new runtime
+  report with 157 requests, token ID `legacy`, and the persisted automation
+  latch honestly reported disabled. The live production database was not
+  modified by this compatibility check. The compatibility publication gate
+  passed `622` tests with the existing Starlette warning, Ruff format/check,
+  mypy for 28 source files, user-systemd verification, trace audit `10/10` at
+  100.0%, and `git diff --check`.
 
 ## Codex cold-start 503 diagnosis — 2026-07-21
 

@@ -725,13 +725,16 @@ class UsageStore:
 
     @staticmethod
     def _record(row: sqlite3.Row) -> RequestUsageRecord:
+        runtime_mode = cast(
+            RuntimeMode, "fast" if row["runtime_mode"] == "chat" else row["runtime_mode"]
+        )
         return RequestUsageRecord(
             request_id=row["request_id"],
             session_id=row["session_id"],
             api_token_id=row["api_token_id"],
             client_class=row["client_class"],
             model_alias=row["model_alias"],
-            runtime_mode=row["runtime_mode"],
+            runtime_mode=runtime_mode,
             request_class=row["request_class"],
             roles_required=tuple(json.loads(row["roles_required"])),
             accepted_at=row["accepted_at"],
@@ -750,11 +753,14 @@ class UsageStore:
 
     @staticmethod
     def _role_record(row: sqlite3.Row) -> RoleRequestUsageRecord:
+        client_mode = cast(
+            RuntimeMode, "fast" if row["client_mode"] == "chat" else row["client_mode"]
+        )
         return RoleRequestUsageRecord(
             request_id=row["request_id"],
             session_id_hash=row["session_id_hash"],
             role=row["role"],
-            client_mode=row["client_mode"],
+            client_mode=client_mode,
             request_class=row["request_class"],
             requested_at=row["requested_at"],
             load_triggered=bool(row["load_triggered"]),
