@@ -2257,14 +2257,50 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert client.get("/v1/models").status_code == 401
         headers = {"Authorization": "Bearer test-secret", "X-Session-ID": "session-1"}
         models = client.get("/v1/models", headers=headers).json()
-        assert [model["id"] for model in models["data"]] == [
+        aliases = [
             "dgx-moa",
             "dgx-moa-fast",
             "dgx-moa-agent",
             "dgx-moa-orchestrated",
             "dgx-moa-chat",
         ]
-        assert all(model["context_length"] == 65536 for model in models["data"])
+        assert models["data"] == [
+            {
+                "id": alias,
+                "object": "model",
+                "created": 0,
+                "owned_by": "local",
+                "context_length": 65536,
+            }
+            for alias in aliases
+        ]
+        assert [model["slug"] for model in models["models"]] == aliases
+        codex_required = {
+            "slug",
+            "display_name",
+            "description",
+            "default_reasoning_level",
+            "supported_reasoning_levels",
+            "shell_type",
+            "visibility",
+            "supported_in_api",
+            "priority",
+            "availability_nux",
+            "upgrade",
+            "base_instructions",
+            "support_verbosity",
+            "default_verbosity",
+            "apply_patch_tool_type",
+            "truncation_policy",
+            "supports_parallel_tool_calls",
+            "context_window",
+            "max_context_window",
+            "experimental_supported_tools",
+        }
+        assert all(codex_required <= model.keys() for model in models["models"])
+        assert all(model["apply_patch_tool_type"] == "freeform" for model in models["models"])
+        assert all(model["shell_type"] == "shell_command" for model in models["models"])
+        assert all(model["context_window"] == 65536 for model in models["models"])
         response = client.post(
             "/v1/chat/completions",
             headers=headers,
@@ -4681,7 +4717,13 @@ def test_responses_post_returns_openai_response_shape(  # type: ignore[no-untype
     assert body["status"] == "completed"
     assert body["output"][0]["type"] == "message"
     assert body["output"][0]["content"][0]["text"] == "ok"
-    assert body["usage"] == {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7}
+    assert body["usage"] == {
+        "input_tokens": 3,
+        "input_tokens_details": {"cached_tokens": 0},
+        "output_tokens": 4,
+        "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": 7,
+    }
 
 
 def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def]
@@ -4712,6 +4754,7 @@ def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def
     assert stub_provider.requests[-1]["messages"][-1]["content"] == [
         {"type": "text", "text": "hello"}
     ]
+    assert stub_provider.requests[-1]["stream_options"] == {"include_usage": True}
 
 
 def test_responses_post_preserves_function_tool_loop(  # type: ignore[no-untyped-def]

@@ -51,7 +51,7 @@ from .runtime_status import report as runtime_report
 from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest
 from .security import admin_dependency, auth_dependency
 from .state import StateStore
-from .streaming import StreamObservation, forward_sse, reported_usage, responses_sse
+from .streaming import StreamObservation, forward_sse, reported_usage, response_usage, responses_sse
 from .trace import TraceRecorder
 from .usage import (
     ModelAlias,
@@ -292,7 +292,7 @@ def _responses_payload(
                     "status": "completed",
                 }
             )
-    if usage := chat_response.get("usage"):
+    if usage := response_usage(chat_response.get("usage")):
         payload["usage"] = usage
     return payload
 
@@ -798,6 +798,7 @@ def create_app(
 
     @app.get("/v1/models", dependencies=[Depends(auth)])
     async def models() -> dict[str, Any]:
+        aliases = list(MODEL_MODES)
         return {
             "object": "list",
             "data": [
@@ -808,7 +809,39 @@ def create_app(
                     "owned_by": "local",
                     "context_length": 65_536,
                 }
-                for alias in MODEL_MODES
+                for alias in aliases
+            ],
+            "models": [
+                {
+                    "slug": alias,
+                    "display_name": alias,
+                    "description": "Local Executor-directed Dynamic MoA model.",
+                    "default_reasoning_level": None,
+                    "supported_reasoning_levels": [],
+                    "shell_type": "shell_command",
+                    "visibility": "list",
+                    "supported_in_api": True,
+                    "priority": index,
+                    "availability_nux": None,
+                    "upgrade": None,
+                    "base_instructions": (
+                        "You are a coding agent. Follow the user's instructions and use the "
+                        "provided tools to inspect, edit, and verify the workspace."
+                    ),
+                    "support_verbosity": False,
+                    "default_verbosity": None,
+                    "apply_patch_tool_type": "freeform",
+                    "truncation_policy": {"mode": "tokens", "limit": 10_000},
+                    "supports_parallel_tool_calls": True,
+                    "context_window": 65_536,
+                    "max_context_window": 65_536,
+                    "experimental_supported_tools": [],
+                    "input_modalities": ["text"],
+                    "supports_search_tool": False,
+                    "use_responses_lite": False,
+                    "tool_mode": "direct",
+                }
+                for index, alias in enumerate(aliases)
             ],
         }
 
@@ -1923,6 +1956,7 @@ def create_app(
             model=body.model,
             messages=[ChatMessage.model_validate(message) for message in messages],
             stream=body.stream,
+            stream_options={"include_usage": True} if body.stream else None,
             tools=tools,
             tool_choice=tool_choice if tools else None,
             parallel_tool_calls=body.parallel_tool_calls if tools else None,
