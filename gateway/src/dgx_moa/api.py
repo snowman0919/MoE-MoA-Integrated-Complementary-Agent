@@ -336,6 +336,13 @@ def _responses_payload(
                     "status": "completed",
                 }
             )
+    if not payload["output"]:
+        payload["status"] = "failed"
+        payload["error"] = {
+            "message": "upstream response did not contain assistant output",
+            "type": "backend_error",
+            "code": "backend_error",
+        }
     if usage := response_usage(chat_response.get("usage")):
         payload["usage"] = usage
     return payload

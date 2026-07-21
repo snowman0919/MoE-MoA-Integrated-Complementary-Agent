@@ -5566,6 +5566,26 @@ def test_responses_post_maps_upstream_502_to_http_200(  # type: ignore[no-untype
     assert "event: response.completed" not in stream_response.text
 
 
+@pytest.mark.parametrize("upstream", [{}, {"choices": []}, {"choices": [{"message": {}}]}])
+def test_responses_post_rejects_missing_assistant_output(
+    settings, stub_provider: StubProvider, upstream: dict[str, object]
+) -> None:  # type: ignore[no-untyped-def]
+    async def empty_response(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        return upstream
+
+    stub_provider.complete = empty_response  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa-fast", "input": "hello"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["error"]["code"] == "backend_error"
+
+
 def test_responses_stream_terminates_unhandled_pre_stream_error(
     settings, stub_provider: StubProvider, caplog
 ) -> None:  # type: ignore[no-untyped-def]

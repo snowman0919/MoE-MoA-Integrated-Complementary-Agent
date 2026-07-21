@@ -21,7 +21,7 @@ evidence. The extended run at `/tmp/dgx-moa-live-client-matrix-20260722-r5`
 also passed the primary `dgx-moa` Reasoner + Executor path and recorded one
 `Qwythos-v2-9B:Q4` Reasoner invocation plus six Executor invocations. Generic
 HTTP, Codex CLI 0.144.6, OpenCode 1.17.18, and Hermes 0.18.2 all completed through
-the physical Executor; five Executor invocations were present in the atomic
+the physical Executor; six Executor invocations were present in the atomic
 runtime CSV; the isolated gateway stopped; and the production worktree Git
 fingerprint was unchanged. The 16,384 value is the per-response generated-token
 limit, not the Executor context window. The physical Phase 3 context remains
@@ -60,6 +60,18 @@ The final post-client-fix full suite reported `786 passed` with the one existing
 third-party Starlette warning. Ruff, mypy for 37 source files, and diff checks
 passed after the Evidence Edge input/serialization alias fix; focused evidence,
 replay, and controller regression tests reported `17 passed` afterward.
+
+The final predeployment tree reported `791 passed` with the same third-party
+warning; Ruff, the 74-file format check, mypy for 37 source files, and diff
+checks passed. A bounded Codex OAuth `gpt-5.6-sol`/high review rejected an empty
+delegated-chat result being converted to a completed Responses payload. The
+shared conversion now emits a failed `backend_error` when no usable assistant
+text or tool call exists, and three missing/empty/malformed upstream shapes have
+endpoint regressions. The focused OAuth re-review used the primary profile and
+approved with confidence `0.97`, no findings, and no missing tests. Its separate
+title-history concern was rejected because the retained OpenCode 1.17.18 wire
+capture and physical regression prove that the automatic title prompt can
+precede trailing work-history messages.
 
 All new feature gates remain disabled. No real Discord/Telegram message,
 wall-clock scheduled week, live provider replay, production-data deletion or
