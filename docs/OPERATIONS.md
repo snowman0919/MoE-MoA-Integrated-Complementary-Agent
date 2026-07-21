@@ -46,6 +46,23 @@ Runtime status reports service state/restarts, recent gateway/model failures,
 SQLite session counts, profile rollback events, and measured current memory.
 Unknown measurements remain explicit; they are not inferred.
 
+For a Responses disconnect, correlate the client session header with the safe
+terminal record:
+
+```bash
+journalctl --user -u dgx-moa-gateway.service --since=-30m \
+  | rg 'responses_stream_terminal'
+```
+
+Every translated Responses stream must log `status=completed` or
+`status=failed`. Failure records include only bounded, control-character-cleaned
+`session_id`, `model`, `source`, HTTP status where available, error type, and
+code. They never include prompts, generated reasoning, tool arguments, upstream
+response bodies, or exception messages. `source=chat_http_exception` and
+`source=chat_non_stream_response` identify failures before streaming;
+`source=upstream_iterator` identifies an error frame, truncated EOF, buffer
+limit, or iterator failure after streaming began.
+
 Lifecycle states and safety rules are canonical in
 `docs/MODEL_LIFECYCLE.md`.
 

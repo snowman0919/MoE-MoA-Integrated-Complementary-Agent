@@ -2370,14 +2370,30 @@ def test_required_reasoner_failure_is_typed_and_never_degrades(
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer test-secret"},
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "reasoner-logging",
+            },
             json={"model": "dgx-moa", "messages": [{"role": "user", "content": "work"}]},
+        )
+        reasoner_event = next(
+            event
+            for event in client.app.state.store.events("reasoner-logging")
+            if event["event_type"] == "reasoner_unavailable"
         )
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "reasoner_required_unavailable"
     assert response.headers["X-DGX-MOA-Model-Role"] == "reasoner"
     assert stub_provider.calls == []
+    assert reasoner_event["payload"] == {
+        "failure_class": "ConnectError",
+        "provider": settings.models["reasoner"].provider,
+        "model": settings.models["reasoner"].served_name,
+        "latency_ms": reasoner_event["payload"]["latency_ms"],
+        "status_code": None,
+    }
+    assert reasoner_event["payload"]["latency_ms"] >= 0
 
 
 def test_executor_selected_planner_gets_usage_and_lease_tracking(
@@ -5036,11 +5052,17 @@ def test_responses_post_maps_upstream_502_to_http_200(  # type: ignore[no-untype
         raise httpx.ConnectError("all endpoints unreachable")
 
     stub_provider.complete = connect_failed  # type: ignore[method-assign]
+    stub_provider.stream = connect_failed  # type: ignore[method-assign]
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(
             "/v1/responses",
             headers={"Authorization": "Bearer test-secret"},
             json={"model": "dgx-moa-fast", "input": "hello"},
+        )
+        stream_response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "failed-stream"},
+            json={"model": "dgx-moa-fast", "input": "hello", "stream": True},
         )
 
     assert response.status_code == 200
@@ -5048,6 +5070,11 @@ def test_responses_post_maps_upstream_502_to_http_200(  # type: ignore[no-untype
     assert body["status"] == "failed"
     assert body["error"]["type"] == "backend_error"
     assert body["error"]["code"] == "backend_error"
+    assert stream_response.status_code == 200
+    assert stream_response.headers["content-type"].startswith("text/event-stream")
+    assert stream_response.headers["x-session-id"] == "failed-stream"
+    assert "event: response.failed" in stream_response.text
+    assert "event: response.completed" not in stream_response.text
 
 
 def test_upstream_openai_400_envelope_and_status_are_preserved(

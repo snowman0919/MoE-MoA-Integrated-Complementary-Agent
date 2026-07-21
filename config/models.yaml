@@ -156,10 +156,10 @@ models:
     required: false
   reasoner:
     repository: ollama/Qwythos-v2-9B
-    revision: Q5
+    revision: Q4
     classification: external
     base_url: http://192.168.0.197:11434
-    served_name: Qwythos-v2-9B:Q5
+    served_name: Qwythos-v2-9B:Q4
     destination: /home/kotori9/models/dgx-moa/reasoner
     provider: ollama
     lifecycle_control: external

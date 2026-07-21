@@ -207,6 +207,14 @@ def test_api_client_mode_documentation() -> None:
     assert "Tailscale Serve" not in hermes
 
 
+def test_external_reasoner_uses_requested_q4_model() -> None:
+    reasoner = yaml.safe_load(Path("config/models.yaml").read_text())["models"]["reasoner"]
+    assert reasoner["revision"] == "Q4"
+    assert reasoner["served_name"] == "Qwythos-v2-9B:Q4"
+    assert reasoner["provider"] == "ollama"
+    assert reasoner["lifecycle_control"] == "external"
+
+
 def test_hermes_documentation_matches_physical_config() -> None:
     hermes = Path("docs/HERMES_AGENT.md").read_text()
     yaml_block = hermes.split("```yaml\n", 1)[1].split("\n```", 1)[0]

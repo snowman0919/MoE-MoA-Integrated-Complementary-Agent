@@ -51,7 +51,14 @@ from .runtime_status import report as runtime_report
 from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest
 from .security import admin_dependency, auth_dependency
 from .state import StateStore
-from .streaming import StreamObservation, forward_sse, reported_usage, response_usage, responses_sse
+from .streaming import (
+    StreamObservation,
+    forward_sse,
+    reported_usage,
+    response_usage,
+    responses_error_sse,
+    responses_sse,
+)
 from .trace import TraceRecorder
 from .usage import (
     ModelAlias,
@@ -1957,6 +1964,28 @@ def create_app(
             for tool in body.tools or []
             if tool.get("type") == "custom" and tool.get("name")
         }
+
+        def failed_stream(
+            error_type: str,
+            code: str,
+            source: str,
+            status_code: int,
+            session_id: str | None = None,
+        ) -> StreamingResponse:
+            response_session_id = session_id or x_session_id or "unknown"
+            return StreamingResponse(
+                responses_error_sse(
+                    body.model,
+                    session_id=response_session_id,
+                    error_type=error_type,
+                    code=code,
+                    source=source,
+                    status_code=status_code,
+                ),
+                media_type="text/event-stream",
+                headers={"X-Session-ID": response_session_id, "Cache-Control": "no-cache"},
+            )
+
         tool_choice = body.tool_choice
         if isinstance(tool_choice, dict) and tool_choice.get("type") in {"function", "custom"}:
             tool_choice = {
@@ -1992,6 +2021,22 @@ def create_app(
                 x_dirty_state,
             )
         except HTTPException as error:
+            if body.stream:
+                error_type = (
+                    "invalid_request_error"
+                    if error.status_code
+                    in {status.HTTP_503_SERVICE_UNAVAILABLE, status.HTTP_404_NOT_FOUND}
+                    else "backend_error"
+                )
+                code = (
+                    "invalid_request" if error_type == "invalid_request_error" else "backend_error"
+                )
+                return failed_stream(
+                    error_type,
+                    code,
+                    "chat_http_exception",
+                    error.status_code,
+                )
             if error.status_code in {
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 status.HTTP_404_NOT_FOUND,
@@ -2014,11 +2059,15 @@ def create_app(
                 status_code=200,
             )
         if isinstance(chat_response, StreamingResponse):
+            response_session_id = (
+                chat_response.headers.get("X-Session-ID") or x_session_id or "unknown"
+            )
             return StreamingResponse(
                 responses_sse(
                     chat_response.body_iterator,
                     body.model,
                     custom_tool_names=custom_tool_names,
+                    session_id=response_session_id,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -2027,6 +2076,26 @@ def create_app(
                 },
             )
         chat_payload = _chat_response_payload(chat_response)
+        response_session_id = chat_response.headers.get("X-Session-ID") or x_session_id or "unknown"
+        if body.stream:
+            upstream_error = chat_payload.get("error") if chat_payload else None
+            error_type = (
+                str(upstream_error.get("type", "backend_error"))
+                if isinstance(upstream_error, dict)
+                else "backend_error"
+            )
+            code = (
+                str(upstream_error.get("code", "backend_error"))
+                if isinstance(upstream_error, dict)
+                else "backend_error"
+            )
+            return failed_stream(
+                error_type,
+                code,
+                "chat_non_stream_response",
+                chat_response.status_code,
+                response_session_id,
+            )
         if chat_payload is None:
             return error_response(
                 status.HTTP_502_BAD_GATEWAY,
