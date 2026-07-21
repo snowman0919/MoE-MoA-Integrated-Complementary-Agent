@@ -52,6 +52,29 @@ disconnected cannot receive a terminal SSE event, so the enforceable contract
 is terminal completed/failed for server-controlled endings plus task cleanup on
 client cancellation.
 
+PR `#32` merged as production main `229be8d`. The controlled deployment used
+the selected full Executor stop/start and preserved context `65536`, one
+sequence, `1700000000` KV bytes, `gpu_memory_utilization=0.5`, and MARLIN.
+Weight loading took `251.57` seconds; total model loading took `262.618`
+seconds, with `67121` KV tokens and `1.02x` maximum concurrency.
+
+The authenticated production Luna utility request received its first heartbeat
+in `8.526` ms, completed exact `PROD_LUNA_OK` in `1.982` seconds, and reported
+served model `dgx-moa-fast`. The Q4 + Executor tool request received its first
+heartbeat in `1.204` ms, sent two heartbeats, exposed zero text deltas, returned
+`{"cmd": "pwd"}`, and ended `response.completed` in `18.266` seconds. A near
+match returned exactly one `response.failed`; the safe journal recorded its
+session, model, source, HTTP 404, error type/code, and failure class.
+
+Real Codex then completed the native tool loop without reconnecting: the
+pre-tool agent message was empty, `/usr/bin/zsh -lc pwd` exited zero, final text
+was exact `CODEX_HEARTBEAT_OK` plus the observed path, and `turn.completed`
+reported `15546` input / `45` output tokens. Trace
+`d62657a8-1ca7-4295-a6b3-c52b907f111d` recorded exact Q4 and no failure. Its
+degraded label remains the known missing-provenance classification for the
+temporary CLI workspace, not a model or stream failure. Gateway, Executor, and
+resident target all remained active.
+
 ## Responses privacy/terminal fix and Q4 Reasoner — 2026-07-22
 
 Production trace
