@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+from pathlib import Path
 
 import httpx
 import pytest
@@ -20,9 +21,12 @@ from dgx_moa.lifecycle import (
     calculate_idle_policy,
     continuation_correlation,
 )
+from dgx_moa.replay import ReplaySnapshot
 from dgx_moa.schemas import ChatRequest, ResponsesRequest
 from dgx_moa.state import Phase, SessionState
 from dgx_moa.streaming import forward_sse as unclosed_forward_sse
+from dgx_moa.training import TrainingCandidate
+from dgx_moa.weekly import previous_complete_week
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
@@ -2318,6 +2322,10 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert all(model["context_window"] == 65536 for model in models["models"])
         assert all(model["supports_reasoning_summaries"] is False for model in models["models"])
         assert all(model["tool_mode"] == "direct" for model in models["models"])
+        assert all(
+            "integration display names are not MCP server IDs" in model["base_instructions"]
+            for model in models["models"]
+        )
         assert all(model["comp_hash"] == "dgx-moa-65536-v1" for model in models["models"])
         response = client.post(
             "/v1/chat/completions",
@@ -3875,6 +3883,26 @@ def test_auth_enabled_invalid_key_returns_401(settings, stub_provider: StubProvi
         assert response.status_code == 401
 
 
+def test_metrics_require_auth_and_expose_only_fixed_label_free_values(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        client.app.state.store.event(
+            "SENSITIVE_METRICS_REQUEST",
+            "engineering_loop_started",
+            {"prompt": "SENSITIVE_METRICS_PROMPT"},
+        )
+        unauthorized = client.get("/metrics")
+        authorized = client.get("/metrics", headers={"Authorization": "Bearer test-secret"})
+
+    assert unauthorized.status_code == 401
+    assert authorized.status_code == 200
+    assert "loop_started_total 1" in authorized.text
+    assert "training_candidates_created_total 0" in authorized.text
+    assert "{" not in authorized.text
+    assert "SENSITIVE_METRICS" not in authorized.text
+
+
 def test_auth_disabled_allows_inference_headers_or_none(
     settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # type: ignore[no-untyped-def]
@@ -3898,6 +3926,19 @@ def test_auth_disabled_allows_inference_headers_or_none(
         ("POST", "/admin/profile/judge"),
         ("POST", "/admin/profile/restore"),
         ("GET", "/v1/admin/runtime-status"),
+        ("POST", "/v1/admin/observation/nonces"),
+        ("POST", "/v1/admin/observation/commands"),
+        ("GET", "/v1/admin/training/candidates/missing"),
+        ("POST", "/v1/admin/training/candidates/missing/state"),
+        ("POST", "/v1/admin/training/exclusions/requests"),
+        ("POST", "/v1/admin/training/exclusions/repositories"),
+        ("POST", "/v1/admin/training/exclusions/users"),
+        ("POST", "/v1/admin/training/retention"),
+        ("POST", "/v1/admin/weekly-packages/verify"),
+        ("POST", "/v1/admin/weekly-packages/revoke"),
+        ("POST", "/v1/admin/weekly-packages/regenerate"),
+        ("POST", "/v1/admin/weekly-packages/retention"),
+        ("POST", "/v1/admin/replay"),
     ],
 )
 @pytest.mark.parametrize("authorization", [None, "Bearer test-secret"])
@@ -3974,6 +4015,248 @@ def test_runtime_status_requires_admin_auth_and_returns_safe_usage(
         "systemctl",
     ):
         assert sentinel not in serialized
+
+
+def test_observation_control_api_is_allowlisted_scoped_and_idempotent(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    enabled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "admin_api_enabled": True,
+            "live_observation": {
+                "enabled": False,
+                "controls": {
+                    "enabled": True,
+                    "allowed_users": {"discord:user-1": "operator"},
+                    "role_permissions": {"operator": ["pause", "resume", "show-status"]},
+                },
+            },
+        }
+    )
+    headers = {"Authorization": "Bearer test-secret"}
+    with client_with_stub(enabled, stub_provider) as client:
+        client.app.state.store.save(
+            SessionState(session_id="controlled-request", objective="bounded task")
+        )
+        denied = client.post(
+            "/v1/admin/observation/nonces",
+            headers=headers,
+            json={"provider": "discord", "user_id": "stranger", "request_id": "controlled-request"},
+        )
+        nonce_response = client.post(
+            "/v1/admin/observation/nonces",
+            headers=headers,
+            json={"provider": "discord", "user_id": "user-1", "request_id": "controlled-request"},
+        )
+        command = {
+            "provider": "discord",
+            "user_id": "user-1",
+            "request_id": "controlled-request",
+            "command": "pause",
+            "nonce": nonce_response.json()["nonce"],
+            "idempotency_key": "pause-command-1",
+        }
+        first = client.post("/v1/admin/observation/commands", headers=headers, json=command)
+        replay = client.post("/v1/admin/observation/commands", headers=headers, json=command)
+
+    assert denied.status_code == 403
+    assert nonce_response.status_code == 200
+    assert first.status_code == 200
+    assert first.json()["control_state"] == "paused"
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+
+
+def test_training_review_admin_api_inspects_transitions_and_revokes_request(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    enabled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "admin_api_enabled": True,
+            "training_data": {
+                "enabled": True,
+                "state_db": settings.state_db.parent / "training.db",
+                "object_root": settings.state_db.parent / "training-objects",
+                "minimum_free_bytes": 0,
+            },
+        }
+    )
+    candidate = TrainingCandidate(
+        candidate_id="cand_synthetic_api",
+        candidate_type="sft",
+        source_request_ids=["request-synthetic-api"],
+        role_target="executor",
+        messages=[{"role": "user", "content": "synthetic"}],
+        accepted_answer="safe result",
+        evidence_summary=["synthetic evidence"],
+        review_state="sanitized",
+        quality_tier="silver",
+        training_eligible=True,
+    )
+    headers = {"Authorization": "Bearer test-secret"}
+    with client_with_stub(enabled, stub_provider) as client:
+        assert client.app.state.training_store.append_candidate(candidate) is True
+        inspected = client.get(
+            f"/v1/admin/training/candidates/{candidate.candidate_id}", headers=headers
+        )
+        approved = client.post(
+            f"/v1/admin/training/candidates/{candidate.candidate_id}/state",
+            headers=headers,
+            json={"target_state": "approved", "reason": "synthetic evidence passed"},
+        )
+        excluded = client.post(
+            "/v1/admin/training/exclusions/requests",
+            headers=headers,
+            json={"request_id": "request-synthetic-api", "reason": "synthetic opt-out"},
+        )
+        repository_excluded = client.post(
+            "/v1/admin/training/exclusions/repositories",
+            headers=headers,
+            json={
+                "repository_identity": {"workspace_id": "synthetic-repository"},
+                "reason": "synthetic owner opt-out",
+            },
+        )
+        user_excluded = client.post(
+            "/v1/admin/training/exclusions/users",
+            headers=headers,
+            json={"subject_id": "synthetic-user", "reason": "synthetic user opt-out"},
+        )
+        revoked = client.get(
+            f"/v1/admin/training/candidates/{candidate.candidate_id}", headers=headers
+        )
+
+    assert inspected.status_code == 200
+    assert approved.json()["review_state"] == "approved"
+    assert excluded.json()["excluded"] is True
+    assert repository_excluded.json()["excluded"] is True
+    assert len(repository_excluded.json()["repository_identity_hash"]) == 64
+    assert user_excluded.json()["excluded"] is True
+    assert len(user_excluded.json()["training_subject_hash"]) == 64
+    assert "synthetic-user" not in user_excluded.text
+    assert revoked.json()["candidate"]["review_state"] == "revoked"
+
+
+def test_weekly_package_admin_api_verifies_revokes_and_regenerates(
+    settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    executable = settings.state_db.parent / "synthetic-7zz"
+    executable.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib, sys\n"
+        "archive = next(pathlib.Path(x) for x in sys.argv[2:] "
+        "if x.endswith(('.tmp', '.7z')))\n"
+        "if sys.argv[1] == 'a': archive.write_bytes(b'synthetic-7z')\n"
+        "raise SystemExit(0 if archive.exists() else 3)\n"
+    )
+    executable.chmod(0o700)
+
+    def synthetic_7z(args, **kwargs):  # type: ignore[no-untyped-def]
+        archive = next(Path(item) for item in args[2:] if item.endswith((".tmp", ".7z")))
+        if args[1] == "a":
+            archive.write_bytes(b"synthetic-7z")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("dgx_moa.weekly.subprocess.run", synthetic_7z)
+    enabled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "admin_api_enabled": True,
+            "training_data": {
+                "enabled": True,
+                "state_db": settings.state_db.parent / "training.db",
+                "object_root": settings.state_db.parent / "training-objects",
+                "minimum_free_bytes": 0,
+            },
+            "weekly_jobs": {
+                "enabled": True,
+                "package_root": settings.state_db.parent / "weekly",
+                "archive_registry": settings.state_db.parent / "weekly-registry.db",
+            },
+        }
+    )
+    candidate = TrainingCandidate(
+        candidate_id="cand_synthetic_weekly_api",
+        candidate_type="sft",
+        source_request_ids=["request-synthetic-weekly-api"],
+        role_target="executor",
+        messages=[{"role": "user", "content": "synthetic weekly"}],
+        accepted_answer="safe result",
+        evidence_summary=["synthetic evidence"],
+        review_state="approved",
+        quality_tier="silver",
+        training_eligible=True,
+    )
+    headers = {"Authorization": "Bearer test-secret"}
+    with client_with_stub(enabled, stub_provider) as client:
+        client.app.state.weekly_packager.seven_zip = str(executable)
+        assert client.app.state.training_store.append_candidate(candidate) is True
+        created = client.app.state.weekly_packager.package(
+            [candidate],
+            window=previous_complete_week(),
+            production_commit="abcdef123",
+            policy_version="policy-1",
+            skill_registry_version="skills-1",
+            model_configuration={},
+        )
+        body = {"idempotency_key": created["idempotency_key"]}
+        verified = client.post("/v1/admin/weekly-packages/verify", headers=headers, json=body)
+        revoked = client.post(
+            "/v1/admin/weekly-packages/revoke",
+            headers=headers,
+            json=body | {"reason": "synthetic revocation"},
+        )
+        regenerated = client.post(
+            "/v1/admin/weekly-packages/regenerate", headers=headers, json=body
+        )
+        metrics = client.get("/metrics", headers=headers)
+
+    assert verified.json()["verified"] is True
+    assert revoked.json()["status"] == "revoked"
+    assert regenerated.json()["status"] == "completed"
+    assert "weekly_packages_created_total 2" in metrics.text
+
+
+def test_admin_exact_replay_is_harness_callable_and_live_comparison_stays_internal(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    enabled = Settings.model_validate(settings.model_dump() | {"admin_api_enabled": True})
+    snapshot = ReplaySnapshot(
+        task_state={"task_id": "synthetic-replay"},
+        evidence_snapshot={"nodes": [], "edges": []},
+        skill_versions=[],
+        policy_version="policy-1",
+        model_role_configuration={"executor": {"revision": "abc"}},
+        invoked_roles=["executor"],
+        mocked_provider_outputs={"executor": [{"answer": "synthetic"}]},
+        original_outcome={"final_status": "completed"},
+    )
+    headers = {"Authorization": "Bearer test-secret"}
+    with client_with_stub(enabled, stub_provider) as client:
+        exact = client.post(
+            "/v1/admin/replay",
+            headers=headers,
+            json={
+                "snapshot": snapshot.model_dump(mode="json"),
+                "mode": "regression",
+                "exact": True,
+            },
+        )
+        live = client.post(
+            "/v1/admin/replay",
+            headers=headers,
+            json={
+                "snapshot": snapshot.model_dump(mode="json"),
+                "mode": "routing_policy_comparison",
+                "exact": False,
+            },
+        )
+
+    assert exact.status_code == 200
+    assert exact.json()["outputs"]["executor"][0]["answer"] == "synthetic"
+    assert live.status_code == 409
 
 
 def test_secret_never_appears_in_logs(settings, stub_provider: StubProvider, caplog) -> None:  # type: ignore[no-untyped-def]
@@ -4813,6 +5096,7 @@ def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def
                 "stream": True,
             },
         )
+        invocation_rates = client.app.state.usage.model_invocation_rates()
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
@@ -4825,12 +5109,52 @@ def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def
         {"type": "text", "text": "hello"}
     ]
     assert stub_provider.requests[-1]["stream_options"] == {"include_usage": True}
+    executor = next(
+        row for row in invocation_rates if row["window"] == "all_time" and row["role"] == "executor"
+    )
+    assert executor["invocation_count"] == 1
+    assert executor["success_count"] == 1
+
+
+def test_responses_waits_through_model_loading_without_terminal_failure(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    controlled.limits.model_load_timeout_seconds = 0.25
+    driver = FakeLifecycleDriver({"executor": "inactive"})
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "loading-retry"},
+            json={"model": "dgx-moa-fast", "input": "work", "stream": True},
+        )
+        usage = app.state.usage.recent_requests()
+
+    assert "event: response.completed" in response.text
+    assert "event: response.failed" not in response.text
+    assert response.text.count(": keep-alive") >= 2
+    assert [record.status for record in usage] == ["failed", "completed"]
+    assert driver.calls.count(("start", "executor")) == 1
 
 
 @pytest.mark.asyncio
 async def test_responses_heartbeat_close_cancels_pending_chat(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
     entered = asyncio.Event()
     cancelled = asyncio.Event()
 
@@ -4867,6 +5191,9 @@ async def test_responses_heartbeat_close_cancels_pending_chat(
 
     assert cancelled.is_set()
     assert_usage(app, "cancelled")
+    state = app.state.store.get("responses-cancel")
+    assert state is not None and state.engineering_loop is not None
+    assert state.engineering_loop.termination_reason == "CLIENT_CANCELLED"
 
 
 def test_codex_utility_model_uses_unadvertised_fast_alias(
@@ -5010,6 +5337,53 @@ def test_responses_post_preserves_function_tool_loop(  # type: ignore[no-untyped
         },
         {"role": "tool", "content": "/workspace", "tool_call_id": "call-shell"},
     ]
+
+
+def test_responses_tool_budget_failure_is_terminal_before_tool_event(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    settings.loop_engineering.defaults["tool_calls"] = 0
+
+    async def stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        stub_provider.requests.append(request)
+
+        async def chunks():  # type: ignore[no-untyped-def]
+            yield (
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                b'"id":"blocked-call","type":"function","function":{"name":'
+                b'"exec_command","arguments":"{\\"cmd\\":\\"pwd\\"}"}}]},'
+                b'"finish_reason":null}]}\n\n'
+            )
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    stub_provider.stream = stream  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "input": "inspect",
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "exec_command",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ],
+                "stream": True,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.text.count("event: response.failed") == 1
+    assert "event: response.completed" not in response.text
+    assert "response.function_call_arguments" not in response.text
+    assert stub_provider.requests[-1]["tool_choice"] == "none"
 
 
 def test_responses_post_preserves_custom_tool_loop(  # type: ignore[no-untyped-def]
@@ -5190,6 +5564,26 @@ def test_responses_post_maps_upstream_502_to_http_200(  # type: ignore[no-untype
     assert stream_response.headers["x-session-id"] == "failed-stream"
     assert "event: response.failed" in stream_response.text
     assert "event: response.completed" not in stream_response.text
+
+
+@pytest.mark.parametrize("upstream", [{}, {"choices": []}, {"choices": [{"message": {}}]}])
+def test_responses_post_rejects_missing_assistant_output(
+    settings, stub_provider: StubProvider, upstream: dict[str, object]
+) -> None:  # type: ignore[no-untyped-def]
+    async def empty_response(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        return upstream
+
+    stub_provider.complete = empty_response  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa-fast", "input": "hello"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["error"]["code"] == "backend_error"
 
 
 def test_responses_stream_terminates_unhandled_pre_stream_error(
@@ -5538,6 +5932,45 @@ def test_multiple_tool_calls_are_preserved(settings, stub_provider: StubProvider
         )
         assert response.status_code == 200
         assert len(response.json()["choices"][0]["message"]["tool_calls"]) == 2
+
+
+@pytest.mark.parametrize(("tool_budget", "status_code"), [(1, 200), (0, 409)])
+def test_loop_tool_budget_is_enforced_before_client_receives_nonstream_call(
+    settings, stub_provider: StubProvider, tool_budget: int, status_code: int
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    settings.loop_engineering.defaults["tool_calls"] = tool_budget
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "tool-budget"},
+            json={
+                "model": "dgx-moa-fast",
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "description": "read",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+                "messages": [{"role": "user", "content": "inspect"}],
+            },
+        )
+        state = client.app.state.store.get("tool-budget")
+
+    assert response.status_code == status_code
+    assert stub_provider.requests[-1]["parallel_tool_calls"] is False
+    assert state is not None and state.engineering_loop is not None
+    if tool_budget:
+        assert state.engineering_loop.remaining_budget.tool_calls == 0
+        assert state.engineering_loop.termination_reason is None
+    else:
+        assert stub_provider.requests[-1]["tool_choice"] == "none"
+        assert response.json()["error"]["code"] == "loop_budget_exhausted"
+        assert state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
 
 
 def test_timeout_and_http_500_mapping(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

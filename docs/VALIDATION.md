@@ -1,5 +1,306 @@
 # Validation
 
+## Goal workflow completion follow-up — 2026-07-22
+
+The predeployment live client matrix used the development source on isolated
+loopback port `19300`, a generated validation-only bearer token, separate client
+homes/state, and the already-resident physical Executor. The first run stopped
+before startup because the checked-in authenticated configuration correctly has
+no secret; the harness now disables authentication only while loading that base
+and immediately installs its generated token. The second run exposed two real
+integration defects: OpenCode omitted its output limit and requested more than
+the gateway's 16,384 generated-token cap, while streamed Codex/Hermes requests
+updated request usage but bypassed model-invocation usage. The shared streamed
+invocation path and OpenCode `context=65536`, `output=16384` declaration were
+corrected.
+
+The third run at `/tmp/dgx-moa-live-client-matrix-20260722-r3` passed, and the
+equivalent final run at `/tmp/dgx-moa-live-client-matrix-20260722-r4` also
+removed all raw client homes/session stores after extracting content-free
+evidence. The extended run at `/tmp/dgx-moa-live-client-matrix-20260722-r5`
+also passed the primary `dgx-moa` Reasoner + Executor path and recorded one
+`Qwythos-v2-9B:Q4` Reasoner invocation plus six Executor invocations. Generic
+HTTP, Codex CLI 0.144.6, OpenCode 1.17.18, and Hermes 0.18.2 all completed through
+the physical Executor; six Executor invocations were present in the atomic
+runtime CSV; the isolated gateway stopped; and the production worktree Git
+fingerprint was unchanged. The 16,384 value is the per-response generated-token
+limit, not the Executor context window. The physical Phase 3 context remains
+65,536 with one sequence.
+
+The accompanying read-only runtime inspection showed the resident Executor
+process with `--max-model-len 65536`, `--max-num-seqs 1`,
+`--kv-cache-memory-bytes 1700000000`, `--gpu-memory-utilization 0.50`, and
+`--moe-backend MARLIN`. The configured external Ollama endpoint's `/api/ps`
+reported `Qwythos-v2-9B:Q4` with `context_length=65536` and 7,680,305,397 VRAM
+bytes. These are direct runtime observations, not inferred benchmark values.
+
+An initial isolated physical run at
+`/tmp/dgx-moa-self-evolving-physical-20260722` stopped before packaging because
+dictionary-key secret redaction did not increment its aggregate counter. The
+counter was corrected without discarding the failed evidence. The new run at
+`/tmp/dgx-moa-self-evolving-physical-20260722-r2` completed with
+`status=passed` using real 7-Zip 23.01 arm64. Its regenerated W29 archive SHA-256
+is `1799e1b9114e6ff959052ba984446f25637ddc5250ec81fe1ed528a34cf2f425`;
+both `7z t` and `sha256sum -c` passed. The run physically exercised redaction,
+quality/licensing/opt-out gates, CAS integrity and SQLite backup, empty and full
+weeks, late arrivals, near duplicates, idempotency, revocation/regeneration,
+deliberate archive corruption, archiver failure, and capacity-failure isolation
+using synthetic data only. The subsequent full regression reported `785
+passed` with the existing third-party Starlette warning.
+
+Synthetic tests now additionally cover dry-run-first training/archive retention,
+legal/preservation/deletion holds, CAS cleanup, atomic SQLite backup and
+corruption detection, hashed persistent user opt-out, authenticated package
+verify/revoke/regenerate and exact replay APIs, Seoul cron calculation and
+scheduler lifecycle, safe weekly notifications, populated reports/indices,
+tool/loop/conversation quality gates, generated-Skill canaries and versioned
+lifecycle transitions, and graph-wide consistency/contradiction resolution.
+
+The final post-client-fix full suite reported `786 passed` with the one existing
+third-party Starlette warning. Ruff, mypy for 37 source files, and diff checks
+passed after the Evidence Edge input/serialization alias fix; focused evidence,
+replay, and controller regression tests reported `17 passed` afterward.
+
+The final predeployment tree reported `791 passed` with the same third-party
+warning; Ruff, the 74-file format check, mypy for 37 source files, and diff
+checks passed. A bounded Codex OAuth `gpt-5.6-sol`/high review rejected an empty
+delegated-chat result being converted to a completed Responses payload. The
+shared conversion now emits a failed `backend_error` when no usable assistant
+text or tool call exists, and three missing/empty/malformed upstream shapes have
+endpoint regressions. The focused OAuth re-review used the primary profile and
+approved with confidence `0.97`, no findings, and no missing tests. Its separate
+title-history concern was rejected because the retained OpenCode 1.17.18 wire
+capture and physical regression prove that the automatic title prompt can
+precede trailing work-history messages.
+
+All new feature gates remain disabled. No real Discord/Telegram message,
+wall-clock scheduled week, live provider replay, production-data deletion or
+export, production mutation, merge, or deployment occurred in this validation
+row. Discord/Telegram physical provider behavior and the broader runtime/Skill
+failure matrix remain separate gates; they are not established by the real-7z
+or client results.
+
+## Policy persistence and training-review follow-up — 2026-07-22
+
+Policy tests now cover actual tool admission globs plus dotted redaction at
+Evidence Graph, raw tool-result and normalized tool-execution persistence
+boundaries. A tool result without a preceding assistant call also retains its
+normalized arguments instead of silently substituting an empty JSON string.
+Built-in redaction preserves prior policy-redaction markers on repeated passes.
+
+Training tests now cover transactional and audited candidate approval,
+invalid-transition rejection, ineligible approval rejection, packaged-candidate
+revocation after request opt-out, hashed repository exclusion, collector
+fail-closed behavior, and authenticated admin inspect/transition/request and
+repository exclusion routes. Focused policy/security tests reported `14 passed`;
+focused training/admin tests reported `26 passed`. After the package and Skill
+follow-ups, the complete suite reported `761 passed` with the one existing
+third-party Starlette warning; 73 files passed the format check, Ruff passed,
+mypy passed for 37 source files, and diff checks passed.
+
+This is synthetic unit evidence. Policy, collection, review APIs, and exclusion
+workflows remain disabled; no production data was read, exported, packaged, or
+deleted, and nothing was deployed. Operator-facing package regeneration and
+retention enforcement remain incomplete.
+
+The weekly synthetic-7z suite now also covers completed-package reverification,
+registry tombstones, refusal to revive a revoked idempotency key, and explicit
+atomic regeneration. The focused suite reported `8 passed`; no real 7z binary
+or archive was used. Runtime Skill tests now cover distinct recurring-pattern
+evidence, experimental-only generated drafts, immutable failed-to-passed
+candidate versions, all mandatory evaluation gates, the additional Frontier
+gate for high-impact candidates, and continued prohibition on automatic
+promotion. The focused Skill suite reported `15 passed`.
+
+Three focused metrics tests cover the complete fixed name set, loop outcome and
+recurrence counters, authenticated HTTP exposure, zero-label rendering, and
+absence of synthetic request/prompt content. Skill, observer, and training
+overlays use aggregate counters only. This is process-local unit evidence; no
+production scraper or dashboard was configured.
+
+## Execution Replay Phase H foundation — 2026-07-22
+
+Five focused tests cover canonical snapshot roundtrip/tamper detection, captured
+task/evidence/Skill/policy/model state, complete mocked exact replay, rejection
+of missing mocks and live calls in exact mode, live comparative nondeterminism,
+explicit evaluation, and provider-free audit replay. The full suite reported
+`742 passed`; format, Ruff, mypy for 36 source files, and diff checks passed.
+
+No real local, Frontier or tool replay was performed. Production integration,
+comparative quality/cost benchmarks and physical replay validation remain
+pending; nothing was deployed.
+
+## Weekly Skill/Data Packaging Phase G foundation — 2026-07-22
+
+Seven focused tests cover the complete Seoul weekly window, required package
+tree and checksums, verified atomic archive publication, source-stable
+idempotency, failed verification cleanup, missing-7z and unsafe-encryption
+fail-closed behavior, evidence-backed non-destructive Skill recommendations,
+eligibility/privacy rescans, and exact/near deduplication. The full suite
+reported `737 passed`; format, Ruff, mypy for 35 source files, and diff checks
+passed.
+
+Archive tests used a synthetic executable. This host has no real `7zz`/`7z` and
+only about 3.8GB free, so physical archive creation, scheduling, retention,
+notification, revocation and regeneration remain unverified. Nothing was
+exported or deployed.
+
+## Privacy-aware Training Collection Phase F foundation — 2026-07-22
+
+Ten focused tests cover content addressing/deduplication/hash reads, object size
+limits, synthetic secret/entropy/email/phone redaction, unknown repository and
+opt-out exclusion, external-output license exclusion, evidence-grounded quality
+tiering, grounded preference validation, separate WAL storage, tombstone package
+filtering, normalized near duplicates, role/routing/tool/Skill separation, and a
+disk-capacity failure that does not escape into request serving. Trace/config
+tests additionally cover collection hooks, schema-compatible gate snapshots and
+separate database enforcement.
+
+The full suite reported `729 passed` with the one existing third-party Starlette
+warning; format, Ruff, mypy for 34 source files, and diff checks passed. This is
+unit evidence only. Collection remains disabled and no production content,
+external output, training export, package, model training or deployment occurred.
+
+## Live Observation Phase E foundation — 2026-07-22
+
+Focused tests cover field allowlisting, unpublished-event suppression, batching,
+bounded-queue drops, Discord thread and Telegram topic targeting, observer
+failure isolation, nonce scope/expiry, allowlist and role authorization,
+idempotent audit records, admin endpoint disablement, and a complete pause
+command/replay. The full suite reported `716 passed` with the one existing
+third-party Starlette warning; format, Ruff, mypy for 33 source files, and diff
+checks passed.
+
+This is unit evidence only. Observation and controls remain disabled; no real
+Discord/Telegram provider, provider rate limit, provider outage, unauthorized
+platform identity, or production deployment was exercised.
+
+## Typed Evidence Graph Phase E foundation — 2026-07-22
+
+Four focused tests cover tool/test precedence over model assertions, explicit
+unknown-assumption classification, relationship validation, and role-specific
+agent node types. The Controller suite plus focused evidence suite passed `53`.
+The full suite then reported `703 passed` with the existing third-party
+Starlette warning. This is unit evidence only; replay and physical validation
+remain pending and no production deployment occurred.
+
+## Declarative Policy Phase D foundation — 2026-07-22
+
+Seven focused policy tests cover version/hash traceability, boolean/path/numeric
+matching, restrictive limit aggregation, invalid-condition rejection, explicit
+request denial, Controller role/evidence integration, and persisted missing-
+approval termination. Combined policy/config tests passed `30`.
+
+The full source gate reported `699 passed` with the one existing third-party
+Starlette warning. Ruff formatted 10 changed files; the subsequent format check,
+lint, mypy check for 31 source files, and diff check all passed. This is unit
+evidence only. The policy engine remains disabled and partial; no physical
+provider, real client, production policy, or deployment was exercised.
+
+## Runtime Skills Phase C foundation — 2026-07-22
+
+The disabled Phase C foundation adds strict Skill schema validation, atomic
+immutable storage, separate SQLite quality metrics, bounded latest-active
+retrieval, Executor-only activation records, evidence-and-approval promotion,
+new-version rollback, and manifest/hash/signature-aware pack import/export.
+Focused Skill tests passed `13`; combined configuration and Skill tests passed
+`33` before the full gate.
+
+The serialized source gate passed: `uv run pytest -q` reported `691 passed` and
+the one existing third-party Starlette warning; `uv run ruff check .` passed;
+`uv run mypy gateway/src/dgx_moa` passed for 30 source files; and
+`git diff --check` passed. This is unit evidence only. Runtime Skills remain
+disabled, no physical role provider or real Codex client was exercised, no
+production registry was created, and no deployment occurred.
+
+## Bounded Loop Engineering action admission — 2026-07-22
+
+The disabled development path now admits each iteration and actual Reasoner,
+Planner, Reviewer, Frontier, Judge and client-visible tool call against persisted
+budgets. Structured retries consume another role call. Streamed tool admission
+occurs before the first tool event; a denied Responses call emits one terminal
+`response.failed` and no tool event. Observed token totals and known Frontier
+cost consume separate budgets. Request-class and low/medium/high risk overrides
+merge deterministically.
+
+Only allowlisted observable evidence unlocks another iteration; Reasoner or
+Executor assertions do not. User feedback is deduplicated by content hash and
+stored without content. Failure evidence ignores timing noise. Identical tool
+failures persist across retries, require a different strategy on occurrence two,
+and terminate at occurrence three. Completion, cancellation, provider outage,
+no progress and exhaustion persist explicit loop outcomes.
+
+Focused tests cover admission before provider/tool calls, retry exhaustion,
+stream terminal compatibility, loop types, risk overrides, evidence
+deduplication, cancellation and repeated failures. The final complete suite
+passed 677 tests with the existing Starlette warning; Ruff, Mypy over 29 source
+files, and diff check passed. No physical or production validation has been
+performed, and checked-in enablement remains false.
+
+## Loop Engineering Phase A foundation — 2026-07-22
+
+The development source adds a feature-gated, task-persisted `LoopState` with
+typed loop classes, evidence-backed acceptance criteria, explicit remaining
+budgets, no-progress tracking, termination reasons, and stable failure
+fingerprints. The controller creates it only after request identity is known,
+links new Evidence Graph node IDs, and retains the existing Reviewer approval
+gate for completion. Safe checked-in configuration keeps it disabled.
+
+Focused validation passed 11 tests covering persistence integration,
+evidence-backed completion, configured no-progress termination, iteration and
+Frontier-call exhaustion, deterministic normalization of timestamps, temporary
+paths, request IDs, memory addresses and line-number noise, duplicate-failure
+strategy change/termination, and strict environment configuration. Ruff passed
+and Mypy passed 29 source files. This is
+development/unit evidence only. The complete regression suite passed 655 tests
+with the existing Starlette warning. Phase B action admission, physical providers,
+real clients, cancellation, production enablement, and deployment remain
+unvalidated and disabled.
+
+## Goal-file fallback and runtime invocation CSV — 2026-07-22
+
+The supplied Codex transcript and correlated production trace
+`ec4923b2-3dac-4b21-8af7-86b4919090a0` showed that Codex first called
+`read_mcp_resource` with the invented server name `local_filesystem`. That call
+failed immediately with `unknown MCP server`. Native file and shell fallbacks
+then read the same goal file successfully, but the gateway retained the earlier
+MCP error as an active failure. Routing therefore selected Planner and Frontier
+despite the recovered observation, and the request ended after `31.720` seconds
+with a retryable Planner `model_loading` 503. The displayed answer consequently
+reported that no models had been invoked even though the trace recorded core
+and collaboration attempts.
+
+The controller now correlates tool calls by normalized local target path. A
+later successful native file or shell observation resolves the matching MCP
+failure for routing purposes while retaining both records as audit evidence.
+Resolved failures no longer lower confidence or trigger specialist escalation.
+Model discovery instructions also state that local paths and `file://` URIs use
+native file/shell tools and that only an exact server name and URI returned by
+MCP discovery may be passed to `read_mcp_resource`.
+
+A stale `unload_queued` lifecycle state is now cancelled when a new request
+arrives, rather than being returned as a false loading state. When an optional
+role genuinely returns `model_loading`, the Responses adapter keeps the
+existing stream open with heartbeats and retries inside the configured loading
+deadline. It emits `response.failed` only when the deadline expires or a
+non-loading error occurs.
+
+Each recorded model invocation now updates the runtime-owned
+`model-invocation-rates.csv` atomically. It reports configured role/model rows
+and preserves historically observed role/model pairs for all-time and
+trailing-one-hour windows, distinct gateway requests using the model, invocation
+count, request participation rate, success/failure counts, average latency, and
+token totals. The denominator is distinct gateway requests
+observed in the same window, so rates across roles need not sum to 100%. The
+file begins accumulating exact evidence after a gateway using this source is
+started; no historical calls are inferred or backfilled.
+
+Focused regressions passed 5 tests. The complete source gate passed 647 tests
+with the existing Starlette TestClient deprecation warning, followed by Ruff,
+Mypy over 28 source files, and diff check. These results validate the development
+source only. No production deployment, restart, or physical post-deployment
+measurement has been performed for this change.
+
 ## Intermittent Responses disconnect and invocation rates — 2026-07-22
 
 The reported production window contained 21 gateway requests: 13 completed, 6

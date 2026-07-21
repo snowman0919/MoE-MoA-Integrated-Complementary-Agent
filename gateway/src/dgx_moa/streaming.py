@@ -43,6 +43,7 @@ class StreamObservation:
     finish_reasons: list[str] = field(default_factory=list)
     tool_delta_seen: bool = False
     tool_call_ids: list[str] = field(default_factory=list)
+    tool_call_names: dict[int, str] = field(default_factory=dict)
     done_seen: bool = False
     usage: dict[str, int] = field(default_factory=dict)
 
@@ -64,6 +65,12 @@ class StreamObservation:
                 self.assistant_content.append(delta["content"])
             self.tool_delta_seen |= bool(delta.get("tool_calls"))
             for call in delta.get("tool_calls") or []:
+                if isinstance(call, dict):
+                    index = int(call.get("index", 0))
+                    function = call.get("function") or {}
+                    name = function.get("name") if isinstance(function, dict) else None
+                    if isinstance(name, str):
+                        self.tool_call_names[index] = self.tool_call_names.get(index, "") + name
                 if (
                     isinstance(call, dict)
                     and isinstance(call_id := call.get("id"), str)

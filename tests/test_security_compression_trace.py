@@ -28,6 +28,15 @@ def test_redaction_and_compression(tmp_path) -> None:  # type: ignore[no-untyped
     assert len(messages[0]["content"]) <= 80
 
 
+def test_redaction_covers_http_credential_keys() -> None:
+    assert redact(
+        {
+            "authorization": "Bearer synthetic-secret",
+            "Cookie": "session=synthetic-secret",
+        }
+    ) == {"authorization": "[REDACTED]", "Cookie": "[REDACTED]"}
+
+
 def test_trace_schema_and_secret_redaction(tmp_path) -> None:  # type: ignore[no-untyped-def]
     path = tmp_path / "trace.jsonl"
     export_trace(path, {"objective": "x", "tool_observation": "Authorization: Bearer secret"})

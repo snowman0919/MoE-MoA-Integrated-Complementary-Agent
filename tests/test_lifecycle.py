@@ -170,6 +170,27 @@ def test_lifecycle_defaults_are_disabled_and_empty() -> None:
     assert settings.lifecycle_unit_map == {}
 
 
+@pytest.mark.asyncio
+async def test_request_cancels_stale_queued_unload(tmp_path: Path) -> None:
+    module = lifecycle()
+    store = module.LifecycleStore(tmp_path / "queued.db", ("planner",))
+    ready = reach(store, "planner", "ready")
+    store.queue_unload("planner", expected_transition_id=ready.transition_id)
+    coordinator = module.LifecycleCoordinator(
+        store,
+        module.FakeLifecycleDriver({"planner": "active"}),
+        health_probe=lambda role: asyncio.sleep(0, result=True),
+        timeout_seconds=10,
+        poll_seconds=1,
+    )
+
+    check = await coordinator.ensure_ready("planner")
+
+    assert check.record.state == "ready"
+    assert check.load_triggered is False
+    await coordinator.close()
+
+
 def test_role_lifecycle_defaults_match_approved_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1162,6 +1183,7 @@ def test_schema_persists_every_lifecycle_field_without_changing_usage_tables(
         "request_usage",
         "role_request_usage",
         "lifecycle_samples",
+        "model_invocation_usage",
         "lifecycle_failure_events",
         "lifecycle_automation",
         "model_lifecycle",

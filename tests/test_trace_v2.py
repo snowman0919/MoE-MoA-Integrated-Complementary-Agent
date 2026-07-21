@@ -152,6 +152,13 @@ def test_trace_metrics_include_content_free_runtime_timing() -> None:
         "request_class": "multi_file_task",
         "roles_required": ["planner", "executor"],
         "truncated": True,
+        "training_opt_out": False,
+        "user_training_opt_out": False,
+        "training_subject_hash": None,
+        "repository_training_policy": "unknown",
+        "policy_version": "none",
+        "skill_versions": [],
+        "engineering_loop_id": "",
     }
     serialized = json.dumps(metrics)
     assert state.objective not in serialized
@@ -355,6 +362,32 @@ def test_tool_linkage_and_stricter_training_override(settings, stub_provider: St
     assert state.training_eligibility == "excluded"
     assert state.tool_executions[0]["decision_id"] == "decision"
     assert state.tool_executions[0]["filesystem_effect"] == {"changed_paths": ["x"]}
+
+
+def test_trace_metrics_carry_training_gate_snapshot_without_schema_change() -> None:
+    state = complete_state()
+    state.training_opt_out = True
+    state.repository_training_policy = "training_denied"
+    state.training_subject_hash = "a" * 64
+
+    trace = trace_record(state)
+
+    assert trace["schema_version"] == "agent-trace-v3"
+    assert trace["metrics"]["training_opt_out"] is True
+    assert trace["metrics"]["repository_training_policy"] == "training_denied"
+    assert trace["metrics"]["training_subject_hash"] == "a" * 64
+
+
+def test_trace_recorder_calls_optional_training_collector(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]
+    collected: list[dict] = []  # type: ignore[type-arg]
+    store = StateStore(tmp_path / "state.db")
+    state = complete_state()
+    recorder = TraceRecorder(tmp_path / "traces", store, settings.models, collected.append)
+
+    recorder.record(state)
+
+    assert len(collected) == 1
+    assert collected[0]["session_id"] == state.session_id
 
 
 def test_proposal_cooldown_changes_with_material_evidence() -> None:

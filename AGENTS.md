@@ -44,6 +44,13 @@
   act as its own primary improvement executor.
 - Do not merge, deploy, change security/systemd topology, or export training data
   without the required human approval.
+- Keep Loop Engineering, runtime Skills, observation controls, training
+  collection, weekly jobs, retention apply, and replay admin paths disabled
+  until their documented physical gates pass. Retention is dry-run unless an
+  authenticated operator explicitly sets `apply=true`.
+- Generated Skills require isolated evaluation, an Executor-evidenced helpful
+  canary, and explicit promotion approval. Never treat weekly recommendations as
+  authority to promote or delete a core Skill.
 - Use `docs/STATE.md`, `docs/OPERATIONS.md`, `docs/VALIDATION.md`, and
   `docs/TRACE_SCHEMA.md` as the current operational authorities. Phase 3 did not
   change the trace schema.

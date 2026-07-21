@@ -61,6 +61,12 @@ JSONL traces are date-partitioned by runtime channel and origin and indexed from
 SQLite. State persistence fails closed; secondary trace failure degrades
 observability without discarding an otherwise safe coding task.
 
+The `dev` source also contains a disabled Phase A engineering-loop state inside
+the same persisted session. It gives acceptance criteria evidence references,
+remaining action budgets, progress state, normalized failure fingerprints, and
+explicit termination reasons. It does not yet autonomously advance actions and
+is not part of the production topology. See `docs/LOOP_ENGINEERING.md`.
+
 ## Model lifecycle
 
 `LifecycleStore` persists one state row per role plus request/stream/continuation

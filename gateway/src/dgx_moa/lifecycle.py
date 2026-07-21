@@ -2093,6 +2093,10 @@ class LifecycleCoordinator:
                     pass
                 record = self.store.get(role)
                 task = None
+            if record.state == "unload_queued":
+                record = self.store.cancel_queued_unload(
+                    role, expected_transition_id=record.transition_id
+                )
             if record.state == "ready" or task is not None:
                 return LoadCheck(record=record)
             if self._automation_disabled():

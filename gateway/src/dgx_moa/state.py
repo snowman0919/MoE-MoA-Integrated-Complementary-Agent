@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from .loop_engineering import LoopState
 
 RuntimeChannel = Literal["main", "dev", "candidate"]
 TraceOrigin = Literal["production", "benchmark", "validation", "diagnostic", "candidate_evaluation"]
@@ -83,6 +86,7 @@ class SessionState(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     session_id: str
+    current_request_id: str = Field(default="", exclude=True)
     api_token_id: str = "legacy"
     runtime_mode: Literal["fast", "moa", "agent", "orchestrated"] = "agent"
     request_class: str = "native_agent_turn"
@@ -104,6 +108,11 @@ class SessionState(BaseModel):
     plan: list[dict[str, Any]] = Field(default_factory=list)
     completed_steps: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
+    engineering_loop: LoopState | None = None
+    skill_selections: list[dict[str, Any]] = Field(default_factory=list)
+    policy_decisions: list[dict[str, Any]] = Field(default_factory=list)
+    policy_denied_tools: list[str] = Field(default_factory=list)
+    policy_redact_fields: list[str] = Field(default_factory=list)
     completion_evidence: dict[str, str] = Field(default_factory=dict)
     approved_scope: list[str] = Field(default_factory=list)
     last_tool_call: dict[str, Any] | None = None
@@ -125,7 +134,15 @@ class SessionState(BaseModel):
     runtime_channel: RuntimeChannel = "dev"
     trace_origin: TraceOrigin = "validation"
     training_eligibility: TrainingEligibility = "excluded"
+    training_opt_out: bool = False
+    user_training_opt_out: bool = False
+    training_subject_hash: str | None = None
+    repository_training_policy: Literal[
+        "training_allowed", "internal_only", "training_denied", "unknown"
+    ] = "unknown"
     final_status: FinalStatus | None = None
+    control_state: Literal["running", "paused", "terminated"] = "running"
+    control_approvals: list[str] = Field(default_factory=list)
     observability_status: Literal["ok", "degraded"] = "ok"
     observability_degraded: bool = False
     controller_commit: str = "unknown"
@@ -151,6 +168,7 @@ class SessionState(BaseModel):
 class StateStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
+        self._event_listeners: list[Callable[[str, str, dict[str, Any], str], None]] = []
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as database:
             database.execute(
@@ -210,12 +228,21 @@ class StateStore:
             )
 
     def event(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        created_at = now()
         with self._connect() as database:
             database.execute(
                 "INSERT INTO events(session_id, event_type, payload, created_at) "
                 "VALUES (?, ?, ?, ?)",
-                (session_id, event_type, json.dumps(payload, sort_keys=True), now()),
+                (session_id, event_type, json.dumps(payload, sort_keys=True), created_at),
             )
+        for listener in self._event_listeners:
+            try:
+                listener(session_id, event_type, payload, created_at)
+            except Exception:
+                continue
+
+    def subscribe_events(self, listener: Callable[[str, str, dict[str, Any], str], None]) -> None:
+        self._event_listeners.append(listener)
 
     def events(self, session_id: str) -> list[dict[str, Any]]:
         with self._connect() as database:

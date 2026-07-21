@@ -5,6 +5,56 @@ gateway:
   bind_port: 9000
   lifecycle_mode: disabled
   lifecycle_unit_map: {}
+  loop_engineering:
+    enabled: false
+    defaults: {iterations: 4, tool_calls: 30, reasoner_reentries: 4, planner_calls: 2, reviewer_calls: 2, frontier_calls: 2, judge_calls: 1, tokens: 250000, external_cost_usd: 10, wall_clock_seconds: 1800}
+    duplicate_fingerprint_limit: 2
+    no_progress_iteration_limit: 2
+    local_failures_before_frontier: 2
+    request_class_overrides: {}
+    risk_level_overrides: {}
+  runtime_skills:
+    enabled: false
+    root: data/skills
+    retrieval_limit: 3
+    max_context_characters: 6000
+  declarative_policy:
+    enabled: false
+    version: development-disabled
+    policies: []
+  live_observation:
+    enabled: false
+    level: normal
+    queue_size: 256
+    batch_size: 10
+    batch_interval_seconds: 2
+    request_timeout_seconds: 10
+    controls:
+      enabled: false
+      nonce_ttl_seconds: 300
+      allowed_users: {}
+      role_permissions: {}
+  training_data:
+    enabled: false
+    state_db: data/training-staging/training.db
+    object_root: data/training-staging/objects
+    minimum_free_bytes: 10000000000
+    maximum_object_bytes: 1000000
+    repository_policies: {}
+    external_output_permitted: false
+  weekly_jobs:
+    enabled: false
+    timezone: Asia/Seoul
+    skill_schedule: "0 3 * * 0"
+    package_schedule: "0 2 * * 1"
+    package_root: data/weekly-packages
+    archive_registry: data/archive-registry/weekly.db
+    retention:
+      raw_operational_days: 30
+      sanitized_candidate_days: 90
+      weekly_archive_weeks: 52
+      quarantine_days: 14
+      failed_staging_days: 7
   lifecycle:
     minimum_samples: 20
     recent_sample_window: 100

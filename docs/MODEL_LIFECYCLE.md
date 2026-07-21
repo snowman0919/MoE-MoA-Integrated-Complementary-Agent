@@ -269,3 +269,9 @@ Items below remain explicitly pending; automated tests do not prove them:
   completed fixed-contract executor trials;
 - any later production recommendation, topology, or threshold change beyond the
   deployed Executor/Planner/Reviewer adaptive map.
+
+The development Loop/Skill/observation/training/weekly/replay features do not
+change model residency, unit ownership, ports, memory gates, or the selected
+full-stop fallback. Their weekly scheduler is an in-process metadata/data job,
+not a model lifecycle scheduler. Production enablement still requires the same
+resident restoration and protected-status checks.

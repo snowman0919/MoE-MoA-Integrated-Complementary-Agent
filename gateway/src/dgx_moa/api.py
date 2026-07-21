@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import os
+import subprocess
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
@@ -23,6 +24,8 @@ from .controller import (
     DuplicateFailedCall,
     FrontierRequiredUnavailable,
     JudgeRequired,
+    LoopAdmissionError,
+    PolicyBlocked,
     ReasonerUnavailable,
 )
 from .frontier import CodexOAuthCollaboration, load_frontier_config
@@ -35,8 +38,20 @@ from .lifecycle import (
     SystemdLifecycleDriver,
     continuation_correlation,
 )
+from .metrics import RuntimeMetrics
+from .observation import (
+    DiscordProvider,
+    ObservationBus,
+    ObservationCommandRequest,
+    ObservationCommandStore,
+    ObservationNonceRequest,
+    ObservationProvider,
+    TelegramProvider,
+)
+from .policy import PolicyEngine
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
+from .replay import ReplayEngine, ReplayRequest
 from .routing import (
     COMPATIBILITY_MODEL_ALIASES,
     MODEL_MODES,
@@ -51,7 +66,8 @@ from .runtime_status import memory_available as runtime_memory_available
 from .runtime_status import report as runtime_report
 from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest
 from .security import admin_dependency, auth_dependency
-from .state import StateStore
+from .skills import SkillRegistry
+from .state import Phase, StateStore
 from .streaming import (
     StreamObservation,
     forward_sse,
@@ -61,6 +77,16 @@ from .streaming import (
     responses_sse,
 )
 from .trace import TraceRecorder
+from .training import (
+    CandidateReviewRequest,
+    ContentStore,
+    TrainingCollector,
+    TrainingRepositoryExclusion,
+    TrainingRequestExclusion,
+    TrainingRetentionRequest,
+    TrainingStore,
+    TrainingUserExclusion,
+)
 from .usage import (
     ModelAlias,
     RequestStatus,
@@ -70,6 +96,16 @@ from .usage import (
     Role,
     UsageStore,
     classify_client,
+)
+from .weekly import (
+    ArchiveRegistry,
+    WeeklyPackageKeyRequest,
+    WeeklyPackager,
+    WeeklyPackageRevocationRequest,
+    WeeklyRetentionRequest,
+    WeeklyScheduler,
+    previous_complete_week,
+    weekly_skill_report,
 )
 
 TIMEOUT_FAILURE_CLASSES: dict[str, RetryableFailureClass] = {
@@ -300,6 +336,13 @@ def _responses_payload(
                     "status": "completed",
                 }
             )
+    if not payload["output"]:
+        payload["status"] = "failed"
+        payload["error"] = {
+            "message": "upstream response did not contain assistant output",
+            "type": "backend_error",
+            "code": "backend_error",
+        }
     if usage := response_usage(chat_response.get("usage")):
         payload["usage"] = usage
     return payload
@@ -436,18 +479,63 @@ def create_app(
         project_root = Path(os.getenv("DGX_MOA_PROJECT_ROOT", ".")).resolve()
         app.state.settings = configured
         app.state.store = store
+        app.state.runtime_metrics = RuntimeMetrics()
+        store.subscribe_events(app.state.runtime_metrics.observe_event)
+        observation_providers: list[ObservationProvider] = []
+        observation = configured.live_observation
+        if observation.enabled and observation.discord is not None:
+            observation_providers.append(
+                DiscordProvider(
+                    observation.discord.webhook_url.get_secret_value(),
+                    thread_id=observation.discord.thread_id,
+                    timeout=observation.request_timeout_seconds,
+                )
+            )
+        if observation.enabled and observation.telegram is not None:
+            observation_providers.append(
+                TelegramProvider(
+                    observation.telegram.bot_token.get_secret_value(),
+                    observation.telegram.chat_id,
+                    message_thread_id=observation.telegram.message_thread_id,
+                    timeout=observation.request_timeout_seconds,
+                )
+            )
+        app.state.observation = (
+            ObservationBus(
+                observation_providers,
+                queue_size=observation.queue_size,
+                batch_size=observation.batch_size,
+                batch_interval_seconds=observation.batch_interval_seconds,
+            )
+            if observation.enabled and observation_providers
+            else None
+        )
+        if app.state.observation is not None:
+            store.subscribe_events(app.state.observation.publish_store_event)
+        app.state.observation_commands = (
+            ObservationCommandStore(configured.state_db) if observation.controls.enabled else None
+        )
+        frontier_config = (
+            load_frontier_config(configured.frontier_config)
+            if configured.frontier_enabled
+            else None
+        )
+        model_catalog = {role: model.served_name for role, model in configured.models.items()}
+        if frontier_config is not None:
+            model_catalog["frontier"] = frontier_config.model
         app.state.usage = UsageStore(
             configured.state_db,
             sample_window=configured.limits.usage_sample_window,
             ewma_alpha=configured.limits.usage_ewma_alpha,
             adaptive_minimum_samples=configured.limits.adaptive_minimum_samples,
+            invocation_report_path=configured.run_dir / "model-invocation-rates.csv",
+            model_catalog=model_catalog,
         )
         app.state.usage_session_namespace = uuid.uuid4()
         app.state.project_root = project_root
         app.state.provider = provider
         frontier = None
-        if configured.frontier_enabled:
-            frontier_config = load_frontier_config(configured.frontier_config)
+        if frontier_config is not None:
             if frontier_config.provider != "codex_oauth":
                 raise ValueError("Frontier collaboration requires codex_oauth")
             frontier = CodexOAuthCollaboration(
@@ -455,7 +543,25 @@ def create_app(
                 configured.run_dir,
                 project_root,
             )
-        app.state.controller = Controller(configured, store, provider, frontier)
+        app.state.skills = (
+            SkillRegistry(configured.runtime_skills.root)
+            if configured.runtime_skills.enabled
+            else None
+        )
+        app.state.policy = (
+            PolicyEngine(configured.declarative_policy.policy_set())
+            if configured.declarative_policy.enabled
+            else None
+        )
+        app.state.controller = Controller(
+            configured,
+            store,
+            provider,
+            frontier,
+            app.state.usage,
+            app.state.skills,
+            app.state.policy,
+        )
         app.state.lifecycle_store = LifecycleStore(
             configured.state_db,
             configured.models,
@@ -494,12 +600,104 @@ def create_app(
                 app.state.usage,
             )
             app.state.reviewer_evaluation_lock = asyncio.Lock()
+            app.state.training_collector = None
+            app.state.training_store = None
+            if configured.training_data.enabled:
+                training_store = TrainingStore(
+                    configured.training_data.state_db,
+                    ContentStore(
+                        configured.training_data.object_root,
+                        maximum_bytes=configured.training_data.maximum_object_bytes,
+                    ),
+                    minimum_free_bytes=configured.training_data.minimum_free_bytes,
+                )
+                app.state.training_store = training_store
+                app.state.training_collector = TrainingCollector(
+                    training_store,
+                    store,
+                    external_output_permitted=(configured.training_data.external_output_permitted),
+                )
+            app.state.weekly_packager = (
+                WeeklyPackager(
+                    configured.weekly_jobs.package_root,
+                    ArchiveRegistry(configured.weekly_jobs.archive_registry),
+                    notifier=lambda event_type, payload: store.event(
+                        "weekly-maintenance", event_type, payload
+                    ),
+                )
+                if configured.weekly_jobs.enabled
+                else None
+            )
+            app.state.weekly_scheduler = None
+            if configured.weekly_jobs.enabled:
+
+                def notify_weekly(event_type: str, payload: dict[str, Any]) -> None:
+                    store.event("weekly-maintenance", event_type, payload)
+
+                async def run_weekly_skill_job() -> None:
+                    if app.state.skills is None:
+                        raise RuntimeError("runtime Skills are disabled")
+                    window = previous_complete_week(timezone=configured.weekly_jobs.timezone)
+                    await asyncio.to_thread(
+                        weekly_skill_report,
+                        app.state.skills,
+                        configured.weekly_jobs.package_root / "skill-reports" / window.week,
+                        notifier=notify_weekly,
+                    )
+
+                async def run_weekly_package_job() -> None:
+                    if app.state.training_store is None or app.state.weekly_packager is None:
+                        raise RuntimeError("weekly training pipeline is disabled")
+                    window = previous_complete_week(timezone=configured.weekly_jobs.timezone)
+                    await asyncio.to_thread(
+                        app.state.weekly_packager.package,
+                        app.state.training_store.packageable_candidates(
+                            created_from=window.utc_start.isoformat(),
+                            created_before=window.utc_end.isoformat(),
+                        ),
+                        window=window,
+                        production_commit=configured.controller_commit,
+                        policy_version=configured.declarative_policy.version,
+                        skill_registry_version="runtime-skill-schema-v1",
+                        model_configuration={
+                            role: {
+                                "repository": model.repository,
+                                "revision": model.revision,
+                                "served_name": model.served_name,
+                            }
+                            for role, model in configured.models.items()
+                        },
+                    )
+
+                app.state.weekly_scheduler = WeeklyScheduler(
+                    timezone=configured.weekly_jobs.timezone,
+                    skill_schedule=configured.weekly_jobs.skill_schedule,
+                    package_schedule=configured.weekly_jobs.package_schedule,
+                    skill_job=run_weekly_skill_job,
+                    package_job=run_weekly_package_job,
+                    notifier=notify_weekly,
+                )
             app.state.traces = TraceRecorder(
-                configured.state_db.parent.parent / "traces", store, configured.models
+                configured.state_db.parent.parent / "traces",
+                store,
+                configured.models,
+                (
+                    app.state.training_collector.collect
+                    if app.state.training_collector is not None
+                    else None
+                ),
             )
             app.state.profiles = ProfileManager(configured.run_dir, project_root)
+            if app.state.observation is not None:
+                app.state.observation.start()
+            if app.state.weekly_scheduler is not None:
+                app.state.weekly_scheduler.start()
             yield
         finally:
+            if app.state.weekly_scheduler is not None:
+                await app.state.weekly_scheduler.close()
+            if app.state.observation is not None:
+                await app.state.observation.close()
             await app.state.lifecycle.close()
 
     app = FastAPI(title="DGX MoA Agent", version="0.1.0", lifespan=lifespan)
@@ -804,6 +1002,333 @@ def create_app(
             }
         )
 
+    @app.post("/v1/admin/observation/nonces", dependencies=[Depends(admin_auth)])
+    async def issue_observation_nonce(
+        body: ObservationNonceRequest, request: Request
+    ) -> dict[str, Any]:
+        controls = configured.live_observation.controls
+        command_store = request.app.state.observation_commands
+        if not controls.enabled or command_store is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "observation controls are disabled")
+        if f"{body.provider}:{body.user_id}" not in controls.allowed_users:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "observation user not allowlisted")
+        if request.app.state.store.get(body.request_id) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown observation request")
+        nonce = command_store.issue_nonce(
+            body.provider,
+            body.user_id,
+            body.request_id,
+            controls.nonce_ttl_seconds,
+        )
+        return {"nonce": nonce, "expires_in_seconds": controls.nonce_ttl_seconds}
+
+    @app.post("/v1/admin/observation/commands", dependencies=[Depends(admin_auth)])
+    async def apply_observation_command(
+        body: ObservationCommandRequest, request: Request
+    ) -> dict[str, Any]:
+        controls = configured.live_observation.controls
+        command_store = request.app.state.observation_commands
+        if not controls.enabled or command_store is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "observation controls are disabled")
+        state = request.app.state.store.get(body.request_id)
+        if state is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown observation request")
+        try:
+            replayed = command_store.authorize(
+                provider=body.provider,
+                user_id=body.user_id,
+                request_id=body.request_id,
+                command=body.command,
+                nonce=body.nonce,
+                idempotency_key=body.idempotency_key,
+                allowed_users=controls.allowed_users,
+                role_permissions=controls.role_permissions,
+            )
+        except PermissionError as error:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        if body.command == "pause":
+            state.control_state = "paused"
+        elif body.command == "resume":
+            state.control_state = "running"
+        elif body.command in {"reject", "terminate"}:
+            state.control_state = "terminated"
+            state.phase = Phase.BLOCKED
+            state.final_status = "cancelled"
+            request.app.state.controller.terminate_loop(state, "CLIENT_CANCELLED")
+        elif body.command == "approve":
+            approval_role = controls.allowed_users[f"{body.provider}:{body.user_id}"]
+            if approval_role not in state.control_approvals:
+                state.control_approvals.append(approval_role)
+        request.app.state.store.event(
+            state.session_id,
+            "observation_command_applied",
+            {
+                "provider": body.provider,
+                "command": body.command,
+                "replayed": replayed,
+            },
+        )
+        request.app.state.store.save(state)
+        response: dict[str, Any] = {
+            "command": body.command,
+            "request_id": body.request_id,
+            "replayed": replayed,
+            "control_state": state.control_state,
+        }
+        if body.command == "show-status":
+            response["status"] = {
+                "phase": state.phase,
+                "final_status": state.final_status,
+                "review_status": state.review_status,
+            }
+        elif body.command == "show-findings":
+            response["findings"] = [
+                node
+                for node in state.evidence_nodes[-20:]
+                if node.get("node_type") in {"reviewer_finding", "frontier_finding"}
+            ]
+        elif body.command == "show-budget":
+            response["budget"] = (
+                state.engineering_loop.remaining_budget.model_dump(mode="json")
+                if state.engineering_loop is not None
+                else None
+            )
+        return response
+
+    def training_store(request: Request) -> TrainingStore:
+        store = request.app.state.training_store
+        if store is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "training data workflow is disabled")
+        return cast(TrainingStore, store)
+
+    @app.get(
+        "/v1/admin/training/candidates/{candidate_id}",
+        dependencies=[Depends(admin_auth)],
+    )
+    async def inspect_training_candidate(candidate_id: str, request: Request) -> dict[str, Any]:
+        store = training_store(request)
+        try:
+            candidate = store.candidate(candidate_id)
+        except KeyError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+        return {
+            "candidate": candidate.model_dump(mode="json"),
+            "review_history": store.review_history(candidate_id),
+        }
+
+    @app.post(
+        "/v1/admin/training/candidates/{candidate_id}/state",
+        dependencies=[Depends(admin_auth)],
+    )
+    async def transition_training_candidate(
+        candidate_id: str, body: CandidateReviewRequest, request: Request
+    ) -> dict[str, Any]:
+        store = training_store(request)
+        actor = str(getattr(request.state, "api_token_id", "loopback-admin"))
+        try:
+            candidate = store.transition_candidate(
+                candidate_id,
+                body.target_state,
+                actor=actor,
+                reason=body.reason,
+            )
+        except KeyError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+        except PermissionError as error:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        return {
+            "candidate_id": candidate.candidate_id,
+            "review_state": candidate.review_state,
+        }
+
+    @app.post(
+        "/v1/admin/training/exclusions/requests",
+        dependencies=[Depends(admin_auth)],
+    )
+    async def exclude_training_request(
+        body: TrainingRequestExclusion, request: Request
+    ) -> dict[str, Any]:
+        store = training_store(request)
+        store.tombstone(body.request_id, body.reason)
+        return {"request_id": body.request_id, "excluded": True}
+
+    @app.post(
+        "/v1/admin/training/exclusions/repositories",
+        dependencies=[Depends(admin_auth)],
+    )
+    async def exclude_training_repository(
+        body: TrainingRepositoryExclusion, request: Request
+    ) -> dict[str, Any]:
+        store = training_store(request)
+        identity_hash = store.exclude_repository(body.repository_identity, body.reason)
+        return {"repository_identity_hash": identity_hash, "excluded": True}
+
+    @app.post(
+        "/v1/admin/training/exclusions/users",
+        dependencies=[Depends(admin_auth)],
+    )
+    async def exclude_training_user(
+        body: TrainingUserExclusion, request: Request
+    ) -> dict[str, Any]:
+        subject_hash = training_store(request).exclude_user(body.subject_id, body.reason)
+        return {"training_subject_hash": subject_hash, "excluded": True}
+
+    @app.post(
+        "/v1/admin/training/retention",
+        dependencies=[Depends(admin_auth)],
+    )
+    async def apply_training_retention(
+        body: TrainingRetentionRequest, request: Request
+    ) -> dict[str, Any]:
+        return training_store(request).purge_retention(
+            event_before=body.event_before,
+            candidate_before=body.candidate_before,
+            apply=body.apply,
+        )
+
+    def weekly_packager(request: Request) -> WeeklyPackager:
+        packager = request.app.state.weekly_packager
+        if packager is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "weekly packaging is disabled")
+        return cast(WeeklyPackager, packager)
+
+    @app.post(
+        "/v1/admin/weekly-packages/verify",
+        dependencies=[Depends(admin_auth)],
+    )
+    async def verify_weekly_package(
+        body: WeeklyPackageKeyRequest, request: Request
+    ) -> dict[str, Any]:
+        try:
+            return weekly_packager(request).verify(body.idempotency_key)
+        except KeyError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+
+    @app.post(
+        "/v1/admin/weekly-packages/revoke",
+        dependencies=[Depends(admin_auth)],
+    )
+    async def revoke_weekly_package(
+        body: WeeklyPackageRevocationRequest, request: Request
+    ) -> dict[str, Any]:
+        try:
+            return weekly_packager(request).registry.revoke(body.idempotency_key, body.reason)
+        except KeyError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+
+    @app.post(
+        "/v1/admin/weekly-packages/regenerate",
+        dependencies=[Depends(admin_auth)],
+    )
+    async def regenerate_weekly_package(
+        body: WeeklyPackageKeyRequest, request: Request
+    ) -> dict[str, Any]:
+        try:
+            packager = weekly_packager(request)
+            window = packager.package_window(body.idempotency_key)
+            candidates = training_store(request).packageable_candidates(
+                created_from=window.utc_start.isoformat(),
+                created_before=window.utc_end.isoformat(),
+            )
+            return packager.regenerate(body.idempotency_key, candidates)
+        except KeyError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+        except (OSError, ValueError, PermissionError, subprocess.SubprocessError) as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+
+    @app.post(
+        "/v1/admin/weekly-packages/retention",
+        dependencies=[Depends(admin_auth)],
+    )
+    async def apply_weekly_retention(
+        body: WeeklyRetentionRequest, request: Request
+    ) -> dict[str, Any]:
+        try:
+            return weekly_packager(request).purge_retention(body.before, apply=body.apply)
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+
+    @app.post("/v1/admin/replay", dependencies=[Depends(admin_auth)])
+    async def replay_execution(body: ReplayRequest) -> dict[str, Any]:
+        if not body.exact and body.mode != "audit":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "live comparative replay requires an internal provider callback",
+            )
+        try:
+            result = await ReplayEngine().run(
+                body.snapshot,
+                mode=body.mode,
+                exact=body.exact,
+            )
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        return result.model_dump(mode="json")
+
+    @app.get("/metrics", dependencies=[Depends(auth)])
+    async def metrics(request: Request) -> Response:
+        overlays: dict[str, int | float] = {}
+        skills = request.app.state.skills
+        if skills is not None:
+            skill_rows = skills.list_skills()
+            skill_metrics = [skills.metrics(item.skill_id, item.version) for item in skill_rows]
+            overlays.update(
+                skill_invocations_total=sum(item.selected for item in skill_metrics),
+                skill_success_total=sum(item.succeeded for item in skill_metrics),
+                skill_override_total=sum(item.overridden for item in skill_metrics),
+                skill_regression_total=sum(item.regressions for item in skill_metrics),
+                skill_candidate_created_total=sum(
+                    item.source == "generated" for item in skill_rows
+                ),
+                skill_promoted_total=sum(
+                    item.state == "active" and item.provenance.source_trace_ids
+                    for item in skill_rows
+                ),
+                skill_deprecated_total=sum(item.state == "deprecated" for item in skill_rows),
+            )
+        observation_bus = request.app.state.observation
+        if observation_bus is not None:
+            overlays.update(
+                observer_events_sent_total=observation_bus.metrics["sent"],
+                observer_events_dropped_total=observation_bus.metrics["dropped"],
+                discord_errors_total=observation_bus.metrics["discord_errors"],
+                telegram_errors_total=observation_bus.metrics["telegram_errors"],
+            )
+        collector = request.app.state.training_collector
+        if collector is not None:
+            overlays.update(
+                training_events_collected_total=collector.metrics["events"],
+                training_candidates_created_total=collector.metrics["candidates"],
+                training_candidates_excluded_total=collector.metrics["excluded"],
+                secret_redactions_total=collector.metrics["secret_redactions"],
+                privacy_exclusions_total=collector.metrics["privacy_exclusions"],
+                license_exclusions_total=collector.metrics["license_exclusions"],
+            )
+        packager = request.app.state.weekly_packager
+        if packager is not None:
+            overlays.update(
+                exact_duplicates_removed_total=packager.metrics["exact_duplicates_removed"],
+                near_duplicates_removed_total=packager.metrics["near_duplicates_removed"],
+                weekly_packages_created_total=packager.metrics["packages_created"],
+                weekly_package_failures_total=packager.metrics["package_failures"],
+                weekly_package_bytes=packager.metrics["package_bytes"],
+                archive_verification_failures_total=packager.metrics[
+                    "archive_verification_failures"
+                ],
+            )
+        return Response(
+            request.app.state.runtime_metrics.prometheus(overlays),
+            media_type="text/plain; version=0.0.4",
+        )
+
     @app.get("/v1/models", dependencies=[Depends(auth)])
     async def models() -> dict[str, Any]:
         aliases = list(MODEL_MODES)
@@ -836,7 +1361,10 @@ def create_app(
                     "upgrade": None,
                     "base_instructions": (
                         "You are a coding agent. Follow the user's instructions and use the "
-                        "provided tools to inspect, edit, and verify the workspace."
+                        "provided tools to inspect, edit, and verify the workspace. Use native "
+                        "file tools or shell for local paths and file:// URIs. Call "
+                        "read_mcp_resource only with an exact server and URI returned by MCP "
+                        "resource discovery; integration display names are not MCP server IDs."
                     ),
                     "model_messages": None,
                     "include_skills_usage_instructions": False,
@@ -1170,6 +1698,7 @@ def create_app(
                         state = current
                     if status_value == "cancelled":
                         current.final_status = "cancelled"
+                        request.app.state.controller.terminate_loop(current, "CLIENT_CANCELLED")
                     elif (
                         status_value in {"failed", "timed_out"}
                         and current.final_status != "blocked"
@@ -1182,6 +1711,7 @@ def create_app(
                         )
                     if downstream_started:
                         current.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                    request.app.state.controller.complete_loop_iteration(current, status_value)
                     record_request_timing(current)
                     request.app.state.store.event(
                         current.session_id,
@@ -1359,6 +1889,7 @@ def create_app(
                     "executor", continuation_owner
                 )
             state = request.app.state.controller.session(state_session_id, raw["messages"])
+            state.current_request_id = usage_request_id
             state.api_token_id = api_token_id
             task_id = task_id or state.task_id or state_session_id
             raw["metadata"]["task_id"] = task_id
@@ -1375,17 +1906,26 @@ def create_app(
                 "request_received",
                 {"stream": body.stream, "task_id": task_id},
             )
-            request.app.state.controller.select_route(state, raw["metadata"])
-            if body.metadata.get("no_progress"):
-                request.app.state.controller.note_no_progress(state)
             state.runtime_mode = mode
             state.request_class = request_class
             state.roles_required = list(roles)
             state.review_fail_closed = review_fails_closed(request_class)
+            request.app.state.controller.select_route(state, raw["metadata"])
+            if body.metadata.get("no_progress"):
+                request.app.state.controller.note_no_progress(state)
             active_stage = "planner" if "planner" in roles else "request"
             prepared = await request.app.state.controller.prepare_executor(
                 state, raw, roles, ensure_dynamic_roles
             )
+            if state.engineering_loop is not None and prepared.get("tools"):
+                prepared["parallel_tool_calls"] = False
+                if state.engineering_loop.remaining_budget.tool_calls == 0:
+                    prepared["tool_choice"] = "none"
+                    request.app.state.store.event(
+                        state_session_id,
+                        "engineering_loop_tool_budget_closed",
+                        {"loop_id": state.engineering_loop.loop_id},
+                    )
             if "planner" in state.timings_ms:
                 stage_status["planner"] = "completed"
             if "reviewer" in state.timings_ms:
@@ -1458,7 +1998,8 @@ def create_app(
                                     "next_phase": state.phase,
                                 }
                             token_usage.update(observation.usage)
-                            state.agent_invocations.append(
+                            request.app.state.controller.record_observed_invocation(
+                                state,
                                 {
                                     "role": "executor",
                                     "mode": "final_synthesis",
@@ -1467,11 +2008,9 @@ def create_app(
                                     "completion_tokens": observation.usage.get("completion_tokens"),
                                     "total_tokens": observation.usage.get("total_tokens"),
                                     "status": "completed" if terminal else terminal_status,
-                                }
+                                },
+                                account_loop_usage=False,
                             )
-                            state.agent_invocations = state.agent_invocations[
-                                -configured.limits.max_steps :
-                            ]
                             if terminal and "tool_calls" in observation.finish_reasons:
                                 state.pending_tool_call_ids = list(
                                     dict.fromkeys(
@@ -1523,6 +2062,8 @@ def create_app(
 
                 async def stream_response() -> AsyncIterator[bytes]:
                     nonlocal first_byte_at, stream_completed
+                    admitted_tool_calls = 0
+                    accounted_total_tokens = 0
                     forwarder = forward_sse(
                         upstream,
                         observation,
@@ -1534,6 +2075,25 @@ def create_app(
                         ):
                             async with aclosing(forwarder):
                                 async for chunk in forwarder:
+                                    required_admissions = max(
+                                        len(observation.tool_call_ids),
+                                        1 if observation.tool_delta_seen else 0,
+                                    )
+                                    while admitted_tool_calls < required_admissions:
+                                        request.app.state.controller.admit_tool_call(
+                                            state,
+                                            observation.tool_call_names.get(admitted_tool_calls),
+                                        )
+                                        admitted_tool_calls += 1
+                                    observed_total_tokens = observation.usage.get("total_tokens", 0)
+                                    if observed_total_tokens > accounted_total_tokens:
+                                        request.app.state.controller.record_loop_usage(
+                                            state,
+                                            total_tokens=(
+                                                observed_total_tokens - accounted_total_tokens
+                                            ),
+                                        )
+                                        accounted_total_tokens = observed_total_tokens
                                     if "first_downstream_byte" not in state.timings_ms:
                                         state.timings_ms["first_downstream_byte"] = elapsed_ms(
                                             accepted
@@ -1583,6 +2143,11 @@ def create_app(
             validate_assistant_response(response)
             assistant_message = response.get("choices", [{}])[0].get("message", {})
             assistant_tool_calls = assistant_message.get("tool_calls") or []
+            for call in assistant_tool_calls:
+                request.app.state.controller.admit_tool_call(
+                    state,
+                    str(call.get("function", {}).get("name", "")) or None,
+                )
             assistant_tool_call_ids = [
                 str(call.get("id"))
                 for call in assistant_tool_calls
@@ -1707,7 +2272,32 @@ def create_app(
         except DuplicateFailedCall as error:
             finalize_request(active_stage, "failed", downstream_started=True)
             raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        except LoopAdmissionError as error:
+            termination = (
+                state.engineering_loop.termination_reason
+                if state is not None and state.engineering_loop is not None
+                else None
+            )
+            finalize_request(active_stage, "failed", downstream_started=True)
+            return error_response(
+                status.HTTP_409_CONFLICT,
+                str(error),
+                "loop_admission_error",
+                "loop_budget_exhausted"
+                if termination == "BUDGET_EXHAUSTED"
+                else "loop_new_evidence_required",
+            )
+        except PolicyBlocked as error:
+            finalize_request(active_stage, "failed", downstream_started=True)
+            return error_response(
+                status.HTTP_403_FORBIDDEN,
+                str(error),
+                "policy_blocked",
+                "approval_required" if "approval" in str(error) else "request_denied",
+            )
         except FrontierRequiredUnavailable as error:
+            if state is not None:
+                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
             finalize_request(
                 "frontier",
                 "failed",
@@ -1735,6 +2325,8 @@ def create_app(
                 },
             )
         except ReasonerUnavailable as error:
+            if state is not None:
+                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
             finalize_request(
                 "reasoner",
                 "failed",
@@ -1764,6 +2356,8 @@ def create_app(
                 else unavailable_response(record.role, record=record)
             )
         except StageTimeout as error:
+            if state is not None:
+                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
             finalize_request(
                 error.stage,
                 "timed_out",
@@ -1777,6 +2371,8 @@ def create_app(
                 f"{error.stage}_timeout",
             )
         except httpx.TimeoutException as error:
+            if state is not None:
+                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
             phase = state.phase.value if state is not None else ""
             stage = {
                 "planning": "planner",
@@ -1796,6 +2392,8 @@ def create_app(
                 f"{stage}_timeout",
             )
         except httpx.HTTPStatusError as error:
+            if state is not None and error.response.status_code >= 500:
+                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
             finalize_request(
                 active_stage,
                 "failed",
@@ -1833,6 +2431,8 @@ def create_app(
                 "backend_error",
             )
         except httpx.HTTPError as error:
+            if state is not None:
+                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
             finalize_request(
                 active_stage,
                 "failed",
@@ -1867,6 +2467,8 @@ def create_app(
                 "backend_error",
             )
         except Exception as error:
+            if state is not None:
+                request.app.state.controller.terminate_loop(state, "INTERNAL_FAILURE")
             finalize_request(
                 active_stage,
                 "failed",
@@ -1906,6 +2508,7 @@ def create_app(
                 "judge_not_pending",
             )
         request_id = str(uuid.uuid4())
+        state.current_request_id = request_id
         leases = await request.app.state.lifecycle.acquire_request_leases(
             request_id,
             ("judge",),
@@ -1995,92 +2598,118 @@ def create_app(
             )
 
             async def response_stream() -> AsyncIterator[bytes]:
-                chat_task = asyncio.create_task(
-                    chat(
-                        chat_body,
-                        request,
-                        response_session_id,
-                        x_runtime_channel,
-                        x_trace_origin,
-                        x_task_id,
-                        x_workspace_path,
-                        x_workspace_id,
-                        x_repository_branch,
-                        x_repository_commit,
-                        x_dirty_state,
-                    )
-                )
+                chat_task: asyncio.Task[Response] | None = None
+                loading_deadline = time.monotonic() + configured.limits.model_load_timeout_seconds
+                initial_heartbeat_sent = False
                 try:
-                    yield b": keep-alive\n\n"
-                    while not chat_task.done():
-                        await asyncio.wait((chat_task,), timeout=15)
-                        if not chat_task.done():
-                            yield b": keep-alive\n\n"
-                    try:
-                        chat_result = chat_task.result()
-                    except HTTPException as error:
-                        error_type = (
-                            "invalid_request_error"
-                            if error.status_code
-                            in {status.HTTP_503_SERVICE_UNAVAILABLE, status.HTTP_404_NOT_FOUND}
-                            else "backend_error"
+                    while True:
+                        chat_task = asyncio.create_task(
+                            chat(
+                                chat_body,
+                                request,
+                                response_session_id,
+                                x_runtime_channel,
+                                x_trace_origin,
+                                x_task_id,
+                                x_workspace_path,
+                                x_workspace_id,
+                                x_repository_branch,
+                                x_repository_commit,
+                                x_dirty_state,
+                            )
                         )
+                        if not initial_heartbeat_sent:
+                            initial_heartbeat_sent = True
+                            yield b": keep-alive\n\n"
+                        while not chat_task.done():
+                            await asyncio.wait((chat_task,), timeout=15)
+                            if not chat_task.done():
+                                yield b": keep-alive\n\n"
+                        try:
+                            chat_result = chat_task.result()
+                        except HTTPException as error:
+                            error_type = (
+                                "invalid_request_error"
+                                if error.status_code
+                                in {
+                                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                                    status.HTTP_404_NOT_FOUND,
+                                }
+                                else "backend_error"
+                            )
+                            async for chunk in responses_error_sse(
+                                response_model,
+                                session_id=response_session_id,
+                                error_type=error_type,
+                                code=(
+                                    "invalid_request"
+                                    if error_type == "invalid_request_error"
+                                    else "backend_error"
+                                ),
+                                source="chat_http_exception",
+                                status_code=error.status_code,
+                            ):
+                                yield chunk
+                            return
+                        except Exception as error:
+                            async for chunk in responses_error_sse(
+                                response_model,
+                                session_id=response_session_id,
+                                error_type="backend_error",
+                                code="backend_error",
+                                source="chat_unhandled_exception",
+                                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                failure_class=type(error).__name__,
+                            ):
+                                yield chunk
+                            return
+                        if isinstance(chat_result, StreamingResponse):
+                            async for chunk in responses_sse(
+                                chat_result.body_iterator,
+                                response_model,
+                                custom_tool_names=custom_tool_names,
+                                session_id=response_session_id,
+                            ):
+                                yield chunk
+                            return
+                        chat_payload = _chat_response_payload(chat_result)
+                        upstream_error = chat_payload.get("error") if chat_payload else None
+                        if (
+                            chat_result.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+                            and isinstance(upstream_error, dict)
+                            and upstream_error.get("code") == "model_loading"
+                            and time.monotonic() < loading_deadline
+                        ):
+                            retry_after = min(
+                                float(chat_result.headers.get("Retry-After", "30")),
+                                max(0.0, loading_deadline - time.monotonic()),
+                            )
+                            while retry_after > 0:
+                                delay = min(15.0, retry_after)
+                                await asyncio.sleep(delay)
+                                retry_after -= delay
+                                yield b": keep-alive\n\n"
+                            continue
                         async for chunk in responses_error_sse(
                             response_model,
                             session_id=response_session_id,
-                            error_type=error_type,
-                            code=(
-                                "invalid_request"
-                                if error_type == "invalid_request_error"
+                            error_type=(
+                                str(upstream_error.get("type", "backend_error"))
+                                if isinstance(upstream_error, dict)
                                 else "backend_error"
                             ),
-                            source="chat_http_exception",
-                            status_code=error.status_code,
+                            code=(
+                                str(upstream_error.get("code", "backend_error"))
+                                if isinstance(upstream_error, dict)
+                                else "backend_error"
+                            ),
+                            source="chat_non_stream_response",
+                            status_code=chat_result.status_code,
                         ):
                             yield chunk
                         return
-                    except Exception as error:
-                        async for chunk in responses_error_sse(
-                            response_model,
-                            session_id=response_session_id,
-                            error_type="backend_error",
-                            code="backend_error",
-                            source="chat_unhandled_exception",
-                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            failure_class=type(error).__name__,
-                        ):
-                            yield chunk
-                        return
-                    if isinstance(chat_result, StreamingResponse):
-                        async for chunk in responses_sse(
-                            chat_result.body_iterator,
-                            response_model,
-                            custom_tool_names=custom_tool_names,
-                            session_id=response_session_id,
-                        ):
-                            yield chunk
-                        return
-                    chat_payload = _chat_response_payload(chat_result)
-                    upstream_error = chat_payload.get("error") if chat_payload else None
-                    async for chunk in responses_error_sse(
-                        response_model,
-                        session_id=response_session_id,
-                        error_type=(
-                            str(upstream_error.get("type", "backend_error"))
-                            if isinstance(upstream_error, dict)
-                            else "backend_error"
-                        ),
-                        code=(
-                            str(upstream_error.get("code", "backend_error"))
-                            if isinstance(upstream_error, dict)
-                            else "backend_error"
-                        ),
-                        source="chat_non_stream_response",
-                        status_code=chat_result.status_code,
-                    ):
-                        yield chunk
                 finally:
-                    if not chat_task.done():
+                    if chat_task is not None and not chat_task.done():
                         chat_task.cancel()
                         await asyncio.gather(chat_task, return_exceptions=True)
 

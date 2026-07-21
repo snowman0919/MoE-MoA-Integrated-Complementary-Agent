@@ -9,6 +9,8 @@ from dgx_moa.controller import (
     Controller,
     DuplicateFailedCall,
     JudgeRequired,
+    LoopAdmissionError,
+    active_failures,
     classify_failure,
     fingerprint,
 )
@@ -595,6 +597,30 @@ def test_duplicate_failed_call_ignores_call_id(settings, stub_provider: StubProv
     )
 
 
+def test_loop_duplicate_failure_policy_persists_across_retries(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session("loop-duplicate", [{"role": "user", "content": "fix"}])
+    controller.select_route(state, {})
+
+    controller._observe(state, tool_messages("first", '{"exit_code":2,"error":"bad"}'))
+    store.save(state)
+    with pytest.raises(DuplicateFailedCall):
+        controller._observe(state, tool_messages("second", '{"exit_code":2,"error":"bad"}'))
+    persisted = store.get("loop-duplicate")
+    assert persisted is not None and persisted.engineering_loop is not None
+    assert persisted.engineering_loop.open_failures[0].occurrence_count == 2
+    assert persisted.engineering_loop.open_failures[0].strategy_change_required
+
+    with pytest.raises(DuplicateFailedCall):
+        controller._observe(persisted, tool_messages("third", '{"exit_code":2,"error":"bad"}'))
+    assert persisted.engineering_loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
+    assert persisted.phase == Phase.BLOCKED
+
+
 def test_parallel_tool_results_match_their_calls(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     calls = [
         {
@@ -672,6 +698,52 @@ def test_semantic_tool_failures_are_not_recorded_as_success(
     assert state.failed_call_fingerprints
 
 
+def test_successful_same_path_fallback_resolves_mcp_failure(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    path = "/Users/test/.codex/attachments/task/goal-objective.md"
+    failed = {
+        "id": "mcp",
+        "type": "function",
+        "function": {
+            "name": "read_mcp_resource",
+            "arguments": json.dumps({"server": "local_filesystem", "uri": f"file://{path}"}),
+        },
+    }
+    fallback = {
+        "id": "shell",
+        "type": "function",
+        "function": {
+            "name": "exec_command",
+            "arguments": json.dumps({"cmd": f"cat {path}"}),
+        },
+    }
+    state = SessionState(session_id="mcp-fallback")
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+
+    controller._observe(
+        state,
+        [
+            {"role": "assistant", "tool_calls": [failed]},
+            {
+                "role": "tool",
+                "tool_call_id": "mcp",
+                "content": "resources/read failed: unknown MCP server 'local_filesystem'",
+            },
+            {"role": "assistant", "tool_calls": [fallback]},
+            {"role": "tool", "tool_call_id": "shell", "content": "objective contents"},
+        ],
+    )
+
+    assert active_failures(state) == []
+    assert state.failures[0]["resolution_status"] == "resolved"
+    assert state.failed_call_fingerprints == []
+    assert any(
+        event["event_type"] == "failure_resolved" for event in store.events(state.session_id)
+    )
+
+
 def test_failure_classification() -> None:
     assert classify_failure("No such file or directory") == "NONEXISTENT_PATH"
     assert classify_failure("unsupported call: read_mcp_resources") == "UNSUPPORTED_TOOL"
@@ -695,6 +767,130 @@ def test_no_progress_and_step_budget(settings, stub_provider: StubProvider) -> N
     store.save(exhausted)
     with pytest.raises(ValueError, match="step budget"):
         controller.session("y", [{"role": "user", "content": "x"}])
+
+
+def test_enabled_loop_persists_evidence_backed_acceptance(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session("loop", [{"role": "user", "content": "ship safely"}])
+    state.current_request_id = "request-1"
+    state.acceptance_criteria = ["tests pass"]
+    state.review_status = "approved"
+
+    controller.select_route(state, {})
+    controller.apply_metadata(state, {"completion_evidence": {"tests pass": "pytest: 0"}})
+
+    persisted = store.get("loop")
+    assert persisted is not None and persisted.engineering_loop is not None
+    assert persisted.engineering_loop.request_id == "request-1"
+    assert persisted.engineering_loop.acceptance_criteria[0].state == "passed"
+    assert persisted.engineering_loop.acceptance_criteria[0].evidence_ids
+    assert persisted.phase == Phase.COMPLETED
+    assert persisted.engineering_loop.termination_reason == "SUCCESS"
+
+
+@pytest.mark.parametrize(
+    ("metadata", "request_class", "expected"),
+    [
+        ({"debugging": True}, "native_agent_turn", "debugging"),
+        ({"code_review": True}, "native_agent_turn", "review"),
+        ({"architecture": True}, "native_agent_turn", "planning"),
+        ({}, "recovery_task", "recovery"),
+        ({"loop_type": "skill_evaluation"}, "native_agent_turn", "skill_evaluation"),
+    ],
+)
+def test_loop_type_is_derived_before_first_iteration(
+    settings,
+    stub_provider: StubProvider,
+    metadata: dict[str, object],
+    request_class: str,
+    expected: str,
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session(expected, [{"role": "user", "content": "work"}])
+    state.request_class = request_class
+
+    controller.select_route(state, metadata)
+
+    assert state.engineering_loop is not None
+    assert state.engineering_loop.loop_type == expected
+
+
+def test_high_risk_loop_uses_budget_override(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    settings.loop_engineering.risk_level_overrides = {"high": {"judge_calls": 0}}
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session("risk-budget", [{"role": "user", "content": "secure it"}])
+    state.request_class = "high_risk_task"
+
+    controller.select_route(state, {"authentication": True})
+
+    assert state.engineering_loop is not None
+    assert state.engineering_loop.remaining_budget.judge_calls == 0
+
+
+def test_enabled_loop_uses_configured_no_progress_limit(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    settings.loop_engineering.no_progress_iteration_limit = 2
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session("stalled-loop", [{"role": "user", "content": "fix"}])
+    controller.select_route(state, {})
+
+    controller.note_no_progress(state)
+    assert state.phase != Phase.BLOCKED
+    controller.note_no_progress(state)
+    assert state.phase == Phase.BLOCKED
+    assert state.engineering_loop is not None
+    assert state.engineering_loop.termination_reason == "NO_PROGRESS"
+
+
+@pytest.mark.asyncio
+async def test_loop_rejects_second_executor_iteration_without_new_evidence(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session("iteration-loop", [{"role": "user", "content": "fix"}])
+    state.current_request_id = "request-iteration"
+    controller.select_route(state, {})
+    request = {"model": "dgx-moa-agent", "messages": []}
+
+    await controller.prepare_executor(state, request, ("executor",))
+    with pytest.raises(LoopAdmissionError, match="new evidence required"):
+        await controller.prepare_executor(state, request, ("executor",))
+
+    controller.record_evidence(state, "test_result", "tool", {"status": "passed"})
+    await controller.prepare_executor(state, request, ("executor",))
+    assert state.engineering_loop is not None
+    assert state.engineering_loop.iteration == 2
+
+
+@pytest.mark.asyncio
+async def test_reasoner_budget_is_admitted_before_provider_call(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    settings.loop_engineering.defaults["reasoner_reentries"] = 1
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session("reasoner-budget", [{"role": "user", "content": "analyze"}])
+    controller.select_route(state, {})
+    request = {"model": "dgx-moa-agent", "messages": []}
+
+    await controller.prepare_executor(state, request, ("reasoner", "executor"))
+    controller.record_evidence(state, "test_result", "tool", {"status": "passed"})
+    with pytest.raises(LoopAdmissionError, match="budget exhausted"):
+        await controller.prepare_executor(state, request, ("reasoner", "executor"))
+
+    assert stub_provider.calls.count("reasoner") == 1
+    assert state.phase == Phase.BLOCKED
+    assert state.engineering_loop is not None
+    assert state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
 
 
 def test_title_state_is_recovered_for_work_messages(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -854,6 +1050,48 @@ def test_metadata_routes_heavy_and_gates_completion(settings, stub_provider: Stu
     controller.apply_metadata(state, {"public_api": True})
     assert state.phase == Phase.AWAITING_HEAVY_JUDGE
     assert state.judge_status == "eligible"
+
+
+@pytest.mark.parametrize(
+    ("signal", "reason"),
+    [
+        ("user_decision_required", "USER_DECISION_REQUIRED"),
+        ("permission_required", "PERMISSION_REQUIRED"),
+        ("policy_blocked", "POLICY_BLOCKED"),
+        ("unresolved_high_risk_disagreement", "UNRESOLVED_HIGH_RISK_DISAGREEMENT"),
+    ],
+)
+def test_loop_metadata_termination_signals_are_explicit(
+    settings,
+    stub_provider: StubProvider,
+    signal: str,
+    reason: str,
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session(signal, [{"role": "user", "content": "work"}])
+    controller.select_route(state, {})
+
+    controller.apply_metadata(state, {signal: True})
+
+    assert state.phase == Phase.BLOCKED
+    assert state.engineering_loop is not None
+    assert state.engineering_loop.termination_reason == reason
+
+
+def test_loop_partial_success_is_not_reported_as_full_completion(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session("partial", [{"role": "user", "content": "work"}])
+    controller.select_route(state, {})
+
+    controller.apply_metadata(state, {"partial_success": True})
+
+    assert state.final_status == "degraded"
+    assert state.engineering_loop is not None
+    assert state.engineering_loop.termination_reason == "PARTIAL_SUCCESS"
 
 
 def test_repository_identity_cannot_change_within_session(
