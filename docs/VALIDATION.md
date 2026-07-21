@@ -1879,6 +1879,11 @@ eight commands:
   upstream Starlette warning; Ruff format/check, mypy for 28 source files,
   user-systemd verification, every shell syntax check, trace audit `10/10` at
   100.0%, and `git diff --check` all exited zero.
+- A real secondary-profile Frontier re-review of the explicit-v3 fix returned
+  `approve`, Critical 0, Important 0, missing tests 0, suggestions 0, confidence
+  0.93, in `25380.793` ms with `20658` tokens. The review covered v2/v3
+  consumers and schemas, downgrade rejection, fallback classification, and
+  selected-profile trace metadata.
 
 ## Codex cold-start 503 diagnosis — 2026-07-21
 
