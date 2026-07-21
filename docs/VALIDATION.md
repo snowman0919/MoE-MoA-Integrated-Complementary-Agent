@@ -40,6 +40,16 @@ by `response.completed`. Both requests returned HTTP 200. Final `/readyz`
 reported profile `resident`, Executor `ready`, Reasoner `ready`, and optional
 Planner/Reviewer/Judge stopped.
 
+Real Codex CLI `0.144.6` then used the production custom provider with the
+Responses wire API, an ephemeral read-only sandbox, and no API-key creation.
+It made three HTTP 200 Responses turns under correlated trace
+`0570e4b9-f8b5-4e17-b342-d265ff4ac7c0`: two native tool-call turns, followed by
+a text turn after Codex executed `pwd`. The client emitted exact final text
+`CODEX_TOOL_OK /home/kotori9/dgx-moa-agent` and `turn.completed`. Codex also
+reported a non-blocking model-catalog metadata warning because the gateway's
+OpenAI-compatible `/v1/models` list has `data` rather than Codex's additional
+top-level `models` field; it defaulted metadata and completed the tool loop.
+
 ## Dynamic MoA isolated validation — 2026-07-21
 
 This section records only observed results for the current `dev` candidate. The
