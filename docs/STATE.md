@@ -12,6 +12,7 @@ Updated: 2026-07-22
 | Heavy Judge adjudication | yes | yes | yes | isolated exclusive-profile yes | deployed, operator-only |
 | Evidence graph and per-agent trace | yes | yes | yes | production yes | yes |
 | Multiple API tokens and per-token usage | yes | yes | yes | production yes | yes |
+| Codex Responses text/function/custom tool loop | yes | yes | yes | production yes | yes |
 
 This table is the current authority. Later sections preserve historical Phase
 1–4 evidence and must not be read as later production evidence. Checked-in safe
@@ -71,6 +72,11 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   `finish_reason=length` is preserved and recorded as truncation, not completion.
 - Standard OpenAI request fields suffice. Project metadata and provenance headers
   remain optional, and errors use the typed OpenAI envelope.
+- `/v1/models` preserves the standard OpenAI `data` list and also publishes the
+  Codex model metadata required by CLI `0.144.6`. Responses streaming requests
+  include upstream usage and return official `input_tokens`, `output_tokens`,
+  cached-token, and reasoning-token fields. Production Codex physically passed
+  both shell-command and freeform `apply_patch` execution.
 - KV reservations, model selection, unit topology, and memory gates are unchanged.
 - A configurable 10-second prestart memory-settle delay prevents reloads from
   racing unified-memory reclamation. The final resident restoration passed.
