@@ -10,27 +10,28 @@ curl -fsS -H "Authorization: Bearer ${DGX_MOA_API_KEY}" \
   "${DGX_MOA_BASE_URL}/models"
 ```
 
-`GET /v1/models` returns all three aliases with `context_length: 65536`.
+`GET /v1/models` returns the current aliases with `context_length: 65536`.
 
 | Model alias | Gateway policy | Tool-loop owner |
 | --- | --- | --- |
-| `dgx-moa-chat` | Direct executor for chat and read-only requests | Client, when tools are supplied |
-| `dgx-moa-agent` | Direct executor for native agent turns | External agent client |
-| `dgx-moa-orchestrated` | Deterministic executor, planner, and reviewer selection from request metadata | Client executes native tool calls |
+| `dgx-moa` | Default Reasoner + Executor core | Client, when tools are supplied |
+| `dgx-moa-fast` | Explicit Executor-only compatibility path | Client, when tools are supplied |
+| `dgx-moa-agent` | Reasoner + Executor native agent turns | External agent client |
+| `dgx-moa-orchestrated` | Executor-directed dynamic Planner, Reviewer, Frontier, and Judge selection | Client executes native tool calls |
 
-Chat and agent modes are always executor-only, including high-risk metadata.
-In agent mode the gateway preserves native OpenAI tool-call IDs, function names,
+`dgx-moa-fast` is always Executor-only. Other MoA profiles invoke the Reasoner;
+the default does not silently bypass it. In agent mode the gateway preserves
+native OpenAI tool-call IDs, function names,
 and JSON arguments; the client executes each call and sends the assistant
 `tool_calls` message plus the matching `tool` result in its next request. The
 gateway does not run that tool loop for the client.
 
-Orchestrated mode uses the executor alone for small clear requests, adds the
-planner for multi-file or recovery requests, and selects planner, executor, and
-reviewer for explicit or high-risk orchestration. Non-streaming review runs only
-when external evidence is available. A low-risk review failure preserves valid
-executor output and marks observability degraded; a high-risk review failure
-fails closed with a typed error. Streaming review is deferred rather than placed
-on the response path.
+Orchestrated mode always begins with Reasoner + Executor. The Executor returns a
+structured routing decision; deterministic safety policy may require Planner,
+Reviewer, Frontier, or Heavy Judge. A low-risk optional review failure preserves
+valid evidence and lowers confidence; a required Frontier/review failure fails
+closed with a typed error. Streaming review remains deferred from the response
+path.
 
 ## Request contract
 
@@ -60,7 +61,7 @@ clients do not need them. The executor output budget defaults to 4,096 tokens;
 ```bash
 curl -fsS -H "Authorization: Bearer ${DGX_MOA_API_KEY}" \
   -H 'Content-Type: application/json' \
-  -d '{"model":"dgx-moa-chat","messages":[{"role":"user","content":"Hello"}]}' \
+  -d '{"model":"dgx-moa","messages":[{"role":"user","content":"Hello"}]}' \
   "${DGX_MOA_BASE_URL}/chat/completions"
 ```
 
@@ -76,7 +77,7 @@ client = OpenAI(
     api_key=os.environ["DGX_MOA_API_KEY"],
 )
 response = client.chat.completions.create(
-    model="dgx-moa-chat",
+    model="dgx-moa",
     messages=[{"role": "user", "content": "Hello"}],
 )
 print(response.choices[0].message.content)

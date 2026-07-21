@@ -198,7 +198,7 @@ def test_lifecycle_docs_link_canonical_contract_and_keep_evidence_pending() -> N
 def test_api_client_mode_documentation() -> None:
     api_modes = Path("docs/API_CLIENT_MODES.md").read_text()
     hermes = Path("docs/HERMES_AGENT.md").read_text()
-    for alias in ("dgx-moa-chat", "dgx-moa-agent", "dgx-moa-orchestrated"):
+    for alias in ("dgx-moa", "dgx-moa-fast", "dgx-moa-agent", "dgx-moa-orchestrated"):
         assert alias in api_modes
     assert "http://100.125.239.72:9000/v1" in hermes
     assert "DGX_MOA_API_KEY" in hermes

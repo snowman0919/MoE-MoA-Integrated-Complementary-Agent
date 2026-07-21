@@ -1,5 +1,22 @@
 # Operations
 
+## Dynamic MoA operational boundary
+
+The primary model alias is `dgx-moa`; it requires the external Ollama Reasoner
+and local Executor. `dgx-moa-fast` is the explicit degraded/low-latency
+Executor-only alias. Do not silently reroute a failed default Reasoner request
+to fast mode. `dgx-moa-agent` keeps the Reasoner + Executor core while OpenCode
+or Hermes owns native tool execution. See `MOA_ORCHESTRATION.md`.
+
+Frontier uses an existing Codex OAuth profile and read-only `codex exec`; no
+OpenAI API key is configured. Enablement requires both the gateway feature gate
+and a reviewed Frontier config. Keep it disabled until the physical matrix in
+`VALIDATION.md` passes. See `FRONTIER.md`.
+
+Gateway authentication may use legacy `DGX_MOA_API_KEY` or the preferred JSON
+mapping `DGX_MOA_API_KEYS`, whose keys are non-secret usage IDs. Rotate values
+outside Git. `/v1/runtime-status` exposes content-free aggregate usage by ID.
+
 ## Gateway and systemd
 
 ```bash
@@ -9,8 +26,10 @@ journalctl --user -u dgx-moa-gateway.service -f
 scripts/healthcheck.sh
 ```
 
-Gateway binds the configured tailnet address on port `9000`. Model servers bind
-only ports `8101`, `8102`, `8103`, and `8110` on loopback.
+Gateway binds the configured tailnet address on port `9000`. Local model servers
+bind only ports `8101`, `8102`, `8103`, and `8110` on loopback. The configured
+Ollama Reasoner is an external dependency and must remain protected by its own
+network boundary; this gateway does not expose or proxy its native API.
 
 ```bash
 scripts/runtime-status.sh
@@ -116,13 +135,13 @@ numbers are evidence, not an instruction to act on production units.
 
 ## Profiles
 
-The checked-in resident target is an undeployed executor-only proposal: it
-requires `dgx-moa-gateway.service` and `dgx-moa-executor.service`. Planner,
-reviewer, and reasoner remain optional and retain
-`PartOf=dgx-moa-resident.target`, so stopping resident cleans up any optional
-role that was started separately. Resident readiness waits only for port 8101;
-resident stop verification requires services executor/planner/reviewer/reasoner
-inactive and ports 8101-8104 unbound.
+The local resident target requires `dgx-moa-gateway.service` and
+`dgx-moa-executor.service`. Planner and Reviewer remain optional and retain
+`PartOf=dgx-moa-resident.target`, so stopping resident cleans up either role if
+started separately. The external Ollama Reasoner is not a member of the local
+target and must be healthy for default product readiness. Existing stop
+verification still checks the legacy local Reasoner unit/port as cleanup along
+with Executor/Planner/Reviewer; it never targets the external Ollama service.
 
 Do not copy the target into production or restart production units as part of
 this repository change. Migration requires a later human-reviewed PR/deployment
@@ -198,10 +217,11 @@ unless `DGX_MOA_ADMIN_API_ENABLED=true`.
 
 ## API clients
 
-Use `/v1/models` to discover `dgx-moa-chat`, `dgx-moa-agent`, and
+Use `/v1/models` to discover `dgx-moa`, `dgx-moa-fast`, `dgx-moa-agent`, and
 `dgx-moa-orchestrated`. Direct external agents should select `dgx-moa-agent` and
-own the native tool loop. Standard OpenAI request fields are sufficient;
-project metadata and provenance headers are optional.
+own the native tool loop. Select `dgx-moa-fast` only for an intentional
+Executor-only request. Standard OpenAI request fields are sufficient; project
+metadata and provenance headers are optional.
 
 The default executor output budget is 4096 tokens and the server cap is 16384.
 SSE is forwarded event-by-event with one DONE. A model/profile-loading 503 is

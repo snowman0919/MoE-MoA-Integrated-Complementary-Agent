@@ -1,4 +1,9 @@
-# Codex frontier escalation
+# Historical Codex frontier candidate-edit escalation
+
+This document preserves the earlier worktree-edit experiment and its measured
+bubblewrap blocker. It is superseded for current dynamic MoA collaboration by
+`docs/FRONTIER.md`; do not use the status or OAuth-profile layout below as the
+current read-only expert-call procedure.
 
 Optional only. Local MoA is default; Mistral is local heavy judge. Frontier uses
 bounded `codex exec --json`, not experimental App Server. Installed CLI verified:

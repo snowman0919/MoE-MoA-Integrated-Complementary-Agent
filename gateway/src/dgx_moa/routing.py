@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from .state import Phase, SessionState
 
-RuntimeMode = Literal["chat", "agent", "orchestrated"]
+RuntimeMode = Literal["fast", "moa", "agent", "orchestrated"]
 ReasonerMode = Literal["required", "optional"]
 RequestClass = Literal[
     "plain_chat",
@@ -19,9 +19,11 @@ RequestClass = Literal[
 ]
 
 MODEL_MODES: dict[str, RuntimeMode] = {
-    "dgx-moa-chat": "chat",
+    "dgx-moa": "moa",
+    "dgx-moa-fast": "fast",
     "dgx-moa-agent": "agent",
     "dgx-moa-orchestrated": "orchestrated",
+    "dgx-moa-chat": "fast",
 }
 HIGH_RISK_FIELDS = (
     "authentication",
@@ -77,16 +79,10 @@ def required_roles(
     *,
     reasoner_mode: ReasonerMode | None = None,
 ) -> tuple[str, ...]:
-    if mode != "orchestrated":
+    if mode == "fast":
         return ("executor",)
-    roles: tuple[str, ...]
-    if request_class in {"multi_file_task", "recovery_task"}:
-        roles = ("planner", "executor")
-    elif request_class in {"high_risk_task", "explicit_orchestrated"}:
-        roles = ("planner", "executor", "reviewer")
-    else:
-        roles = ("executor",)
-    return roles + (("reasoner",) if reasoner_mode == "required" else ())
+    core = ("reasoner", "executor")
+    return core
 
 
 def optional_roles(
@@ -94,7 +90,7 @@ def optional_roles(
     *,
     reasoner_mode: ReasonerMode | None = None,
 ) -> tuple[str, ...]:
-    return ("reasoner",) if mode == "orchestrated" and reasoner_mode == "optional" else ()
+    return ()
 
 
 def review_fails_closed(request_class: RequestClass) -> bool:

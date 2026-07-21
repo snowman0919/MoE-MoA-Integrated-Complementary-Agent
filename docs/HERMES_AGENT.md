@@ -21,13 +21,13 @@ platform_toolsets:
 
 Hermes owns the native tool loop: it supplies tool schemas, executes returned
 native tool calls, and sends each matching tool result in the next request. The
-`dgx-moa-agent` alias is a direct executor path; the gateway does not insert a
+`dgx-moa-agent` uses the always-active Reasoner + Executor core; the gateway does not insert a
 planner or reviewer into that loop.
 
 This exact configuration was measured on 2026-07-18 with Hermes Agent `0.18.2`.
 A documented one-shot invocation returned `HERMES_OK` in one streaming API call.
 A second invocation issued native `read_file`, received the isolated fixture,
-and continued with `HERMES_TOOL_OK`; both gateway requests recorded executor-only
+and continued with `HERMES_TOOL_OK`; those historical gateway requests recorded executor-only
 roles and `stream_completed`. Supplying only `OPENAI_API_KEY` did not authenticate
 this non-OpenAI custom host in version `0.18.2`; the explicit environment
 reference under `model.api_key` is required for this gateway.

@@ -42,8 +42,8 @@ class ChatRequest(BaseModel):
         if self.stream_options is not None and not self.stream:
             raise ValueError("stream_options requires stream=true")
         reasoner_mode = self.metadata.get("reasoner_mode")
-        if reasoner_mode is not None and reasoner_mode not in {"required", "optional"}:
-            raise ValueError("metadata.reasoner_mode must be required or optional")
+        if reasoner_mode is not None and reasoner_mode != "required":
+            raise ValueError("Reasoner is required; use dgx-moa-fast to bypass it")
         if reasoner_mode is not None and self.model != "dgx-moa-orchestrated":
             raise ValueError("metadata.reasoner_mode requires dgx-moa-orchestrated")
         return self
@@ -77,6 +77,46 @@ class ResponsesRequest(BaseModel):
             if message.get("content") is None:
                 raise ValueError("input message must include content")
         return self
+
+
+class AdditionalAgentRecommendation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["planner", "reviewer", "frontier", "judge"]
+    needed: bool
+    reason: str
+
+
+class ReasonerContribution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    problem_interpretation: str
+    constraints: list[str]
+    reasoning: list[str]
+    risks: list[str]
+    unknowns: list[str]
+    recommended_actions: list[str]
+    additional_agents: list[AdditionalAgentRecommendation]
+    confidence: float = Field(ge=0, le=1)
+
+
+class OrchestrationDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["respond", "invoke_agents"]
+    required_agents: list[Literal["planner", "reviewer", "frontier", "judge"]]
+    optional_agents: list[Literal["planner", "reviewer", "frontier", "judge"]]
+    reason: dict[str, str]
+    parallelizable: bool
+    continue_after: Literal["respond", "synthesize", "reason_again"]
+    confidence: float = Field(ge=0, le=1)
+
+
+class ReviewResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["approved", "rejected"]
+    findings: list[str]
 
 
 class ProfileResponse(BaseModel):

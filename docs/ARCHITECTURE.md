@@ -1,16 +1,23 @@
 # Architecture
 
-OpenCode connects directly over tailnet TCP to the configurable gateway port
-`9000`. Deterministic controller stores session state in SQLite and calls
-loopback-only role servers on ports `8101`, `8102`, `8103`, or `8110`.
-Resident and judge profiles are mutually exclusive systemd targets.
+OpenCode connects over tailnet TCP to the authenticated gateway. The controller
+stores session state in SQLite and calls loopback-only local role servers. The
+Reasoner is an externally managed Ollama service configured as an explicit
+external dependency; no local role endpoint is exposed by this gateway.
+Resident and judge profiles remain mutually exclusive systemd targets.
 
-The public aliases separate client policy without adding gateways:
-`dgx-moa-chat` and `dgx-moa-agent` call only the executor, while
-`dgx-moa-orchestrated` deterministically selects executor-only, planner/executor,
-or planner/executor/reviewer roles from the request class. External agents own
-the native tool-call/result loop. Standard OpenAI fields are forwarded to the
-executor; project metadata remains optional.
+The primary `dgx-moa` and external-tool-loop `dgx-moa-agent` aliases invoke the
+Reasoner before every Executor turn. `dgx-moa-fast` alone bypasses the Reasoner.
+`dgx-moa-orchestrated` asks the Executor for a structured routing decision, then
+applies deterministic safety overrides to select Planner, Reviewer, Frontier,
+or Heavy Judge. The Executor alone emits native tool calls and client-visible
+content. Standard OpenAI fields are forwarded to it; project metadata remains
+optional.
+
+Planner and Frontier architecture work run concurrently when independent.
+Local Reviewer and Frontier code review initially receive the same bounded
+evidence independently. All artifacts return to the Executor for evidence-based
+synthesis; agent outputs are never concatenated into the client response.
 
 Streaming is a bounded forwarding path, not a review buffer. Complete SSE events
 are released immediately, native deltas are preserved, duplicate DONE events
@@ -19,15 +26,16 @@ both 1,000,000 bytes. Streaming review is deferred. Non-streaming review uses at
 most 16,000 characters of external evidence; low-risk review failure preserves
 valid executor output, while high-risk orchestration may fail closed.
 
-The checked-in, undeployed resident target requires only the Qwen3-Coder-Next
-executor and gateway. Planner, reviewer, and reasoner remain optional services;
-their `PartOf=dgx-moa-resident.target` relationship ensures a resident stop also
-stops any optional role loaded separately. Judge runs only
+The local resident target keeps the Qwen3-Coder-Next Executor and gateway.
+Planner and Reviewer are optional local services whose
+`PartOf=dgx-moa-resident.target` relationship ensures a resident stop also stops
+any role loaded separately. The Ollama Reasoner is externally lifecycle-managed,
+normally resident, and never locally idle-unloaded. Judge runs only
 `nvidia/Mistral-Medium-3.5-128B-NVFP4`; coding requests return retryable `503`
 while judge profile is active. Health is public; inference uses
 `DGX_MOA_AUTH_ENABLED`, and admin profile switching is disabled by default.
 
-This topology is a development handoff, not a deployed production change.
+This topology is a development candidate, not a deployed production change.
 Checked-in lifecycle control remains disabled with an empty unit map, so the
 target alone does not activate optional on-demand loading. A later reviewed
 fixed/adaptive deployment with authorized unit mappings is required before cold

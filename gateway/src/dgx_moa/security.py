@@ -35,20 +35,32 @@ def redact(value: Any) -> Any:
     return value
 
 
-def verify_bearer(expected: str, authorization: str | None) -> None:
+def verify_bearer(expected: dict[str, str], authorization: str | None) -> str:
     if not expected:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, "gateway API key is not configured"
         )
     scheme, _, token = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer" or not secrets.compare_digest(token, expected):
+    matched = None
+    for name, value in expected.items():
+        is_match = secrets.compare_digest(token, value)
+        if is_match and matched is None:
+            matched = name
+    if scheme.lower() != "bearer" or matched is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid bearer token")
+    return matched
 
 
 def auth_dependency(settings: Settings) -> Callable[..., Coroutine[Any, Any, None]]:
-    async def authenticate(authorization: str | None = Header(default=None)) -> None:
+    async def authenticate(
+        request: Request, authorization: str | None = Header(default=None)
+    ) -> None:
         if settings.auth_enabled:
-            verify_bearer(settings.api_key or "", authorization)
+            request.state.api_token_id = verify_bearer(
+                settings.configured_api_keys(), authorization
+            )
+        else:
+            request.state.api_token_id = "authentication-disabled"
 
     return authenticate
 
@@ -60,7 +72,9 @@ def admin_dependency(settings: Settings) -> Callable[..., Coroutine[Any, Any, No
         if not settings.admin_api_enabled:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "admin API is disabled")
         if settings.auth_enabled:
-            verify_bearer(settings.api_key or "", authorization)
+            request.state.api_token_id = verify_bearer(
+                settings.configured_api_keys(), authorization
+            )
             return
         client_host = request.client.host if request.client else ""
         if client_host not in {"127.0.0.1", "::1"}:

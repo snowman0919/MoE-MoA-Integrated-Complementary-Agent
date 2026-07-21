@@ -76,8 +76,9 @@
   1,700,000,000 KV bytes, `gpu_memory_utilization=0.5`, and MARLIN. FP8,
   prefix-off, eager, chunked prefill, CPU offload, and KV offload did not beat
   the deterministic memory/safety/quality rule.
-- Change only the undeployed checked-in resident target to gateway+executor.
-  Planner, reviewer, and reasoner remain optional with target cleanup. Keep
+- Historical Phase 3 decision, superseded for the Reasoner on 2026-07-21: change
+  only the undeployed checked-in resident target to gateway+executor. Planner,
+  Reviewer, and Reasoner were then optional with target cleanup. Keep
   lifecycle disabled and the unit map empty until a separate human-reviewed
   fixed/adaptive deployment proves migration and rollback.
 - Keep the gateway in Python. Its five-minute isolated peak PSS, idle CPU, and
@@ -89,16 +90,41 @@
 
 ## 2026-07-20
 
-- Adopt role-aware adaptive lifecycle as the `dev` release candidate, with
+- Historical Phase 4 decision, superseded for the Reasoner and aliases on
+  2026-07-21: adopt role-aware adaptive lifecycle as the `dev` candidate, with
   executor normally resident and idle unload disabled. Planner, reviewer, and
-  reasoner may unload by their own bounded successful-request gaps; judge stays
+  Reasoner allowed to unload by its bounded successful-request gap; Judge stayed
   outside automation.
 - Return an immediate typed JSON `503` for a required cold role and expose honest
-  role/state/generation/weight/overall/ETA data. Explicit optional reasoner use
-  may degrade and continue; ordinary chat/agent requests never add reasoner.
+  role/state/generation/weight/overall/ETA data. At that time explicit optional
+  Reasoner use could degrade and ordinary chat/agent requests omitted it.
 - Latch lifecycle mutations off after three failures in the configured window,
   while preserving status and already-ready traffic. Use atomic, idempotent
   disabled-mode rollback as the recovery boundary.
 - Treat the passing four-role user-systemd fake-weight result as control-plane
   evidence only. Do not infer real-weight memory savings or call production
   deployed until a separately approved migration runs the real model matrix.
+
+## 2026-07-21
+
+- Replace the primary Executor-only product path with an always-active external
+  Ollama Reasoner + local 80B Executor core. Preserve `dgx-moa-fast` as the
+  explicitly named low-latency compatibility path.
+- Make the Executor the authoritative routing controller, sole native tool
+  caller, and sole client-visible synthesizer. Reasoner and specialists return
+  bounded structured artifacts only.
+- Select Planner and Reviewer dynamically, combining the Executor decision with
+  deterministic overrides for architecture, review, security, lifecycle,
+  persistent-schema, disagreement, and failure evidence.
+- Use Frontier routinely for qualifying architecture and code review, with
+  architecture, code-review, and disagreement modes. Authenticate only through
+  an existing Codex OAuth profile; do not add an OpenAI API key dependency.
+- Keep Heavy Judge for unresolved high-risk adjudication and promotion only.
+- Keep the external Ollama Reasoner normally resident with external lifecycle
+  ownership. Keep local Executor normally resident and idle unload disabled;
+  Planner and Reviewer remain adaptive/on-demand.
+- Add multiple authenticated gateway tokens identified by non-secret token IDs,
+  with content-free per-token request and token totals. Preserve legacy one-token
+  configuration during migration.
+- Keep lifecycle and Frontier disabled in checked-in production defaults until
+  physical validation and separate deployment approval are complete.

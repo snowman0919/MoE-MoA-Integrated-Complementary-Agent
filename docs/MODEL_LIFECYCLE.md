@@ -5,6 +5,25 @@ validated `dev` release candidate. Checked-in configuration remains
 `lifecycle_mode: disabled` with `lifecycle_unit_map: {}`, so it is not active in
 production until a reviewed deployment supplies exact authorized units.
 
+The current dynamic MoA design changes role policy, not the measured local
+Executor mechanism. Executor remains normally resident with idle unload off.
+The Ollama Reasoner is externally lifecycle-managed, persistently resident
+(`keep_alive=-1`), and never targeted by local systemd start/stop or short-idle
+policy. Planner and Reviewer are local adaptive/on-demand roles. Heavy Judge is
+an exclusive, operator-controlled profile outside idle automation. Exact full
+service stop/start remains the only selected local unload and fallback.
+
+If the external Reasoner is missing or Ollama has evicted it, the default MoA
+must use a bounded readiness wait or return a typed loading/unavailable response;
+it must not silently claim a Reasoner contribution or degrade to Executor-only.
+The client may explicitly retry with `dgx-moa-fast` only when its policy permits.
+Readiness uses Ollama `/api/ps`, requires the exact served model to be resident,
+and requires its reported context to be at least 65,536. `/api/tags` proves only
+that a model is installed and is not a residency signal. Each Reasoner request
+sets `num_ctx=65536` and `keep_alive=-1`; a bounded reload may therefore occur
+after eviction, while fixed/adaptive health returns typed unavailable until the
+resident contract is restored.
+
 ## States
 
 | State | Meaning |

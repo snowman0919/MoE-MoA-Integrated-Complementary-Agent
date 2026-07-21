@@ -1,6 +1,6 @@
 # Copy `models.yaml`, then change only verified repositories and pinned revisions.
 gateway:
-  model_name: dgx-moa-agent
+  model_name: dgx-moa
   bind_host: 127.0.0.1
   bind_port: 9000
   lifecycle_mode: disabled
@@ -18,7 +18,7 @@ gateway:
       executor: {enabled: true, normally_resident: true, idle_unload_enabled: false, fallback_timeout_seconds: 14400, minimum_timeout_seconds: 7200, maximum_timeout_seconds: 28800, minimum_ready_residency_seconds: 600}
       planner: {enabled: true, normally_resident: false, idle_unload_enabled: true, fallback_timeout_seconds: 1200, minimum_timeout_seconds: 600, maximum_timeout_seconds: 3600, minimum_ready_residency_seconds: 600}
       reviewer: {enabled: true, normally_resident: false, idle_unload_enabled: true, fallback_timeout_seconds: 1200, minimum_timeout_seconds: 600, maximum_timeout_seconds: 3600, minimum_ready_residency_seconds: 600}
-      reasoner: {enabled: true, normally_resident: false, idle_unload_enabled: true, fallback_timeout_seconds: 600, minimum_timeout_seconds: 300, maximum_timeout_seconds: 1800, minimum_ready_residency_seconds: 300}
+      reasoner: {enabled: true, normally_resident: true, idle_unload_enabled: false, fallback_timeout_seconds: 600, minimum_timeout_seconds: 300, maximum_timeout_seconds: 1800, minimum_ready_residency_seconds: 300}
       judge: {enabled: false, normally_resident: false, idle_unload_enabled: false, fallback_timeout_seconds: 600, minimum_timeout_seconds: 300, maximum_timeout_seconds: 1800, minimum_ready_residency_seconds: 300}
 models: {}
 # Optional prepared adapter field under a complete executor entry:

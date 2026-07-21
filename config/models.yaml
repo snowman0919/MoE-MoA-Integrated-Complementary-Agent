@@ -2,7 +2,7 @@ hf_home: /home/kotori9/models/.hf-cache
 model_root: /home/kotori9/models/dgx-moa
 
 gateway:
-  model_name: dgx-moa-agent
+  model_name: dgx-moa
   bind_host: 127.0.0.1
   bind_port: 9000
   state_db: data/state/gateway.db
@@ -12,7 +12,7 @@ gateway:
   controller_commit: unknown
   vllm_version: 0.22.1
   frontier_enabled: false
-  frontier_disabled_reason: host_sandbox_capability_blocked
+  frontier_disabled_reason: configuration_disabled
   lifecycle_mode: disabled
   lifecycle_poll_seconds: 30
   lifecycle_unit_map: {}
@@ -52,8 +52,8 @@ gateway:
         minimum_ready_residency_seconds: 600
       reasoner:
         enabled: true
-        normally_resident: false
-        idle_unload_enabled: true
+        normally_resident: true
+        idle_unload_enabled: false
         fallback_timeout_seconds: 600
         minimum_timeout_seconds: 300
         maximum_timeout_seconds: 1800
@@ -72,6 +72,7 @@ gateway:
     max_error_lines: 40
     max_diff_summary_lines: 100
     planner_tokens: 1500
+    reasoner_tokens: 1500
     executor_tokens: 4096
     executor_max_tokens: 16384
     reviewer_tokens: 1500
@@ -80,9 +81,11 @@ gateway:
     max_sse_event_bytes: 1000000
     max_review_evidence_characters: 16000
     planner_timeout_seconds: 120
+    reasoner_timeout_seconds: 120
     executor_first_byte_timeout_seconds: 120
     executor_total_timeout_seconds: 900
     reviewer_timeout_seconds: 120
+    judge_timeout_seconds: 300
     model_load_timeout_seconds: 1200
     tool_continuation_timeout_seconds: 600
     usage_sample_window: 512
@@ -152,12 +155,15 @@ models:
     trust_remote_code: true
     required: false
   reasoner:
-    repository: WeiboAI/VibeThinker-3B
-    revision: 77bd2cced09193c8b9a59a32bd8577bbd1f3e01c
-    classification: community-maintained
-    base_url: http://127.0.0.1:8104
-    served_name: dgx-moa-reasoner
+    repository: ollama/Qwythos-v2-9B
+    revision: Q5
+    classification: external
+    base_url: http://192.168.0.197:11434
+    served_name: Qwythos-v2-9B:Q5
     destination: /home/kotori9/models/dgx-moa/reasoner
+    provider: ollama
+    lifecycle_control: external
+    ollama_keep_alive: -1
     context_length: 65536
     max_num_seqs: 1
     trust_remote_code: false

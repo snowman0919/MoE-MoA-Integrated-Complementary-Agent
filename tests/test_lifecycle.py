@@ -2388,10 +2388,10 @@ async def test_twenty_concurrent_cold_checks_share_one_load(
     )
 
     checks = await asyncio.gather(*(coordinator.ensure_ready("executor") for _ in range(20)))
-    for _ in range(100):
+    for _ in range(1_000):
         if ("start", "executor") in driver.calls:
             break
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.001)
 
     assert sum(check.load_triggered for check in checks) == 1
     assert {check.record.state for check in checks} == {"load_queued"}

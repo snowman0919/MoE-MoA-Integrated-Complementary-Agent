@@ -2,6 +2,13 @@
 
 - Keep role-model inference endpoints loopback-only; expose only the authenticated
   gateway on the configured tailnet address.
+- Treat `dgx-moa` as the primary Reasoner + Executor path. `dgx-moa-fast` is the
+  only intentional Executor-only compatibility path. The Executor alone owns
+  tools, routing authority, and client-visible final synthesis.
+- Use Codex OAuth profiles for Frontier collaboration. Never create, store, or
+  require an OpenAI API key for Frontier.
+- Keep collaboration bounded: structured artifacts only, no hidden reasoning,
+  no recursive agent-to-agent loop, and no direct Frontier host mutation.
 - Never commit secrets or model weights.
 - Record measured evidence in `docs/VALIDATION.md`; do not infer benchmarks.
 - Preserve the Phase 3 executor baseline unless new physical evidence passes the
