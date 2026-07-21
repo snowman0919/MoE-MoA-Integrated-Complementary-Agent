@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator, AsyncIterator
+import time
+import uuid
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from dataclasses import dataclass, field
 
 from .usage import SQLITE_MAX_INTEGER
@@ -103,6 +105,156 @@ async def forward_sse(
         if not observation.done_seen:
             observation.done_seen = True
             yield b"data: [DONE]\n\n"
+    finally:
+        close = getattr(upstream, "aclose", None)
+        if close is not None:
+            await close()
+
+
+def _response_usage(value: object) -> dict[str, object] | None:
+    usage = reported_usage(value)
+    if not usage:
+        return None
+    input_tokens = usage.get("prompt_tokens", 0)
+    output_tokens = usage.get("completion_tokens", 0)
+    return {
+        "input_tokens": input_tokens,
+        "input_tokens_details": {"cached_tokens": 0},
+        "output_tokens": output_tokens,
+        "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": usage.get("total_tokens", input_tokens + output_tokens),
+    }
+
+
+async def responses_sse(
+    upstream: AsyncIterable[str | bytes | memoryview[int]],
+    model: str,
+) -> AsyncGenerator[bytes, None]:
+    """Translate Chat Completions SSE into the text subset of Responses SSE."""
+    response_id = f"resp_{uuid.uuid4().hex}"
+    message_id = f"msg_{uuid.uuid4().hex}"
+    created_at = int(time.time())
+    sequence_number = 0
+    text_parts: list[str] = []
+    usage: dict[str, object] | None = None
+
+    def response_payload(status: str, output: list[dict[str, object]]) -> dict[str, object]:
+        return {
+            "id": response_id,
+            "object": "response",
+            "created_at": created_at,
+            "status": status,
+            "error": None,
+            "incomplete_details": None,
+            "instructions": None,
+            "max_output_tokens": None,
+            "model": model,
+            "output": output,
+            "parallel_tool_calls": True,
+            "previous_response_id": None,
+            "reasoning": {"effort": None, "summary": None},
+            "store": False,
+            "temperature": 1.0,
+            "text": {"format": {"type": "text"}},
+            "tool_choice": "auto",
+            "tools": [],
+            "top_p": 1.0,
+            "truncation": "disabled",
+            "usage": usage,
+            "user": None,
+            "metadata": {},
+        }
+
+    def event(event_type: str, **payload: object) -> bytes:
+        nonlocal sequence_number
+        body = {"type": event_type, "sequence_number": sequence_number, **payload}
+        sequence_number += 1
+        encoded = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+        return f"event: {event_type}\ndata: {encoded}\n\n".encode()
+
+    pending_message = {
+        "id": message_id,
+        "type": "message",
+        "status": "in_progress",
+        "role": "assistant",
+        "content": [],
+    }
+    yield event("response.created", response=response_payload("in_progress", []))
+    yield event("response.in_progress", response=response_payload("in_progress", []))
+    yield event("response.output_item.added", output_index=0, item=pending_message)
+    yield event(
+        "response.content_part.added",
+        item_id=message_id,
+        output_index=0,
+        content_index=0,
+        part={"type": "output_text", "text": "", "annotations": [], "logprobs": []},
+    )
+
+    try:
+        async for chunk in upstream:
+            raw_chunk = (
+                chunk.encode()
+                if isinstance(chunk, str)
+                else chunk.tobytes()
+                if isinstance(chunk, memoryview)
+                else chunk
+            )
+            for line in raw_chunk.decode(errors="replace").splitlines():
+                if not line.startswith("data: ") or line == "data: [DONE]":
+                    continue
+                try:
+                    chat_event = json.loads(line[6:])
+                except ValueError:
+                    continue
+                usage = _response_usage(chat_event.get("usage")) or usage
+                choice = (chat_event.get("choices") or [{}])[0]
+                delta = choice.get("delta") or {}
+                content = delta.get("content")
+                if isinstance(content, str) and content:
+                    text_parts.append(content)
+                    yield event(
+                        "response.output_text.delta",
+                        item_id=message_id,
+                        output_index=0,
+                        content_index=0,
+                        delta=content,
+                        logprobs=[],
+                    )
+
+        text = "".join(text_parts)
+        part: dict[str, object] = {
+            "type": "output_text",
+            "text": text,
+            "annotations": [],
+            "logprobs": [],
+        }
+        completed_message: dict[str, object] = {
+            "id": message_id,
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [part],
+        }
+        yield event(
+            "response.output_text.done",
+            item_id=message_id,
+            output_index=0,
+            content_index=0,
+            text=text,
+            logprobs=[],
+        )
+        yield event(
+            "response.content_part.done",
+            item_id=message_id,
+            output_index=0,
+            content_index=0,
+            part=part,
+        )
+        yield event("response.output_item.done", output_index=0, item=completed_message)
+        yield event(
+            "response.completed",
+            response=response_payload("completed", [completed_message]),
+        )
     finally:
         close = getattr(upstream, "aclose", None)
         if close is not None:
