@@ -17,9 +17,10 @@
 - Treat exact full service stop/start as the selected executor unload and
   mandatory fallback. Sleep, cache reset, FP8 KV, eager mode, chunking, and
   offload experiments are rejected evidence, not approved production changes.
-- The checked-in gateway+executor resident target is undeployed. Do not describe
-  optional-role on-demand loading as active while lifecycle mode is `disabled`
-  and its unit map is empty.
+- Safe checked-in lifecycle defaults remain disabled with an empty unit map.
+  Describe optional-role on-demand loading as active only when the inspected
+  runtime has a physically verified fixed/adaptive mode and exact unit map; the
+  reviewed production override currently does.
 - Keep executor normally resident and idle unload disabled unless new physical
   evidence explicitly changes that policy. Planner/reviewer/reasoner use their
   own successful request gaps; never substitute aggregate gateway traffic.

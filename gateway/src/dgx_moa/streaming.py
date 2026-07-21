@@ -129,6 +129,8 @@ def _response_usage(value: object) -> dict[str, object] | None:
 async def responses_sse(
     upstream: AsyncIterable[str | bytes | memoryview[int]],
     model: str,
+    *,
+    custom_tool_names: set[str] | None = None,
 ) -> AsyncGenerator[bytes, None]:
     """Translate Chat Completions SSE into Responses text and function-call events."""
     response_id = f"resp_{uuid.uuid4().hex}"
@@ -225,20 +227,15 @@ async def responses_sse(
                     index = int(tool_delta.get("index", 0))
                     function = tool_delta.get("function") or {}
                     if index not in tool_calls:
-                        item = {
-                            "id": f"fc_{uuid.uuid4().hex}",
-                            "type": "function_call",
-                            "status": "in_progress",
-                            "call_id": tool_delta.get("id") or f"call_{uuid.uuid4().hex}",
-                            "name": function.get("name", ""),
-                            "arguments": "",
+                        tool_calls[index] = {
+                            "id": "",
+                            "call_id": "",
+                            "name": "",
+                            "_arguments": "",
+                            "_arguments_emitted": 0,
+                            "_added": False,
+                            "_kind": "",
                         }
-                        tool_calls[index] = item
-                        yield event(
-                            "response.output_item.added",
-                            output_index=index + 1,
-                            item=item,
-                        )
                     item = tool_calls[index]
                     if tool_delta.get("id"):
                         item["call_id"] = tool_delta["id"]
@@ -246,14 +243,39 @@ async def responses_sse(
                         item["name"] = function["name"]
                     arguments = function.get("arguments")
                     if isinstance(arguments, str) and arguments:
-                        item["arguments"] = str(item["arguments"]) + arguments
+                        item["_arguments"] = str(item["_arguments"]) + arguments
+                    if not item["_added"] and item["name"] and item["call_id"]:
+                        is_custom = item["name"] in (custom_tool_names or set())
+                        item["id"] = f"{'ctc' if is_custom else 'fc'}_{uuid.uuid4().hex}"
+                        item["type"] = "custom_tool_call" if is_custom else "function_call"
+                        item["_kind"] = "custom" if is_custom else "function"
+                        item["_added"] = True
+                        if is_custom:
+                            item["input"] = ""
+                        else:
+                            item["status"] = "in_progress"
+                            item["arguments"] = ""
                         yield event(
-                            "response.function_call_arguments.delta",
-                            response_id=response_id,
-                            item_id=item["id"],
+                            "response.output_item.added",
                             output_index=index + 1,
-                            delta=arguments,
+                            item={
+                                key: value for key, value in item.items() if not key.startswith("_")
+                            },
                         )
+                    if item["_kind"] == "function":
+                        emitted_value = item["_arguments_emitted"]
+                        emitted = emitted_value if isinstance(emitted_value, int) else 0
+                        pending_arguments = str(item["_arguments"])[emitted:]
+                        if pending_arguments:
+                            item["arguments"] = str(item["arguments"]) + pending_arguments
+                            item["_arguments_emitted"] = emitted + len(pending_arguments)
+                            yield event(
+                                "response.function_call_arguments.delta",
+                                response_id=response_id,
+                                item_id=item["id"],
+                                output_index=index + 1,
+                                delta=pending_arguments,
+                            )
 
         text = "".join(text_parts)
         part: dict[str, object] = {
@@ -287,6 +309,55 @@ async def responses_sse(
         yield event("response.output_item.done", output_index=0, item=completed_message)
         completed_output = [completed_message]
         for index, item in sorted(tool_calls.items()):
+            if not item["_added"]:
+                is_custom = item["name"] in (custom_tool_names or set())
+                item["id"] = f"{'ctc' if is_custom else 'fc'}_{uuid.uuid4().hex}"
+                item["call_id"] = item["call_id"] or f"call_{uuid.uuid4().hex}"
+                item["type"] = "custom_tool_call" if is_custom else "function_call"
+                item["_kind"] = "custom" if is_custom else "function"
+                if is_custom:
+                    item["input"] = ""
+                else:
+                    item["status"] = "in_progress"
+                    item["arguments"] = str(item["_arguments"])
+                    item["_arguments_emitted"] = len(str(item["_arguments"]))
+                yield event(
+                    "response.output_item.added",
+                    output_index=index + 1,
+                    item={key: value for key, value in item.items() if not key.startswith("_")},
+                )
+            if item["_kind"] == "custom":
+                try:
+                    parsed_arguments = json.loads(str(item["_arguments"]))
+                    custom_input = parsed_arguments["input"]
+                    if not isinstance(custom_input, str):
+                        raise TypeError
+                except (KeyError, TypeError, ValueError):
+                    custom_input = str(item["_arguments"])
+                custom_item = {
+                    "id": item["id"],
+                    "type": "custom_tool_call",
+                    "call_id": item["call_id"],
+                    "name": item["name"],
+                    "input": custom_input,
+                }
+                if custom_input:
+                    yield event(
+                        "response.custom_tool_call_input.delta",
+                        item_id=custom_item["id"],
+                        output_index=index + 1,
+                        delta=custom_input,
+                    )
+                yield event(
+                    "response.custom_tool_call_input.done",
+                    item_id=custom_item["id"],
+                    output_index=index + 1,
+                    input=custom_input,
+                )
+                yield event("response.output_item.done", output_index=index + 1, item=custom_item)
+                completed_output.append(custom_item)
+                continue
+            item.pop("_arguments", None)
             item["status"] = "completed"
             yield event(
                 "response.function_call_arguments.done",

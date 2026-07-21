@@ -1,8 +1,8 @@
 # State
 
-Updated: 2026-07-21
+Updated: 2026-07-22
 
-## Dynamic MoA candidate status
+## Dynamic MoA production status
 
 | Capability | Designed | Implemented on `dev` | Unit-tested | Physically validated | Production-enabled |
 | --- | --- | --- | --- | --- | --- |
@@ -106,9 +106,10 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   bounded idle policy, exact-unit full-stop unload, restart reconciliation,
   status filtering, and shutdown ownership. The canonical contract is
   `docs/MODEL_LIFECYCLE.md`.
-- Checked-in lifecycle mode remains `disabled` with an empty unit map. Physical
-  Task 10 used an isolated fixed-mode harness only; no production lifecycle
-  setting changed. It physically passed cold single-flight, measured-shard
+- Safe checked-in lifecycle mode remains `disabled` with an empty unit map;
+  production uses the reviewed ignored adaptive override described above.
+  Historical Task 10 used an isolated fixed-mode harness and physically passed
+  cold single-flight, measured-shard
   progress, active/stream/continuation guards, ordered full-stop unload, memory
   return within host-snapshot noise, timeout, and one reload at 64K
   configuration.
@@ -116,8 +117,9 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   unchanged executor baseline: context `65536`, `max_num_seqs=1`,
   `1700000000` KV bytes, `gpu_memory_utilization=0.5`, and MARLIN. A later
   three-cycle run passed the complete short, long, native-tool, code, review,
-  near-64K, teardown, and gateway-advertisement contract. This selection is not
-  deployed or enabled in production.
+  near-64K, teardown, and gateway-advertisement contract. The selected baseline
+  and exact full-stop mechanism are now deployed; recent gateway restarts
+  physically exercised the same full service stop/start.
 
 ## Phase 3 memory and topology decision
 

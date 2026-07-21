@@ -52,8 +52,8 @@ accepts or rejects every recommendation against shared evidence.
 
 ## Current state
 
-The Codex OAuth adapter and three schemas are implemented and unit-tested on
-`dev`. Real isolated Codex OAuth calls previously passed architecture,
+The Codex OAuth adapter and three schemas are production-enabled. Real Codex
+OAuth calls passed architecture,
 code-review, and disagreement modes; the safe child-environment boundary,
 redaction, and token accounting were also observed. Primary-to-secondary
 profile fallback is now automated and covered by a subprocess-level test.
@@ -61,8 +61,7 @@ Both profiles were reauthenticated on 2026-07-21. A physical adapter call
 observed the primary usage-limit failure, completed through `secondary`, and
 recorded `profile=secondary`. Timeout, rate-limit,
 authentication, required and optional fallback, and circuit-breaker paths pass
-automated tests. Checked-in gateway configuration still keeps Frontier disabled,
-and the complete local-role physical matrix has not passed, so production
-enablement remains unapproved.
+automated tests. Safe checked-in gateway configuration keeps Frontier disabled;
+the ignored 0600 production environment enables the reviewed ordered profiles.
 Historical candidate-edit behavior is documented separately in
 `CODEX_FRONTIER.md` and is not this collaboration path.

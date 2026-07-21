@@ -4820,6 +4820,154 @@ def test_responses_post_preserves_function_tool_loop(  # type: ignore[no-untyped
     ]
 
 
+def test_responses_post_preserves_custom_tool_loop(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider
+) -> None:
+    async def stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        stub_provider.requests.append(request)
+
+        async def chunks():  # type: ignore[no-untyped-def]
+            yield (
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                b'"id":"call-edit","type":"function","function":{}}]},'
+                b'"finish_reason":null}]}\n\n'
+            )
+            yield (
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                b'"function":{"name":"apply_patch","arguments":'
+                b'"{\\"input\\":\\"*** Begin Patch\\\\n*** End Patch\\"}"}}]},'
+                b'"finish_reason":null}]}\n\n'
+            )
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    stub_provider.stream = stream  # type: ignore[method-assign]
+    custom_tool = {
+        "type": "custom",
+        "name": "apply_patch",
+        "description": "Apply a patch",
+        "format": {"type": "text"},
+    }
+    function_tool = {
+        "type": "function",
+        "name": "read_file",
+        "parameters": {"type": "object", "properties": {}},
+    }
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "input": "edit the file",
+                "tools": [custom_tool, function_tool],
+                "tool_choice": {"type": "custom", "name": "apply_patch"},
+                "stream": True,
+            },
+        )
+
+        continuation = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "input": [
+                    {
+                        "type": "custom_tool_call",
+                        "call_id": "call-edit",
+                        "name": "apply_patch",
+                        "input": "*** Begin Patch\n*** End Patch",
+                    },
+                    {
+                        "type": "custom_tool_call_output",
+                        "call_id": "call-edit",
+                        "output": "Done!",
+                    },
+                ],
+            },
+        )
+
+        async def complete(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+            stub_provider.requests.append(request)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-invalid",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "apply_patch",
+                                        "arguments": '{"input":null}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            }
+
+        stub_provider.complete = complete  # type: ignore[method-assign]
+        invalid_input = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "input": "edit",
+                "tools": [custom_tool, function_tool],
+            },
+        )
+
+    assert response.status_code == 200
+    assert "event: response.custom_tool_call_input.delta" in response.text
+    assert "event: response.custom_tool_call_input.done" in response.text
+    assert '"type":"custom_tool_call"' in response.text
+    assert '"input":"*** Begin Patch\\n*** End Patch"' in response.text
+    request = stub_provider.requests[0]
+    assert request["tools"][0]["function"]["parameters"] == {
+        "type": "object",
+        "properties": {"input": {"type": "string"}},
+        "required": ["input"],
+        "additionalProperties": False,
+    }
+    assert request["tools"][1] == {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    assert request["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "apply_patch"},
+    }
+    assert continuation.status_code == 200
+    assert stub_provider.requests[-2]["messages"][-2:] == [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call-edit",
+                    "type": "function",
+                    "function": {
+                        "name": "apply_patch",
+                        "arguments": '{"input": "*** Begin Patch\\n*** End Patch"}',
+                    },
+                }
+            ],
+        },
+        {"role": "tool", "content": "Done!", "tool_call_id": "call-edit"},
+    ]
+    assert invalid_input.status_code == 200
+    assert invalid_input.json()["output"][0]["input"] == '{"input":null}'
+
+
 def test_responses_post_maps_upstream_502_to_http_200(  # type: ignore[no-untyped-def]
     settings, stub_provider: StubProvider
 ) -> None:
