@@ -1,5 +1,44 @@
 # Validation
 
+## Governed runtime production deployment — 2026-07-22
+
+PR `#34` merged to `main` as `979a608` and the production worktree was
+fast-forwarded while preserving its untracked state database. Restarting the
+gateway exercised the resident target's selected exact stop/start relationship,
+so the Executor reloaded once with PID `2572119`; it returned active using
+context `65536`, one sequence, `1700000000` KV bytes,
+`gpu_memory_utilization=0.50`, and MARLIN. Gateway PID `2571891`, the resident
+target, and Executor are active. Planner, Reviewer, and Judge remain cold.
+
+Authenticated `/readyz` and `/v1/models` returned HTTP `200`; all public model
+metadata reports context `65536`. The primary `dgx-moa` Reasoner + Executor path
+returned exact `READY`. The production tool-continuation and Chat streaming
+smoke passed, followed by isolated real-client runs of Codex CLI `0.144.6`,
+OpenCode `1.17.18`, and Hermes `0.18.2`; each exited zero and returned its exact
+marker. A direct Responses stream returned exactly one `response.completed`, no
+`response.failed`, and no reasoning event. The atomic runtime CSV matched every
+nonzero model-invocation database aggregate; its deployed rows include
+`dgx-moa-executor` and `Qwythos-v2-9B:Q4`.
+
+The first post-resident smoke reached Chat during the readiness boundary and
+received the single expected `503`. A later smoke completed model work but its
+final evidence helper exposed an unquoted JSON unit map in the protected
+production environment. Adding only the documented outer quoting preserved the
+same adaptive unit map and made both systemd EnvironmentFile and shell loading
+equivalent; the complete rerun then passed. Post-deployment journals contain no
+unhandled traceback, stream disconnect, OOM, or service restart loop after
+readiness.
+
+The only authenticated tailnet listener is the gateway at
+`100.125.239.72:9000`; the configured Executor remains loopback-only at `8101`.
+The configured external Reasoner remains `Qwythos-v2-9B:Q4` at
+`192.168.0.197:11434`. Frontier remains Codex OAuth `gpt-5.6-sol`/high with
+authenticated primary and secondary profiles and bounded failover. Loop
+Engineering, runtime Skills, declarative policy, live observation and controls,
+training collection, and weekly jobs remain production-disabled pending their
+documented enablement gates; no production training data or external chat
+message was emitted.
+
 ## Goal workflow completion follow-up — 2026-07-22
 
 The predeployment live client matrix used the development source on isolated

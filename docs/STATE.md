@@ -13,7 +13,7 @@ Updated: 2026-07-22
 | Evidence graph and per-agent trace | yes | yes | yes | production yes | yes |
 | Multiple API tokens and per-token usage | yes | yes | yes | production yes | yes |
 | Codex Responses text/function/custom tool loop | yes | yes | yes | production yes | yes |
-| Runtime model invocation-rate CSV | yes | yes | yes | isolated live clients | no |
+| Runtime model invocation-rate CSV | yes | yes | yes | production live clients | yes |
 | Bounded Loop Engineering Phase A + action-boundary B | yes | yes | yes | unit only | no |
 | Runtime Skills Phase C foundation | yes | yes | yes | unit only | no |
 | Declarative Policy Phase D foundation | yes | partial | yes | unit only | no |
@@ -41,7 +41,7 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 - Promotion remains `dev` -> reviewed PR -> `main` fast-forward pull -> controlled
   gateway restart. Runtime services never execute from the development worktree.
 
-## Production enablement — 2026-07-21
+## Production enablement — 2026-07-22
 
 - PRs 15, 16, and 17 were reviewed, merged to `main`, and fast-forwarded into
   the production worktree. The gateway was restarted under the reviewed
@@ -64,6 +64,11 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   architecture smoke, Reviewer cold/inactive, Judge inactive, and the resident
   target active. Planner remains subject to its normal minimum-residency and
   adaptive idle-unload policy.
+- PR `#34` deployed the governed runtime foundations and production invocation
+  CSV as `main@979a608`. Codex, OpenCode, Hermes, Chat tool continuation, Chat
+  streaming, and Responses terminal streaming passed against production. The
+  new autonomous/observation/training/weekly capabilities remain deployed but
+  disabled; deployment did not authorize their gates.
 
 ## Runtime
 
@@ -82,20 +87,20 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   adapter buffers at most 1,000,000 characters until it can distinguish a final
   answer from a tool-call preamble; tool preambles and failed streams are never
   exposed. A valid upstream terminal marker is required before completion.
-- Development source resolves a failed MCP local-path observation after a later
+- Deployed source resolves a failed MCP local-path observation after a later
   successful native file/shell observation, retries genuine optional-role
   loading within the existing Responses stream, and writes atomic all-time and
   trailing-hour model invocation rates to
   `<gateway.run_dir>/model-invocation-rates.csv`. Generic HTTP, Codex, OpenCode,
   and Hermes plus the primary Reasoner path physically produced six Executor
   records and one exact `Qwythos-v2-9B:Q4` Reasoner record through an isolated
-  development gateway. These additions are not yet production-enabled.
-- Development source contains disabled Phase A state and Phase B action
+  development gateway. Production clients now physically update the same CSV.
+- Deployed source contains disabled Phase A state and Phase B action
   admission. Evidence-linked criteria, iterations, role/tool/token/known-cost/
   wall-time budgets, progress evidence allowlisting, stable repeated-failure
   policy, and explicit termination reasons are unit-tested. Physical validation
   remains incomplete; production stays disabled.
-- Development source also contains a disabled runtime Skill registry with
+- Deployed source also contains a disabled runtime Skill registry with
   immutable versions, bounded active-only retrieval, Executor-only activation,
   structured recurring-pattern drafts, isolated multi-gate candidate evaluation,
   Executor-evidenced canaries, governed versioned lifecycle changes, separate
