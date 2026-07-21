@@ -5,7 +5,14 @@ import json
 from collections.abc import AsyncIterator
 
 import pytest
-from dgx_moa.streaming import StreamObservation, forward_sse, reported_usage, responses_sse
+from dgx_moa.streaming import (
+    StreamObservation,
+    forward_sse,
+    reported_usage,
+    response_usage,
+    responses_sse,
+)
+from dgx_moa.usage import SQLITE_MAX_INTEGER
 
 
 @pytest.mark.asyncio
@@ -15,7 +22,9 @@ async def test_responses_sse_translates_chat_text_and_usage() -> None:
         yield b'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'
         yield (
             b'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
-            b'"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}\n\n'
+            b'"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5,'
+            b'"prompt_tokens_details":{"cached_tokens":1},'
+            b'"completion_tokens_details":{"reasoning_tokens":1}}}\n\n'
         )
         yield b"data: [DONE]\n\n"
 
@@ -34,7 +43,30 @@ async def test_responses_sse_translates_chat_text_and_usage() -> None:
     assert completed["type"] == "response.completed"
     assert completed["response"]["output"][0]["content"][0]["text"] == "hello"
     assert completed["response"]["usage"]["total_tokens"] == 5
+    assert completed["response"]["usage"]["input_tokens_details"] == {"cached_tokens": 1}
+    assert completed["response"]["usage"]["output_tokens_details"] == {"reasoning_tokens": 1}
     assert all(b"data: [DONE]" not in chunk for chunk in chunks)
+
+
+@pytest.mark.parametrize("invalid", [-1, True, SQLITE_MAX_INTEGER + 1])
+def test_response_usage_rejects_malformed_token_details(invalid: object) -> None:
+    usage = response_usage(
+        {
+            "prompt_tokens": 3,
+            "completion_tokens": 2,
+            "total_tokens": 5,
+            "prompt_tokens_details": {"cached_tokens": invalid},
+            "completion_tokens_details": {"reasoning_tokens": invalid},
+        }
+    )
+
+    assert usage == {
+        "input_tokens": 3,
+        "input_tokens_details": {"cached_tokens": 0},
+        "output_tokens": 2,
+        "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": 5,
+    }
 
 
 @pytest.mark.asyncio

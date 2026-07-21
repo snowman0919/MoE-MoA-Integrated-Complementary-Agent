@@ -21,6 +21,13 @@ def reported_usage(value: object) -> dict[str, int]:
     }
 
 
+def _token_detail(value: object, group: str, key: str) -> int:
+    if not isinstance(value, dict) or not isinstance(details := value.get(group), dict):
+        return 0
+    token_count = details.get(key)
+    return token_count if type(token_count) is int and 0 <= token_count <= SQLITE_MAX_INTEGER else 0
+
+
 @dataclass
 class StreamObservation:
     max_capture_bytes: int
@@ -111,7 +118,7 @@ async def forward_sse(
             await close()
 
 
-def _response_usage(value: object) -> dict[str, object] | None:
+def response_usage(value: object) -> dict[str, object] | None:
     usage = reported_usage(value)
     if not usage:
         return None
@@ -119,9 +126,15 @@ def _response_usage(value: object) -> dict[str, object] | None:
     output_tokens = usage.get("completion_tokens", 0)
     return {
         "input_tokens": input_tokens,
-        "input_tokens_details": {"cached_tokens": 0},
+        "input_tokens_details": {
+            "cached_tokens": _token_detail(value, "prompt_tokens_details", "cached_tokens")
+        },
         "output_tokens": output_tokens,
-        "output_tokens_details": {"reasoning_tokens": 0},
+        "output_tokens_details": {
+            "reasoning_tokens": _token_detail(
+                value, "completion_tokens_details", "reasoning_tokens"
+            )
+        },
         "total_tokens": usage.get("total_tokens", input_tokens + output_tokens),
     }
 
@@ -209,7 +222,7 @@ async def responses_sse(
                     chat_event = json.loads(line[6:])
                 except ValueError:
                     continue
-                usage = _response_usage(chat_event.get("usage")) or usage
+                usage = response_usage(chat_event.get("usage")) or usage
                 choice = (chat_event.get("choices") or [{}])[0]
                 delta = choice.get("delta") or {}
                 content = delta.get("content")
