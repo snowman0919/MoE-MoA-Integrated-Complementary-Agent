@@ -50,6 +50,34 @@ reported a non-blocking model-catalog metadata warning because the gateway's
 OpenAI-compatible `/v1/models` list has `data` rather than Codex's additional
 top-level `models` field; it defaulted metadata and completed the tool loop.
 
+### Responses custom/freeform tool candidate — 2026-07-22
+
+The follow-up audit found that the deployed adapter preserved standard
+`function` tools but silently omitted Responses `custom` tools such as Codex
+`apply_patch`. The development fix wraps each custom tool in one strict Chat
+function string field for local Executor inference, then restores native
+`custom_tool_call`, `response.custom_tool_call_input.delta`, and
+`response.custom_tool_call_input.done` objects. Custom call/output continuation
+items map back to assistant/tool Chat messages; mixed standard function tools
+remain unchanged.
+
+The focused regressions cover a tool name arriving after its call ID, valid
+freeform input, non-string decoded input fallback, function+custom coexistence,
+and both custom continuation items. Full publication gates passed `627` tests
+with the existing Starlette warning; Ruff format/check, Mypy for 29 source
+files, user-systemd verification, every shell syntax check, trace audit `10/10`
+at 100%, and `git diff --check` all passed. Host OpenAI Python parsed all 12
+synthetic typed events through `response.completed`.
+
+A real primary-profile Codex OAuth review first returned `revise`, Critical 0
+and Important 2, confidence 0.90, in `40899.016` ms with `25060` tokens. It
+identified premature stream-kind classification and unchecked decoded input
+types. Both were fixed with regressions. The bounded re-review returned
+`approve`, Critical 0, Important 0, missing tests 0, confidence 0.93, in
+`6448.757` ms with `14708` tokens. No API key was created or used. This is dev
+candidate evidence until the reviewed PR is merged and a real Codex custom tool
+executes through production.
+
 ## Dynamic MoA isolated validation — 2026-07-21
 
 This section records only observed results for the current `dev` candidate. The

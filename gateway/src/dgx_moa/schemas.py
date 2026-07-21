@@ -76,7 +76,19 @@ class ResponsesRequest(BaseModel):
         for item in self.input:
             if not isinstance(item, dict):
                 raise ValueError("input entries must be message objects")
-            if item.get("type") in {"function_call", "function_call_output", "reasoning"}:
+            item_type = item.get("type")
+            if item_type == "reasoning":
+                continue
+            if item_type in {"function_call", "custom_tool_call"}:
+                if not all(isinstance(item.get(key), str) for key in ("call_id", "name")):
+                    raise ValueError(f"{item_type} must include call_id and name")
+                value_key = "arguments" if item_type == "function_call" else "input"
+                if not isinstance(item.get(value_key), str):
+                    raise ValueError(f"{item_type} must include {value_key}")
+                continue
+            if item_type in {"function_call_output", "custom_tool_call_output"}:
+                if not isinstance(item.get("call_id"), str) or "output" not in item:
+                    raise ValueError(f"{item_type} must include call_id and output")
                 continue
             if not isinstance(item.get("role"), str):
                 raise ValueError("input message must include role")

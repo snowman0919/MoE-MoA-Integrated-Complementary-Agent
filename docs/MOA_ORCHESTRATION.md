@@ -51,10 +51,10 @@ review occurred. Only the Executor response is returned to ordinary clients.
 
 ## Current deployment boundary
 
-The contracts are implemented and unit-tested in the `dev` candidate. The core,
-external-client loops, Codex OAuth modes, evidence traces, and token accounting
-have isolated physical evidence. Planner and Reviewer passed real-weight client
-paths; the exclusive Heavy Judge resume path passed a real-weight adjudication,
-guard-error matrix, teardown, and resident restoration. Checked-in lifecycle
-mode and the gateway Frontier feature gate are disabled, the local lifecycle
-unit map is empty, and production is unchanged.
+The contracts are production-enabled. The core, external-client loops, Codex
+OAuth modes, evidence traces, and per-token accounting have production physical
+evidence. Planner and Reviewer passed real-weight client paths; the exclusive
+Heavy Judge resume path passed a real-weight adjudication, guard-error matrix,
+teardown, and resident restoration. Safe checked-in lifecycle and Frontier
+defaults remain disabled/empty; the ignored 0600 production environment enables
+the reviewed adaptive unit map and ordered OAuth profiles.

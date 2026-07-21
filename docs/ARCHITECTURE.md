@@ -35,11 +35,12 @@ normally resident, and never locally idle-unloaded. Judge runs only
 while judge profile is active. Health is public; inference uses
 `DGX_MOA_AUTH_ENABLED`, and admin profile switching is disabled by default.
 
-This topology is a development candidate, not a deployed production change.
-Checked-in lifecycle control remains disabled with an empty unit map, so the
-target alone does not activate optional on-demand loading. A later reviewed
-fixed/adaptive deployment with authorized unit mappings is required before cold
-optional roles can use the typed loading/unavailable `503` contract.
+This topology is production-enabled. Safe checked-in lifecycle control remains
+disabled with an empty unit map, while the ignored 0600 production environment
+enables reviewed adaptive control for the exact Executor, Planner, and Reviewer
+units. Cold optional roles use the typed loading/unavailable `503` contract.
+Judge stays outside that unit map and the Ollama Reasoner remains externally
+managed.
 
 The topology follows physical Phase 3 evidence. Exact full process stop/start
 is the selected executor unload and mandatory fallback. The retained executor
@@ -81,8 +82,8 @@ sampling, then a `cold` transition and sample. Failures become sanitized
 `docs/MODEL_LIFECYCLE.md`.
 
 Usage is stored once per request and once per participating role. Idle decisions
-consume only recent successful gaps for that role, so executor traffic cannot
-keep an unused reasoner resident or cause a planner unload. Three lifecycle
+consume only recent successful gaps for that role, so aggregate Executor traffic
+cannot substitute for Planner or Reviewer activity. Three lifecycle
 mutation failures inside the configured window latch automation off; status and
 already-ready inference remain available, but new start/stop mutations do not.
 Rollback atomically restores disabled mode and an empty authorization map.

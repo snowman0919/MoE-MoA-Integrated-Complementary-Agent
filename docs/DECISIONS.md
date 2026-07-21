@@ -128,3 +128,7 @@
   configuration during migration.
 - Keep lifecycle and Frontier disabled in checked-in production defaults until
   physical validation and separate deployment approval are complete.
+- Production approval was subsequently exercised through reviewed PRs: retain
+  disabled/empty checked-in defaults, but run the operator-owned 0600 production
+  override with adaptive Executor/Planner/Reviewer lifecycle control, ordered
+  Codex OAuth Frontier profiles, and multiple token IDs.

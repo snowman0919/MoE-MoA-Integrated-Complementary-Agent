@@ -144,7 +144,12 @@ def _coerce_responses_input_messages(
             item_type = item.get("type")
             if item_type == "reasoning":
                 continue
-            if item_type == "function_call":
+            if item_type in {"function_call", "custom_tool_call"}:
+                arguments = (
+                    item.get("arguments", "")
+                    if item_type == "function_call"
+                    else json.dumps({"input": item.get("input", "")})
+                )
                 messages.append(
                     {
                         "role": "assistant",
@@ -155,14 +160,14 @@ def _coerce_responses_input_messages(
                                 "type": "function",
                                 "function": {
                                     "name": item["name"],
-                                    "arguments": item.get("arguments", ""),
+                                    "arguments": arguments,
                                 },
                             }
                         ],
                     }
                 )
                 continue
-            if item_type == "function_call_output":
+            if item_type in {"function_call_output", "custom_tool_call_output"}:
                 output = item.get("output", "")
                 messages.append(
                     {
@@ -190,9 +195,22 @@ def _coerce_responses_tools(tools: list[dict[str, Any]] | None) -> list[dict[str
         return None
     chat_tools = []
     for tool in tools:
-        if tool.get("type") != "function":
+        tool_type = tool.get("type")
+        if tool_type not in {"function", "custom"}:
             continue
-        function = tool.get("function") if isinstance(tool.get("function"), dict) else tool
+        nested_function = tool.get("function")
+        function: dict[str, Any] = nested_function if isinstance(nested_function, dict) else tool
+        if tool_type == "custom":
+            function = {
+                "name": tool.get("name"),
+                "description": tool.get("description"),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"input": {"type": "string"}},
+                    "required": ["input"],
+                    "additionalProperties": False,
+                },
+            }
         chat_tools.append(
             {
                 "type": "function",
@@ -211,6 +229,7 @@ def _responses_payload(
     chat_response: dict[str, Any] | None = None,
     *,
     status: str = "completed",
+    custom_tool_names: set[str] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "id": f"resp-{uuid.uuid4().hex}",
@@ -244,6 +263,25 @@ def _responses_payload(
             ]
         for tool_call in message.get("tool_calls") or []:
             function = tool_call.get("function") or {}
+            name = function.get("name")
+            if name in (custom_tool_names or set()):
+                try:
+                    parsed_arguments = json.loads(function.get("arguments", ""))
+                    custom_input = parsed_arguments["input"]
+                    if not isinstance(custom_input, str):
+                        raise TypeError
+                except (KeyError, TypeError, ValueError):
+                    custom_input = function.get("arguments", "")
+                payload["output"].append(
+                    {
+                        "type": "custom_tool_call",
+                        "id": f"ctc_{uuid.uuid4().hex}",
+                        "call_id": tool_call.get("id"),
+                        "name": name,
+                        "input": custom_input,
+                    }
+                )
+                continue
             payload["output"].append(
                 {
                     "type": "function_call",
@@ -1870,12 +1908,23 @@ def create_app(
         if body.instructions:
             messages.insert(0, {"role": "developer", "content": body.instructions})
         tools = _coerce_responses_tools(body.tools)
+        custom_tool_names = {
+            str(tool.get("name"))
+            for tool in body.tools or []
+            if tool.get("type") == "custom" and tool.get("name")
+        }
+        tool_choice = body.tool_choice
+        if isinstance(tool_choice, dict) and tool_choice.get("type") in {"function", "custom"}:
+            tool_choice = {
+                "type": "function",
+                "function": {"name": tool_choice.get("name")},
+            }
         chat_body = ChatRequest(
             model=body.model,
             messages=[ChatMessage.model_validate(message) for message in messages],
             stream=body.stream,
             tools=tools,
-            tool_choice=body.tool_choice if tools else None,
+            tool_choice=tool_choice if tools else None,
             parallel_tool_calls=body.parallel_tool_calls if tools else None,
             metadata=body.metadata,
             max_tokens=body.max_output_tokens,
@@ -1921,7 +1970,11 @@ def create_app(
             )
         if isinstance(chat_response, StreamingResponse):
             return StreamingResponse(
-                responses_sse(chat_response.body_iterator, body.model),
+                responses_sse(
+                    chat_response.body_iterator,
+                    body.model,
+                    custom_tool_names=custom_tool_names,
+                ),
                 media_type="text/event-stream",
                 headers={
                     "X-Session-ID": chat_response.headers.get("X-Session-ID", ""),
@@ -1941,7 +1994,13 @@ def create_app(
                 _responses_payload(body.model, chat_payload, status="failed"),
                 status_code=status.HTTP_200_OK,
             )
-        return JSONResponse(_responses_payload(body.model, chat_payload))
+        return JSONResponse(
+            _responses_payload(
+                body.model,
+                chat_payload,
+                custom_tool_names=custom_tool_names,
+            )
+        )
 
     @app.get("/v1/responses", dependencies=[Depends(auth)])
     async def responses_get(

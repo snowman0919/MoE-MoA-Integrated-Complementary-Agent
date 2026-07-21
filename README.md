@@ -31,8 +31,8 @@ See `docs/API_CLIENT_MODES.md` for the model aliases, standard request and SSE
 contracts, typed errors, curl/OpenAI SDK/OpenCode examples, and output limits.
 See `docs/HERMES_AGENT.md` for the environment-only Hermes configuration.
 
-The `dev` release candidate implements the new MoA contracts and role-aware
-request statistics. The intended lifecycle policy keeps the 65,536-token
+The production `main` runtime implements the MoA contracts and role-aware
+request statistics. Its lifecycle policy keeps the 65,536-token
 Executor resident and keeps the external Ollama Reasoner persistently available;
 Planner and Reviewer may unload after bounded role-local idle periods. A cold
 managed local role returns retryable `503`
@@ -40,19 +40,21 @@ state, generation, weight progress, overall progress, and ETA fields while one
 load owns the role. An isolated user-systemd run physically passed the four-role
 control path, idle unload/reload, circuit breaker, and idempotent rollback. It
 used fake weights to avoid duplicating the active 45G production executor, so it
-does not add a new real-weight memory claim. Checked-in and production lifecycle
-settings remain `disabled` with an empty unit map. The dynamic MoA candidate has
-isolated physical evidence for the core, real clients, Planner, Reviewer, and
-Codex OAuth Frontier, and the exclusive Heavy Judge resume path. The 2026-07-21
+does not add a new real-weight memory claim. Safe checked-in defaults remain
+`disabled` with an empty unit map; the ignored 0600 production environment uses
+reviewed `adaptive` control for Executor, Planner, and Reviewer and enables
+Codex OAuth Frontier. Physical evidence covers the core, real clients, Planner,
+Reviewer, Frontier, and the exclusive Heavy Judge resume path. The 2026-07-21
 Heavy Judge validation rejected a drifted 12-GB KV configuration, then passed
 the approved 4-GB readiness gate, normal adjudication, guard errors, teardown,
-and fixed-resident restoration. The candidate is still not production-enabled;
-production configuration and code remain unchanged.
+and fixed-resident restoration. Production enablement and later Responses
+compatibility fixes were promoted through reviewed `dev`-to-`main` PRs.
 
 See `docs/MODEL_LIFECYCLE.md` for model states, role policies and statistics,
 retryable loading responses, blockers, status routes, circuit breaker, and
-rollback. Checked-in lifecycle control is deliberately `disabled` with an empty
-unit map until a reviewed deployment supplies exact authorized units.
+rollback. Safe checked-in lifecycle control is deliberately `disabled` with an
+empty unit map; production authorization remains an ignored operator-owned
+override and must never be copied into Git.
 
 Authoritative references: `docs/STATE.md` for current state,
 `docs/OPERATIONS.md` for operation, `docs/VALIDATION.md` for measured evidence,

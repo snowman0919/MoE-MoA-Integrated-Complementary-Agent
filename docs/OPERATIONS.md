@@ -10,8 +10,8 @@ or Hermes owns native tool execution. See `MOA_ORCHESTRATION.md`.
 
 Frontier uses an existing Codex OAuth profile and read-only `codex exec`; no
 OpenAI API key is configured. Enablement requires both the gateway feature gate
-and a reviewed Frontier config. Keep it disabled until the physical matrix in
-`VALIDATION.md` passes. See `FRONTIER.md`.
+and a reviewed Frontier config. Safe checked-in defaults remain disabled. See
+`FRONTIER.md`.
 
 The 2026-07-21 production deployment passed that gate and enables Frontier with
 ordered `primary`/`secondary` OAuth profiles. Safe checked-in defaults remain
@@ -149,20 +149,17 @@ target and must be healthy for default product readiness. Existing stop
 verification still checks the legacy local Reasoner unit/port as cleanup along
 with Executor/Planner/Reviewer; it never targets the external Ollama service.
 
-Do not copy the target into production or restart production units as part of
-this repository change. Migration requires a later human-reviewed PR/deployment
-that verifies the installed unit diff, daemon reload, profile transition,
-readiness, typed cold-role behavior, and rollback. Checked-in lifecycle remains
-disabled, so this target change alone does not provide on-demand optional-role
-startup. With a separately approved fixed/adaptive lifecycle and validated unit
-map, a request that requires a cold optional role receives the typed retryable
-loading/unavailable `503` contract.
+The reviewed target and exact adaptive unit map are installed in production;
+safe checked-in lifecycle defaults remain disabled. Do not change the installed
+target or unit map in place. Any later topology change still requires a reviewed
+PR/deployment that verifies the installed diff, daemon reload, profile
+transition, readiness, typed cold-role behavior, and rollback. A cold required
+optional role currently receives the typed retryable loading/unavailable `503`
+contract.
 
-Rollback restores the previous resident target requirements for gateway,
-executor, planner, and reviewer, restores the previous readiness/stop script
-arrays, reloads units, and verifies the prior profile. Rollback must be reviewed
-and deployed through the same production process; do not edit installed units
-in place.
+Rollback uses the one-config atomic disabled/empty-map path documented above,
+then restores and verifies the fixed resident services. A production rollback
+still requires separate approval; do not edit installed units in place.
 
 ```bash
 scripts/switch-profile.sh resident

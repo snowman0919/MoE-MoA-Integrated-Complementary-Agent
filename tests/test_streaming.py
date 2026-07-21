@@ -37,6 +37,42 @@ async def test_responses_sse_translates_chat_text_and_usage() -> None:
     assert all(b"data: [DONE]" not in chunk for chunk in chunks)
 
 
+@pytest.mark.asyncio
+async def test_responses_sse_defers_custom_kind_and_rejects_non_string_input() -> None:
+    async def upstream():
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call-edit","function":{}}]}}]}\n\n'
+        )
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"function":{"name":"apply_patch","arguments":"{\\"input\\":42}"}}]},'
+            b'"finish_reason":"tool_calls"}]}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    emitted = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(
+            upstream(), "dgx-moa-agent", custom_tool_names={"apply_patch"}
+        )
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+    added = next(
+        event
+        for event in emitted
+        if event["type"] == "response.output_item.added" and event["output_index"] == 1
+    )
+    custom_done = next(
+        event for event in emitted if event["type"] == "response.custom_tool_call_input.done"
+    )
+
+    assert added["item"]["type"] == "custom_tool_call"
+    assert all("function_call_arguments" not in event["type"] for event in emitted)
+    assert custom_done["input"] == '{"input":42}'
+
+
 async def chunks(*values: bytes) -> AsyncIterator[bytes]:
     for value in values:
         yield value

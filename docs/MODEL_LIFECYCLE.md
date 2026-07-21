@@ -1,9 +1,9 @@
 # Model lifecycle contract
 
-This is the canonical lifecycle contract. The role-aware implementation is a
-validated `dev` release candidate. Checked-in configuration remains
-`lifecycle_mode: disabled` with `lifecycle_unit_map: {}`, so it is not active in
-production until a reviewed deployment supplies exact authorized units.
+This is the canonical lifecycle contract. Safe checked-in configuration remains
+`lifecycle_mode: disabled` with `lifecycle_unit_map: {}`. The reviewed production
+deployment supplies an ignored 0600 `adaptive` override mapping the exact
+Executor, Planner, and Reviewer units; it is active and physically validated.
 
 The current dynamic MoA design changes role policy, not the measured local
 Executor mechanism. Executor remains normally resident with idle unload off.
@@ -130,10 +130,11 @@ state, or restart resets hysteresis. Minimum residency must also pass.
 | Executor | 7200 | 14400 | 28800 | 600 |
 | Planner | 600 | 1200 | 3600 | 600 |
 | Reviewer | 600 | 1200 | 3600 | 600 |
-| Reasoner | 300 | 600 | 1800 | 300 |
+| Reasoner (external) | n/a | n/a | n/a | n/a |
 
-Executor is normally resident and its idle unload is disabled by default.
-Planner, reviewer, and reasoner enable idle unload. Judge automation is disabled.
+Executor is normally resident and its idle unload is disabled by default and in
+production. Planner and Reviewer enable adaptive idle unload. The external
+Reasoner and exclusive Judge are outside local idle automation.
 
 Values are seconds. `fixed` uses fallback idle. `observe` and `adaptive` use the
 fallback until there are 20 usable positive role-local gaps. With enough data,
@@ -235,13 +236,12 @@ the unit, left recorded PGID and unit-cgroup PSS/RSS at zero, released port
 contract. This is development evidence only; production units were not
 started, stopped, restarted, edited, or deployed.
 
-The checked-in resident target now requires only gateway and executor, while
-optional services retain `PartOf` for cleanup. This target is undeployed and
-does not alter the canonical disabled lifecycle setting. Optional-role
-on-demand loading and its typed `503` responses require a later approved
-fixed/adaptive configuration with an exact validated unit map. Rollback restores
-the previous four-service target dependency set and associated readiness/stop
-script arrays.
+The resident target requires gateway and executor, while optional services
+retain `PartOf` for cleanup. Production has the reviewed target plus an adaptive
+exact unit map for Executor, Planner, and Reviewer; optional-role on-demand
+loading and typed `503` responses are active there. Safe checked-in defaults
+remain disabled/empty. Rollback atomically restores those safe lifecycle values,
+restarts the fixed gateway, restores resident, and verifies protected status.
 
 The original Task 10 executor-only lifecycle evidence measured cold-load,
 warm-reload, and unload durations of `942.7537190914154`,
@@ -267,4 +267,5 @@ Items below remain explicitly pending; automated tests do not prove them:
   the completed Phase 3 study;
 - 64K physical quality under the later client matrix and soak beyond the
   completed fixed-contract executor trials;
-- any production recommendation, enablement, topology, or threshold change.
+- any later production recommendation, topology, or threshold change beyond the
+  deployed Executor/Planner/Reviewer adaptive map.
