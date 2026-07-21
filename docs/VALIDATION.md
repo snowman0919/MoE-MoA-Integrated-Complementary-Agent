@@ -1798,6 +1798,14 @@ eight commands:
   for both profiles is required before a physical fallback success can be
   claimed.
   The local CLI used for these calls was `codex-cli 0.144.6`.
+- Both profiles were then reauthenticated with device OAuth. Primary's real
+  read-only smoke authenticated but returned its account usage limit until
+  2026-07-25 16:25. Secondary returned `READY` and `turn.completed`. A real
+  `CodexOAuthCollaboration` architecture call subsequently observed the primary
+  usage-limit failure, fell back to secondary, returned a schema-valid artifact,
+  and reported `profile=secondary`, `mode=architecture`, and `13613` total
+  tokens. This physically validates the ordered OAuth fallback without an API
+  key or repository modification.
 - Publication checks passed: `611` tests, Ruff format/check, mypy for 28 source
   files, user-systemd unit verification, shell syntax checks, and
   `git diff --check` all exited zero. The one pytest warning is the existing

@@ -277,10 +277,10 @@ an empty local unit map. Production is unchanged.
   failures. Each can also be invoked independently with
   `scripts/codex-profile.sh test <profile>` or the existing
   `dgx-moa-codex-frontier@<profile>.service` template; its read-only sandbox
-  and systemd hardening remain unchanged. Both profiles returned a verified
-  `turn.completed` event after interactive re-login on 2026-07-13, but the
-  current primary and secondary tokens are invalidated and both must be logged
-  in again before a live failover can succeed.
+  and systemd hardening remain unchanged. Both profiles were reauthenticated on
+  2026-07-21. Primary is currently usage-limited until 2026-07-25 16:25; a real
+  adapter call fell back to secondary, completed architecture mode, and recorded
+  `profile=secondary` with `13613` total tokens.
 
 ## Known limitations
 

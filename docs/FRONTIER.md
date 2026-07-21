@@ -57,8 +57,9 @@ The Codex OAuth adapter and three schemas are implemented and unit-tested on
 code-review, and disagreement modes; the safe child-environment boundary,
 redaction, and token accounting were also observed. Primary-to-secondary
 profile fallback is now automated and covered by a subprocess-level test.
-Both current refresh tokens returned `token_invalidated`, so a live fallback
-success still requires interactive re-login. Timeout, rate-limit,
+Both profiles were reauthenticated on 2026-07-21. A physical adapter call
+observed the primary usage-limit failure, completed through `secondary`, and
+recorded `profile=secondary`. Timeout, rate-limit,
 authentication, required and optional fallback, and circuit-breaker paths pass
 automated tests. Checked-in gateway configuration still keeps Frontier disabled,
 and the complete local-role physical matrix has not passed, so production
