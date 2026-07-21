@@ -1937,6 +1937,32 @@ eight commands:
   diff returned `approve`, Critical 0, Important 0, confidence 0.97, in
   `16307.331` ms with `14935` tokens. It requested the post-fix physical smoke
   below before considering the production acceptance criterion fully evidenced.
+- Post-fix production deployment completed on reviewed `main`. Authentication
+  rejected missing and invalid credentials with 401; `legacy`, `opencode`,
+  `hermes`, and `operator` each returned 200 from the protected model route.
+  Authenticated missing-input `GET /v1/responses` returned the designed 405.
+  A legacy-key `POST /v1/responses` returned 200/completed in Responses API
+  shape with 310 prompt, 6 completion, and 316 total tokens; the unauthenticated
+  counterpart returned 401.
+- The default `dgx-moa` production smoke returned 200/stop in 51 seconds with
+  531 prompt, 5 completion, and 536 total tokens. Its usage row was attributed
+  to `operator`, and role rows recorded successful Reasoner and Executor
+  participation. Distinct `dgx-moa-agent` requests attributed 570 total tokens
+  to `opencode` and 587 to `hermes`; both recorded Reasoner and Executor.
+- The corrected Planner unit preflighted the ready Executor, started without
+  Reviewer, and reached ready as generation 10 with retry count zero. The first
+  vLLM process failed engine initialization; systemd's configured restart
+  succeeded, and the stable retry was recorded rather than hidden. Reviewer
+  stayed cold/inactive. The final architecture request returned 200 in 74
+  seconds. It honestly ended `length` at the requested 128-token cap and left
+  the session nonterminal rather than claiming completion.
+- That architecture trace recorded Reasoner, Planner (1033 tokens), Frontier
+  architecture via OAuth `secondary` (13484 prompt, 691 completion, 14175 total
+  tokens, 22457.468 ms), and Executor final synthesis (2591 total tokens). The
+  orchestration decision required Planner and Frontier in parallel. Final
+  production status reported automation enabled with zero failures, Executor,
+  Planner, and external Reasoner ready, Reviewer cold, Judge inactive, and only
+  tailnet 9000 plus loopback 8101/8102 listening.
 
 ## Codex cold-start 503 diagnosis — 2026-07-21
 

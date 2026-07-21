@@ -13,9 +13,15 @@ OpenAI API key is configured. Enablement requires both the gateway feature gate
 and a reviewed Frontier config. Keep it disabled until the physical matrix in
 `VALIDATION.md` passes. See `FRONTIER.md`.
 
+The 2026-07-21 production deployment passed that gate and enables Frontier with
+ordered `primary`/`secondary` OAuth profiles. Safe checked-in defaults remain
+disabled; production enablement stays in the ignored 0600 environment file.
+
 Gateway authentication may use legacy `DGX_MOA_API_KEY` or the preferred JSON
 mapping `DGX_MOA_API_KEYS`, whose keys are non-secret usage IDs. Rotate values
 outside Git. `/v1/runtime-status` exposes content-free aggregate usage by ID.
+The production IDs are `legacy`, `opencode`, `hermes`, and `operator`; never put
+their values in Git, logs, traces, or documentation.
 
 ## Gateway and systemd
 
