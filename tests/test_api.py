@@ -4714,6 +4714,112 @@ def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def
     ]
 
 
+def test_responses_post_preserves_function_tool_loop(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider
+) -> None:
+    async def stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        stub_provider.calls.append(role)
+        stub_provider.requests.append(request)
+
+        async def chunks():  # type: ignore[no-untyped-def]
+            yield (
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                b'"id":"call-shell","type":"function","function":{"name":'
+                b'"exec_command","arguments":"{\\"cmd\\":\\"pwd\\"}"}}]},'
+                b'"finish_reason":null}]}\n\n'
+            )
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    stub_provider.stream = stream  # type: ignore[method-assign]
+    tool = {
+        "type": "function",
+        "name": "exec_command",
+        "description": "Run a command",
+        "parameters": {
+            "type": "object",
+            "properties": {"cmd": {"type": "string"}},
+            "required": ["cmd"],
+        },
+    }
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "instructions": "Use tools for shell commands.",
+                "input": "inspect the workspace",
+                "tools": [tool],
+                "tool_choice": "auto",
+                "parallel_tool_calls": False,
+                "stream": True,
+            },
+        )
+
+    assert response.status_code == 200
+    assert "event: response.function_call_arguments.delta" in response.text
+    assert "event: response.function_call_arguments.done" in response.text
+    assert '"type":"function_call"' in response.text
+    assert '"call_id":"call-shell"' in response.text
+    request = stub_provider.requests[-1]
+    assert {
+        "role": "developer",
+        "content": "Use tools for shell commands.",
+    } in request["messages"]
+    assert request["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "exec_command",
+                "description": "Run a command",
+                "parameters": tool["parameters"],
+            },
+        }
+    ]
+    assert request["tool_choice"] == "auto"
+    assert request["parallel_tool_calls"] is False
+
+    with client_with_stub(settings, stub_provider) as client:
+        continuation = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "input": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call-shell",
+                        "name": "exec_command",
+                        "arguments": '{"cmd":"pwd"}',
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call-shell",
+                        "output": "/workspace",
+                    },
+                ],
+            },
+        )
+
+    assert continuation.status_code == 200
+    assert stub_provider.requests[-1]["messages"][-2:] == [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call-shell",
+                    "type": "function",
+                    "function": {"name": "exec_command", "arguments": '{"cmd":"pwd"}'},
+                }
+            ],
+        },
+        {"role": "tool", "content": "/workspace", "tool_call_id": "call-shell"},
+    ]
+
+
 def test_responses_post_maps_upstream_502_to_http_200(  # type: ignore[no-untyped-def]
     settings, stub_provider: StubProvider
 ) -> None:
