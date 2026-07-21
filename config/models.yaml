@@ -161,4 +161,4 @@ models:
     context_length: 65536
     max_num_seqs: 1
     trust_remote_code: false
-    required: false
+    required: true
