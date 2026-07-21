@@ -54,7 +54,9 @@ def test_route_selection_has_machine_reasons() -> None:
 @pytest.mark.parametrize(
     ("model", "mode"),
     [
-        ("dgx-moa-chat", "chat"),
+        ("dgx-moa", "moa"),
+        ("dgx-moa-fast", "fast"),
+        ("dgx-moa-chat", "fast"),
         ("dgx-moa-agent", "agent"),
         ("dgx-moa-orchestrated", "orchestrated"),
     ],
@@ -66,7 +68,9 @@ def test_public_model_aliases(model: str, mode: str) -> None:
 @pytest.mark.parametrize(
     ("model", "mode"),
     [
-        ("dgx-moa-chat", "chat"),
+        ("dgx-moa", "moa"),
+        ("dgx-moa-fast", "fast"),
+        ("dgx-moa-chat", "fast"),
         ("dgx-moa-orchestrated", "orchestrated"),
     ],
 )
@@ -81,10 +85,10 @@ def test_unknown_model_is_rejected() -> None:
 
 def test_request_classes_and_roles() -> None:
     assert (
-        classify_request("chat", [{"role": "user", "content": "Hello"}], None, {}) == "plain_chat"
+        classify_request("fast", [{"role": "user", "content": "Hello"}], None, {}) == "plain_chat"
     )
     assert (
-        classify_request("chat", [{"role": "user", "content": "What changed?"}], None, {})
+        classify_request("moa", [{"role": "user", "content": "What changed?"}], None, {})
         == "read_only_question"
     )
     assert (
@@ -99,17 +103,22 @@ def test_request_classes_and_roles() -> None:
     assert classify_request("orchestrated", [], None, {"recovery_task": True}) == "recovery_task"
     assert classify_request("orchestrated", [], None, {"authentication": True}) == "high_risk_task"
     assert classify_request("orchestrated", [], None, {}) == "explicit_orchestrated"
-    assert required_roles("chat", "plain_chat") == ("executor",)
-    assert required_roles("agent", "high_risk_task") == ("executor",)
-    assert required_roles("orchestrated", "multi_file_task") == ("planner", "executor")
-    assert required_roles("orchestrated", "high_risk_task") == ("planner", "executor", "reviewer")
-    assert required_roles("orchestrated", "explicit_orchestrated", reasoner_mode="required") == (
-        "planner",
-        "executor",
-        "reviewer",
+    assert required_roles("fast", "plain_chat") == ("executor",)
+    assert required_roles("moa", "plain_chat") == ("reasoner", "executor")
+    assert required_roles("agent", "high_risk_task") == ("reasoner", "executor")
+    assert required_roles("orchestrated", "multi_file_task") == (
         "reasoner",
+        "executor",
     )
-    assert optional_roles("orchestrated", reasoner_mode="optional") == ("reasoner",)
+    assert required_roles("orchestrated", "high_risk_task") == (
+        "reasoner",
+        "executor",
+    )
+    assert required_roles("orchestrated", "explicit_orchestrated", reasoner_mode="required") == (
+        "reasoner",
+        "executor",
+    )
+    assert optional_roles("orchestrated", reasoner_mode="optional") == ()
     assert optional_roles("agent", reasoner_mode=None) == ()
     assert review_fails_closed("high_risk_task") is True
     assert review_fails_closed("explicit_orchestrated") is False

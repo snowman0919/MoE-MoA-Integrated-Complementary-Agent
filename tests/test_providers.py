@@ -53,11 +53,56 @@ def tracked_stream_transport(
 
 def test_stage_timeout_defaults(settings) -> None:  # type: ignore[no-untyped-def]
     assert settings.limits.planner_timeout_seconds == 120
+    assert settings.limits.reasoner_timeout_seconds == 120
     assert settings.limits.executor_first_byte_timeout_seconds == 120
     assert settings.limits.executor_total_timeout_seconds == 900
     assert settings.limits.reviewer_timeout_seconds == 120
     assert settings.limits.model_load_timeout_seconds == 1_200
     assert settings.limits.tool_continuation_timeout_seconds == 600
+
+
+def test_ollama_reasoner_contract(settings) -> None:  # type: ignore[no-untyped-def]
+    model = settings.models["reasoner"].model_copy(
+        update={"provider": "ollama", "served_name": "Qwythos-v2-9B:Q5", "ollama_keep_alive": -1}
+    )
+    schema = {"type": "object", "properties": {"confidence": {"type": "number"}}}
+    body = ModelProvider.ollama_body(
+        model,
+        {
+            "messages": [{"role": "system", "content": "reason"}],
+            "max_tokens": 321,
+            "tools": [{"type": "function"}],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "reasoner", "schema": schema},
+            },
+        },
+    )
+    assert body == {
+        "model": "Qwythos-v2-9B:Q5",
+        "messages": [{"role": "system", "content": "reason"}],
+        "stream": False,
+        "keep_alive": -1,
+        "options": {"num_ctx": 65536, "num_predict": 321},
+        "format": schema,
+    }
+    response = ModelProvider.ollama_response(
+        {
+            "message": {"role": "assistant", "content": '{"confidence":0.8}'},
+            "done": True,
+            "prompt_eval_count": 7,
+            "eval_count": 3,
+        }
+    )
+    assert response["usage"] == {
+        "prompt_tokens": 7,
+        "completion_tokens": 3,
+        "total_tokens": 10,
+    }
+    with pytest.raises(ValueError, match="cannot issue tools"):
+        ModelProvider.ollama_response(
+            {"message": {"content": "x", "tool_calls": [{"function": {"name": "shell"}}]}}
+        )
 
 
 def test_judge_is_read_only(settings) -> None:  # type: ignore[no-untyped-def]

@@ -12,7 +12,7 @@ from contextlib import contextmanager
 import httpx
 import pytest
 from dgx_moa import providers
-from dgx_moa.api import create_app, has_matching_tool_result
+from dgx_moa.api import create_app, has_matching_tool_result, ollama_model_ready
 from dgx_moa.config import Settings
 from dgx_moa.controller import fingerprint
 from dgx_moa.lifecycle import (
@@ -113,10 +113,28 @@ def block_profile_control(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("dgx_moa.profiles.subprocess.run", reject_control)
 
 
+def test_systemd_lifecycle_driver_uses_model_load_timeout(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    def driver(unit_map, *, timeout_seconds):  # type: ignore[no-untyped-def]
+        captured.update(unit_map=unit_map, timeout_seconds=timeout_seconds)
+        return FakeLifecycleDriver({})
+
+    monkeypatch.setattr("dgx_moa.api.SystemdLifecycleDriver", driver)
+    settings.limits.model_load_timeout_seconds = 123.0
+
+    with TestClient(create_app(settings)):
+        pass
+
+    assert captured == {"unit_map": {}, "timeout_seconds": 123.0}
+
+
 async def direct_chat(app, session_id: str, *, stream: bool = False):  # type: ignore[no-untyped-def]
     return await chat_endpoint(app)(
         ChatRequest(
-            model="dgx-moa-agent",
+            model="dgx-moa-fast",
             stream=stream,
             messages=[{"role": "user", "content": "work"}],
         ),
@@ -1198,6 +1216,116 @@ async def test_stream_tool_calls_create_one_continuation_before_stream_release(
     assert record.continuation_lease_count == 1
 
 
+def test_stream_tool_continuation_without_session_header_correlates_by_token(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    configured = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "api_key": None,
+            "api_keys": {
+                "client-a": "isolated-client-a-token-20260721",
+                "client-b": "isolated-client-b-token-20260721",
+            },
+        }
+    )
+    tool_delta = (
+        b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"stream-call",'
+        b'"type":"function","function":{"name":"read_file","arguments":"{}"}}]}}]}\n\n'
+    )
+    terminal = b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+    done = b"data: [DONE]\n\n"
+    original_complete = stub_provider.complete
+
+    async def streamed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        async def upstream():  # type: ignore[no-untyped-def]
+            yield tool_delta
+            yield terminal
+            yield done
+
+        return upstream()
+
+    async def continue_after_tool(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor" and any(
+            message.get("role") == "tool" for message in request["messages"]
+        ):
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "recovered"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original_complete(role, model, request, **kwargs)
+
+    stub_provider.stream = streamed  # type: ignore[method-assign]
+    stub_provider.complete = continue_after_tool  # type: ignore[method-assign]
+    continuation = {
+        "model": "dgx-moa-agent",
+        "messages": [
+            {"role": "user", "content": "work"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "stream-call",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "stream-call",
+                "content": json.dumps(
+                    {
+                        "tool_name": "read_file",
+                        "stderr": "File not found: x",
+                        "exit_code": 0,
+                    }
+                ),
+            },
+        ],
+    }
+    with client_with_stub(configured, stub_provider) as client:
+        first = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer isolated-client-a-token-20260721"},
+            json={
+                "model": "dgx-moa-agent",
+                "stream": True,
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        session_id = first.headers["X-Session-ID"]
+        original_state = client.app.state.store.get(session_id)
+        wrong_token = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer isolated-client-b-token-20260721"},
+            json=continuation,
+        )
+        after_wrong_token = client.app.state.store.get(session_id)
+        correct_token = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer isolated-client-a-token-20260721"},
+            json=continuation,
+        )
+        final_state = client.app.state.store.get(session_id)
+
+    assert first.status_code == 200
+    assert original_state and original_state.pending_tool_call_ids == ["stream-call"]
+    assert wrong_token.status_code == 200
+    assert wrong_token.headers["X-Session-ID"] != session_id
+    assert after_wrong_token and after_wrong_token.tool_results == []
+    assert correct_token.status_code == 200
+    assert correct_token.headers["X-Session-ID"] == session_id
+    assert final_state and final_state.pending_tool_call_ids == []
+    assert final_state.tool_results[0]["stderr"] == "File not found: x"
+    assert final_state.failures[0]["root_cause_summary"] == "tool execution failed"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("malformed", [False, True])
 async def test_synthesized_done_and_malformed_sse_release_stream_leases(
@@ -1387,11 +1515,8 @@ async def test_concurrent_cold_api_requests_return_one_json_load_and_usage_each(
     assert not any(operation == "stop" for operation, _ in driver.calls)
 
 
-@pytest.mark.parametrize(
-    "reasoner_mode",
-    ["required", "optional"],
-)
-def test_explicit_reasoner_policy_is_required_or_degraded_when_cold(
+@pytest.mark.parametrize("reasoner_mode", ["required"])
+def test_explicit_reasoner_policy_is_required_when_cold(
     settings,
     stub_provider: StubProvider,
     reasoner_mode: str,
@@ -1438,29 +1563,14 @@ def test_explicit_reasoner_policy_is_required_or_degraded_when_cold(
                 break
             time.sleep(0.001)
         role_usage = app.state.usage.recent_role_requests("reasoner")
-        events = app.state.store.events(reasoner_mode)
 
     assert len(role_usage) == 1
     assert role_usage[0].load_triggered is True
     assert driver.calls.count(("start", "reasoner")) == 1
-    if reasoner_mode == "required":
-        assert response.status_code == 503
-        assert response.headers["X-DGX-MOA-Model-Role"] == "reasoner"
-        assert role_usage[0].failure_class == "model_loading"
-        assert "reasoner" not in stub_provider.calls
-    else:
-        assert response.status_code == 200
-        assert "reasoner" not in stub_provider.calls
-        assert role_usage[0].failure_class == "reasoner_unavailable"
-        assert any(
-            event["event_type"] == "role_degraded"
-            and event["payload"]
-            == {
-                "role": "reasoner",
-                "reason": "reasoner_unavailable",
-            }
-            for event in events
-        )
+    assert response.status_code == 503
+    assert response.headers["X-DGX-MOA-Model-Role"] == "reasoner"
+    assert role_usage[0].failure_class == "model_loading"
+    assert "reasoner" not in stub_provider.calls
 
 
 def test_explicit_ready_reasoner_is_used_only_when_selected(
@@ -1480,7 +1590,7 @@ def test_explicit_ready_reasoner_is_used_only_when_selected(
         reasoner_usage = client.app.state.usage.recent_role_requests("reasoner")
 
     assert response.status_code == 200
-    assert stub_provider.calls[:3] == ["reasoner", "planner", "executor"]
+    assert stub_provider.calls == ["reasoner", "executor", "executor"]
     assert len(reasoner_usage) == 1
     assert reasoner_usage[0].success is True
 
@@ -1530,7 +1640,7 @@ def test_failure_circuit_blocks_mutation_but_preserves_ready_traffic(
             "/v1/chat/completions",
             headers={"Authorization": "Bearer test-secret"},
             json={
-                "model": "dgx-moa-agent",
+                "model": "dgx-moa-fast",
                 "messages": [{"role": "user", "content": "work"}],
             },
         )
@@ -1593,7 +1703,7 @@ def test_observe_lifecycle_records_state_without_blocking_or_controlling(
         lifecycle_record = app.state.lifecycle_store.get("executor")
 
     assert response.status_code == 200
-    assert stub_provider.calls == ["executor"]
+    assert stub_provider.calls == ["reasoner", "executor"]
     assert driver.calls == [("status", "executor")]
     assert lifecycle_record.state == "ready"
     assert status_response.json()["control"] == "observe_only"
@@ -1678,7 +1788,7 @@ def test_disabled_lifecycle_bypasses_control_and_reports_external_state(
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
-    assert stub_provider.calls == ["executor"]
+    assert stub_provider.calls == ["reasoner", "executor"]
     assert driver.calls == []
     assert status_response.status_code == 200
     payload = status_response.json()
@@ -1775,6 +1885,7 @@ def test_model_status_is_authenticated_typed_and_content_free(
     assert payload["lifecycle_mode"] == "observe"
     assert set(payload) == {
         "role",
+        "lifecycle_control",
         "state",
         "generation",
         "ready",
@@ -1952,12 +2063,18 @@ async def test_managed_request_rejects_an_unmapped_required_role_honestly(
         | {
             "lifecycle_mode": "fixed",
             "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+            "models": settings.model_dump()["models"]
+            | {
+                "reasoner": settings.model_dump()["models"]["reasoner"]
+                | {"lifecycle_control": "external"}
+            },
         }
     )
     driver = FakeLifecycleDriver({"executor": "inactive"})
 
-    async def reject_health(role: str) -> bool:
-        raise AssertionError(f"unmapped request probed health for {role}")
+    async def external_health(role: str) -> bool:
+        assert role == "reasoner"
+        return True
 
     async def reject_sleep(seconds: float) -> None:
         raise AssertionError(f"unmapped request slept for {seconds}")
@@ -1965,7 +2082,7 @@ async def test_managed_request_rejects_an_unmapped_required_role_honestly(
     app = create_app(
         controlled,
         lifecycle_driver=driver,
-        lifecycle_health_probe=reject_health,
+        lifecycle_health_probe=external_health,
         lifecycle_clock=lambda: 100.0,
         lifecycle_sleeper=reject_sleep,
     )
@@ -1985,10 +2102,6 @@ async def test_managed_request_rejects_an_unmapped_required_role_honestly(
         app.state.provider = stub_provider
         app.state.controller.provider = stub_provider
 
-        def reject_session(*args, **kwargs):  # type: ignore[no-untyped-def]
-            raise AssertionError("controller mutated for an unmanaged required role")
-
-        app.state.controller.session = reject_session
         response = await chat_endpoint(app)(
             ChatRequest(
                 model="dgx-moa-orchestrated",
@@ -2029,8 +2142,8 @@ async def test_managed_request_rejects_an_unmapped_required_role_honestly(
     assert usage.model_state == "cold"
     assert usage.load_triggered is False
     assert usage.retryable_failure_class is None
+    assert stub_provider.calls == ["reasoner", "executor"]
     assert driver.calls == [("status", "executor")]
-    assert stub_provider.calls == []
 
 
 @pytest.mark.asyncio
@@ -2104,9 +2217,11 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         headers = {"Authorization": "Bearer test-secret", "X-Session-ID": "session-1"}
         models = client.get("/v1/models", headers=headers).json()
         assert [model["id"] for model in models["data"]] == [
-            "dgx-moa-chat",
+            "dgx-moa",
+            "dgx-moa-fast",
             "dgx-moa-agent",
             "dgx-moa-orchestrated",
+            "dgx-moa-chat",
         ]
         assert all(model["context_length"] == 65536 for model in models["data"])
         response = client.post(
@@ -2119,7 +2234,345 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         call = response.json()["choices"][0]["message"]["tool_calls"][0]
         assert call["id"] == "call-preserved"
         assert response.json()["usage"]["total_tokens"] == 3
-        assert stub_provider.calls == ["executor"]
+        assert stub_provider.calls == ["reasoner", "executor"]
+
+
+def test_multiple_api_tokens_are_attributed_by_safe_id(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    configured = Settings.model_validate(
+        settings.model_dump()
+        | {"api_key": None, "api_keys": {"opencode": "token-one", "hermes": "token-two"}}
+    )
+    with client_with_stub(configured, stub_provider) as client:
+        for token in ("token-one", "token-two"):
+            response = client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"model": "dgx-moa-fast", "messages": [{"role": "user", "content": "x"}]},
+            )
+            assert response.status_code == 200
+        assert (
+            client.get("/v1/models", headers={"Authorization": "Bearer unknown"}).status_code == 401
+        )
+        records = client.app.state.usage.recent_requests()
+        per_token = client.app.state.usage.api_token_statistics()
+
+    assert {record.api_token_id for record in records} == {"opencode", "hermes"}
+    assert per_token["opencode"]["requests"] == 1
+    assert per_token["hermes"]["requests"] == 1
+
+
+def test_required_reasoner_failure_is_typed_and_never_degrades(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    async def fail_reasoner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reasoner":
+            raise httpx.ConnectError("offline")
+        return await StubProvider.complete(stub_provider, role, model, request, **kwargs)
+
+    stub_provider.complete = fail_reasoner  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa", "messages": [{"role": "user", "content": "work"}]},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "reasoner_required_unavailable"
+    assert response.headers["X-DGX-MOA-Model-Role"] == "reasoner"
+    assert stub_provider.calls == []
+
+
+def test_executor_selected_planner_gets_usage_and_lease_tracking(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def select_planner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor" and (
+            request.get("response_format", {}).get("json_schema", {}).get("name")
+            == "orchestration_decision"
+        ):
+            stub_provider.calls.append(role)
+            stub_provider.requests.append(request)
+            stub_provider.call_options.append(kwargs)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "action": "invoke_agents",
+                                    "required_agents": ["planner"],
+                                    "optional_agents": [],
+                                    "reason": {"planner": "decomposition needed"},
+                                    "parallelizable": False,
+                                    "continue_after": "synthesize",
+                                    "confidence": 0.8,
+                                }
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = select_planner  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "make the focused change"}],
+                "metadata": {"target_clear": True, "expected_files": 1},
+            },
+        )
+        usage = client.app.state.usage.recent_requests()[0]
+        planner_rows = client.app.state.usage.recent_role_requests("planner")
+        assert_no_request_leases(client.app)
+
+    assert response.status_code == 200
+    assert stub_provider.calls == ["reasoner", "executor", "planner", "executor"]
+    assert usage.roles_required == ("reasoner", "executor", "planner")
+    assert len(planner_rows) == 1 and planner_rows[0].success is True
+
+
+def test_executor_selected_cold_planner_triggers_load_and_typed_usage(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {
+                role: f"dgx-moa-dev-{role}.service" for role in ("reasoner", "executor", "planner")
+            },
+        }
+    )
+    driver = FakeLifecycleDriver(
+        {"reasoner": "active", "executor": "active", "planner": "inactive"}
+    )
+    original = stub_provider.complete
+
+    async def select_planner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor" and (
+            request.get("response_format", {}).get("json_schema", {}).get("name")
+            == "orchestration_decision"
+        ):
+            stub_provider.calls.append(role)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "action": "invoke_agents",
+                                    "required_agents": ["planner"],
+                                    "optional_agents": [],
+                                    "reason": {"planner": "decomposition needed"},
+                                    "parallelizable": False,
+                                    "continue_after": "synthesize",
+                                    "confidence": 0.8,
+                                }
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    async def health_probe(role: str) -> bool:
+        return role != "planner"
+
+    stub_provider.complete = select_planner  # type: ignore[method-assign]
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health_probe,
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "make the focused change"}],
+                "metadata": {"target_clear": True, "expected_files": 1},
+            },
+        )
+        for _ in range(1_000):
+            if ("start", "planner") in driver.calls:
+                break
+            time.sleep(0.001)
+        usage = app.state.usage.recent_requests()[0]
+        planner_rows = app.state.usage.recent_role_requests("planner")
+        assert_no_request_leases(app)
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "model_loading"
+    assert response.headers["X-DGX-MOA-Model-Role"] == "planner"
+    assert stub_provider.calls == ["reasoner", "executor"]
+    assert usage.roles_required == ("reasoner", "executor", "planner")
+    assert usage.retryable_failure_class == "model_loading"
+    assert len(planner_rows) == 1
+    assert planner_rows[0].load_triggered is True
+    assert planner_rows[0].failure_class == "model_loading"
+    assert driver.calls.count(("start", "planner")) == 1
+
+
+def test_policy_selected_cold_reviewer_triggers_load_before_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {
+                role: f"dgx-moa-dev-{role}.service" for role in ("reasoner", "executor", "reviewer")
+            },
+        }
+    )
+    driver = FakeLifecycleDriver(
+        {"reasoner": "active", "executor": "active", "reviewer": "inactive"}
+    )
+
+    async def health_probe(role: str) -> bool:
+        return role != "reviewer"
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health_probe,
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "review this change"}],
+                "metadata": {"diff_summary": "bounded diff"},
+            },
+        )
+        for _ in range(1_000):
+            if ("start", "reviewer") in driver.calls:
+                break
+            time.sleep(0.001)
+        usage = app.state.usage.recent_requests()[0]
+        reviewer_rows = app.state.usage.recent_role_requests("reviewer")
+        assert_no_request_leases(app)
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "model_loading"
+    assert response.headers["X-DGX-MOA-Model-Role"] == "reviewer"
+    assert stub_provider.calls == ["reasoner", "executor"]
+    assert usage.roles_required == ("reasoner", "executor", "reviewer")
+    assert usage.model_state == "loading"
+    assert len(reviewer_rows) == 1
+    assert reviewer_rows[0].load_triggered is True
+    assert reviewer_rows[0].failure_class == "model_loading"
+    assert driver.calls.count(("start", "reviewer")) == 1
+
+
+def test_policy_selected_ready_reviewer_gets_one_dynamic_lease(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {
+                role: f"dgx-moa-dev-{role}.service" for role in ("reasoner", "executor", "reviewer")
+            },
+        }
+    )
+    driver = FakeLifecycleDriver({"reasoner": "active", "executor": "active", "reviewer": "active"})
+
+    async def health_probe(role: str) -> bool:
+        return role in {"reasoner", "executor", "reviewer"}
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health_probe,
+    )
+    acquisitions: list[tuple[tuple[str, ...], str]] = []
+    with TestClient(app) as client:
+        original = app.state.lifecycle.acquire_request_leases
+
+        async def track_acquisition(request_id, roles, *, kind, require_ready):  # type: ignore[no-untyped-def]
+            role_tuple = tuple(roles)
+            leases = await original(
+                request_id,
+                role_tuple,
+                kind=kind,
+                require_ready=require_ready,
+            )
+            acquisitions.append((role_tuple, kind))
+            return leases
+
+        app.state.lifecycle.acquire_request_leases = track_acquisition
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "review this change"}],
+                "metadata": {"diff_summary": "bounded diff"},
+            },
+        )
+        reviewer_rows = app.state.usage.recent_role_requests("reviewer")
+        assert_no_request_leases(app)
+
+    assert response.status_code == 200
+    assert acquisitions.count((("reviewer",), "active_request")) == 1
+    assert len(reviewer_rows) == 1
+    assert reviewer_rows[0].success is True
+
+
+def test_dynamically_selected_unconfigured_role_is_typed_unmanaged(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    models = settings.model_dump()["models"]
+    models.pop("planner")
+    controlled = Settings.model_validate(settings.model_dump() | {"models": models})
+    app = create_app(controlled)
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "change four files"}],
+                "metadata": {"expected_files": 4},
+            },
+        )
+        usage = app.state.usage.recent_requests()[0]
+        planner_rows = app.state.usage.recent_role_requests("planner")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "model_not_managed"
+    assert response.headers["X-DGX-MOA-Model-Role"] == "planner"
+    assert stub_provider.calls == ["reasoner", "executor"]
+    assert usage.roles_required == ("reasoner", "executor", "planner")
+    assert usage.model_state == "cold"
+    assert len(planner_rows) == 1
+    assert planner_rows[0].failure_class == "model_unavailable"
 
 
 def test_nonstream_usage_is_content_free_and_uses_opaque_server_ids(
@@ -2154,7 +2607,7 @@ def test_nonstream_usage_is_content_free_and_uses_opaque_server_ids(
                 "User-Agent": raw_user_agent,
             },
             json={
-                "model": "dgx-moa-agent",
+                "model": "dgx-moa-fast",
                 "messages": [{"role": "user", "content": raw_prompt}],
                 "tools": [
                     {
@@ -2182,9 +2635,9 @@ def test_nonstream_usage_is_content_free_and_uses_opaque_server_ids(
     assert response.json()["choices"][0]["message"]["content"] == raw_response
     assert record.session_id != raw_session
     assert record.client_class == "openai-python"
-    assert record.model_alias == "dgx-moa-agent"
-    assert record.runtime_mode == "agent"
-    assert record.request_class == "native_agent_turn"
+    assert record.model_alias == "dgx-moa-fast"
+    assert record.runtime_mode == "fast"
+    assert record.request_class == "plain_chat"
     assert record.roles_required == ("executor",)
     assert record.first_byte_at is not None
     assert record.accepted_at <= record.first_byte_at <= record.completed_at
@@ -2228,7 +2681,7 @@ def test_usage_correlates_repeated_sessions_without_storing_the_raw_value(
                     "X-Session-ID": raw_session,
                 },
                 json={
-                    "model": "dgx-moa-agent",
+                    "model": "dgx-moa-fast",
                     "messages": [{"role": "user", "content": "work"}],
                 },
             )
@@ -2433,7 +2886,7 @@ def test_invalid_request_field_combinations_return_typed_validation_errors(
         (
             "dgx-moa-orchestrated",
             "automatic",
-            "metadata.reasoner_mode must be required or optional",
+            "Reasoner is required; use dgx-moa-fast to bypass it",
         ),
     ],
 )
@@ -2460,8 +2913,18 @@ def test_reasoner_policy_requires_explicit_valid_orchestrated_mode(
     assert stub_provider.calls == []
 
 
-@pytest.mark.parametrize("model", ["dgx-moa-chat", "dgx-moa-agent"])
-def test_direct_modes_are_executor_only(settings, stub_provider: StubProvider, model: str) -> None:  # type: ignore[no-untyped-def]
+@pytest.mark.parametrize(
+    ("model", "expected_calls"),
+    [
+        ("dgx-moa-chat", ["executor"]),
+        ("dgx-moa-fast", ["executor"]),
+        ("dgx-moa", ["reasoner", "executor"]),
+        ("dgx-moa-agent", ["reasoner", "executor"]),
+    ],
+)
+def test_core_and_fast_profile_roles(
+    settings, stub_provider: StubProvider, model: str, expected_calls: list[str]
+) -> None:  # type: ignore[no-untyped-def]
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(
             "/v1/chat/completions",
@@ -2473,7 +2936,7 @@ def test_direct_modes_are_executor_only(settings, stub_provider: StubProvider, m
             },
         )
     assert response.status_code == 200
-    assert stub_provider.calls == ["executor"]
+    assert stub_provider.calls == expected_calls
 
 
 def test_chat_returns_normal_assistant_content(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -2543,7 +3006,7 @@ def test_nonstream_omits_unstorable_token_statistics_without_changing_response(
         response = client.post(
             "/v1/chat/completions",
             headers={"Authorization": "Bearer test-secret"},
-            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
+            json={"model": "dgx-moa-fast", "messages": [{"role": "user", "content": "x"}]},
         )
         usage = assert_usage(client.app, "completed")
 
@@ -2570,7 +3033,27 @@ def test_orchestrated_mode_uses_policy_roles(settings, stub_provider: StubProvid
             },
         )
     assert response.status_code == 200
-    assert stub_provider.calls == ["planner", "executor"]
+    assert stub_provider.calls == ["reasoner", "executor", "planner", "executor"]
+
+
+def test_security_architecture_without_implementation_evidence_skips_reviewer(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "design the security architecture"}],
+                "metadata": {"architecture": True, "authentication": True},
+            },
+        )
+        usage = client.app.state.usage.recent_requests()[0]
+
+    assert response.status_code == 200
+    assert stub_provider.calls == ["reasoner", "executor", "planner", "executor"]
+    assert usage.roles_required == ("reasoner", "executor", "planner")
 
 
 def test_role_calls_receive_exact_stage_timeouts(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -2586,11 +3069,12 @@ def test_role_calls_receive_exact_stage_timeouts(settings, stub_provider: StubPr
         )
 
     assert response.status_code == 200
-    assert stub_provider.calls == ["planner", "executor", "reviewer"]
+    assert stub_provider.calls == ["reasoner", "executor", "reviewer", "executor"]
     assert stub_provider.call_options == [
-        {"timeout_seconds": 120, "stage": "planner"},
-        {"timeout_seconds": 900, "stage": "executor_total"},
+        {"timeout_seconds": 120, "stage": "reasoner"},
+        {"timeout_seconds": 120, "stage": "orchestration"},
         {"timeout_seconds": 120, "stage": "reviewer"},
+        {"timeout_seconds": 900, "stage": "executor_total"},
     ]
 
 
@@ -2614,9 +3098,8 @@ def test_orchestrated_timing_records_role_durations(settings, stub_provider: Stu
 
     assert response.status_code == 200
     assert state
-    assert all(state.timings_ms[stage] >= 0 for stage in ("planner", "executor_total", "reviewer"))
+    assert all(state.timings_ms[stage] >= 0 for stage in ("executor_total", "reviewer"))
     assert timing_event["payload"]["stage_status"] == {
-        "planner": "completed",
         "executor_total": "completed",
         "reviewer": "completed",
     }
@@ -2681,7 +3164,7 @@ def test_request_timing_event_is_numeric_and_content_free(
 @pytest.mark.parametrize(
     ("stage", "model", "metadata", "stream"),
     [
-        ("planner", "dgx-moa-orchestrated", {"authentication": True}, False),
+        ("planner", "dgx-moa-orchestrated", {"expected_files": 4}, False),
         ("executor_first_byte", "dgx-moa-agent", {}, True),
         ("executor_total", "dgx-moa-agent", {}, False),
         (
@@ -2751,7 +3234,7 @@ def test_orchestrated_assistant_answer_without_evidence_skips_review(
     original = stub_provider.complete
 
     async def natural(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
-        if role == "executor":
+        if role == "executor" and not request.get("response_format"):
             stub_provider.calls.append(role)
             return {
                 "choices": [
@@ -2761,7 +3244,7 @@ def test_orchestrated_assistant_answer_without_evidence_skips_review(
                     }
                 ]
             }
-        return await original(role, model, request)
+        return await original(role, model, request, **kwargs)
 
     stub_provider.complete = natural  # type: ignore[method-assign]
     with client_with_stub(settings, stub_provider) as client:
@@ -2776,7 +3259,7 @@ def test_orchestrated_assistant_answer_without_evidence_skips_review(
         )
 
     assert response.status_code == 200
-    assert stub_provider.calls == ["planner", "executor"]
+    assert stub_provider.calls == ["reasoner", "executor", "executor"]
 
 
 @pytest.mark.parametrize("failure", ["http", "timeout", "value"])
@@ -2786,7 +3269,7 @@ def test_low_risk_review_failure_preserves_executor_response(
     original = stub_provider.complete
 
     async def fail_review(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
-        if role == "executor":
+        if role == "executor" and not request.get("response_format"):
             return {
                 "id": "chatcmpl-preserved",
                 "choices": [
@@ -2802,7 +3285,7 @@ def test_low_risk_review_failure_preserves_executor_response(
             if failure == "timeout":
                 raise httpx.ReadTimeout("review timed out")
             raise ValueError("invalid review")
-        return await original(role, model, request)
+        return await original(role, model, request, **kwargs)
 
     stub_provider.complete = fail_review  # type: ignore[method-assign]
     with client_with_stub(settings, stub_provider) as client:
@@ -2833,7 +3316,7 @@ def test_high_risk_review_failure_returns_typed_bad_gateway(
     original = stub_provider.complete
 
     async def fail_review(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
-        if role == "executor":
+        if role == "executor" and not request.get("response_format"):
             return {
                 "choices": [
                     {
@@ -2862,7 +3345,7 @@ def test_high_risk_review_failure_returns_typed_bad_gateway(
                     "invalid reviewer request", request=response.request, response=response
                 )
             raise ValueError("invalid review")
-        return await original(role, model, request)
+        return await original(role, model, request, **kwargs)
 
     stub_provider.complete = fail_review  # type: ignore[method-assign]
     with client_with_stub(settings, stub_provider) as client:
@@ -2881,8 +3364,10 @@ def test_high_risk_review_failure_returns_typed_bad_gateway(
         state = client.app.state.store.get(f"high-risk-{failure}")
         events = client.app.state.store.events(f"high-risk-{failure}")
 
-    assert response.status_code == 502
-    assert response.json()["error"]["type"] == "backend_error"
+    assert response.status_code == (504 if failure == "timeout" else 502)
+    assert response.json()["error"]["type"] == (
+        "timeout_error" if failure == "timeout" else "backend_error"
+    )
     assert state and state.review_status == "failed"
     assert any(event["event_type"] == "review_failed" for event in events)
 
@@ -2893,7 +3378,7 @@ def test_length_finish_is_preserved_and_never_completes_session(
     original = stub_provider.complete
 
     async def truncated(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
-        if role == "executor":
+        if role == "executor" and not request.get("response_format"):
             return {
                 "id": "chatcmpl-truncated",
                 "choices": [
@@ -2903,7 +3388,7 @@ def test_length_finish_is_preserved_and_never_completes_session(
                     }
                 ],
             }
-        return await original(role, model, request)
+        return await original(role, model, request, **kwargs)
 
     stub_provider.complete = truncated  # type: ignore[method-assign]
     with client_with_stub(settings, stub_provider) as client:
@@ -3065,6 +3550,74 @@ def test_tool_result_continuation_uses_same_session(settings, stub_provider: Stu
         ]
 
 
+def test_failed_tool_evidence_reinvokes_reasoner_and_overrides_self_confidence(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def finish_after_failed_tool(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor" and any(
+            message.get("role") == "tool" for message in request["messages"]
+        ):
+            stub_provider.calls.append(role)
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "failure observed"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"total_tokens": 4},
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = finish_after_failed_tool  # type: ignore[method-assign]
+    headers = {"Authorization": "Bearer test-secret", "X-Session-ID": "failed-tool"}
+    with client_with_stub(settings, stub_provider) as client:
+        first = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "work"}]},
+        )
+        call = first.json()["choices"][0]["message"]
+        second = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [
+                    {"role": "user", "content": "work"},
+                    call,
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-preserved",
+                        "content": json.dumps(
+                            {
+                                "tool_name": "shell",
+                                "stderr": "assertion failed",
+                                "exit_code": 2,
+                            }
+                        ),
+                    },
+                ],
+            },
+        )
+        state = client.app.state.store.get("failed-tool")
+        reasoner_requests = [
+            request
+            for request in stub_provider.requests
+            if request.get("response_format", {}).get("json_schema", {}).get("name")
+            == "reasoner_contribution"
+        ]
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert stub_provider.calls.count("reasoner") == 2
+    assert state and state.failures
+    assert state.derived_confidence == "low"
+    assert "assertion failed" in json.dumps(reasoner_requests[-1])
+
+
 def test_title_request_does_not_set_the_work_session_objective(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -3096,6 +3649,41 @@ def test_title_request_does_not_set_the_work_session_objective(
         work_state = client.app.state.store.get("shared-session")
         assert title_state and title_state.objective.startswith("Generate a title")
         assert work_state and work_state.objective == "Create AGENTS.md"
+
+
+def test_current_opencode_title_prompt_isolated_from_trailing_work_prompt(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    headers = {"Authorization": "Bearer test-secret", "X-Session-ID": "shared-session"}
+    with client_with_stub(settings, stub_provider) as client:
+        title = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a title generator. You output ONLY a thread title. "
+                            "Nothing else."
+                        ),
+                    },
+                    {"role": "user", "content": "Generate a title for this conversation:\n"},
+                    {
+                        "role": "user",
+                        "content": "Architecture task: inspect authentication boundaries.",
+                    },
+                ],
+            },
+        )
+
+        assert title.status_code == 200
+        title_state = client.app.state.store.get("shared-session:title")
+        work_state = client.app.state.store.get("shared-session")
+        assert title_state and title_state.objective.startswith("Generate a title")
+        assert work_state is None
+        assert stub_provider.calls == ["executor"]
 
 
 def test_auth_enabled_invalid_key_returns_401(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -3226,7 +3814,9 @@ def test_profile_aware_readiness(settings, stub_provider: StubProvider, monkeypa
             return None
 
         async def get(self, url: str) -> httpx.Response:
-            status_code = 200 if url.endswith(":8101/v1/models") else 503
+            status_code = (
+                200 if url.endswith(":8101/v1/models") or url.endswith(":8104/v1/models") else 503
+            )
             return httpx.Response(status_code, request=httpx.Request("GET", url))
 
     monkeypatch.setattr("dgx_moa.api.httpx.AsyncClient", FakeAsyncClient)
@@ -3244,7 +3834,7 @@ def test_profile_aware_readiness(settings, stub_provider: StubProvider, monkeypa
                 "executor": "ready",
                 "planner": "stopped",
                 "reviewer": "stopped",
-                "reasoner": "stopped",
+                "reasoner": "ready",
                 "judge": "stopped",
             },
             "auth_enabled": True,
@@ -3253,6 +3843,85 @@ def test_profile_aware_readiness(settings, stub_provider: StubProvider, monkeypa
         transition = client.get("/readyz")
         assert transition.status_code == 503
         assert transition.json()["status"] == "transitioning"
+
+
+def test_ollama_readiness_requires_resident_model_and_configured_context(settings) -> None:  # type: ignore[no-untyped-def]
+    model = settings.models["reasoner"].model_copy(
+        update={"provider": "ollama", "served_name": "Qwythos-v2-9B:Q5"}
+    )
+    request = httpx.Request("GET", "http://ollama/api/ps")
+    evicted = httpx.Response(200, json={"models": []}, request=request)
+    short_context = httpx.Response(
+        200,
+        json={
+            "models": [
+                {
+                    "name": "Qwythos-v2-9B:Q5",
+                    "model": "Qwythos-v2-9B:Q5",
+                    "context_length": 8192,
+                }
+            ]
+        },
+        request=request,
+    )
+    ready = httpx.Response(
+        200,
+        json={
+            "models": [
+                {
+                    "name": "Qwythos-v2-9B:Q5",
+                    "model": "Qwythos-v2-9B:Q5",
+                    "context_length": 65536,
+                }
+            ]
+        },
+        request=request,
+    )
+
+    assert ollama_model_ready(evicted, model) is False
+    assert ollama_model_ready(short_context, model) is False
+    assert ollama_model_ready(ready, model) is True
+
+
+def test_evicted_external_reasoner_returns_typed_unavailable(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    models = settings.model_dump()["models"]
+    models["reasoner"] |= {"provider": "ollama", "lifecycle_control": "external"}
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+            "models": models,
+        }
+    )
+    driver = FakeLifecycleDriver({"executor": "active"})
+
+    async def health(role: str) -> bool:
+        return role != "reasoner"
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health,
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa",
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.headers["X-DGX-MOA-Model-Role"] == "reasoner"
+    assert response.json()["error"]["code"] == "model_load_failed"
+    assert stub_provider.calls == []
 
 
 def test_coding_request_retries_during_judge(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -3268,6 +3937,41 @@ def test_coding_request_retries_during_judge(settings, stub_provider: StubProvid
         )
         assert response.status_code == 503
         assert response.headers["retry-after"] == "30"
+
+
+def test_pending_adjudication_runs_only_in_exclusive_judge_profile(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    session_id = "judge-pending"
+    with client_with_stub(settings, stub_provider) as client:
+        state = SessionState(
+            session_id=session_id,
+            objective="Resolve a high-risk disagreement",
+            judge_status="required",
+            pending_judge_evidence="Reasoner and Frontier disagree on verified evidence.",
+        )
+        client.app.state.store.save(state)
+        unavailable = client.post(
+            f"/v1/judge/adjudications/{session_id}",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        client.app.state.profiles.record("judge")
+        completed = client.post(
+            f"/v1/judge/adjudications/{session_id}",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        persisted = client.app.state.store.get(session_id)
+        assert_no_request_leases(client.app)
+
+    assert unavailable.status_code == 409
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "accept"
+    assert completed.json()["resume_profile"] == "resident"
+    assert persisted is not None
+    assert persisted.pending_judge_evidence == ""
+    assert persisted.judge_verdict is not None
+    assert stub_provider.calls == ["judge"]
+    assert stub_provider.call_options == [{"timeout_seconds": 300, "stage": "judge"}]
 
 
 def test_coding_request_retries_during_transition(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -3305,7 +4009,7 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         assert "usage" in final
         events = client.app.state.store.events("stream")
         assert sum(event["event_type"] == "stream_completed" for event in events) == 1
-        assert stub_provider.calls == ["executor"]
+        assert stub_provider.calls == ["reasoner", "executor"]
         assert not any(event["event_type"] == "review_completed" for event in events)
         assert events[-1]["created_at"]
         trace = assert_terminal_evidence(settings, client.app.state.store, "stream", "completed")
@@ -3361,7 +4065,7 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
                 model="dgx-moa-orchestrated",
                 stream=True,
                 messages=[{"role": "user", "content": "orchestrate"}],
-                metadata={"session_id": "immediate-stream"},
+                metadata={"session_id": "immediate-stream", "code_review": True},
             ),
             Request({"type": "http", "app": app}),
             x_session_id=None,
@@ -3379,7 +4083,7 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
         first = await asyncio.wait_for(anext(response.body_iterator), timeout=1)
         assert first == first_event
         assert not release.is_set()
-        assert stub_provider.calls == ["planner", "executor"]
+        assert stub_provider.calls == ["reasoner", "executor", "executor"]
         assert not any(
             event["event_type"] == "session_ended"
             for event in app.state.store.events("immediate-stream")
@@ -3391,7 +4095,7 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
         release.set()
         remaining = b"".join([chunk async for chunk in response.body_iterator])
         assert remaining.count(b"data: [DONE]") == 1
-        assert stub_provider.calls == ["planner", "executor"]
+        assert stub_provider.calls == ["reasoner", "executor", "executor"]
         state = app.state.store.get("immediate-stream")
         assert state and state.review_deferred
         assert state.review_status == "deferred"
@@ -3427,7 +4131,7 @@ async def test_stream_total_deadline_does_not_retry_after_first_byte(
         app.state.controller.provider = stub_provider
         response = await chat_endpoint(app)(
             ChatRequest(
-                model="dgx-moa-agent",
+                model="dgx-moa-fast",
                 stream=True,
                 messages=[{"role": "user", "content": "work"}],
                 metadata={"session_id": "total-timeout"},
@@ -3569,7 +4273,7 @@ async def test_streaming_api_first_byte_cancellation_persists_terminal_evidence(
         pending = asyncio.create_task(
             chat_endpoint(app)(
                 ChatRequest(
-                    model="dgx-moa-agent",
+                    model="dgx-moa-fast",
                     stream=True,
                     messages=[{"role": "user", "content": "work"}],
                     metadata={"session_id": "first-byte-cancelled"},
@@ -3721,7 +4425,7 @@ async def test_streaming_api_close_after_done_persists_terminal_success(
                 model="dgx-moa-orchestrated",
                 stream=True,
                 messages=[{"role": "user", "content": "orchestrate"}],
-                metadata={"session_id": "terminal-close"},
+                metadata={"session_id": "terminal-close", "code_review": True},
             ),
             Request({"type": "http", "app": app}),
             x_session_id=None,
@@ -3744,6 +4448,13 @@ async def test_streaming_api_close_after_done_persists_terminal_success(
         state = app.state.store.get("terminal-close")
         assert state
         assert state.finish_reasons == ["stop"]
+        assert (
+            sum(
+                invocation.get("role") == "executor" and invocation.get("mode") == "final_synthesis"
+                for invocation in state.agent_invocations
+            )
+            == 1
+        )
         assert state.review_deferred
         assert state.review_status == "deferred"
         assert state.decisions[-1]["outcome"]["status"] == "success"
@@ -3852,6 +4563,70 @@ def test_api_validation(settings, stub_provider: StubProvider) -> None:  # type:
         }
 
 
+def test_responses_post_returns_openai_response_shape(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider
+) -> None:
+    original = stub_provider.complete
+
+    async def complete(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor":
+            return {
+                "id": "chatcmpl-resp",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "ok",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = complete  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "input": [{"role": "user", "content": "hello"}],
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["object"] == "response"
+    assert body["model"] == "dgx-moa-agent"
+    assert body["status"] == "completed"
+    assert body["output"][0]["type"] == "message"
+    assert body["output"][0]["content"][0]["text"] == "ok"
+    assert body["usage"] == {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7}
+
+
+def test_responses_post_maps_upstream_502_to_http_200(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider
+) -> None:
+    async def connect_failed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        raise httpx.ConnectError("all endpoints unreachable")
+
+    stub_provider.complete = connect_failed  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa-fast", "input": "hello"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["error"]["type"] == "backend_error"
+    assert body["error"]["code"] == "backend_error"
+
+
 def test_upstream_openai_400_envelope_and_status_are_preserved(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -3877,7 +4652,7 @@ def test_upstream_openai_400_envelope_and_status_are_preserved(
         response = client.post(
             "/v1/chat/completions",
             headers={"Authorization": "Bearer test-secret"},
-            json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "x"}]},
+            json={"model": "dgx-moa-fast", "messages": [{"role": "user", "content": "x"}]},
         )
 
     assert response.status_code == 400
@@ -4106,7 +4881,7 @@ def test_provenance_failure_finalizes_exactly_one_failed_usage_row(
     assert second.json()["error"]["message"] == "session runtime provenance changed"
     assert [record.status for record in records] == ["completed", "failed"]
     assert sum(record.status == "failed" for record in records) == 1
-    assert stub_provider.calls == ["executor"]
+    assert stub_provider.calls == ["reasoner", "executor"]
 
 
 def test_route_failure_finalizes_one_usage_row(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -4126,7 +4901,7 @@ def test_route_failure_finalizes_one_usage_row(settings, stub_provider: StubProv
     assert "invalid literal for int" in response.json()["error"]["message"]
     assert stub_provider.calls == []
     assert usage.request_class == "native_agent_turn"
-    assert usage.roles_required == ("executor",)
+    assert usage.roles_required == ("reasoner", "executor")
 
 
 def test_session_setup_failure_finalizes_usage_without_state(

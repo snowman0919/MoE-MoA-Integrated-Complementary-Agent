@@ -1,6 +1,23 @@
 # State
 
-Updated: 2026-07-20
+Updated: 2026-07-21
+
+## Dynamic MoA candidate status
+
+| Capability | Designed | Implemented on `dev` | Unit-tested | Physically validated | Production-enabled |
+| --- | --- | --- | --- | --- | --- |
+| `dgx-moa` Reasoner + Executor core | yes | yes | yes | isolated yes | no |
+| Dynamic Planner/Reviewer routing | yes | yes | yes | isolated generic + OpenCode yes | no |
+| Codex OAuth Frontier modes/fallback | yes | yes | yes | isolated yes | no |
+| Heavy Judge adjudication | yes | yes | yes | no | no |
+| Evidence graph and per-agent trace | yes | yes | yes | isolated yes | no |
+| Multiple API tokens and per-token usage | yes | yes | yes | isolated yes | no |
+
+This table is the current authority. "Isolated yes" does not mean the full
+physical matrix passed. Later sections preserve historical Phase
+1–4 evidence and must not be read as validation of the new dynamic MoA. The
+checked-in gateway still has lifecycle control disabled, Frontier disabled, and
+an empty local unit map. Production is unchanged.
 
 ## Branch and deployment
 
@@ -18,9 +35,11 @@ Updated: 2026-07-20
 - Gateway: authenticated direct tailnet TCP at `100.125.239.72:9000`.
 - Model endpoints: loopback-only executor `8101`, planner `8102`, reviewer `8103`.
 - Context limits are executor, planner, and reviewer `65536`.
-- Development phase one exposes `dgx-moa-chat`, `dgx-moa-agent`, and
-  `dgx-moa-orchestrated` through `/v1/models`. Chat and agent are executor-only;
-  orchestration roles are selected deterministically.
+- The current `dev` candidate exposes `dgx-moa`, `dgx-moa-fast`,
+  `dgx-moa-agent`, and `dgx-moa-orchestrated`. `dgx-moa` is the primary
+  Reasoner + Executor core; `dgx-moa-fast` is the explicitly Executor-only
+  compatibility alias. The orchestrated profile combines deterministic safety
+  policy with a structured Executor routing decision.
 - Complete SSE events are forwarded as they arrive with a single DONE. Streaming
   review is deferred; it does not buffer executor output. Capture and individual
   event bounds are each 1,000,000 bytes.
@@ -35,6 +54,28 @@ Updated: 2026-07-20
   OpenAI Python, HTTPX, OpenCode `1.17.18`, and Hermes Agent `0.18.2` checks in
   Task 9. The post-fix stream reached the client before executor completion and
   used no planner or reviewer. Production was not deployed or restarted.
+- Current dynamic OpenCode evidence additionally passes architecture with
+  Planner + Codex OAuth Frontier in parallel and an evidence-bearing review
+  continuation with local Reviewer + Frontier in parallel. Its automatic title
+  request is isolated to a separate session and forced to the fast Executor-only
+  path. Hermes architecture also passes with Planner + Frontier, and its real
+  four-turn failure recovery now preserves one token-scoped state, reinvokes
+  Reasoner, and selects Frontier after two failures. That recovery included the
+  required marker but failed exact-output formatting. Hermes evidence-bearing
+  review also selects local Reviewer + Frontier after its read continuation,
+  but similarly adds text around the required marker. OpenCode multi-file/
+  recovery now pass with exact output. Hermes multi-file implementation and a
+  post-fix exact-output tool continuation now pass.
+- A controlled real-weight seven-key security task now covers Executor-only,
+  core, Planner, Reviewer, Codex OAuth Frontier, and full relevant-agent
+  variants. All successful final answers scored 7/7, but specialists added
+  latency/tokens and showed no final-answer quality gain on this one task. The
+  latest full row passed strict pre/post review in 125.950 seconds; the latest
+  Reviewer-only row returned 7/7 but its pre-review artifact failed schema
+  validation and therefore remained observability-degraded with confidence
+  `low`. This controlled same-task evidence is paired with real simple,
+  architecture, multi-file, recovery, review, and security task coverage in
+  `docs/VALIDATION.md`; it is not a full variant-by-task cross-product.
 - Automated lifecycle contracts now cover persisted states, single-flight load,
   typed loading progress, content-free usage/decisions/samples, leases/guards,
   bounded idle policy, exact-unit full-stop unload, restart reconciliation,
@@ -83,8 +124,10 @@ Updated: 2026-07-20
   bytes and its best post-unload settle was `120564150272` bytes with owned
   PSS/RSS zero. These host snapshots are noisy comparisons, not GPU-byte
   measurements.
-- The checked-in, undeployed resident target now requires gateway+executor only;
-  planner, reviewer, and reasoner are optional and retain `PartOf` cleanup.
+- The historical Phase 3 checked-in resident target required gateway+executor
+  only. The current dynamic MoA design instead treats the externally managed
+  Ollama Reasoner as normally resident and not subject to local idle unload;
+  Planner and Reviewer remain optional local services with `PartOf` cleanup.
   On-demand loading still requires a separately reviewed fixed/adaptive
   deployment and validated unit map. Rollback restores the prior
   gateway+executor+planner+reviewer dependencies and prior readiness/stop

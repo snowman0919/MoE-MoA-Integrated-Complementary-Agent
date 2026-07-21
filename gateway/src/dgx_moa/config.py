@@ -41,6 +41,7 @@ class Limits(BaseModel):
     max_error_lines: int = 40
     max_diff_summary_lines: int = 100
     planner_tokens: int = 1_500
+    reasoner_tokens: int = 1_500
     executor_tokens: int = 4_096
     executor_max_tokens: int = 16_384
     reviewer_tokens: int = 1_500
@@ -49,9 +50,11 @@ class Limits(BaseModel):
     max_sse_event_bytes: int = 1_000_000
     max_review_evidence_characters: int = 16_000
     planner_timeout_seconds: float = 120
+    reasoner_timeout_seconds: float = 120
     executor_first_byte_timeout_seconds: float = 120
     executor_total_timeout_seconds: float = 900
     reviewer_timeout_seconds: float = 120
+    judge_timeout_seconds: float = 300
     model_load_timeout_seconds: float = 1_200
     tool_continuation_timeout_seconds: float = 600
     usage_sample_window: int = Field(default=512, ge=1)
@@ -125,6 +128,8 @@ def default_lifecycle_roles() -> dict[str, LifecycleRolePolicy]:
             minimum_ready_residency_seconds=600,
         ),
         "reasoner": LifecycleRolePolicy(
+            normally_resident=True,
+            idle_unload_enabled=False,
             minimum_timeout_seconds=300,
             fallback_timeout_seconds=600,
             maximum_timeout_seconds=1_800,
@@ -181,6 +186,9 @@ class ModelConfig(BaseModel):
     base_url: str
     served_name: str
     destination: Path
+    provider: Literal["openai", "ollama"] = "openai"
+    lifecycle_control: Literal["systemd", "external"] = "systemd"
+    ollama_keep_alive: str | int = -1
     context_length: int = Field(ge=65_536)
     max_num_seqs: int = 1
     quantization: str | None = None
@@ -192,11 +200,12 @@ class ModelConfig(BaseModel):
 
 
 class Settings(BaseModel):
-    model_name: str = "dgx-moa-agent"
+    model_name: str = "dgx-moa"
     bind_host: str = "127.0.0.1"
     bind_port: int = 9000
     auth_enabled: bool = True
     api_key: str | None = None
+    api_keys: dict[str, str] = Field(default_factory=dict)
     admin_api_enabled: bool = False
     state_db: Path = Path("data/state/gateway.db")
     run_dir: Path = Path("data/run")
@@ -205,7 +214,8 @@ class Settings(BaseModel):
     controller_commit: str = "unknown"
     vllm_version: str = "unknown"
     frontier_enabled: bool = False
-    frontier_disabled_reason: str = "host_sandbox_capability_blocked"
+    frontier_disabled_reason: str = "configuration_disabled"
+    frontier_config: Path = Path("config/codex-frontier.yaml")
     lifecycle_mode: Literal["disabled", "observe", "fixed", "adaptive"] = "disabled"
     lifecycle_poll_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
     lifecycle_unit_map: dict[str, str] = Field(default_factory=dict)
@@ -220,16 +230,24 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def validate_authentication(self) -> Settings:
-        if self.auth_enabled and (
-            not self.api_key
-            or self.api_key.strip().lower() in API_KEY_PLACEHOLDERS
-            or "replace-with" in self.api_key.strip().lower()
-        ):
+        keys = self.api_keys or ({"default": self.api_key} if self.api_key else {})
+        if any(not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", name) for name in keys):
+            raise ValueError("API token IDs must be lowercase safe identifiers")
+        invalid = any(
+            not value
+            or value.strip().lower() in API_KEY_PLACEHOLDERS
+            or "replace-with" in value.strip().lower()
+            for value in keys.values()
+        )
+        if self.auth_enabled and (not keys or invalid):
             raise ValueError(
-                "DGX_MOA_API_KEY must contain a non-placeholder token when "
+                "DGX_MOA_API_KEY or DGX_MOA_API_KEYS must contain non-placeholder tokens when "
                 "DGX_MOA_AUTH_ENABLED=true"
             )
         return self
+
+    def configured_api_keys(self) -> dict[str, str]:
+        return self.api_keys or ({"default": self.api_key} if self.api_key else {})
 
     @field_validator("lifecycle_unit_map")
     @classmethod
@@ -264,6 +282,13 @@ def load_settings(path: str | Path | None = None) -> Settings:
     gateway["models"] = raw.get("models", {})
     gateway["auth_enabled"] = os.getenv("DGX_MOA_AUTH_ENABLED", gateway.get("auth_enabled", True))
     gateway["api_key"] = os.getenv("DGX_MOA_API_KEY", gateway.get("api_key"))
+    api_keys: Any = os.getenv("DGX_MOA_API_KEYS", gateway.get("api_keys", {}))
+    if isinstance(api_keys, str):
+        try:
+            api_keys = json.loads(api_keys)
+        except json.JSONDecodeError as error:
+            raise ValueError("DGX_MOA_API_KEYS must be a JSON object") from error
+    gateway["api_keys"] = api_keys
     gateway["admin_api_enabled"] = os.getenv(
         "DGX_MOA_ADMIN_API_ENABLED", gateway.get("admin_api_enabled", False)
     )
@@ -289,7 +314,11 @@ def load_settings(path: str | Path | None = None) -> Settings:
     )
     gateway["frontier_disabled_reason"] = os.getenv(
         "DGX_MOA_FRONTIER_DISABLED_REASON",
-        gateway.get("frontier_disabled_reason", "host_sandbox_capability_blocked"),
+        gateway.get("frontier_disabled_reason", "configuration_disabled"),
+    )
+    gateway["frontier_config"] = os.getenv(
+        "DGX_MOA_FRONTIER_CONFIG",
+        gateway.get("frontier_config", "config/codex-frontier.yaml"),
     )
     gateway["lifecycle_mode"] = os.getenv(
         "DGX_MOA_LIFECYCLE_MODE", gateway.get("lifecycle_mode", "disabled")

@@ -34,6 +34,21 @@
     "controller_commit": {"type": "string"},
     "selected_route": {"type": "object"},
     "agent_decisions": {"type": "array", "items": {"type": "object"}},
+    "reasoner_contributions": {"type": "array", "items": {"type": "object"}},
+    "orchestration_decisions": {"type": "array", "items": {"type": "object"}},
+    "agent_invocations": {"type": "array", "items": {"type": "object"}},
+    "agent_artifacts": {"type": "array", "items": {"type": "object"}},
+    "recommendation_resolutions": {"type": "array", "items": {"type": "object"}},
+    "evidence_graph": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "properties": {
+        "nodes": {"type": "array", "items": {"type": "object"}},
+        "edges": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": false
+    },
+    "derived_confidence": {"enum": ["high", "medium", "low", "conflicted"]},
     "tool_executions": {"type": "array", "items": {"type": "object"}},
     "evaluations": {"type": "array", "items": {"type": "object"}},
     "failures": {"type": "array", "items": {"type": "object"}},

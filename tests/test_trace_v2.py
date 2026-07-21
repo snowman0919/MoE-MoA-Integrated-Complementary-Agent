@@ -118,6 +118,11 @@ def test_v2_provenance_training_and_schema() -> None:
     assert trace["tool_executions"][0]["decision_id"] == "decision"
     assert trace["evaluations"][0]["target_id"] == "complete"
     assert trace["vllm_version"] == "0.22.1"
+    assert trace["reasoner_contributions"] == []
+    assert trace["orchestration_decisions"] == []
+    assert trace["agent_invocations"] == []
+    assert trace["evidence_graph"] == {"nodes": [], "edges": []}
+    assert trace["derived_confidence"] == "medium"
 
 
 def test_trace_metrics_include_content_free_runtime_timing() -> None:

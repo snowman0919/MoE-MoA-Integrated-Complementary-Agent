@@ -26,7 +26,13 @@ CLIENT_MARKERS: tuple[tuple[str, SafeClientClass], ...] = (
     ("python-httpx", "httpx"),
     ("curl/", "curl"),
 )
-ModelAlias = Literal["dgx-moa-chat", "dgx-moa-agent", "dgx-moa-orchestrated"]
+ModelAlias = Literal[
+    "dgx-moa",
+    "dgx-moa-fast",
+    "dgx-moa-agent",
+    "dgx-moa-orchestrated",
+    "dgx-moa-chat",
+]
 Role = Literal["executor", "planner", "reviewer", "reasoner", "judge"]
 ModelState = Literal["warm", "cold", "loading"]
 LifecycleKind = Literal["load", "unload"]
@@ -35,6 +41,7 @@ RetryableFailureClass = Literal[
     "backend_error",
     "model_loading",
     "planner_timeout",
+    "reasoner_timeout",
     "executor_first_byte_timeout",
     "executor_total_timeout",
     "executor_timeout",
@@ -44,7 +51,7 @@ RetryableFailureClass = Literal[
 SQLITE_MAX_INTEGER = 2**63 - 1
 
 REQUEST_COLUMNS = (
-    "request_id, session_id, client_class, model_alias, runtime_mode, request_class, "
+    "request_id, session_id, api_token_id, client_class, model_alias, runtime_mode, request_class, "
     "roles_required, accepted_at, first_byte_at, completed_at, active_duration_seconds, "
     "status, streaming, model_state, load_triggered, retryable_failure_class, "
     "prompt_tokens, completion_tokens, total_tokens"
@@ -69,6 +76,7 @@ class RequestUsageStart(BaseModel):
 
     request_id: str
     session_id: str
+    api_token_id: str = Field(default="legacy", pattern=r"^[a-z][a-z0-9_-]{0,31}$")
     client_class: SafeClientClass
     model_alias: ModelAlias
     runtime_mode: RuntimeMode
@@ -253,6 +261,7 @@ class UsageStore:
                 CREATE TABLE IF NOT EXISTS request_usage (
                     request_id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
+                    api_token_id TEXT NOT NULL DEFAULT 'legacy',
                     client_class TEXT NOT NULL,
                     model_alias TEXT NOT NULL,
                     runtime_mode TEXT NOT NULL,
@@ -300,6 +309,12 @@ class UsageStore:
                     ON role_request_usage(role, requested_at);
                 """
             )
+            columns = {row[1] for row in database.execute("PRAGMA table_info(request_usage)")}
+            if "api_token_id" not in columns:
+                database.execute(
+                    "ALTER TABLE request_usage ADD COLUMN api_token_id "
+                    "TEXT NOT NULL DEFAULT 'legacy'"
+                )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30)
@@ -311,12 +326,13 @@ class UsageStore:
         with self._connect() as database:
             database.execute(
                 "INSERT OR IGNORE INTO request_usage "
-                "(request_id, session_id, client_class, model_alias, runtime_mode, "
+                "(request_id, session_id, api_token_id, client_class, model_alias, runtime_mode, "
                 "request_class, roles_required, accepted_at, streaming, model_state, "
-                "load_triggered) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "load_triggered) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     record.request_id,
                     record.session_id,
+                    record.api_token_id,
                     record.client_class,
                     record.model_alias,
                     record.runtime_mode,
@@ -377,6 +393,30 @@ class UsageStore:
                     )
                     for record in records
                 ),
+            )
+
+    def add_required_roles(self, request_id: str, roles: Sequence[str]) -> None:
+        """Append dynamically selected roles to the content-free request summary."""
+        with self._connect() as database:
+            row = database.execute(
+                "SELECT roles_required FROM request_usage WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(request_id)
+            current = json.loads(row["roles_required"])
+            combined = list(dict.fromkeys((*current, *roles)))
+            database.execute(
+                "UPDATE request_usage SET roles_required = ? WHERE request_id = ?",
+                (json.dumps(combined, separators=(",", ":")), request_id),
+            )
+
+    def update_model_state(self, request_id: str, model_state: ModelState) -> None:
+        """Reflect a dynamically selected cold/loading role in request accounting."""
+        with self._connect() as database:
+            database.execute(
+                "UPDATE request_usage SET model_state = ? WHERE request_id = ?",
+                (model_state, request_id),
             )
 
     def finalize_roles(
@@ -654,18 +694,41 @@ class UsageStore:
         ]
 
     def report(self, *, now: float | None = None) -> dict[str, Any]:
-        return request_statistics(
-            self.recent_requests(),
-            now=time.time() if now is None else now,
-            ewma_alpha=self.ewma_alpha,
-            adaptive_minimum_samples=self.adaptive_minimum_samples,
-        ) | lifecycle_statistics(self.recent_lifecycle_samples())
+        return (
+            request_statistics(
+                self.recent_requests(),
+                now=time.time() if now is None else now,
+                ewma_alpha=self.ewma_alpha,
+                adaptive_minimum_samples=self.adaptive_minimum_samples,
+            )
+            | lifecycle_statistics(self.recent_lifecycle_samples())
+            | {"api_token_usage": self.api_token_statistics()}
+        )
+
+    def api_token_statistics(self) -> dict[str, dict[str, int]]:
+        with self._connect() as database:
+            rows = database.execute(
+                "SELECT api_token_id, COUNT(*), "
+                "COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), "
+                "COALESCE(SUM(total_tokens), 0) FROM request_usage GROUP BY api_token_id "
+                "ORDER BY api_token_id"
+            ).fetchall()
+        return {
+            str(row[0]): {
+                "requests": int(row[1]),
+                "prompt_tokens": int(row[2]),
+                "completion_tokens": int(row[3]),
+                "total_tokens": int(row[4]),
+            }
+            for row in rows
+        }
 
     @staticmethod
     def _record(row: sqlite3.Row) -> RequestUsageRecord:
         return RequestUsageRecord(
             request_id=row["request_id"],
             session_id=row["session_id"],
+            api_token_id=row["api_token_id"],
             client_class=row["client_class"],
             model_alias=row["model_alias"],
             runtime_mode=row["runtime_mode"],

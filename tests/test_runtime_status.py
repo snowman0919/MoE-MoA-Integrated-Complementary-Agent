@@ -69,6 +69,7 @@ def test_runtime_report_contains_bounded_content_free_usage(tmp_path: Path, monk
     assert result["usage"] == {
         "last_request": {
             "request_id": "00000000-0000-4000-8000-000000000001",
+            "api_token_id": "legacy",
             "client_class": "httpx",
             "model_alias": "dgx-moa-agent",
             "runtime_mode": "agent",
@@ -111,6 +112,14 @@ def test_runtime_report_contains_bounded_content_free_usage(tmp_path: Path, monk
                 "p95": 1.0,
             },
             "cold_starts": 0,
+            "api_token_usage": {
+                "legacy": {
+                    "requests": 1,
+                    "prompt_tokens": 2,
+                    "completion_tokens": 3,
+                    "total_tokens": 5,
+                }
+            },
         },
         "role_statistics": {},
         "role_states": {"executor": "warm"},

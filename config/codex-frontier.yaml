@@ -7,8 +7,13 @@ protocol: codex-exec-jsonl
 codex_version: 0.144.1
 model: gpt-5.6-sol
 reasoning_effort: high
-primary_profile: primary
+primary_profile: default
 allow_auth_failover: false
-max_invocations_per_task: 1
+max_invocations_per_task: 3
 max_recursive_cycles: 3
-profile_root: /home/kotori9/.local/share/dgx-moa/codex-profiles
+profile_root: null
+collaboration_timeout_seconds: 300
+collaboration_retries: 1
+circuit_failure_limit: 3
+circuit_cooldown_seconds: 300
+max_evidence_characters: 24000

@@ -95,6 +95,7 @@ def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
     assert record is not None
     assert record.request_id == "request-1"
     assert record.session_id == "session-request-1"
+    assert record.api_token_id == "legacy"
     assert record.client_class == "openai-compatible"
     assert record.model_alias == "dgx-moa-agent"
     assert record.runtime_mode == "agent"
@@ -129,6 +130,7 @@ def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
     assert request_columns == {
         "request_id",
         "session_id",
+        "api_token_id",
         "client_class",
         "model_alias",
         "runtime_mode",

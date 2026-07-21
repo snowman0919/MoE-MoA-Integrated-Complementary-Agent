@@ -6,6 +6,15 @@ agent decisions, tool executions, evaluations, failure attribution/resolution,
 completion evidence, training eligibility, and observability state. Context
 manifests record visible identifiers and bounded summaries, never hidden reasoning.
 
+Dynamic MoA records additionally contain bounded `reasoner_contributions`,
+structured `orchestration_decisions`, `agent_invocations`, `agent_artifacts`,
+`recommendation_resolutions`, `derived_confidence`, and an `evidence_graph`.
+Evidence nodes distinguish user constraints, model assertions, tool-observed
+facts, test-confirmed facts, and unverified assumptions. Edges use `supports`,
+`contradicts`, `depends_on`, `supersedes`, `generated_from`, or `validated_by`.
+Frontier records transmitted evidence categories, latency, token counts, and
+cost only when the provider reports or configuration can calculate them.
+
 Strict provenance values are `main|dev|candidate` and
 `production|benchmark|validation|diagnostic|candidate_evaluation`. Production is
 valid only with `main`; candidate evaluation is valid only with `candidate`.

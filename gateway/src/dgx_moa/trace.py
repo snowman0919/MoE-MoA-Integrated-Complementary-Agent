@@ -55,13 +55,31 @@ TRACE_FIELDS = LEGACY_TRACE_FIELDS | frozenset(
         "observability_status",
         "observability_degraded",
         "agent_decisions",
+        "reasoner_contributions",
+        "orchestration_decisions",
+        "agent_invocations",
+        "agent_artifacts",
+        "recommendation_resolutions",
+        "evidence_graph",
+        "derived_confidence",
         "tool_executions",
         "evaluations",
         "failures",
     }
 )
 
-LIST_FIELDS = {"events", "agent_decisions", "tool_executions", "evaluations", "failures"}
+LIST_FIELDS = {
+    "events",
+    "agent_decisions",
+    "reasoner_contributions",
+    "orchestration_decisions",
+    "agent_invocations",
+    "agent_artifacts",
+    "recommendation_resolutions",
+    "tool_executions",
+    "evaluations",
+    "failures",
+}
 DICT_FIELDS = {
     "workspace_identity",
     "repository_identity",
@@ -76,6 +94,7 @@ DICT_FIELDS = {
     "tool_observation",
     "failure_classification",
     "review_outcome",
+    "evidence_graph",
 }
 
 
@@ -197,6 +216,13 @@ def trace_record(
         "ended_at": state.updated_at if final_status(state) != "degraded" else None,
         "events": events or [],
         "agent_decisions": state.decisions,
+        "reasoner_contributions": state.reasoner_contributions,
+        "orchestration_decisions": state.orchestration_decisions,
+        "agent_invocations": state.agent_invocations,
+        "agent_artifacts": state.agent_artifacts,
+        "recommendation_resolutions": state.recommendation_resolutions,
+        "evidence_graph": {"nodes": state.evidence_nodes, "edges": state.evidence_edges},
+        "derived_confidence": state.derived_confidence,
         "tool_executions": state.tool_executions,
         "evaluations": state.evaluations,
         "failures": state.failures,

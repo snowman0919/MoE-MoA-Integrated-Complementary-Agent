@@ -83,7 +83,8 @@ class SessionState(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     session_id: str
-    runtime_mode: Literal["chat", "agent", "orchestrated"] = "agent"
+    api_token_id: str = "legacy"
+    runtime_mode: Literal["fast", "moa", "agent", "orchestrated"] = "agent"
     request_class: str = "native_agent_turn"
     roles_required: list[str] = Field(default_factory=lambda: ["executor"])
     review_fail_closed: bool = False
@@ -106,6 +107,7 @@ class SessionState(BaseModel):
     completion_evidence: dict[str, str] = Field(default_factory=dict)
     approved_scope: list[str] = Field(default_factory=list)
     last_tool_call: dict[str, Any] | None = None
+    pending_tool_call_ids: list[str] = Field(default_factory=list)
     last_decision_id: str | None = None
     failed_call_fingerprints: list[str] = Field(default_factory=list)
     failure_families: dict[str, int] = Field(default_factory=dict)
@@ -113,6 +115,8 @@ class SessionState(BaseModel):
     step_count: int = 0
     review_status: str = "pending"
     judge_status: str = "not_requested"
+    pending_judge_evidence: str = ""
+    judge_verdict: dict[str, Any] | None = None
     active_profile: str = "resident"
     heavy_switch_count: int = 0
     frontier_invocations: int = 0
@@ -128,6 +132,14 @@ class SessionState(BaseModel):
     gateway_version: str = "0.1.0"
     vllm_version: str = "unknown"
     decisions: list[dict[str, Any]] = Field(default_factory=list)
+    reasoner_contributions: list[dict[str, Any]] = Field(default_factory=list)
+    orchestration_decisions: list[dict[str, Any]] = Field(default_factory=list)
+    agent_artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    agent_invocations: list[dict[str, Any]] = Field(default_factory=list)
+    recommendation_resolutions: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_nodes: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_edges: list[dict[str, str]] = Field(default_factory=list)
+    derived_confidence: Literal["high", "medium", "low", "conflicted"] = "medium"
     tool_executions: list[dict[str, Any]] = Field(default_factory=list)
     evaluations: list[dict[str, Any]] = Field(default_factory=list)
     failures: list[dict[str, Any]] = Field(default_factory=list)
@@ -168,6 +180,24 @@ class StateStore:
                 "SELECT payload FROM sessions WHERE session_id = ?", (session_id,)
             ).fetchone()
         return SessionState.model_validate_json(row[0]) if row else None
+
+    def find_tool_owner(self, tool_call_ids: set[str], api_token_id: str) -> SessionState | None:
+        if not tool_call_ids:
+            return None
+        with self._connect() as database:
+            rows = database.execute(
+                "SELECT payload FROM sessions ORDER BY updated_at DESC"
+            ).fetchall()
+        for (payload,) in rows:
+            state = SessionState.model_validate_json(payload)
+            if state.api_token_id != api_token_id:
+                continue
+            pending = set(state.pending_tool_call_ids)
+            if state.last_tool_call and isinstance(state.last_tool_call.get("id"), str):
+                pending.add(state.last_tool_call["id"])
+            if pending.intersection(tool_call_ids):
+                return state
+        return None
 
     def save(self, state: SessionState) -> None:
         state.updated_at = now()

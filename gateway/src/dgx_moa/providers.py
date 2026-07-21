@@ -79,6 +79,48 @@ class ModelProvider:
             body["stream"] = False
         return body
 
+    @staticmethod
+    def ollama_body(model: ModelConfig, request: dict[str, Any]) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": model.served_name,
+            "messages": request.get("messages", []),
+            "stream": False,
+            "keep_alive": model.ollama_keep_alive,
+            "options": {
+                "num_ctx": model.context_length,
+                "num_predict": int(request.get("max_tokens", 1500)),
+            },
+        }
+        response_format = request.get("response_format")
+        if isinstance(response_format, dict):
+            json_schema = response_format.get("json_schema")
+            if isinstance(json_schema, dict) and isinstance(json_schema.get("schema"), dict):
+                body["format"] = json_schema["schema"]
+        return body
+
+    @staticmethod
+    def ollama_response(payload: dict[str, Any]) -> dict[str, Any]:
+        message = payload.get("message")
+        if not isinstance(message, dict) or not isinstance(message.get("content"), str):
+            raise ValueError("Ollama response missing assistant content")
+        if message.get("tool_calls"):
+            raise ValueError("Reasoner cannot issue tools")
+        prompt_tokens = int(payload.get("prompt_eval_count", 0) or 0)
+        completion_tokens = int(payload.get("eval_count", 0) or 0)
+        return {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": message["content"]},
+                    "finish_reason": "stop" if payload.get("done", True) else None,
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        }
+
     async def complete(
         self,
         role: str,
@@ -92,12 +134,19 @@ class ModelProvider:
         try:
             async with asyncio.timeout(timeout_seconds):
                 async with httpx.AsyncClient(timeout=None) as client:
-                    response = await client.post(
-                        f"{model.base_url.rstrip('/')}/v1/chat/completions",
-                        json=self.body(role, model, request),
-                    )
+                    if model.provider == "ollama":
+                        response = await client.post(
+                            f"{model.base_url.rstrip('/')}/api/chat",
+                            json=self.ollama_body(model, request),
+                        )
+                    else:
+                        response = await client.post(
+                            f"{model.base_url.rstrip('/')}/v1/chat/completions",
+                            json=self.body(role, model, request),
+                        )
                     response.raise_for_status()
-                    return cast(dict[str, Any], response.json())
+                    payload = cast(dict[str, Any], response.json())
+                    return self.ollama_response(payload) if model.provider == "ollama" else payload
         except (TimeoutError, httpx.TimeoutException) as error:
             raise StageTimeout(stage or role) from error
 
@@ -110,6 +159,8 @@ class ModelProvider:
         timeout_seconds: float | None = None,
         stage: str | None = None,
     ) -> AsyncIterator[bytes]:
+        if model.provider == "ollama":
+            raise ValueError("Ollama streaming is not used for bounded Reasoner turns")
         body = self.body(role, model, request)
         body["stream"] = True
         timeout_seconds = self.timeout if timeout_seconds is None else timeout_seconds
