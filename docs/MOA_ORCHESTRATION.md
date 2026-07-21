@@ -31,6 +31,12 @@ Each request has at most the configured step budget. Contributions are one-shot
 structured artifacts, not an unbounded agent conversation. Meaningful new tool,
 test, repository, or review evidence may start another bounded Reasoner turn;
 trivial tool events do not.
+
+The disabled development loop adds explicit per-role/tool/token/cost/wall-clock
+budgets and requires allowlisted new evidence before another iteration. The
+Executor alone retrieves and activates bounded Skills and remains the only
+client-visible tool/final-response owner. Generated Skill canaries and replay
+evaluations do not gain direct host mutation authority.
 Frontier has a separate maximum of three invocations per task and three bounded
 recursive cycles. A material local Reviewer rejection can trigger a sequential
 Frontier code review when the initial routing decision did not already select it.

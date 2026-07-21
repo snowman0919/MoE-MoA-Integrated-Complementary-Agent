@@ -7,9 +7,12 @@ from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+
+from .policy import PolicyRule, PolicySet
 
 TRUE_VALUES = {"true", "1", "yes", "on"}
 FALSE_VALUES = {"false", "0", "no", "off"}
@@ -179,6 +182,180 @@ class LifecyclePolicy(BaseModel):
         return merged
 
 
+def default_loop_budgets() -> dict[str, int | float]:
+    return {
+        "iterations": 4,
+        "tool_calls": 30,
+        "reasoner_reentries": 4,
+        "planner_calls": 2,
+        "reviewer_calls": 2,
+        "frontier_calls": 2,
+        "judge_calls": 1,
+        "tokens": 250_000,
+        "external_cost_usd": 10,
+        "wall_clock_seconds": 1_800,
+    }
+
+
+class LoopEngineeringPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    defaults: dict[str, int | float] = Field(default_factory=default_loop_budgets)
+    duplicate_fingerprint_limit: int = Field(default=2, ge=1)
+    no_progress_iteration_limit: int = Field(default=2, ge=1)
+    local_failures_before_frontier: int = Field(default=2, ge=1)
+    request_class_overrides: dict[str, dict[str, int | float]] = Field(default_factory=dict)
+    risk_level_overrides: dict[str, dict[str, int | float]] = Field(default_factory=dict)
+
+    @field_validator("defaults")
+    @classmethod
+    def validate_defaults(cls, value: dict[str, int | float]) -> dict[str, int | float]:
+        from .loop_engineering import LoopBudget
+
+        return LoopBudget.model_validate(value).model_dump()
+
+    @field_validator("request_class_overrides", "risk_level_overrides")
+    @classmethod
+    def validate_budget_overrides(
+        cls, value: dict[str, dict[str, int | float]]
+    ) -> dict[str, dict[str, int | float]]:
+        allowed = set(default_loop_budgets())
+        for name, override in value.items():
+            if not name or set(override) - allowed:
+                raise ValueError("invalid loop budget override")
+            if any(
+                not isinstance(item, int | float) or isinstance(item, bool) or item < 0
+                for item in override.values()
+            ):
+                raise ValueError("loop budget override must be nonnegative")
+        return value
+
+    @model_validator(mode="after")
+    def validate_risk_levels(self) -> LoopEngineeringPolicy:
+        if set(self.risk_level_overrides) - {"low", "medium", "high"}:
+            raise ValueError("invalid loop risk level")
+        return self
+
+    def budget_for(self, request_class: str, risk_level: str) -> dict[str, int | float]:
+        return (
+            self.defaults
+            | self.request_class_overrides.get(request_class, {})
+            | self.risk_level_overrides.get(risk_level, {})
+        )
+
+
+class RuntimeSkillsPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    root: Path = Path("data/skills")
+    retrieval_limit: int = Field(default=3, ge=1, le=10)
+    max_context_characters: int = Field(default=6_000, ge=256, le=32_000)
+
+
+class DeclarativePolicyConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    version: str = "development-disabled"
+    policies: list[PolicyRule] = Field(default_factory=list, max_length=256)
+
+    def policy_set(self) -> PolicySet:
+        return PolicySet(version=self.version, policies=self.policies)
+
+
+class DiscordObservationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    webhook_url: SecretStr
+    thread_id: str | None = None
+
+
+class TelegramObservationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bot_token: SecretStr
+    chat_id: str
+    message_thread_id: int | None = None
+
+
+class ObservationControlConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    nonce_ttl_seconds: int = Field(default=300, ge=30, le=3_600)
+    allowed_users: dict[str, str] = Field(default_factory=dict)
+    role_permissions: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class LiveObservationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    level: Literal["minimal", "normal", "verbose", "debug"] = "normal"
+    queue_size: int = Field(default=256, ge=1, le=10_000)
+    batch_size: int = Field(default=10, ge=1, le=50)
+    batch_interval_seconds: float = Field(default=2, ge=0.1, le=60)
+    request_timeout_seconds: float = Field(default=10, gt=0, le=60)
+    discord: DiscordObservationConfig | None = None
+    telegram: TelegramObservationConfig | None = None
+    controls: ObservationControlConfig = Field(default_factory=ObservationControlConfig)
+
+
+class TrainingDataConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    state_db: Path = Path("data/training-staging/training.db")
+    object_root: Path = Path("data/training-staging/objects")
+    minimum_free_bytes: int = Field(default=10_000_000_000, ge=0)
+    maximum_object_bytes: int = Field(default=1_000_000, ge=1_024, le=16_000_000)
+    repository_policies: dict[
+        str, Literal["training_allowed", "internal_only", "training_denied"]
+    ] = Field(default_factory=dict)
+    external_output_permitted: bool = False
+
+
+class RetentionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    raw_operational_days: int = Field(default=30, ge=1)
+    sanitized_candidate_days: int = Field(default=90, ge=1)
+    weekly_archive_weeks: int = Field(default=52, ge=1)
+    quarantine_days: int = Field(default=14, ge=1)
+    failed_staging_days: int = Field(default=7, ge=1)
+
+
+class WeeklyJobsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    timezone: str = "Asia/Seoul"
+    skill_schedule: str = "0 3 * * 0"
+    package_schedule: str = "0 2 * * 1"
+    package_root: Path = Path("data/weekly-packages")
+    archive_registry: Path = Path("data/archive-registry/weekly.db")
+    retention: RetentionConfig = Field(default_factory=RetentionConfig)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as error:
+            raise ValueError("invalid weekly timezone") from error
+        return value
+
+    @field_validator("skill_schedule", "package_schedule")
+    @classmethod
+    def validate_schedule(cls, value: str) -> str:
+        from .weekly import CronSchedule
+
+        CronSchedule.parse(value)
+        return value
+
+
 class ModelConfig(BaseModel):
     repository: str
     revision: str
@@ -220,6 +397,12 @@ class Settings(BaseModel):
     lifecycle_poll_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
     lifecycle_unit_map: dict[str, str] = Field(default_factory=dict)
     lifecycle: LifecyclePolicy = Field(default_factory=LifecyclePolicy)
+    loop_engineering: LoopEngineeringPolicy = Field(default_factory=LoopEngineeringPolicy)
+    runtime_skills: RuntimeSkillsPolicy = Field(default_factory=RuntimeSkillsPolicy)
+    declarative_policy: DeclarativePolicyConfig = Field(default_factory=DeclarativePolicyConfig)
+    live_observation: LiveObservationConfig = Field(default_factory=LiveObservationConfig)
+    training_data: TrainingDataConfig = Field(default_factory=TrainingDataConfig)
+    weekly_jobs: WeeklyJobsConfig = Field(default_factory=WeeklyJobsConfig)
     models: dict[str, ModelConfig] = Field(default_factory=dict)
     limits: Limits = Field(default_factory=Limits)
 
@@ -276,6 +459,8 @@ class Settings(BaseModel):
             raise ValueError(
                 f"external lifecycle role cannot have a systemd unit: {conflicting[0]}"
             )
+        if self.training_data.enabled and self.training_data.state_db == self.state_db:
+            raise ValueError("training state database must be separate from gateway state")
         return self
 
 
@@ -345,6 +530,42 @@ def load_settings(path: str | Path | None = None) -> Settings:
         with suppress(json.JSONDecodeError):
             lifecycle = json.loads(lifecycle)
     gateway["lifecycle"] = lifecycle
+    loop_engineering: Any = os.getenv(
+        "DGX_MOA_LOOP_ENGINEERING", gateway.get("loop_engineering", {})
+    )
+    if isinstance(loop_engineering, str):
+        with suppress(json.JSONDecodeError):
+            loop_engineering = json.loads(loop_engineering)
+    gateway["loop_engineering"] = loop_engineering
+    runtime_skills: Any = os.getenv("DGX_MOA_RUNTIME_SKILLS", gateway.get("runtime_skills", {}))
+    if isinstance(runtime_skills, str):
+        with suppress(json.JSONDecodeError):
+            runtime_skills = json.loads(runtime_skills)
+    gateway["runtime_skills"] = runtime_skills
+    declarative_policy: Any = os.getenv(
+        "DGX_MOA_DECLARATIVE_POLICY", gateway.get("declarative_policy", {})
+    )
+    if isinstance(declarative_policy, str):
+        with suppress(json.JSONDecodeError):
+            declarative_policy = json.loads(declarative_policy)
+    gateway["declarative_policy"] = declarative_policy
+    live_observation: Any = os.getenv(
+        "DGX_MOA_LIVE_OBSERVATION", gateway.get("live_observation", {})
+    )
+    if isinstance(live_observation, str):
+        with suppress(json.JSONDecodeError):
+            live_observation = json.loads(live_observation)
+    gateway["live_observation"] = live_observation
+    training_data: Any = os.getenv("DGX_MOA_TRAINING_DATA", gateway.get("training_data", {}))
+    if isinstance(training_data, str):
+        with suppress(json.JSONDecodeError):
+            training_data = json.loads(training_data)
+    gateway["training_data"] = training_data
+    weekly_jobs: Any = os.getenv("DGX_MOA_WEEKLY_JOBS", gateway.get("weekly_jobs", {}))
+    if isinstance(weekly_jobs, str):
+        with suppress(json.JSONDecodeError):
+            weekly_jobs = json.loads(weekly_jobs)
+    gateway["weekly_jobs"] = weekly_jobs
     return Settings.model_validate(gateway)
 
 

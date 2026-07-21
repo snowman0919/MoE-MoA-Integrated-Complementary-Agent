@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import hashlib
 import json
+import re
+import sqlite3
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -12,6 +15,7 @@ import httpx
 
 from .compression import compress_messages, compress_text
 from .config import Settings
+from .evidence import EvidenceEdge, EvidenceNode, classify_evidence
 from .frontier import (
     CodexOAuthCollaboration,
     FrontierCollaborationResult,
@@ -22,12 +26,36 @@ from .frontier import (
     frontier_eligible,
     select_frontier_profile,
 )
+from .loop_engineering import (
+    LOOP_TYPES,
+    PROGRESS_EVIDENCE_KINDS,
+    BudgetName,
+    LoopBudget,
+    LoopType,
+    TerminationReason,
+    begin_iteration,
+    consume_budget,
+    consume_usage,
+    new_loop,
+    normalized_failure_class,
+    progress_evidence_fingerprint,
+    record_no_progress,
+    record_progress,
+    register_failure,
+    register_user_input,
+    resolve_failures,
+    set_criterion,
+    terminate,
+)
+from .policy import PolicyEngine, redact_fields
 from .providers import ModelProvider, StageTimeout, parse_json_content
 from .routing import ChangeRisk, heavy_eligible, needs_planner, select_route
 from .schemas import JudgeVerdict, OrchestrationDecision, ReasonerContribution, ReviewResult
 from .security import redact
+from .skills import SkillQuery, SkillRegistry
 from .state import Phase, SessionState, StateStore, now
 from .trace import training_default, validate_provenance
+from .usage import UsageStore
 from .validation import completion_ready
 
 
@@ -47,6 +75,14 @@ class JudgeRequired(RuntimeError):
     def __init__(self, session_id: str):
         self.session_id = session_id
         super().__init__("Heavy Judge adjudication required")
+
+
+class LoopAdmissionError(RuntimeError):
+    pass
+
+
+class PolicyBlocked(RuntimeError):
+    pass
 
 
 def fingerprint(call: dict[str, Any]) -> str:
@@ -88,6 +124,18 @@ def classify_failure(observation: str) -> str:
     return "TEST_FAILURE"
 
 
+def active_failures(state: SessionState) -> list[dict[str, Any]]:
+    return [item for item in state.failures if item.get("resolution_status", "active") == "active"]
+
+
+def argument_paths(arguments: Any) -> set[str]:
+    text = arguments if isinstance(arguments, str) else json.dumps(arguments, sort_keys=True)
+    return {
+        match.removeprefix("file://").rstrip(",);]")
+        for match in re.findall(r"(?:file://)?/[^\s\"'\\]+", text)
+    }
+
+
 def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
     """Keep tool evidence structured; tolerate OpenCode-compatible string payloads."""
     content = message.get("content", "")
@@ -118,13 +166,176 @@ class Controller:
         store: StateStore,
         provider: ModelProvider,
         frontier: CodexOAuthCollaboration | None = None,
+        usage: UsageStore | None = None,
+        skills: SkillRegistry | None = None,
+        policy: PolicyEngine | None = None,
     ):
         self.settings = settings
         self.store = store
         self.provider = provider
         self.frontier = frontier
+        self.usage = usage
+        self.skills = skills
+        self.policy = policy
         self.lifecycle_store: Any | None = None
         self._review_lock = asyncio.Lock()
+
+    @staticmethod
+    def _sync_loop_criteria(state: SessionState) -> None:
+        if state.engineering_loop is None:
+            return
+        existing = {item.description for item in state.engineering_loop.acceptance_criteria}
+        for description in state.acceptance_criteria:
+            if description not in existing:
+                set_criterion(state.engineering_loop, description, "unknown")
+
+    @staticmethod
+    def _loop_type(state: SessionState, metadata: dict[str, Any]) -> LoopType:
+        explicit = str(metadata.get("loop_type", ""))
+        if explicit in LOOP_TYPES:
+            return cast(LoopType, explicit)
+        if state.request_class == "recovery_task":
+            return "recovery"
+        if metadata.get("debugging") or metadata.get("test_failure"):
+            return "debugging"
+        if metadata.get("code_review") or metadata.get("review"):
+            return "review"
+        if metadata.get("planning") or metadata.get("architecture"):
+            return "planning"
+        if metadata.get("validation"):
+            return "validation"
+        return "implementation"
+
+    @staticmethod
+    def _loop_risk(metadata: dict[str, Any]) -> str:
+        if any(
+            metadata.get(key)
+            for key in (
+                "authentication",
+                "cryptography",
+                "database_schema",
+                "deployment_security",
+                "heavy_review",
+            )
+        ):
+            return "high"
+        if metadata.get("public_api") or int(metadata.get("files_changed", 0)) > 1:
+            return "medium"
+        return "low"
+
+    def terminate_loop(self, state: SessionState, reason: TerminationReason) -> None:
+        if state.engineering_loop is None or state.engineering_loop.termination_reason is not None:
+            return
+        terminate(state.engineering_loop, reason)
+        self.store.event(
+            state.session_id,
+            "engineering_loop_terminated",
+            {"loop_id": state.engineering_loop.loop_id, "reason": reason},
+        )
+
+    def complete_loop_iteration(self, state: SessionState, outcome: str) -> None:
+        loop = state.engineering_loop
+        if loop is None or loop.iteration <= loop.completed_iteration:
+            return
+        loop.completed_iteration = loop.iteration
+        loop.completed_actions.append(f"executor_turn:{loop.iteration}:{outcome}")
+        self.store.event(
+            state.session_id,
+            "engineering_loop_iteration_completed",
+            {"loop_id": loop.loop_id, "iteration": loop.iteration, "outcome": outcome},
+        )
+
+    def record_provider_failure(self, state: SessionState, role: str, error: Exception) -> None:
+        self.record_evidence(
+            state,
+            "provider_failure",
+            role,
+            {"role": role, "failure_class": type(error).__name__},
+        )
+
+    def _reject_loop_action(self, state: SessionState, action: str, reason: str) -> None:
+        loop = state.engineering_loop
+        assert loop is not None
+        if loop.termination_reason is not None:
+            state.phase = Phase.BLOCKED
+            state.final_status = "blocked"
+        self.store.event(
+            state.session_id,
+            "engineering_loop_action_rejected",
+            {
+                "loop_id": loop.loop_id,
+                "action": action,
+                "reason": reason,
+                "termination_reason": loop.termination_reason,
+            },
+        )
+        self.store.save(state)
+        raise LoopAdmissionError(reason)
+
+    def admit_loop_iteration(self, state: SessionState) -> None:
+        loop = state.engineering_loop
+        if loop is None:
+            return
+        if not begin_iteration(loop):
+            self._reject_loop_action(
+                state,
+                "iteration",
+                "loop terminated" if loop.termination_reason else "new evidence required",
+            )
+        self.store.event(
+            state.session_id,
+            "engineering_loop_iteration_started",
+            {"loop_id": loop.loop_id, "iteration": loop.iteration},
+        )
+
+    def admit_loop_action(self, state: SessionState, action: BudgetName) -> None:
+        loop = state.engineering_loop
+        if loop is None:
+            return
+        if not consume_budget(loop, action):
+            self._reject_loop_action(state, action, "loop budget exhausted")
+        self.store.event(
+            state.session_id,
+            "engineering_loop_budget_consumed",
+            {
+                "loop_id": loop.loop_id,
+                "action": action,
+                "remaining": getattr(loop.remaining_budget, action),
+            },
+        )
+
+    def admit_tool_call(self, state: SessionState, tool_name: str | None) -> None:
+        denied = state.policy_denied_tools
+        if denied and (
+            tool_name is None or any(fnmatch.fnmatch(tool_name, pattern) for pattern in denied)
+        ):
+            state.phase = Phase.BLOCKED
+            state.final_status = "blocked"
+            self.terminate_loop(state, "POLICY_BLOCKED")
+            self.store.event(
+                state.session_id,
+                "policy_tool_blocked",
+                {"tool_name": tool_name or "unknown"},
+            )
+            self.store.save(state)
+            raise PolicyBlocked("tool call denied by declarative policy")
+        self.admit_loop_action(state, "tool_calls")
+
+    async def _frontier_collaborate(
+        self,
+        state: SessionState,
+        mode: Literal["architecture", "code_review", "disagreement"],
+        evidence: dict[str, Any],
+    ) -> FrontierCollaborationResult:
+        assert self.frontier is not None
+        self.admit_loop_action(state, "frontier_calls")
+        state.frontier_invocations += 1
+        return await self.frontier.collaborate(mode, evidence, state.task_id or state.session_id)
+
+    @staticmethod
+    def safe_payload(state: SessionState, payload: Any) -> Any:
+        """Apply built-in and request policy redaction before a persistence boundary."""
+        return redact_fields(redact(payload), state.policy_redact_fields)
 
     def record_evidence(
         self,
@@ -136,24 +347,32 @@ class Controller:
         generated_from: str | None = None,
     ) -> str:
         node_id = str(uuid.uuid4())
-        state.evidence_nodes.append(
-            {
-                "node_id": node_id,
-                "kind": kind,
-                "source": source,
-                "payload": redact(payload),
-                "created_at": now(),
-            }
+        node_type, trust_class = classify_evidence(kind, source)
+        safe_payload = self.safe_payload(state, payload)
+        node = EvidenceNode(
+            node_id=node_id,
+            node_type=node_type,
+            kind=kind,
+            trust_class=trust_class,
+            source=source,
+            payload=safe_payload,
+            created_at=now(),
         )
+        state.evidence_nodes.append(node.model_dump(mode="json"))
         state.evidence_nodes = state.evidence_nodes[-self.settings.limits.max_steps :]
-        if generated_from:
-            state.evidence_edges.append(
-                {
-                    "from": node_id,
-                    "to": generated_from,
-                    "relationship": "generated_from",
-                }
+        if state.engineering_loop is not None and kind in PROGRESS_EVIDENCE_KINDS:
+            record_progress(
+                state.engineering_loop,
+                node_id,
+                evidence_fingerprint=progress_evidence_fingerprint(kind, safe_payload),
             )
+        if generated_from:
+            edge = EvidenceEdge(
+                from_node=node_id,
+                to_node=generated_from,
+                relationship="generated_from",
+            )
+            state.evidence_edges.append(edge.model_dump(mode="json", by_alias=True))
             state.evidence_edges = state.evidence_edges[-self.settings.limits.max_steps :]
         return node_id
 
@@ -168,7 +387,8 @@ class Controller:
     ) -> None:
         raw_usage = response.get("usage")
         usage = cast(dict[str, Any], raw_usage) if isinstance(raw_usage, dict) else {}
-        state.agent_invocations.append(
+        self.record_observed_invocation(
+            state,
             {
                 "role": role,
                 "mode": mode,
@@ -177,9 +397,79 @@ class Controller:
                 "completion_tokens": usage.get("completion_tokens"),
                 "total_tokens": usage.get("total_tokens"),
                 "status": "completed",
-            }
+            },
         )
+
+    def record_observed_invocation(
+        self,
+        state: SessionState,
+        invocation: dict[str, Any],
+        *,
+        account_loop_usage: bool = True,
+    ) -> None:
+        state.agent_invocations.append(invocation)
         state.agent_invocations = state.agent_invocations[-self.settings.limits.max_steps :]
+        if account_loop_usage:
+            self.record_loop_usage(
+                state,
+                total_tokens=invocation.get("total_tokens"),
+                external_cost_usd=invocation.get("cost_usd"),
+            )
+        if self.usage is None:
+            return
+        role = str(invocation["role"])
+        model = (
+            self.frontier.config.model
+            if role == "frontier" and self.frontier is not None
+            else self.settings.models[role].served_name
+        )
+        try:
+            self.usage.record_model_invocation(
+                state.current_request_id or state.session_id,
+                role=role,
+                model=model,
+                mode=str(invocation.get("mode", "default")),
+                status=str(invocation.get("status", "failed")),
+                latency_ms=float(invocation.get("latency_ms", 0)),
+                prompt_tokens=invocation.get("prompt_tokens"),
+                completion_tokens=invocation.get("completion_tokens"),
+                total_tokens=invocation.get("total_tokens"),
+            )
+        except Exception as error:
+            self.store.event(
+                state.session_id,
+                "model_invocation_usage_failed",
+                {"failure_class": type(error).__name__, "role": role},
+            )
+
+    def record_loop_usage(
+        self,
+        state: SessionState,
+        *,
+        total_tokens: object = None,
+        external_cost_usd: object = None,
+    ) -> None:
+        loop = state.engineering_loop
+        if loop is None:
+            return
+        values = (
+            ("tokens", total_tokens),
+            ("external_cost_usd", external_cost_usd),
+        )
+        for name, raw_value in values:
+            if not isinstance(raw_value, int | float) or isinstance(raw_value, bool):
+                continue
+            if not consume_usage(loop, name, raw_value):  # type: ignore[arg-type]
+                self._reject_loop_action(state, name, "loop usage budget exhausted")
+            self.store.event(
+                state.session_id,
+                "engineering_loop_usage_consumed",
+                {
+                    "loop_id": loop.loop_id,
+                    "budget": name,
+                    "remaining": getattr(loop.remaining_budget, name),
+                },
+            )
 
     def _record_decision(
         self,
@@ -235,7 +525,7 @@ class Controller:
                 "evicted_item_categories": [],
                 "compression_status": "bounded",
             },
-            "structured_decision": redact(structured_decision),
+            "structured_decision": self.safe_payload(state, structured_decision),
             "outcome": {
                 "status": "pending",
                 "progress_made": False,
@@ -247,15 +537,17 @@ class Controller:
         }
         state.decisions.append(decision)
         state.decisions = state.decisions[-self.settings.limits.max_steps :]
-        state.evidence_nodes.append(
-            {
-                "node_id": decision_id,
-                "kind": "agent_decision",
-                "source": role,
-                "payload": redact(structured_decision),
-                "created_at": decision["timestamp"],
-            }
+        decision_type, trust_class = classify_evidence("agent_decision", role)
+        decision_node = EvidenceNode(
+            node_id=decision_id,
+            node_type=decision_type,
+            kind="agent_decision",
+            trust_class=trust_class,
+            source=role,
+            payload=self.safe_payload(state, structured_decision),
+            created_at=decision["timestamp"],
         )
+        state.evidence_nodes.append(decision_node.model_dump(mode="json"))
         state.evidence_nodes = state.evidence_nodes[-self.settings.limits.max_steps :]
         state.last_decision_id = decision_id
         self.store.event(
@@ -265,6 +557,7 @@ class Controller:
 
     def session(self, session_id: str, messages: list[dict[str, Any]]) -> SessionState:
         state = self.store.get(session_id)
+        objective_was_empty = state is None or not state.objective
         if state is None:
             state = SessionState(session_id=session_id)
             self.store.event(session_id, "session_started", {})
@@ -288,6 +581,25 @@ class Controller:
                 ),
                 "",
             )
+        if objective_was_empty and state.objective:
+            self.record_evidence(
+                state,
+                "user_objective",
+                "user",
+                {"content_sha256": hashlib.sha256(state.objective.encode()).hexdigest()},
+            )
+        if state.engineering_loop is not None:
+            for message in messages:
+                if message.get("role") != "user":
+                    continue
+                content = str(message.get("content", ""))
+                if fingerprint := register_user_input(state.engineering_loop, content):
+                    self.record_evidence(
+                        state,
+                        "user_feedback",
+                        "user",
+                        {"content_sha256": fingerprint},
+                    )
         self._observe(state, messages)
         if state.step_count >= self.settings.limits.max_steps:
             state.phase = Phase.BLOCKED
@@ -308,12 +620,36 @@ class Controller:
         state.training_eligibility = str(  # type: ignore[assignment]
             metadata.get("training_eligibility", training_default(runtime_channel, trace_origin))
         )
+        state.training_opt_out = bool(metadata.get("training_opt_out"))
+        state.user_training_opt_out = bool(metadata.get("user_training_opt_out"))
+        training_subject = metadata.get("training_subject_id")
+        if training_subject:
+            subject_hash = hashlib.sha256(str(training_subject).encode()).hexdigest()
+            if state.training_subject_hash and state.training_subject_hash != subject_hash:
+                raise ValueError("session training subject changed")
+            state.training_subject_hash = subject_hash
         state.controller_commit = self.settings.controller_commit
         state.vllm_version = self.settings.vllm_version
         task_id = str(metadata.get("task_id") or state.task_id or state.session_id)
         if state.task_id and state.task_id != task_id:
             raise ValueError("session task identity changed")
         state.task_id = task_id
+        if self.settings.loop_engineering.enabled and state.engineering_loop is None:
+            policy = self.settings.loop_engineering
+            state.engineering_loop = new_loop(
+                state.current_request_id or state.session_id,
+                state.objective,
+                loop_type=self._loop_type(state, metadata),
+                budget=LoopBudget.model_validate(
+                    policy.budget_for(state.request_class, self._loop_risk(metadata))
+                ),
+                no_progress_iteration_limit=policy.no_progress_iteration_limit,
+            )
+            self.store.event(
+                state.session_id,
+                "engineering_loop_started",
+                {"loop_id": state.engineering_loop.loop_id, "loop_type": "implementation"},
+            )
         repository = metadata.get("repository")
         if isinstance(repository, dict):
             identity = {str(key): str(value) for key, value in repository.items()}
@@ -325,7 +661,12 @@ class Controller:
                 "workspace_identifier": "external-api",
                 "identity_quality": "client_unspecified",
             }
+        repository_id = state.repository.get("workspace_identifier", "")
+        state.repository_training_policy = self.settings.training_data.repository_policies.get(
+            repository_id, "unknown"
+        )
         state.route, state.route_reasons = select_route(metadata)
+        self.apply_declarative_policy(state, metadata)
         if state.route == "escalation":
             state.judge_status = "eligible"
         self.store.event(
@@ -334,6 +675,81 @@ class Controller:
             {"route": state.route, "reasons": state.route_reasons},
         )
         self.store.save(state)
+
+    def apply_declarative_policy(self, state: SessionState, metadata: dict[str, Any]) -> None:
+        if self.policy is None or not self.settings.declarative_policy.enabled:
+            return
+        repeated = max(state.failure_families.values(), default=0)
+        if state.engineering_loop is not None:
+            repeated = max(
+                repeated,
+                max(
+                    (failure.occurrence_count for failure in state.engineering_loop.open_failures),
+                    default=0,
+                ),
+            )
+        decision = self.policy.evaluate(
+            {
+                "task": metadata,
+                "changed_paths": metadata.get("changed_paths", []),
+                "failure": {"same_fingerprint_count": repeated},
+                "tool": {"destructive": bool(metadata.get("destructive_operation"))},
+            }
+        )
+        decision_data = decision.model_dump(mode="json")
+        state.policy_decisions.append(decision_data)
+        state.policy_decisions = state.policy_decisions[-self.settings.limits.max_steps :]
+        evidence_id = self.record_evidence(state, "policy_decision", "policy", decision_data)
+        required_roles = [
+            role
+            for role, required in decision.require.items()
+            if required and role in {"planner", "reviewer", "judge", "frontier"}
+        ]
+        state.roles_required = list(dict.fromkeys([*state.roles_required, *required_roles]))
+        denied_tools = decision.deny.get("tools", [])
+        state.policy_denied_tools = (
+            [str(item) for item in denied_tools] if isinstance(denied_tools, list) else []
+        )
+        state.policy_redact_fields = decision.redact
+        if decision.require.get("frontier"):
+            metadata["frontier_required"] = True
+            state.route = "escalation"
+            state.route_reasons.append("declarative_policy_frontier_required")
+        loop = state.engineering_loop
+        if loop is not None:
+            for name, limit in decision.limits.items():
+                if name in LoopBudget.model_fields:
+                    current = getattr(loop.remaining_budget, name)
+                    setattr(loop.remaining_budget, name, min(current, limit))
+        approvals = {
+            *(str(item) for item in metadata.get("approval_ids", [])),
+            *state.control_approvals,
+        }
+        missing_approvals = [
+            approval for approval in decision.approvals_required if approval not in approvals
+        ]
+        self.store.event(
+            state.session_id,
+            "policy_evaluated",
+            {
+                "evidence_id": evidence_id,
+                "policy_version": decision.policy_version,
+                "matched_rules": decision.matched_rules,
+                "missing_approvals": missing_approvals,
+            },
+        )
+        if decision.request_denied:
+            state.phase = Phase.BLOCKED
+            state.final_status = "blocked"
+            self.terminate_loop(state, "POLICY_BLOCKED")
+            self.store.save(state)
+            raise PolicyBlocked("request denied by declarative policy")
+        if missing_approvals:
+            state.phase = Phase.BLOCKED
+            state.final_status = "blocked"
+            self.terminate_loop(state, "PERMISSION_REQUIRED")
+            self.store.save(state)
+            raise PolicyBlocked("operator approval required by declarative policy")
 
     def frontier_eligible(self, state: SessionState, metadata: dict[str, Any]) -> tuple[bool, str]:
         metadata = metadata | {"frontier_invocations": state.frontier_invocations}
@@ -406,6 +822,7 @@ class Controller:
             self.store.event(state.session_id, "frontier_usage_limited", {"reason": "cycle_limit"})
             self.store.save(state)
             raise ValueError("frontier recursive cycle limit reached")
+        self.admit_loop_action(state, "frontier_calls")
         state.frontier_invocations += 1
         state.recursive_cycles += 1
         self.store.event(
@@ -482,7 +899,7 @@ class Controller:
                 if state.decisions:
                     state.decisions[-1]["structured_decision"] = {
                         "type": "tool_calls",
-                        "tool_calls": redact(calls),
+                        "tool_calls": self.safe_payload(state, calls),
                     }
             if message.get("role") != "tool":
                 continue
@@ -493,6 +910,7 @@ class Controller:
             result = normalize_tool_result(message)
             for key in ("stdout", "stderr"):
                 result[key] = compress_text(result[key], self.settings.limits)
+            result = cast(dict[str, Any], self.safe_payload(state, result))
             observation = json.dumps(result, sort_keys=True)
             failed = (
                 result["exit_code"] != 0
@@ -536,7 +954,7 @@ class Controller:
                 state.last_tool_call or {}
             )
             function = call.get("function") or {}
-            arguments = function.get("arguments", "{}")
+            arguments = function.get("arguments", result.get("arguments", {}))
             effect: dict[str, Any] = {
                 key: result[key]
                 for key in ("changed_paths", "created_paths", "deleted_paths")
@@ -548,7 +966,7 @@ class Controller:
                 "decision_id": state.last_decision_id or "unknown",
                 "session_id": state.session_id,
                 "tool_name": str(function.get("name", result["tool_name"])),
-                "normalized_arguments": redact(arguments),
+                "normalized_arguments": self.safe_payload(state, arguments),
                 "argument_fingerprint": fingerprint(call),
                 "started_at": "legacy_unavailable",
                 "ended_at": now(),
@@ -565,6 +983,37 @@ class Controller:
             state.tool_executions.append(execution)
             state.tool_executions = state.tool_executions[-self.settings.limits.max_steps :]
             self.store.event(state.session_id, "tool_execution_recorded", execution)
+            target_paths = argument_paths(arguments)
+            if not failed and target_paths:
+                for failure in active_failures(state):
+                    if not target_paths.intersection(failure.get("target_paths", [])):
+                        continue
+                    failure["resolution_status"] = "resolved"
+                    failure["resolved_at"] = now()
+                    failure["resolution_evidence"] = [execution["tool_execution_id"]]
+                    failed_fingerprint = failure.get("tool_call_fingerprint")
+                    if failed_fingerprint in state.failed_call_fingerprints:
+                        state.failed_call_fingerprints.remove(failed_fingerprint)
+                    family = failure.get("failure_family")
+                    if family in state.failure_families:
+                        state.failure_families[family] = max(0, state.failure_families[family] - 1)
+                    self.store.event(
+                        state.session_id,
+                        "failure_resolved",
+                        {
+                            "failure_class": failure["failure_class"],
+                            "resolution": "successful_fallback_same_path",
+                        },
+                    )
+                if state.engineering_loop is not None and resolve_failures(
+                    state.engineering_loop, target_paths
+                ):
+                    self.record_evidence(
+                        state,
+                        "failure_resolved",
+                        "tool",
+                        {"resolution": "successful_fallback_same_path"},
+                    )
             self.record_evidence(
                 state,
                 "tool_failure" if failed else "tool_observed_fact",
@@ -575,6 +1024,31 @@ class Controller:
             state.no_progress_count = 0
             if failed and call:
                 call_fingerprint = fingerprint(call)
+                if state.engineering_loop is not None:
+                    loop_failure = register_failure(
+                        state.engineering_loop,
+                        normalized_failure_class(str(failure_class)),
+                        strategy=call_fingerprint,
+                        tool_name=execution["tool_name"],
+                        command=arguments,
+                        exit_code=result["exit_code"],
+                        stderr=result["stderr"],
+                        affected_path=sorted(target_paths),
+                        model_role="executor",
+                    )
+                    self.store.event(
+                        state.session_id,
+                        "engineering_loop_failure_registered",
+                        {
+                            "fingerprint": loop_failure.fingerprint,
+                            "failure_class": loop_failure.failure_class,
+                            "occurrence_count": loop_failure.occurrence_count,
+                            "strategy_change_required": loop_failure.strategy_change_required,
+                        },
+                    )
+                    if state.engineering_loop.termination_reason is not None:
+                        state.phase = Phase.BLOCKED
+                        state.final_status = "blocked"
                 if call_fingerprint in state.failed_call_fingerprints:
                     self.store.event(
                         state.session_id,
@@ -594,6 +1068,7 @@ class Controller:
                         }
                     )
                     state.failures = state.failures[-self.settings.limits.max_steps :]
+                    self.store.save(state)
                     raise DuplicateFailedCall("identical failed tool call blocked")
                 state.failed_call_fingerprints.append(call_fingerprint)
                 family = failure_family(observation)
@@ -613,6 +1088,9 @@ class Controller:
                         "resolved_at": None,
                         "resolving_commit": None,
                         "related_proposal_ids": [],
+                        "tool_call_fingerprint": call_fingerprint,
+                        "failure_family": family,
+                        "target_paths": sorted(target_paths),
                     }
                 )
                 state.failures = state.failures[-self.settings.limits.max_steps :]
@@ -623,16 +1101,57 @@ class Controller:
 
     def note_no_progress(self, state: SessionState) -> None:
         state.no_progress_count += 1
-        if state.no_progress_count >= 3:
+        if state.engineering_loop is not None:
+            record_no_progress(state.engineering_loop)
+        if state.no_progress_count >= 3 or (
+            state.engineering_loop is not None
+            and state.engineering_loop.termination_reason == "NO_PROGRESS"
+        ):
             state.phase = Phase.BLOCKED
         self.store.save(state)
 
     def apply_metadata(self, state: SessionState, metadata: dict[str, Any]) -> None:
+        termination_signals: tuple[tuple[str, TerminationReason], ...] = (
+            ("user_decision_required", "USER_DECISION_REQUIRED"),
+            ("permission_required", "PERMISSION_REQUIRED"),
+            ("policy_blocked", "POLICY_BLOCKED"),
+            ("unresolved_high_risk_disagreement", "UNRESOLVED_HIGH_RISK_DISAGREEMENT"),
+        )
+        for signal, reason in termination_signals:
+            if not metadata.get(signal):
+                continue
+            state.phase = Phase.BLOCKED
+            state.final_status = "blocked"
+            self.terminate_loop(state, reason)
+            self.store.save(state)
+            return
+        if metadata.get("partial_success"):
+            state.phase = Phase.COMPLETED
+            state.final_status = "degraded"
+            self.terminate_loop(state, "PARTIAL_SUCCESS")
+            self.store.save(state)
+            return
         evidence = metadata.get("completion_evidence")
         if isinstance(evidence, dict):
             state.completion_evidence.update(
                 {str(criterion): str(value) for criterion, value in evidence.items()}
             )
+            self._sync_loop_criteria(state)
+            if state.engineering_loop is not None:
+                for criterion, value in evidence.items():
+                    description = str(criterion)
+                    evidence_id = self.record_evidence(
+                        state,
+                        "acceptance_evidence",
+                        "client_metadata",
+                        {"criterion": description, "summary": str(value)},
+                    )
+                    set_criterion(
+                        state.engineering_loop,
+                        description,
+                        "passed",
+                        evidence_ids=[evidence_id],
+                    )
         risk = ChangeRisk(
             files_changed=int(metadata.get("files_changed", 0)),
             meaningful_lines=int(metadata.get("meaningful_lines", 0)),
@@ -649,6 +1168,7 @@ class Controller:
         elif completion_ready(state):
             state.phase = Phase.COMPLETED
             state.final_status = "completed"
+            self.terminate_loop(state, "SUCCESS")
             self.store.event(state.session_id, "task_completed", state.completion_evidence)
             state.evaluations.append(
                 {
@@ -680,12 +1200,16 @@ class Controller:
                 "policy": (
                     "tool calls allowed; verified tool and validation evidence override "
                     "conflicting model assertions; model contributions are advisory and "
-                    "unsupported recommendations must be rejected"
+                    "unsupported recommendations must be rejected; activated Skills are "
+                    "bounded procedures and never grant tools or permissions"
                 ),
                 "plan": state.plan,
                 "verified_facts": facts,
                 "recent_tool_results": state.tool_results[-4:],
                 "failure_state": state.failure_families,
+                "activated_skills": state.skill_selections[
+                    -self.settings.runtime_skills.retrieval_limit :
+                ],
                 "observation": observation,
             }
         if role == "planner":
@@ -707,7 +1231,7 @@ class Controller:
                 "known_constraints": state.acceptance_criteria,
                 "current_plan": state.plan,
                 "recent_tool_results": state.tool_results[-4:],
-                "previous_failure_evidence": state.failures[-4:],
+                "previous_failure_evidence": active_failures(state)[-4:],
                 "executor_question": observation,
             }
         return base | {
@@ -716,6 +1240,85 @@ class Controller:
             "review_status": state.review_status,
             "completion_evidence": state.completion_evidence,
         }
+
+    def select_executor_skills(self, state: SessionState, metadata: dict[str, Any]) -> None:
+        if self.skills is None or not self.settings.runtime_skills.enabled:
+            return
+        fingerprints = list(state.failure_families)[-16:]
+        if state.engineering_loop is not None:
+            fingerprints.extend(item.fingerprint for item in state.engineering_loop.open_failures)
+        try:
+            matches = self.skills.search(
+                SkillQuery(
+                    text=" ".join((state.objective, " ".join(state.acceptance_criteria))),
+                    task_type=str(metadata.get("task_type", state.request_class)),
+                    language=str(metadata.get("language", "")),
+                    framework=str(metadata.get("framework", "")),
+                    failure_fingerprints=list(dict.fromkeys(fingerprints)),
+                ),
+                limit=self.settings.runtime_skills.retrieval_limit,
+            )
+        except (OSError, sqlite3.Error, ValueError) as error:
+            state.skill_selections = []
+            state.observability_degraded = True
+            state.observability_status = "degraded"
+            self.store.event(
+                state.session_id,
+                "skill_selection_failed",
+                {"failure_class": type(error).__name__},
+            )
+            return
+        selections: list[dict[str, Any]] = []
+        remaining = self.settings.runtime_skills.max_context_characters
+        for match in matches:
+            procedure = [step[:500] for step in match.skill.procedure]
+            selection = {
+                "skill_id": match.skill.skill_id,
+                "skill_version": match.skill.version,
+                "selection_reason": ",".join(match.reasons),
+                "selection_score": round(match.score / (match.score + 10), 4),
+                "policy_required": False,
+                "result": "unknown",
+                "evidence_ids": [],
+                "procedure": procedure,
+                "requested_tool_subset": match.skill.allowed_tools,
+                "denied_tools": match.skill.denied_tools,
+                "recommended_agents": match.skill.recommended_agents,
+                "activation_authority": "executor",
+            }
+            encoded = json.dumps(selection, ensure_ascii=False)
+            if len(encoded) > remaining:
+                continue
+            remaining -= len(encoded)
+            selections.append(selection)
+            self.skills.record_outcome(match.skill.skill_id, match.skill.version, "selected")
+        state.skill_selections = selections
+        if state.engineering_loop is not None:
+            state.engineering_loop.selected_skills = [
+                f"{item['skill_id']}@{item['skill_version']}" for item in selections
+            ]
+        evidence_id = self.record_evidence(
+            state,
+            "skill_selection",
+            "executor",
+            {
+                "selected": [
+                    {
+                        "skill_id": item["skill_id"],
+                        "skill_version": item["skill_version"],
+                        "selection_reason": item["selection_reason"],
+                        "selection_score": item["selection_score"],
+                    }
+                    for item in selections
+                ],
+                "retrieval_limit": self.settings.runtime_skills.retrieval_limit,
+            },
+        )
+        self.store.event(
+            state.session_id,
+            "executor_skills_selected",
+            {"evidence_id": evidence_id, "count": len(selections)},
+        )
 
     def prompt_sandwich(
         self,
@@ -784,7 +1387,7 @@ class Controller:
         tests_failed = isinstance(validation, list) and any(
             isinstance(item, dict) and item.get("passed") is False for item in validation
         )
-        if tests_failed or state.failures or reasoner.confidence < 0.5:
+        if tests_failed or active_failures(state) or reasoner.confidence < 0.5:
             return "low"
         executor_confidence = decision.confidence if decision else 1.0
         if reasoner.confidence >= 0.8 and executor_confidence >= 0.8 and not reasoner.unknowns:
@@ -822,7 +1425,7 @@ class Controller:
             or state.request_class == "high_risk_task"
             or reasoner.confidence < 0.6
             or any(item.needed and item.role == "frontier" for item in reasoner.additional_agents)
-            or len(state.failures) >= 2
+            or len(active_failures(state)) >= 2
         )
         if architecture and "planner" not in mandatory:
             mandatory.append("planner")
@@ -858,7 +1461,7 @@ class Controller:
                                     "reasoner": reasoner.model_dump(),
                                     "hard_required_agents": mandatory,
                                     "observable_evidence": {
-                                        "tool_failures": state.failures[-4:],
+                                        "tool_failures": active_failures(state)[-4:],
                                         "has_tool_results": bool(state.tool_results),
                                         "metadata_signals": {
                                             key: metadata.get(key)
@@ -1010,9 +1613,13 @@ class Controller:
         ensure_roles: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
         body = request.copy()
+        roles = tuple(dict.fromkeys((*roles, *state.roles_required)))
+        if state.control_state != "running":
+            raise PolicyBlocked(f"request control state is {state.control_state}")
         body["max_tokens"] = self.executor_tokens(body)
         if state.phase == Phase.BLOCKED:
             raise ValueError("session blocked after no progress")
+        self.admit_loop_iteration(state)
         reasoner = self.settings.models.get("reasoner") if "reasoner" in roles else None
         reasoner_advice = ""
         reasoner_contribution: ReasonerContribution | None = None
@@ -1039,7 +1646,7 @@ class Controller:
                                         "constraints": state.acceptance_criteria,
                                         "current_plan": state.plan[-8:],
                                         "recent_tool_results": state.tool_results[-4:],
-                                        "previous_failures": state.failures[-4:],
+                                        "previous_failures": active_failures(state)[-4:],
                                         "executor_question": (
                                             "Interpret the task and recommend the next "
                                             "bounded action."
@@ -1070,6 +1677,7 @@ class Controller:
             try:
                 for attempt in range(2):
                     try:
+                        self.admit_loop_action(state, "reasoner_reentries")
                         reasoner_response = await self.provider.complete(
                             "reasoner",
                             reasoner,
@@ -1090,6 +1698,7 @@ class Controller:
                             {"attempt": 2, "failure_class": type(error).__name__},
                         )
             except (httpx.HTTPError, StageTimeout, ValueError) as error:
+                self.record_provider_failure(state, "reasoner", error)
                 status_code = (
                     error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
                 )
@@ -1222,15 +1831,12 @@ class Controller:
                     )
                     frontier_degraded = True
                 else:
-                    state.frontier_invocations += 1
                     if orchestration.parallelizable or not {
                         "planner",
                         "reviewer",
                     }.intersection(roles):
                         frontier_task = asyncio.create_task(
-                            self.frontier.collaborate(
-                                mode, evidence, state.task_id or state.session_id
-                            )
+                            self._frontier_collaborate(state, mode, evidence)
                         )
                         self.store.event(
                             state.session_id,
@@ -1310,6 +1916,7 @@ class Controller:
             planner: dict[str, Any] | None = None
             parsed: dict[str, Any] = {}
             try:
+                self.admit_loop_action(state, "planner_calls")
                 planner = await self.provider.complete(
                     "planner",
                     self.settings.models["planner"],
@@ -1325,6 +1932,7 @@ class Controller:
                         "replan_requested",
                         {"reason": "planner_structured_output_invalid"},
                     )
+                    self.admit_loop_action(state, "planner_calls")
                     planner = await self.provider.complete(
                         "planner",
                         self.settings.models["planner"],
@@ -1335,17 +1943,18 @@ class Controller:
                     parsed = parse_json_content(planner)
             except (httpx.HTTPError, StageTimeout, ValueError) as error:
                 planner_error = error
+                self.record_provider_failure(state, "planner", error)
                 state.derived_confidence = "low"
-                state.agent_invocations.append(
+                self.record_observed_invocation(
+                    state,
                     {
                         "role": "planner",
                         "mode": "collaboration",
                         "latency_ms": round((time.monotonic() - planner_started) * 1000, 3),
                         "status": "failed",
                         "failure_class": type(error).__name__,
-                    }
+                    },
                 )
-                state.agent_invocations = state.agent_invocations[-self.settings.limits.max_steps :]
                 self.store.event(
                     state.session_id,
                     "planner_failed",
@@ -1357,6 +1966,7 @@ class Controller:
                 self.record_invocation(state, "planner", planner, planner_started)
                 state.plan = parsed.get("plan", [])
                 state.acceptance_criteria = parsed.get("acceptance_criteria", [])
+                self._sync_loop_criteria(state)
                 self.store.event(state.session_id, "plan_created", {"steps": len(state.plan)})
                 self.record_evidence(
                     state,
@@ -1370,6 +1980,7 @@ class Controller:
                 pre_review_result = await pre_review_task
             except (httpx.HTTPError, StageTimeout, ValueError) as error:
                 state.review_status = "failed"
+                self.record_provider_failure(state, "reviewer", error)
                 state.derived_confidence = "low"
                 self.store.event(
                     state.session_id,
@@ -1418,7 +2029,6 @@ class Controller:
                                 },
                             )
                         else:
-                            state.frontier_invocations += 1
                             frontier_review_evidence = {
                                 "objective": state.objective,
                                 "acceptance_criteria": state.acceptance_criteria,
@@ -1438,10 +2048,8 @@ class Controller:
                                 ),
                             }
                             frontier_task = asyncio.create_task(
-                                self.frontier.collaborate(
-                                    "code_review",
-                                    frontier_review_evidence,
-                                    state.task_id or state.session_id,
+                                self._frontier_collaborate(
+                                    state, "code_review", frontier_review_evidence
                                 )
                             )
                             self.store.event(
@@ -1461,9 +2069,7 @@ class Controller:
                 for artifact in state.agent_artifacts[-4:]
                 if artifact.get("role") == "reviewer"
             ]
-            frontier_task = asyncio.create_task(
-                self.frontier.collaborate(mode, evidence, state.task_id or state.session_id)
-            )
+            frontier_task = asyncio.create_task(self._frontier_collaborate(state, mode, evidence))
             self.store.event(
                 state.session_id,
                 "frontier_collaboration_started",
@@ -1472,7 +2078,10 @@ class Controller:
         if frontier_task is not None:
             try:
                 frontier_result = await frontier_task
+            except LoopAdmissionError:
+                raise
             except RuntimeError as error:
+                self.record_provider_failure(state, "frontier", error)
                 self.store.event(
                     state.session_id,
                     "frontier_unavailable",
@@ -1491,7 +2100,8 @@ class Controller:
                 collaboration_context += "\nFrontier contribution:\n" + json.dumps(
                     redact(artifact), ensure_ascii=False
                 )
-                state.agent_invocations.append(
+                self.record_observed_invocation(
+                    state,
                     {
                         "role": "frontier",
                         "mode": frontier_result.mode,
@@ -1502,9 +2112,8 @@ class Controller:
                         "cost_usd": frontier_result.cost_usd,
                         "profile": frontier_result.profile,
                         "status": "completed",
-                    }
+                    },
                 )
-                state.agent_invocations = state.agent_invocations[-self.settings.limits.max_steps :]
                 self.record_evidence(
                     state,
                     "external_expert_finding",
@@ -1559,6 +2168,7 @@ class Controller:
         state.phase = Phase.EXECUTING
         state.final_status = None
         state.step_count += 1
+        self.select_executor_skills(state, dict(request.get("metadata", {})))
         self._record_decision(
             "executor", state, {"type": "next_step_request"}, "Proceed from verified state"
         )
@@ -1629,7 +2239,7 @@ class Controller:
             "scope_evidence": state.approved_scope,
             "completion_evidence": state.completion_evidence
             | (current_completion if isinstance(current_completion, dict) else {}),
-            "known_failures": state.failures[-4:],
+            "known_failures": active_failures(state)[-4:],
             "assistant_message": choice.get("message", {}),
             "finish_reason": choice.get("finish_reason"),
         }
@@ -1714,6 +2324,7 @@ class Controller:
                     )
                     owned_guard = True
             try:
+                self.admit_loop_action(state, "reviewer_calls")
                 response = await self.provider.complete(
                     "reviewer",
                     self.settings.models["reviewer"],
@@ -1758,6 +2369,7 @@ class Controller:
                     ]
                     retry_request["max_tokens"] = min(self.settings.limits.reviewer_tokens, 1024)
                     retry_started = time.monotonic()
+                    self.admit_loop_action(state, "reviewer_calls")
                     response = await self.provider.complete(
                         "reviewer",
                         self.settings.models["reviewer"],
@@ -1843,6 +2455,7 @@ class Controller:
         }
         decision_id = self._record_decision("judge", state, {"type": "judge_request"}, observation)
         judge_started = time.monotonic()
+        self.admit_loop_action(state, "judge_calls")
         response = await self.provider.complete(
             "judge",
             self.settings.models["judge"],
@@ -1860,10 +2473,16 @@ class Controller:
         if verdict.verdict == "blocked":
             state.phase = Phase.BLOCKED
             state.final_status = "blocked"
+            self.terminate_loop(state, "UNRESOLVED_HIGH_RISK_DISAGREEMENT")
             self.store.event(state.session_id, "task_blocked", {"reason": "judge_blocked"})
-        elif verdict.verdict == "accept" and verdict.completion_allowed:
+        elif (
+            verdict.verdict == "accept"
+            and verdict.completion_allowed
+            and (state.engineering_loop is None or completion_ready(state))
+        ):
             state.phase = Phase.COMPLETED
             state.final_status = "completed"
+            self.terminate_loop(state, "SUCCESS")
         else:
             state.phase = Phase.CORRECTION
         self.store.save(state)

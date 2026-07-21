@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import math
 import re
 import sqlite3
 import time
+import uuid
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -49,6 +51,22 @@ RetryableFailureClass = Literal[
     "judge_timeout",
 ]
 SQLITE_MAX_INTEGER = 2**63 - 1
+MODEL_INVOCATION_RATE_COLUMNS = (
+    "generated_at_epoch",
+    "window",
+    "role",
+    "model",
+    "total_requests",
+    "requests_using_model",
+    "invocation_count",
+    "invocation_rate_percent",
+    "success_count",
+    "failure_count",
+    "average_latency_ms",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+)
 
 REQUEST_COLUMNS = (
     "request_id, session_id, api_token_id, client_class, model_alias, runtime_mode, request_class, "
@@ -243,6 +261,8 @@ class UsageStore:
         sample_window: int = 512,
         ewma_alpha: float = 0.25,
         adaptive_minimum_samples: int = 20,
+        invocation_report_path: str | Path | None = None,
+        model_catalog: Mapping[str, str] | None = None,
     ) -> None:
         if sample_window < 1:
             raise ValueError("sample_window must be positive")
@@ -254,6 +274,10 @@ class UsageStore:
         self.sample_window = sample_window
         self.ewma_alpha = ewma_alpha
         self.adaptive_minimum_samples = adaptive_minimum_samples
+        self.invocation_report_path = (
+            Path(invocation_report_path) if invocation_report_path is not None else None
+        )
+        self.model_catalog = dict(model_catalog or {})
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as database:
             database.executescript(
@@ -307,6 +331,21 @@ class UsageStore:
                 );
                 CREATE INDEX IF NOT EXISTS role_request_usage_role_time
                     ON role_request_usage(role, requested_at);
+                CREATE TABLE IF NOT EXISTS model_invocation_usage (
+                    invocation_id TEXT PRIMARY KEY,
+                    request_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    invoked_at REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    latency_ms REAL NOT NULL,
+                    prompt_tokens INTEGER,
+                    completion_tokens INTEGER,
+                    total_tokens INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS model_invocation_usage_role_time
+                    ON model_invocation_usage(role, invoked_at);
                 """
             )
             columns = {row[1] for row in database.execute("PRAGMA table_info(request_usage)")}
@@ -315,6 +354,112 @@ class UsageStore:
                     "ALTER TABLE request_usage ADD COLUMN api_token_id "
                     "TEXT NOT NULL DEFAULT 'legacy'"
                 )
+        self.write_model_invocation_rates()
+
+    def record_model_invocation(
+        self,
+        request_id: str,
+        *,
+        role: str,
+        model: str,
+        mode: str,
+        status: str,
+        latency_ms: float,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
+    ) -> None:
+        if role not in {*self.model_catalog, "frontier"}:
+            raise ValueError("unknown invocation role")
+        with self._connect() as database:
+            database.execute(
+                "INSERT INTO model_invocation_usage "
+                "(invocation_id, request_id, role, model, mode, invoked_at, status, latency_ms, "
+                "prompt_tokens, completion_tokens, total_tokens) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(uuid.uuid4()),
+                    request_id,
+                    role,
+                    model,
+                    mode,
+                    time.time(),
+                    status,
+                    latency_ms,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                ),
+            )
+        self.write_model_invocation_rates()
+
+    def model_invocation_rates(self, *, now: float | None = None) -> list[dict[str, Any]]:
+        current = time.time() if now is None else now
+        rows: list[dict[str, Any]] = []
+        with self._connect() as database:
+            for window, since in (("all_time", 0.0), ("last_hour", current - 3_600)):
+                total_requests = int(
+                    database.execute(
+                        "SELECT COUNT(*) FROM request_usage WHERE accepted_at >= ?", (since,)
+                    ).fetchone()[0]
+                )
+                summaries = {
+                    (str(row[0]), str(row[1])): row
+                    for row in database.execute(
+                        "SELECT role, model, COUNT(DISTINCT request_id), COUNT(*), "
+                        "SUM(status = 'completed'), SUM(status != 'completed'), AVG(latency_ms), "
+                        "COALESCE(SUM(prompt_tokens), 0), "
+                        "COALESCE(SUM(completion_tokens), 0), "
+                        "COALESCE(SUM(total_tokens), 0) "
+                        "FROM model_invocation_usage WHERE invoked_at >= ? GROUP BY role, model",
+                        (since,),
+                    )
+                }
+                models = {*self.model_catalog.items(), *summaries}
+                for role, model in sorted(models):
+                    summary = summaries.get((role, model))
+                    requests_using = int(summary[2]) if summary else 0
+                    rows.append(
+                        {
+                            "generated_at_epoch": current,
+                            "window": window,
+                            "role": role,
+                            "model": model,
+                            "total_requests": total_requests,
+                            "requests_using_model": requests_using,
+                            "invocation_count": int(summary[3]) if summary else 0,
+                            "invocation_rate_percent": round(
+                                requests_using / total_requests * 100, 3
+                            )
+                            if total_requests
+                            else 0.0,
+                            "success_count": int(summary[4] or 0) if summary else 0,
+                            "failure_count": int(summary[5] or 0) if summary else 0,
+                            "average_latency_ms": round(float(summary[6]), 3)
+                            if summary and summary[6] is not None
+                            else "",
+                            "prompt_tokens": int(summary[7]) if summary else 0,
+                            "completion_tokens": int(summary[8]) if summary else 0,
+                            "total_tokens": int(summary[9]) if summary else 0,
+                        }
+                    )
+        return rows
+
+    def write_model_invocation_rates(self) -> None:
+        if self.invocation_report_path is None:
+            return
+        path = self.invocation_report_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        rows = self.model_invocation_rates()
+        try:
+            with temporary.open("w", newline="") as output:
+                writer = csv.DictWriter(output, fieldnames=MODEL_INVOCATION_RATE_COLUMNS)
+                writer.writeheader()
+                writer.writerows(rows)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30)

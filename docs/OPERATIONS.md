@@ -68,8 +68,112 @@ Chat stream exists and includes only its exception class. Responses clients may
 receive `: keep-alive` SSE comments while Reasoner or routing work is pending;
 these are transport heartbeats, not model output.
 
+An optional role that is genuinely loading is retried inside that same Responses
+stream until `model_load_timeout_seconds`; heartbeat comments keep the transport
+alive. A terminal `response.failed` is emitted only after the loading deadline
+or for a non-loading failure. A newly arriving request also cancels a stale
+`unload_queued` transition before readiness is evaluated.
+
+The gateway atomically maintains the model invocation report at:
+
+```text
+<gateway.run_dir>/model-invocation-rates.csv
+```
+
+In the checked-in configuration this resolves under `data/run/`. The report has
+`all_time` and `last_hour` rows for every configured or historically observed
+role/model pair. `invocation_rate_percent`
+is the percentage of distinct gateway request IDs that invoked that model in the
+window; `invocation_count` separately preserves repeated calls within one
+request. The report also includes recorded success/failure counts, average
+latency, and token totals. Rates across roles may exceed 100% in aggregate
+because one request can invoke several models. The CSV contains no prompts,
+reasoning, tool arguments, response bodies, credentials, or OAuth material. It
+starts with the first invocation after the running gateway contains this change;
+historical rates are not reconstructed.
+
+Local files and `file://` attachment paths are native filesystem inputs. Use
+Codex file or shell tools for them. Call `read_mcp_resource` only with the exact
+server identifier and resource URI returned by MCP discovery; a connector's
+display name such as `local_filesystem` is not evidence that such an MCP server
+exists.
+
 Lifecycle states and safety rules are canonical in
 `docs/MODEL_LIFECYCLE.md`.
+
+## Isolated Loop Engineering development
+
+The development loop implementation is disabled in checked-in configuration and is not
+production-authorized. An isolated development gateway may enable it with a
+complete JSON policy:
+
+```bash
+DGX_MOA_LOOP_ENGINEERING='{"enabled":true,"defaults":{"iterations":4,"tool_calls":30,"reasoner_reentries":4,"planner_calls":2,"reviewer_calls":2,"frontier_calls":2,"judge_calls":1,"tokens":250000,"external_cost_usd":10,"wall_clock_seconds":1800},"duplicate_fingerprint_limit":2,"no_progress_iteration_limit":2,"local_failures_before_frontier":2,"request_class_overrides":{},"risk_level_overrides":{}}'
+```
+
+Use an isolated state database, run directory, loopback port, and development
+runtime channel. The source admits model and tool actions through the configured
+budgets, but physical client/provider validation is incomplete. Do not enable
+it in production.
+See `docs/LOOP_ENGINEERING.md`.
+
+## Isolated runtime Skills development
+
+The checked-in `gateway.runtime_skills.enabled` value is `false`. For isolated
+development only, set a separate writable root:
+
+```bash
+DGX_MOA_RUNTIME_SKILLS='{"enabled":true,"root":"/tmp/dgx-moa-skills","retrieval_limit":3,"max_context_characters":6000}'
+```
+
+Do not point experiments at a production registry. Promotion and rollback are
+new-version operations and require evidence plus explicit approval. Set
+`require_signature` at the pack import boundary when unsigned packs must be
+rejected. See `docs/SKILLS.md` and `docs/SKILL_GOVERNANCE.md`.
+
+## Isolated declarative policy development
+
+The checked-in `gateway.declarative_policy.enabled` value is `false`. Use only
+an isolated gateway and pass a complete versioned policy object through
+`DGX_MOA_DECLARATIVE_POLICY`. Approval IDs belong in authenticated request
+metadata; do not store credentials or approval secrets inside a policy file.
+See `docs/POLICY_ENGINE.md` for the implemented and missing enforcement edges.
+
+## Isolated live observation development
+
+Keep `gateway.live_observation.enabled: false` until using synthetic or dedicated
+test channels. Supply webhook and bot credentials only through the protected
+`DGX_MOA_LIVE_OBSERVATION` runtime object. Never commit them. Controls require
+both `admin_api_enabled` and `live_observation.controls.enabled`, plus an empty-
+by-default user/role policy. Issue request-scoped nonces through
+`POST /v1/admin/observation/nonces` and submit bounded commands through
+`POST /v1/admin/observation/commands`. See `docs/LIVE_OBSERVATION.md`.
+
+## Isolated training collection development
+
+Keep `gateway.training_data.enabled: false` in production. Isolated validation
+must use a training database different from `gateway.state_db`, a separate
+object root, synthetic content, an explicit `training_allowed` repository map,
+and a conservative free-space floor. Collection failure emits only a sanitized
+failure class and cannot fail the request. See `docs/TRAINING_DATA.md` and
+`docs/PRIVACY_AND_RETENTION.md`.
+
+## Isolated weekly packaging development
+
+Checked-in weekly jobs are disabled. Skill reporting defaults to Sunday 03:00
+and packaging to Monday 02:00 in `Asia/Seoul`, but no scheduler is installed.
+Packaging requires a real `7zz` or `7z`, adequate free space, a complete prior
+week, and only eligible/tombstone-free candidates. Do not install a timer or
+publish archives without the separate systemd/export approval. See
+`docs/WEEKLY_PACKAGING.md`.
+
+## Isolated execution replay
+
+Use exact replay only with complete structured mock outputs for every invoked
+role. Live comparative replay is nondeterministic and must run against an
+isolated state, Skill registry and provider configuration. Do not point a replay
+at the production worktree or allow it to mutate Frontier hosts. See
+`docs/EXECUTION_REPLAY.md`.
 
 ## Isolated lifecycle development
 
@@ -274,3 +378,22 @@ Production deployment is a fast-forward/pull of reviewed `main` into
 `/home/kotori9/dgx-moa-agent`, followed by proportional checks. `dev` may be
 deployed there only as an explicitly identified validation runtime; its traces
 must use `runtime_channel=dev` and must never be labeled production.
+## Development runtime metrics
+
+The development gateway exposes the Goal-specific fixed metric set at
+authenticated `GET /metrics`. Metrics are label-free: request IDs, user IDs,
+repository paths, prompts, and failure text are never accepted or retained by
+the collector. Loop counters are fed by the append-only event boundary; Skill,
+observer, and training counters are overlaid from their bounded stores. Disabled
+or not-yet-run weekly operations report zero. This endpoint has unit evidence
+only and is not yet enabled in production.
+
+## Disabled weekly and training administration
+
+When both the existing admin boundary and feature gates are enabled, candidate
+inspection/state transitions and request/repository/user exclusions live under
+`/v1/admin/training/*`. Retention endpoints are dry-run unless `apply=true`.
+Weekly package verify/revoke/regenerate/retention lives under
+`/v1/admin/weekly-packages/*`; exact/audit replay is `/v1/admin/replay`. Package
+jobs use the configured Seoul schedules and emit only allowlisted summaries.
+These routes are `404` under checked-in defaults and have no production evidence.

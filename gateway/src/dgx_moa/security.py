@@ -19,8 +19,12 @@ SECRET_PATTERNS = (
 def redact(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            key: "[REDACTED]"
-            if re.search(r"(?i)token|secret|password|api.?key", key)
+            key: (
+                item
+                if isinstance(item, str) and item in {"[REDACTED]", "[REDACTED_BY_POLICY]"}
+                else "[REDACTED]"
+            )
+            if re.search(r"(?i)authorization|cookie|token|secret|password|api.?key", key)
             else redact(item)
             for key, item in value.items()
         }

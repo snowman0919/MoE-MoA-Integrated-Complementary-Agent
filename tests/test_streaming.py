@@ -353,6 +353,7 @@ async def test_native_tool_call_delta_bytes_are_preserved_exactly() -> None:
     assert forwarded[0] == tool_event
     assert bytes(observation.captured).startswith(tool_event)
     assert observation.tool_delta_seen
+    assert observation.tool_call_names == {0: "shell"}
 
 
 @pytest.mark.asyncio

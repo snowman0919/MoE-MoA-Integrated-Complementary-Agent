@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -253,6 +254,20 @@ def trace_record(
             "request_class": state.request_class,
             "roles_required": state.roles_required,
             "truncated": state.truncated,
+            "training_opt_out": state.training_opt_out,
+            "user_training_opt_out": state.user_training_opt_out,
+            "training_subject_hash": state.training_subject_hash,
+            "repository_training_policy": state.repository_training_policy,
+            "policy_version": (
+                state.policy_decisions[-1].get("policy_version", "none")
+                if state.policy_decisions
+                else "none"
+            ),
+            "skill_versions": [
+                f"{item.get('skill_id')}@{item.get('skill_version')}"
+                for item in state.skill_selections
+            ],
+            "engineering_loop_id": state.engineering_loop.loop_id if state.engineering_loop else "",
         },
         "verified_state": state.verified_facts[-8:],
         "planner_output": state.plan,
@@ -299,11 +314,16 @@ def export_trace(path: str | Path, trace: dict[str, Any]) -> None:
 
 class TraceRecorder:
     def __init__(
-        self, directory: str | Path, store: StateStore, models: dict[str, ModelConfig] | None = None
+        self,
+        directory: str | Path,
+        store: StateStore,
+        models: dict[str, ModelConfig] | None = None,
+        collector: Callable[[dict[str, Any]], None] | None = None,
     ):
         self.directory = Path(directory)
         self.store = store
         self.models = models or {}
+        self.collector = collector
 
     def record(
         self, state: SessionState, *, task_id: str = "", metrics: dict[str, Any] | None = None
@@ -316,16 +336,16 @@ class TraceRecorder:
             / date
             / f"{state.session_id}.jsonl"
         )
-        export_trace(
-            path,
-            trace_record(
-                state,
-                events=self.store.events(state.session_id),
-                task_id=task_id,
-                metrics=metrics,
-                models=self.models,
-            ),
+        trace = trace_record(
+            state,
+            events=self.store.events(state.session_id),
+            task_id=task_id,
+            metrics=metrics,
+            models=self.models,
         )
+        export_trace(path, trace)
+        if self.collector is not None:
+            self.collector(trace)
         self.store.index_trace(state.session_id, path, state.runtime_channel, state.trace_origin)
         return path
 
