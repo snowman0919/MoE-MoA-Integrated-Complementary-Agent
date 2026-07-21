@@ -1816,8 +1816,20 @@ Measured development checks:
    `ResponseCreatedEvent` through `ResponseCompletedEvent`; final text was `ok`
    and total token usage was `2`.
 
-This is development-only evidence. No production service, lifecycle profile,
-systemd topology, model process, secret, or model weight was changed.
+Production deployment was approved and merged as PR `#19`, commit
+`52bd8fc89195497b9132a30c8fd90733f3103be6`. Restarting the gateway followed
+the installed resident-target dependency and performed the selected exact
+executor stop/start. The replacement executor retained context `65536`, one
+sequence, `1700000000` KV bytes, `gpu_memory_utilization=0.5`, and MARLIN;
+weight loading took `246.07` seconds. Gateway, executor, and resident target all
+returned active, and health, model-list, and protected readiness checks passed.
+
+Authenticated production streaming checks returned HTTP 200. `dgx-moa-fast`
+emitted ten ordered events and exactly `STREAM_OK`; the primary `dgx-moa`
+Reasoner+Executor path emitted nineteen ordered events, non-empty text, and a
+completed response. An unauthenticated streaming request returned HTTP 401.
+No secret value was printed or stored, and no systemd topology or model weight
+was changed.
 
 ### Heavy Judge validation and OAuth profile fallback (2026-07-21)
 
