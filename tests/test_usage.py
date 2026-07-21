@@ -159,6 +159,38 @@ def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
     }
 
 
+def test_legacy_chat_runtime_mode_reads_as_fast(tmp_path: Path) -> None:
+    module = usage_module()
+    path = tmp_path / "usage.db"
+    store = module.UsageStore(path)
+    store.start(start_record(module, "legacy-chat", 100.0))
+    store.start_roles(
+        "legacy-chat",
+        ("executor",),
+        session_id="legacy-session",
+        requested_at=100.0,
+        client_mode="fast",
+        request_class="native_agent_turn",
+        states={"executor": "warm"},
+        load_triggered={"executor": False},
+    )
+    with sqlite3.connect(path) as database:
+        database.execute(
+            "UPDATE request_usage SET runtime_mode = 'chat' WHERE request_id = 'legacy-chat'"
+        )
+        database.execute(
+            "UPDATE role_request_usage SET client_mode = 'chat' WHERE request_id = 'legacy-chat'"
+        )
+
+    record = store.get("legacy-chat")
+    role_record = store.recent_role_requests("executor")[0]
+
+    assert record is not None
+    assert record.runtime_mode == "fast"
+    assert role_record.client_mode == "fast"
+    assert store.report(now=100.0)["request_count"] == 1
+
+
 def test_role_usage_is_independent_and_content_free(tmp_path: Path) -> None:
     module = usage_module()
     path = tmp_path / "state.db"
