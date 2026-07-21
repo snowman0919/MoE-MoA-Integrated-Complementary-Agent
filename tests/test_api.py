@@ -2285,22 +2285,40 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             "visibility",
             "supported_in_api",
             "priority",
+            "additional_speed_tiers",
+            "service_tiers",
             "availability_nux",
             "upgrade",
             "base_instructions",
+            "model_messages",
+            "include_skills_usage_instructions",
+            "supports_reasoning_summaries",
+            "default_reasoning_summary",
             "support_verbosity",
             "default_verbosity",
             "apply_patch_tool_type",
+            "web_search_tool_type",
             "truncation_policy",
             "supports_parallel_tool_calls",
+            "supports_image_detail_original",
             "context_window",
             "max_context_window",
+            "comp_hash",
+            "effective_context_window_percent",
             "experimental_supported_tools",
+            "input_modalities",
+            "supports_search_tool",
+            "use_responses_lite",
+            "tool_mode",
+            "multi_agent_version",
         }
         assert all(codex_required <= model.keys() for model in models["models"])
         assert all(model["apply_patch_tool_type"] == "freeform" for model in models["models"])
         assert all(model["shell_type"] == "shell_command" for model in models["models"])
         assert all(model["context_window"] == 65536 for model in models["models"])
+        assert all(model["supports_reasoning_summaries"] is False for model in models["models"])
+        assert all(model["tool_mode"] == "direct" for model in models["models"])
+        assert all(model["comp_hash"] == "dgx-moa-65536-v1" for model in models["models"])
         response = client.post(
             "/v1/chat/completions",
             headers=headers,
