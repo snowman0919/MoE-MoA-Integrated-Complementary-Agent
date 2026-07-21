@@ -267,6 +267,15 @@ class Settings(BaseModel):
             not unit.startswith("dgx-moa-dev-") for unit in self.lifecycle_unit_map.values()
         ):
             raise ValueError("non-main lifecycle units must use the dgx-moa-dev namespace")
+        conflicting = sorted(
+            role
+            for role in self.lifecycle_unit_map
+            if role in self.models and self.models[role].lifecycle_control == "external"
+        )
+        if conflicting:
+            raise ValueError(
+                f"external lifecycle role cannot have a systemd unit: {conflicting[0]}"
+            )
         return self
 
 

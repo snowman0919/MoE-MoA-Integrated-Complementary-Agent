@@ -186,15 +186,33 @@ def test_responses_get_works_and_converts_502_to_200(settings):
     with TestClient(app) as client:
         app.state.provider = FailingProvider()
         app.state.controller.provider = app.state.provider
+        unauthorized = client.get("/v1/responses", params={"input": "hello"})
+        unauthorized_missing = client.get("/v1/responses")
+        missing = client.get(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+        )
         response = client.get(
             "/v1/responses",
             params={"input": "hello", "model": "dgx-moa-agent"},
             headers={"Authorization": "Bearer test-secret"},
         )
+        post_response = client.post(
+            "/v1/responses",
+            json={"input": "hello", "model": "dgx-moa-agent"},
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        assert unauthorized.status_code == 401
+        assert unauthorized_missing.status_code == 401
+        assert missing.status_code == 405
         assert response.status_code == 200
+        assert post_response.status_code == 200
         payload = response.json()
         assert payload["status"] == "failed"
         assert payload["output"] == []
+        assert {key: payload[key] for key in ("status", "output", "error")} == {
+            key: post_response.json()[key] for key in ("status", "output", "error")
+        }
 
 
 @pytest.mark.parametrize(
@@ -3488,6 +3506,43 @@ def test_request_headers_set_trace_identity(settings, stub_provider: StubProvide
     assert continuation.status_code == 200
     assert continued_state and continued_state.task_id == "task-1"
     assert continued_state.repository["workspace_identifier"] == "repo"
+
+
+def test_responses_get_forwards_trace_headers_and_default_model(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    headers = {
+        "Authorization": "Bearer test-secret",
+        "X-Session-ID": "responses-get-headers",
+        "X-Runtime-Channel": "dev",
+        "X-Trace-Origin": "validation",
+        "X-Task-ID": "get-task",
+        "X-Workspace-Path": "/tmp/repo",
+        "X-Workspace-ID": "get-repo",
+        "X-Repository-Branch": "dev",
+        "X-Repository-Commit": "def",
+        "X-Dirty-State": "clean",
+    }
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.get(
+            "/v1/responses",
+            params={"input": "work"},
+            headers=headers,
+        )
+        state = client.app.state.store.get("responses-get-headers")
+
+    assert response.status_code == 200
+    assert response.json()["model"] == settings.model_name
+    assert state and state.task_id == "get-task"
+    assert state.runtime_channel == "dev"
+    assert state.trace_origin == "validation"
+    assert state.repository == {
+        "workspace_path": "/tmp/repo",
+        "workspace_identifier": "get-repo",
+        "current_branch": "dev",
+        "current_commit": "def",
+        "dirty_status": "clean",
+    }
 
 
 def test_request_json_cannot_select_runtime_trace_provenance(

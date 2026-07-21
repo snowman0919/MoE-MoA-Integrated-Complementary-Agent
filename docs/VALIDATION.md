@@ -1898,12 +1898,22 @@ eight commands:
   0.93, in `25380.793` ms with `20658` tokens. The review covered v2/v3
   consumers and schemas, downgrade rejection, fallback classification, and
   selected-profile trace metadata.
-- Production-hotfix reconciliation gates passed with `619` tests and the
+- Production-hotfix reconciliation gates passed with `621` tests and the
   existing upstream Starlette warning; Ruff format/check, mypy for 28 source
   files, user-systemd verification, every shell syntax check, trace audit
   `10/10` at 100.0%, and `git diff --check` all exited zero. The reconciliation
   preserves the authenticated `GET /v1/responses` shim and reports externally
   controlled roles without treating them as unmanaged.
+- Frontier reconciliation review used the secondary OAuth profile throughout.
+  The first review returned `revise`, Important 1, confidence 0.93, in
+  `26174.539` ms with `15947` tokens because an external role could also appear
+  in the systemd unit map. Configuration now rejects that contradiction and
+  status rendering gives external control defensive precedence. The second
+  review returned `revise`, Important 1, confidence 0.97, in `17859.387` ms
+  with `15957` tokens because the omitted-model GET test did not assert the
+  selected default. The assertion was added. The final review returned
+  `approve`, Critical 0, Important 0, missing tests 0, confidence 0.99, in
+  `10961.058` ms with `15564` tokens.
 
 ## Codex cold-start 503 diagnosis — 2026-07-21
 

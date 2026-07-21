@@ -473,8 +473,6 @@ def create_app(
         }
 
     def status_lifecycle_record(role: str) -> dict[str, Any]:
-        if configured.lifecycle_mode != "disabled" and role in configured.lifecycle_unit_map:
-            return public_lifecycle_record(app.state.lifecycle_store.get(role))
         if (
             configured.lifecycle_mode != "disabled"
             and configured.models.get(role) is not None
@@ -483,6 +481,8 @@ def create_app(
             status = public_lifecycle_record(app.state.lifecycle_store.get(role))
             status["control"] = "external"
             return status
+        if configured.lifecycle_mode != "disabled" and role in configured.lifecycle_unit_map:
+            return public_lifecycle_record(app.state.lifecycle_store.get(role))
         automation = app.state.lifecycle_store.automation_status()
         return {
             "role": role,
