@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import math
+import json
 import os
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import httpx
 import uvicorn
@@ -40,7 +41,7 @@ from .routing import (
 )
 from .runtime_status import memory_available as runtime_memory_available
 from .runtime_status import report as runtime_report
-from .schemas import ChatRequest, ProfileResponse
+from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest
 from .security import admin_dependency, auth_dependency
 from .state import StateStore
 from .streaming import StreamObservation, forward_sse, reported_usage
@@ -89,6 +90,126 @@ def title_request_index(messages: list[dict[str, Any]]) -> int | None:
             content = str(message.get("content", "")).strip().lower()
             return index if content.startswith("generate a title for this conversation") else None
     return None
+
+
+def _coerce_responses_input(
+    input_payload: str | list[str | dict[str, Any]],
+) -> list[ChatMessage]:
+    if isinstance(input_payload, str):
+        return [ChatMessage(role="user", content=input_payload)]
+
+    messages: list[ChatMessage] = []
+    for item in input_payload:
+        if isinstance(item, str):
+            messages.append(ChatMessage(role="user", content=item))
+            continue
+        message_role: Literal["system", "user", "assistant", "tool", "developer"] = "user"
+        role = item.get("role")
+        valid_roles = {"system", "user", "assistant", "tool", "developer"}
+        if not (isinstance(role, str) and role in valid_roles):
+            role = "user" if item.get("type") == "input_text" else str(role or "user")
+        if role in valid_roles:
+            message_role = cast(
+                Literal["system", "user", "assistant", "tool", "developer"], role
+            )
+        content = item.get("content")
+        if content is None:
+            content = item.get("text")
+        if content is None:
+            raise ValueError("responses item content is missing")
+        messages.append(ChatMessage(role=message_role, content=content))
+    return messages
+
+
+def _to_chat_request(body: ResponsesRequest) -> ChatRequest:
+    messages = _coerce_responses_input(body.input)
+    payload: dict[str, Any] = {
+        "model": body.model,
+        "messages": messages,
+        "stream": body.stream,
+        "metadata": body.metadata,
+        "max_tokens": body.max_output_tokens,
+    }
+    extra = {
+        "temperature": body.temperature,
+        "top_p": body.top_p,
+        "stop": body.stop,
+    }
+    for key, value in extra.items():
+        if value is not None:
+            payload[key] = value
+    return ChatRequest.model_validate(payload)
+
+
+def _to_response_payload(chat_response: dict[str, Any], model_name: str) -> dict[str, Any]:
+    response_id = chat_response.get("id") or f"resp-{uuid.uuid4().hex}"
+    message = chat_response.get("choices", [{}])[0].get("message", {})
+    content = message.get("content")
+    if content is None:
+        if message.get("tool_calls"):
+            content = json.dumps(message.get("tool_calls"), ensure_ascii=False)
+        else:
+            content = ""
+    if not isinstance(content, str):
+        if isinstance(content, list):
+            content = json.dumps(content, ensure_ascii=False)
+        else:
+            content = str(content)
+    usage = chat_response.get("usage", {})
+    output_usage = {
+        key: value
+        for key, value in {
+            "input_tokens": usage.get("prompt_tokens"),
+            "output_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens", usage.get("total")),
+        }.items()
+        if isinstance(value, (int, float))
+    }
+    return {
+        "id": response_id,
+        "object": "response",
+        "created": chat_response.get("created", int(time.time())),
+        "model": chat_response.get("model", model_name),
+        "status": "completed",
+        "output": [
+            {
+                "type": "message",
+                "id": f"msg-{uuid.uuid4().hex}",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": content}],
+            }
+        ],
+        "usage": output_usage,
+    }
+
+
+def _to_response_error_payload(payload: dict[str, Any], model_name: str) -> dict[str, Any]:
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return {
+            "id": f"resp-{uuid.uuid4().hex}",
+            "object": "response",
+            "created": int(time.time()),
+            "model": model_name,
+            "status": "failed",
+            "error": {"message": str(payload), "type": "backend_error", "code": "backend_error"},
+            "output": [],
+        }
+    return {
+        "id": f"resp-{uuid.uuid4().hex}",
+        "object": "response",
+        "created": int(time.time()),
+        "model": model_name,
+        "status": "failed",
+        "error": {
+            "message": str(error.get("message", "backend_error")),
+            "type": str(error.get("type", "backend_error")),
+            "code": str(error.get("code", "backend_error")),
+            "param": error.get("param"),
+        },
+        "output": [],
+    }
 
 
 def elapsed_ms(started: float) -> float:
@@ -1305,6 +1426,99 @@ def create_app(
                 "backend_error",
                 "backend_error",
             )
+
+    @app.post("/v1/responses", dependencies=[Depends(auth)])
+    async def responses(
+        body: ResponsesRequest,
+        request: Request,
+        x_session_id: str | None = Header(default=None),
+        x_runtime_channel: str | None = Header(default=None),
+        x_trace_origin: str | None = Header(default=None),
+        x_task_id: str | None = Header(default=None),
+        x_workspace_path: str | None = Header(default=None),
+        x_workspace_id: str | None = Header(default=None),
+        x_repository_branch: str | None = Header(default=None),
+        x_repository_commit: str | None = Header(default=None),
+        x_dirty_state: str | None = Header(default=None),
+    ) -> Response:
+        try:
+            chat_request = _to_chat_request(body)
+        except ValueError as error:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from error
+        chat_response = await chat(
+            chat_request,
+            request=request,
+            x_session_id=x_session_id,
+            x_runtime_channel=x_runtime_channel,
+            x_trace_origin=x_trace_origin,
+            x_task_id=x_task_id,
+            x_workspace_path=x_workspace_path,
+            x_workspace_id=x_workspace_id,
+            x_repository_branch=x_repository_branch,
+            x_repository_commit=x_repository_commit,
+            x_dirty_state=x_dirty_state,
+        )
+        if isinstance(chat_response, StreamingResponse):
+            return chat_response
+        if chat_response.status_code != 200:
+            if chat_response.status_code == status.HTTP_502_BAD_GATEWAY:
+                response_body = chat_response.body
+                if isinstance(response_body, memoryview):
+                    response_body = response_body.tobytes()
+                if not isinstance(response_body, (bytes, bytearray)):
+                    response_body = bytes(response_body)
+                try:
+                    payload = json.loads(response_body.decode("utf-8"))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    payload = {}
+                payload = _to_response_error_payload(payload, body.model)
+                return JSONResponse(
+                    payload,
+                    headers={"X-Session-ID": chat_response.headers.get("X-Session-ID", "")},
+                )
+            return chat_response
+        response_body = chat_response.body
+        if isinstance(response_body, memoryview):
+            response_body = response_body.tobytes()
+        if not isinstance(response_body, (bytes, bytearray)):
+            response_body = bytes(response_body)
+        payload: dict[str, Any] = json.loads(response_body.decode("utf-8"))
+        return JSONResponse(
+            _to_response_payload(payload, body.model),
+            headers={"X-Session-ID": chat_response.headers.get("X-Session-ID", "")},
+        )
+
+    @app.get("/v1/responses", dependencies=[Depends(auth)])
+    async def responses_get(
+        request: Request,
+        input: str | None = None,
+        model: str | None = None,
+        x_session_id: str | None = Header(default=None),
+        x_runtime_channel: str | None = Header(default=None),
+        x_trace_origin: str | None = Header(default=None),
+        x_task_id: str | None = Header(default=None),
+        x_workspace_path: str | None = Header(default=None),
+        x_workspace_id: str | None = Header(default=None),
+        x_repository_branch: str | None = Header(default=None),
+        x_repository_commit: str | None = Header(default=None),
+        x_dirty_state: str | None = Header(default=None),
+    ) -> Response:
+        if input is None:
+            raise HTTPException(status.HTTP_405_METHOD_NOT_ALLOWED, "Method Not Allowed")
+        chat_request = ResponsesRequest(model=model or configured.model_name, input=input)
+        return await responses(
+            body=chat_request,
+            request=request,
+            x_session_id=x_session_id,
+            x_runtime_channel=x_runtime_channel,
+            x_trace_origin=x_trace_origin,
+            x_task_id=x_task_id,
+            x_workspace_path=x_workspace_path,
+            x_workspace_id=x_workspace_id,
+            x_repository_branch=x_repository_branch,
+            x_repository_commit=x_repository_commit,
+            x_dirty_state=x_dirty_state,
+        )
 
     @app.get("/v1/admin/runtime-status", dependencies=[Depends(admin_auth)])
     async def admin_runtime_status(request: Request) -> dict[str, Any]:

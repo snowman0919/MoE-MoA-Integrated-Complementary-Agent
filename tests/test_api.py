@@ -20,7 +20,7 @@ from dgx_moa.lifecycle import (
     calculate_idle_policy,
     continuation_correlation,
 )
-from dgx_moa.schemas import ChatRequest
+from dgx_moa.schemas import ChatRequest, ResponsesRequest
 from dgx_moa.state import Phase, SessionState
 from dgx_moa.streaming import forward_sse as unclosed_forward_sse
 from fastapi import HTTPException, Request
@@ -154,6 +154,58 @@ async def direct_review(app, session_id: str, *, high_risk: bool = False):  # ty
         x_repository_commit=None,
         x_dirty_state=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_responses_endpoint_translates_and_streams(settings, stub_provider: StubProvider):
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        responses_endpoint = endpoint(app, "/v1/responses", "POST")
+
+        response = await responses_endpoint(
+            ResponsesRequest(model="dgx-moa-agent", input="hello"),
+            Request({"type": "http", "app": app}),
+        )
+        assert not isinstance(response, StreamingResponse)
+        payload = json.loads(response.body.decode("utf-8"))
+        assert payload["object"] == "response"
+        assert payload["model"] == "dgx-moa-agent"
+        assert payload["output"][0]["type"] == "message"
+        assert payload["output"][0]["content"][0]["type"] == "output_text"
+
+        stream_response = await responses_endpoint(
+            ResponsesRequest(model="dgx-moa-agent", input="hello", stream=True),
+            Request({"type": "http", "app": app}),
+        )
+        assert isinstance(stream_response, StreamingResponse)
+
+
+@pytest.mark.asyncio
+async def test_responses_get_works_and_converts_502_to_200(settings):
+    class FailingProvider:
+        async def complete(self, role, model, request, **kwargs):
+            raise httpx.HTTPError("downstream failed")
+
+        async def stream(self, role, model, request, **kwargs):
+            raise AssertionError("stream should not be called")
+
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = FailingProvider()
+        app.state.controller.provider = app.state.provider
+        responses_get_endpoint = endpoint(app, "/v1/responses", "GET")
+
+        response = await responses_get_endpoint(
+            Request({"type": "http", "app": app}),
+            input="hello",
+            model="dgx-moa-agent",
+        )
+        assert response.status_code == 200
+        payload = json.loads(response.body.decode("utf-8"))
+        assert payload["status"] == "failed"
+        assert payload["output"] == []
 
 
 @pytest.mark.parametrize(

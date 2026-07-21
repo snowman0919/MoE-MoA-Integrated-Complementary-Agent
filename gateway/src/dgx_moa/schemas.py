@@ -49,6 +49,25 @@ class ChatRequest(BaseModel):
         return self
 
 
+class ResponsesRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    model: str
+    input: str | list[str | dict[str, Any]]
+    stream: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    max_output_tokens: int | None = Field(default=None, gt=0)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    top_p: float | None = Field(default=None, ge=0, le=1)
+    stop: str | list[str] | None = None
+
+    @model_validator(mode="after")
+    def require_input(self) -> ResponsesRequest:
+        if isinstance(self.input, list) and not self.input:
+            raise ValueError("input must not be empty")
+        return self
+
+
 class ProfileResponse(BaseModel):
     active_profile: Literal["resident", "judge", "stopped"]
     status: Literal["ready", "transitioning", "failed", "degraded", "stopped"]
