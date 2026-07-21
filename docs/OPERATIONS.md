@@ -54,10 +54,11 @@ journalctl --user -u dgx-moa-gateway.service --since=-30m \
   | rg 'responses_stream_terminal'
 ```
 
-Every translated Responses stream must log `status=completed` or
-`status=failed`. Failure records include only bounded, control-character-cleaned
-`session_id`, `model`, `source`, HTTP status where available, error type, and
-code. They never include prompts, generated reasoning, tool arguments, upstream
+Every translated Responses failure logs `status=failed` at warning level;
+successful terminal summaries use info level and are available when that logger
+is enabled. Records include only bounded, control-character-cleaned `session_id`,
+`model`, `source`, HTTP status where available, error type, code, and safe counts.
+They never include prompts, generated reasoning, tool arguments, upstream
 response bodies, or exception messages. `source=chat_http_exception` and
 `source=chat_non_stream_response` identify failures before streaming;
 `source=upstream_iterator` identifies an error frame, truncated EOF, buffer

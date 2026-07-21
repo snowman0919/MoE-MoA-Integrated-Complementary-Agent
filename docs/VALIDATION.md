@@ -22,7 +22,8 @@ add provider, served model, latency, HTTP status, and failure class.
 
 The configured external Ollama Reasoner changed from `Qwythos-v2-9B:Q5` to exact
 `Qwythos-v2-9B:Q4`. `/api/tags` physically reported digest
-`9f14...` and stored size `6,825,527,520` bytes. A schema-constrained request at
+`9f14d2d170086958ad4b216b402617441838b578820f479fd729766e6fc08dc1`
+and stored size `6,825,527,520` bytes. A schema-constrained request at
 context `65536` completed with all eight contribution keys in `17.469` seconds,
 including `4.390` seconds load. `/api/ps` then reported runtime size
 `8,630,462,050`, VRAM `7,402,244,012`, and context `65536`.
@@ -39,9 +40,34 @@ Automated gates passed 632 tests before Frontier review. Primary-profile Codex
 OAuth review rejected two missing counterexamples: top-level error-only frames
 and EOF without a terminal marker. Both were fixed with privacy regressions,
 control-character-safe log fields, and an explicit 1,000,000-character bound.
-Focused gates then passed 187 tests plus Ruff and Mypy. The bounded OAuth
+Focused gates then passed 187 tests plus Ruff and Mypy. The final complete gate
+passed 636 tests with the existing Starlette warning, Ruff, Mypy, and diff check.
+The bounded OAuth
 re-review approved with Critical 0, Important 0, confidence `0.96`; no API key
 was created or used.
+
+PR `#30` merged as production main `dc82514`. The controlled restart performed
+the selected full Executor stop/start. Weight loading took `254.14` seconds and
+total model loading took `265.766` seconds. The unchanged command and runtime
+reported context `65536`, one sequence, `1700000000` KV bytes,
+`gpu_memory_utilization=0.5`, MARLIN, `67121` KV tokens, and `1.02x` maximum
+concurrency. Gateway, Executor, and resident target all returned active.
+
+An authenticated unknown-model stream returned the single terminal
+`response.failed`; the journal recorded source `chat_http_exception`, HTTP 404,
+error type, and code without content. An authenticated real Executor request
+returned `response.function_call_arguments.done` with `{"cmd": "pwd"}` and
+`response.completed`, with zero `response.output_text.delta` events. A real
+`dgx-moa` request returned exact `Q4_PROD_OK` then `response.completed`; trace
+`prod-q4-stream-validation` recorded exact Reasoner revision `Q4` and no failure.
+
+Finally Codex CLI used the production Responses provider against a temporary Git
+workspace. Its pre-tool agent message was empty, it executed
+`/usr/bin/zsh -lc pwd`, returned exact `CODEX_STREAM_OK` plus the observed path,
+and ended with `turn.completed` and usage `15415` input / `41` output tokens.
+Trace `13400371-7f3f-42c5-a5ee-877d4cbc9bdf` recorded Q4 and zero failures. Its
+degraded label is the existing missing-provenance classification for the
+temporary CLI workspace, not a model or stream failure.
 
 ## Production Codex Responses tool loop — 2026-07-22
 
