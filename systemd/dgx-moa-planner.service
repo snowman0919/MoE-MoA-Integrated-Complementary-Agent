@@ -2,7 +2,7 @@
 Description=DGX MoA planner
 PartOf=dgx-moa-resident.target
 Before=dgx-moa-resident.target
-After=dgx-moa-reviewer.service
+After=dgx-moa-executor.service
 Conflicts=dgx-moa-judge.service dgx-moa-judge.target
 StartLimitIntervalSec=600
 StartLimitBurst=3
@@ -18,7 +18,7 @@ Environment=XDG_CACHE_HOME=/home/kotori9/.cache
 Environment=MAX_JOBS=1
 Environment=CMAKE_BUILD_PARALLEL_LEVEL=1
 ExecStart=/home/kotori9/dgx-moa-agent/.venv/bin/python -m dgx_moa.serve planner
-ExecStartPre=/home/kotori9/dgx-moa-agent/scripts/wait-model.sh reviewer
+ExecStartPre=/home/kotori9/dgx-moa-agent/scripts/wait-model.sh executor
 ExecStartPost=/home/kotori9/dgx-moa-agent/scripts/wait-model.sh planner
 Restart=on-failure
 RestartSec=5
