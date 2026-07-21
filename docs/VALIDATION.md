@@ -1761,6 +1761,48 @@ eight commands:
    incomplete, 0 legacy, and 100.0% mandatory-field completeness.
 8. `git diff --check`: no output.
 
+### Heavy Judge safety rejection and OAuth profile fallback (2026-07-21)
+
+- The production Executor, Planner, and Reviewer were stopped for an approved
+  isolated Heavy Judge run. The installed Judge unit revealed configuration
+  drift: it launched at context `8192`, one sequence, ModelOpt FP4,
+  `gpu_memory_utilization=0.85`, and `12000000000` KV bytes instead of the
+  documented `4000000000`. Weight loading took `586.36` seconds and model
+  loading reported `88.85 GiB` in `592.701` seconds. KV initialization left
+  `6796004` KiB `MemAvailable`, below the 16-GiB Judge gate, so the Judge was
+  stopped before readiness. Its systemd stop consumed the configured five-minute
+  timeout and ended failed; memory recovered to `120529240` KiB.
+- A direct development rerun restored the declared `4000000000` KV bytes with
+  the same context, sequence count, utilization, and quantization. It loaded ten
+  shards in `546.73` seconds and reported `88.85 GiB` model memory in
+  `558.704` seconds, `22192` KV tokens, and `2.71x` concurrency. During kernel
+  autotuning, `MemAvailable` reached `13810768` KiB, below the same 16-GiB
+  safety line. The process was interrupted before readiness; port `8110` closed
+  and memory recovered to `120686556` KiB. Therefore neither the new normal
+  adjudication-resume path nor production promotion passed. This preserves the
+  earlier 2026-07-11 ready-state result but does not treat it as evidence for
+  the changed resume path.
+- The fixed resident Executor was restored with context `65536`, one sequence,
+  `1700000000` KV bytes, `gpu_memory_utilization=0.5`, and MARLIN. It returned
+  `/v1/models` HTTP `200`; `wait-profile.sh` reported
+  `available_bytes=69101035520`. The gateway health check returned `ok`, the
+  resident target and Executor were active, and Planner, Reviewer, Judge, and
+  the Judge target were inactive.
+- The Codex OAuth adapter now tries `primary` and changes to `secondary` only on
+  authentication, usage-limit, or rate-limit failures. A subprocess-level test
+  forced primary `not logged in`, observed the ordered calls
+  `[primary, secondary]`, and recorded `profile=secondary` on success. The
+  selected profile is also persisted in collaboration invocation and trace
+  evidence. Real primary and secondary calls each returned HTTP `401` with
+  `token_invalidated` / `refresh_token_invalidated`; interactive OAuth re-login
+  for both profiles is required before a physical fallback success can be
+  claimed.
+  The local CLI used for these calls was `codex-cli 0.144.6`.
+- Publication checks passed: `611` tests, Ruff format/check, mypy for 28 source
+  files, user-systemd unit verification, shell syntax checks, and
+  `git diff --check` all exited zero. The one pytest warning is the existing
+  third-party Starlette TestClient deprecation.
+
 ## Codex cold-start 503 diagnosis — 2026-07-21
 
 Production journal and SQLite inspection showed three lifecycle failures within

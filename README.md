@@ -44,8 +44,10 @@ does not add a new real-weight memory claim. Checked-in and production lifecycle
 settings remain `disabled` with an empty unit map. The dynamic MoA candidate has
 isolated physical evidence for the core, real clients, Planner, Reviewer, and
 Codex OAuth Frontier. The new Heavy Judge resume path remains physically
-unverified, so the candidate is not production-enabled; production was not
-restarted or changed.
+unverified, so the candidate is not production-enabled. A 2026-07-21 physical
+attempt rejected both a drifted 12-GB Judge KV configuration and the restored
+4-GB candidate on the 16-GiB startup safety line; production resident was
+restored unchanged.
 
 See `docs/MODEL_LIFECYCLE.md` for model states, role policies and statistics,
 retryable loading responses, blockers, status routes, circuit breaker, and

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .security import redact
 from .state import SessionState
@@ -61,6 +61,9 @@ FRONTIER_FAILURES = frozenset(
         "FRONTIER_SCOPE_VIOLATION",
         "FRONTIER_VALIDATION_FAILURE",
     }
+)
+PROFILE_FAILOVER_FAILURES = frozenset(
+    {"FRONTIER_AUTH_ERROR", "FRONTIER_USAGE_LIMIT", "FRONTIER_RATE_LIMIT"}
 )
 
 
@@ -121,6 +124,8 @@ class FrontierConfig(BaseModel):
     max_invocations_per_task: int = 3
     max_recursive_cycles: int = 3
     primary_profile: str = "default"
+    secondary_profile: str | None = None
+    allow_profile_failover: bool = False
     profile_root: Path | None = None
     collaboration_timeout_seconds: int = 300
     collaboration_retries: int = 1
@@ -154,6 +159,17 @@ class FrontierConfig(BaseModel):
     )
     input_cost_per_million: float | None = None
     output_cost_per_million: float | None = None
+
+    @model_validator(mode="after")
+    def validate_profile_failover(self) -> FrontierConfig:
+        validate_profile_name(self.primary_profile)
+        if self.secondary_profile is not None:
+            validate_profile_name(self.secondary_profile)
+            if self.secondary_profile == self.primary_profile:
+                raise ValueError("secondary_profile must differ from primary_profile")
+        if self.allow_profile_failover and self.secondary_profile is None:
+            raise ValueError("allow_profile_failover requires secondary_profile")
+        return self
 
 
 def bounded_external_evidence(
@@ -224,6 +240,7 @@ class FrontierCollaborationResult(BaseModel):
     cost_usd: float | None = None
     latency_ms: float
     transmitted_categories: list[str]
+    profile: str = "unknown"
 
 
 def codex_usage(output: str) -> tuple[int | None, int | None]:
@@ -263,6 +280,17 @@ class CodexOAuthCollaboration:
             config.primary_profile,
             config.profile_root if profile_root is None else profile_root,
         )
+        self.providers = [(config.primary_profile, self.provider)]
+        if config.allow_profile_failover and config.secondary_profile:
+            self.providers.append(
+                (
+                    config.secondary_profile,
+                    CodexOAuthProvider(
+                        config.secondary_profile,
+                        config.profile_root if profile_root is None else profile_root,
+                    ),
+                )
+            )
         self.failures = 0
         self.opened_at: float | None = None
 
@@ -324,33 +352,42 @@ class CodexOAuthCollaboration:
                 ),
             ]
             completed: subprocess.CompletedProcess[str] | None = None
-            for attempt in range(self.config.collaboration_retries + 1):
-                try:
-                    with profile_lock(self.config.primary_profile, self.run_dir):
-                        completed = subprocess.run(
-                            command,
-                            cwd=self.project_root,
-                            env=self.provider.environment(),
-                            timeout=self.config.collaboration_timeout_seconds,
-                            check=False,
-                            capture_output=True,
-                            text=True,
-                        )
-                except subprocess.TimeoutExpired as error:
-                    if attempt >= self.config.collaboration_retries:
+            selected_profile = ""
+            for profile_index, (profile, provider) in enumerate(self.providers):
+                for attempt in range(self.config.collaboration_retries + 1):
+                    try:
+                        with profile_lock(profile, self.run_dir):
+                            completed = subprocess.run(
+                                command,
+                                cwd=self.project_root,
+                                env=provider.environment(),
+                                timeout=self.config.collaboration_timeout_seconds,
+                                check=False,
+                                capture_output=True,
+                                text=True,
+                            )
+                    except subprocess.TimeoutExpired as error:
+                        if attempt >= self.config.collaboration_retries:
+                            self._failed()
+                            raise RuntimeError("FRONTIER_TIMEOUT") from error
+                        continue
+                    if completed.returncode == 0:
+                        selected_profile = profile
+                        break
+                    failure = classify_frontier_failure(completed.stdout + completed.stderr)
+                    has_fallback = profile_index + 1 < len(self.providers)
+                    if failure in PROFILE_FAILOVER_FAILURES and has_fallback:
+                        completed = None
+                        break
+                    if (
+                        failure in PROFILE_FAILOVER_FAILURES
+                        or attempt >= self.config.collaboration_retries
+                    ):
                         self._failed()
-                        raise RuntimeError("FRONTIER_TIMEOUT") from error
-                    continue
-                if completed.returncode == 0:
+                        raise RuntimeError(failure)
+                if selected_profile:
                     break
-                failure = classify_frontier_failure(completed.stdout + completed.stderr)
-                if (
-                    failure in {"FRONTIER_AUTH_ERROR", "FRONTIER_RATE_LIMIT"}
-                    or attempt >= self.config.collaboration_retries
-                ):
-                    self._failed()
-                    raise RuntimeError(failure)
-            if completed is None or not result_path.is_file():
+            if completed is None or not selected_profile or not result_path.is_file():
                 self._failed()
                 raise RuntimeError("FRONTIER_PROTOCOL_ERROR")
             result = schema_model.model_validate_json(result_path.read_text()).model_dump()
@@ -368,6 +405,7 @@ class CodexOAuthCollaboration:
             cost_usd=self._cost(prompt, completion),
             latency_ms=round((time.monotonic() - started) * 1000, 3),
             transmitted_categories=categories,
+            profile=selected_profile,
         )
 
     def _failed(self) -> None:
@@ -640,7 +678,17 @@ def codex_command(
 
 def classify_frontier_failure(output: str) -> str:
     normalized = output.lower()
-    if any(marker in normalized for marker in ("unauthorized", "authentication", "login required")):
+    if any(
+        marker in normalized
+        for marker in (
+            "unauthorized",
+            "authentication",
+            "login required",
+            "not logged in",
+            "token_invalidated",
+            "refresh_token",
+        )
+    ):
         return "FRONTIER_AUTH_ERROR"
     if any(marker in normalized for marker in ("rate limit", "too many requests", "429")):
         return "FRONTIER_RATE_LIMIT"

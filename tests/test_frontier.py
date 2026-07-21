@@ -240,6 +240,57 @@ def test_codex_oauth_timeout_opens_circuit(tmp_path, monkeypatch: pytest.MonkeyP
         runner._run("architecture", {"objective": "x"}, "two")
 
 
+def test_codex_oauth_falls_back_to_secondary_profile(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    profiles: list[str] = []
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        profile = Path(kwargs["env"]["CODEX_HOME"]).name
+        profiles.append(profile)
+        if profile == "primary":
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="not logged in")
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        result_path.write_text(
+            json.dumps(
+                {
+                    "recommended_architecture": "secondary",
+                    "design_decisions": [],
+                    "tradeoffs": [],
+                    "failure_modes": [],
+                    "implementation_sequence": [],
+                    "review_questions": [],
+                }
+            )
+        )
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout='{"type":"turn.completed","usage":{"input_tokens":7,"output_tokens":3}}',
+            stderr="",
+        )
+
+    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(
+            enabled=True,
+            primary_profile="primary",
+            secondary_profile="secondary",
+            allow_profile_failover=True,
+            profile_root=tmp_path / "profiles",
+            collaboration_retries=0,
+        ),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    result = runner._run("architecture", {"objective": "x"}, "fallback")
+
+    assert profiles == ["primary", "secondary"]
+    assert result.profile == "secondary"
+    assert result.total_tokens == 10
+
+
 def test_frontier_output_schema_uses_strict_property_types() -> None:
     schema = json.loads((Path(__file__).parents[1] / "schemas/frontier-result-v1.json").read_text())
     assert schema["properties"]["schema_version"] == {

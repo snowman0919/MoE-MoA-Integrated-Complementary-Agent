@@ -1470,6 +1470,7 @@ class Controller:
                         "completion_tokens": frontier_result.completion_tokens,
                         "total_tokens": frontier_result.total_tokens,
                         "cost_usd": frontier_result.cost_usd,
+                        "profile": frontier_result.profile,
                         "status": "completed",
                     }
                 )
@@ -1490,6 +1491,7 @@ class Controller:
                         "prompt_tokens": frontier_result.prompt_tokens,
                         "completion_tokens": frontier_result.completion_tokens,
                         "cost_usd": frontier_result.cost_usd,
+                        "profile": frontier_result.profile,
                         "transmitted_categories": frontier_result.transmitted_categories,
                     },
                 )

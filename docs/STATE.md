@@ -263,15 +263,24 @@ an empty local unit map. Production is unchanged.
 
 ## Heavy Judge and Frontier
 
-- Heavy Judge remains validated with its unchanged model, `4000000000`-byte KV
-  reservation, 8192 context, structured accept verdict, and resident restoration.
-  It was not rerun because Judge code/configuration did not change.
-- Frontier Codex is enabled through separate OAuth profiles (`primary` and
-  `secondary`). Each can be invoked independently with
+- A 2026-07-21 Heavy Judge rerun found configuration drift to a
+  `12000000000`-byte KV reservation. It loaded weights but left only
+  `6796004` KiB available during KV initialization, so it was rejected and
+  stopped. Restoring the approved `4000000000`-byte reservation still crossed
+  below the 16-GiB safety line during initialization (`13810768` KiB) before
+  readiness, so the new adjudication-resume path was not exercised. The fixed
+  resident Executor was restored and passed readiness with
+  `69101035520` available bytes. This is rejection evidence, not a new Heavy
+  Judge approval.
+- Frontier Codex uses separate OAuth profiles (`primary` and `secondary`) with
+  automatic fallback from primary on authentication, usage-limit, or rate-limit
+  failures. Each can also be invoked independently with
   `scripts/codex-profile.sh test <profile>` or the existing
   `dgx-moa-codex-frontier@<profile>.service` template; its read-only sandbox
   and systemd hardening remain unchanged. Both profiles returned a verified
-  `turn.completed` event after interactive re-login on 2026-07-13.
+  `turn.completed` event after interactive re-login on 2026-07-13, but the
+  current primary and secondary tokens are invalidated and both must be logged
+  in again before a live failover can succeed.
 
 ## Known limitations
 

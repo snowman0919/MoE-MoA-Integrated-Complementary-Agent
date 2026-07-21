@@ -28,6 +28,11 @@ bounded retry count, profile lock, and circuit breaker. Failures distinguish
 timeout, rate limit, usage limit, authentication, provider, protocol, and open
 circuit. Optional failures retain completed local evidence and lower derived
 confidence; policy-required failures return a typed retryable response.
+The adapter tries the configured `primary` OAuth profile first and falls back
+once to `secondary` on authentication, usage-limit, or rate-limit failures.
+Provider and protocol failures do not silently change identities. The selected
+profile name is recorded in collaboration evidence and traces; OAuth material
+is not.
 The checked-in task budget permits at most three Frontier collaborations and
 three recursive cycles, so architecture and later review can both occur without
 an unbounded model conversation.
@@ -48,11 +53,15 @@ accepts or rejects every recommendation against shared evidence.
 ## Current state
 
 The Codex OAuth adapter and three schemas are implemented and unit-tested on
-`dev`. Real isolated Codex OAuth calls passed architecture, code-review, and
-disagreement modes; the safe child-environment boundary, redaction, and token
-accounting were also observed. Timeout, rate-limit, authentication, required and
-optional fallback, and circuit-breaker paths passed automated tests. Checked-in
-gateway configuration still keeps Frontier disabled, and the complete local-role
-physical matrix has not passed, so production enablement remains unapproved.
+`dev`. Real isolated Codex OAuth calls previously passed architecture,
+code-review, and disagreement modes; the safe child-environment boundary,
+redaction, and token accounting were also observed. Primary-to-secondary
+profile fallback is now automated and covered by a subprocess-level test.
+Both current refresh tokens returned `token_invalidated`, so a live fallback
+success still requires interactive re-login. Timeout, rate-limit,
+authentication, required and optional fallback, and circuit-breaker paths pass
+automated tests. Checked-in gateway configuration still keeps Frontier disabled,
+and the complete local-role physical matrix has not passed, so production
+enablement remains unapproved.
 Historical candidate-edit behavior is documented separately in
 `CODEX_FRONTIER.md` and is not this collaboration path.
