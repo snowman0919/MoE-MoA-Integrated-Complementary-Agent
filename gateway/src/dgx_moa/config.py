@@ -19,6 +19,7 @@ API_KEY_PLACEHOLDERS = {
 }
 MODEL_ROLES = frozenset({"executor", "planner", "reviewer", "reasoner", "judge"})
 SYSTEMD_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@-]*\.service$")
+LifecycleControl = Literal["systemd", "external"]
 
 
 def parse_bool(value: Any) -> bool:
@@ -186,6 +187,7 @@ class ModelConfig(BaseModel):
     quantization: str | None = None
     tool_call_parser: str | None = None
     reasoning_parser: str | None = None
+    lifecycle_control: LifecycleControl = "systemd"
     trust_remote_code: bool = False
     lora_adapter: Path | None = None
     required: bool = True

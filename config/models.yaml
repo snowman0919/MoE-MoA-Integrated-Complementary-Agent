@@ -83,7 +83,7 @@ gateway:
     executor_first_byte_timeout_seconds: 120
     executor_total_timeout_seconds: 900
     reviewer_timeout_seconds: 120
-    model_load_timeout_seconds: 1200
+    model_load_timeout_seconds: 3600
     tool_continuation_timeout_seconds: 600
     usage_sample_window: 512
     usage_ewma_alpha: 0.25
@@ -152,13 +152,14 @@ models:
     trust_remote_code: true
     required: false
   reasoner:
-    repository: WeiboAI/VibeThinker-3B
-    revision: 77bd2cced09193c8b9a59a32bd8577bbd1f3e01c
-    classification: community-maintained
-    base_url: http://127.0.0.1:8104
-    served_name: dgx-moa-reasoner
+    repository: Qwythos-v2-9B-Q5
+    revision: unknown
+    classification: external
+    base_url: http://192.168.0.197:11434
+    served_name: Qwythos-v2-9B:Q5
     destination: /home/kotori9/models/dgx-moa/reasoner
     context_length: 65536
     max_num_seqs: 1
     trust_remote_code: false
+    lifecycle_control: external
     required: true

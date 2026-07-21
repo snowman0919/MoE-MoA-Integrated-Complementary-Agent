@@ -76,6 +76,20 @@ below. Heavy-judge validation is appended after its first isolated startup.
   no-progress blocking, planner/reviewer/judge routing, rollback, redaction,
   compression, integrity, capacity, and completion gates have automated tests.
 
+- Production-tailnet service check (`100.125.239.72:9000`) after main-branch
+  runtime restart:
+  - `POST /v1/responses` with `dgx-moa-orchestrated` and no `reasoner_mode`:
+    `200`, completion success.
+  - `GET /v1/responses?input=...`:
+    `200` (response shim path works).
+  - `GET /v1/responses` with missing `input`:
+    `405 Method Not Allowed` (by design; query-only GET shim requires `input`).
+  - `POST /v1/responses` with `metadata.reasoner_mode=required` now returns
+    `200` after `reasoner` control transition to external mode (`control:
+    external`, `unmanaged_roles` no longer includes reasoner).
+  - `/v1/model-status` shows reasoner control as `external` and `unmanaged_roles`
+    = `["judge"]` (previously included `reasoner`).
+
 ## Build And Tests
 
 - `uv run ruff format --check .`: passed.

@@ -1537,6 +1537,62 @@ def test_explicit_ready_reasoner_is_used_only_when_selected(
     assert reasoner_usage[0].success is True
 
 
+def test_external_reasoner_required_request_is_accepted_when_healthcheck_passes(
+    settings,
+    stub_provider: StubProvider,
+) -> None:  # type: ignore[no-untyped-def]
+    models = {name: model.model_dump() for name, model in settings.models.items()}
+    models["reasoner"]["lifecycle_control"] = "external"
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {
+                "executor": "dgx-moa-dev-executor.service",
+                "planner": "dgx-moa-dev-planner.service",
+                "reviewer": "dgx-moa-dev-reviewer.service",
+            },
+            "models": models,
+        }
+    )
+    driver = FakeLifecycleDriver(
+        {
+            "executor": "active",
+            "planner": "active",
+            "reviewer": "active",
+        }
+    )
+    health_calls: list[str] = []
+
+    async def health_probe(role: str) -> bool:
+        health_calls.append(role)
+        return True
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health_probe,
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "analyze explicitly"}],
+                "metadata": {"reasoner_mode": "required"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert "choices" in response.json()
+    assert app.state.lifecycle_store.get("reasoner").state == "ready"
+    assert "reasoner" in stub_provider.calls
+    assert set(health_calls) == {"executor", "planner", "reviewer", "reasoner"}
+
+
 @pytest.mark.parametrize(
     ("driver_state", "expected_status"),
     [("inactive", 503), ("active", 200)],

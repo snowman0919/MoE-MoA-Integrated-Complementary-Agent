@@ -2110,6 +2110,27 @@ class LifecycleCoordinator:
             self._tasks[role] = asyncio.create_task(self._load(role, queued.transition_id))
             return LoadCheck(record=queued, load_triggered=True)
 
+    async def ensure_external_ready(self, role: str) -> LoadCheck:
+        try:
+            lock = self._locks[role]
+        except KeyError as error:
+            raise UnknownRoleError(role) from error
+        async with lock:
+            record = self.store.get(role)
+            if record.state == "ready" or self._automation_disabled():
+                return LoadCheck(record=record)
+            try:
+                healthy = await self.health_probe(role)
+            except Exception:
+                healthy = False
+            if healthy:
+                if record.state == "ready":
+                    return LoadCheck(record=record)
+                return LoadCheck(record=self.store.recover_state(role, "ready"))
+            if record.state != "cold":
+                return LoadCheck(record=self.store.recover_state(role, "cold"))
+            return LoadCheck(record=record)
+
     async def _load(self, role: str, transition_id: str) -> None:
         started = self.clock()
         try:

@@ -455,6 +455,14 @@ def create_app(
     def status_lifecycle_record(role: str) -> dict[str, Any]:
         if configured.lifecycle_mode != "disabled" and role in configured.lifecycle_unit_map:
             return public_lifecycle_record(app.state.lifecycle_store.get(role))
+        if (
+            configured.lifecycle_mode != "disabled"
+            and configured.models.get(role) is not None
+            and configured.models[role].lifecycle_control == "external"
+        ):
+            status = public_lifecycle_record(app.state.lifecycle_store.get(role))
+            status["control"] = "external"
+            return status
         automation = app.state.lifecycle_store.automation_status()
         return {
             "role": role,
@@ -680,7 +688,12 @@ def create_app(
             "unmanaged_roles": sorted(
                 configured.models
                 if mode == "disabled"
-                else set(configured.models) - set(configured.lifecycle_unit_map)
+                else {
+                    role
+                    for role, model in configured.models.items()
+                    if role not in configured.lifecycle_unit_map
+                    and model.lifecycle_control != "external"
+                }
             ),
             "idle_decisions": {
                 role: decision.model_dump(mode="json")
@@ -820,6 +833,24 @@ def create_app(
             for role in candidate_roles:
                 is_optional = role in optional
                 if role not in configured.lifecycle_unit_map:
+                    model = configured.models.get(role)
+                    if (
+                        model is not None
+                        and model.lifecycle_control == "external"
+                    ):
+                        check = await request.app.state.lifecycle.ensure_external_ready(role)
+                        role_states[role] = check.record.state
+                        role_ready_at[role] = check.record.ready_at
+                        if is_optional and check.record.state != "ready":
+                            degraded_roles[role] = f"{role}_unavailable"
+                            continue
+                        if (
+                            loading_record is None
+                            and unavailable_record is None
+                            and check.record.state != "ready"
+                        ):
+                            unavailable_record = check.record
+                        continue
                     role_states[role] = "cold"
                     if is_optional:
                         degraded_roles[role] = f"{role}_unavailable"
