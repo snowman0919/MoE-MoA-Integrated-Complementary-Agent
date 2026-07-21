@@ -54,7 +54,11 @@ class ResponsesRequest(BaseModel):
 
     model: str
     input: str | list[dict[str, Any]]
+    instructions: str | None = None
     stream: bool = False
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+    parallel_tool_calls: bool | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     max_output_tokens: int | None = Field(default=None, gt=0)
     temperature: float | None = Field(default=None, ge=0, le=2)
@@ -69,12 +73,14 @@ class ResponsesRequest(BaseModel):
             return self
         if not self.input:
             raise ValueError("input must not be empty")
-        for message in self.input:
-            if not isinstance(message, dict):
+        for item in self.input:
+            if not isinstance(item, dict):
                 raise ValueError("input entries must be message objects")
-            if not isinstance(message.get("role"), str):
+            if item.get("type") in {"function_call", "function_call_output", "reasoning"}:
+                continue
+            if not isinstance(item.get("role"), str):
                 raise ValueError("input message must include role")
-            if message.get("content") is None:
+            if item.get("content") is None:
                 raise ValueError("input message must include content")
         return self
 

@@ -130,12 +130,13 @@ async def responses_sse(
     upstream: AsyncIterable[str | bytes | memoryview[int]],
     model: str,
 ) -> AsyncGenerator[bytes, None]:
-    """Translate Chat Completions SSE into the text subset of Responses SSE."""
+    """Translate Chat Completions SSE into Responses text and function-call events."""
     response_id = f"resp_{uuid.uuid4().hex}"
     message_id = f"msg_{uuid.uuid4().hex}"
     created_at = int(time.time())
     sequence_number = 0
     text_parts: list[str] = []
+    tool_calls: dict[int, dict[str, object]] = {}
     usage: dict[str, object] | None = None
 
     def response_payload(status: str, output: list[dict[str, object]]) -> dict[str, object]:
@@ -220,6 +221,39 @@ async def responses_sse(
                         delta=content,
                         logprobs=[],
                     )
+                for tool_delta in delta.get("tool_calls") or []:
+                    index = int(tool_delta.get("index", 0))
+                    function = tool_delta.get("function") or {}
+                    if index not in tool_calls:
+                        item = {
+                            "id": f"fc_{uuid.uuid4().hex}",
+                            "type": "function_call",
+                            "status": "in_progress",
+                            "call_id": tool_delta.get("id") or f"call_{uuid.uuid4().hex}",
+                            "name": function.get("name", ""),
+                            "arguments": "",
+                        }
+                        tool_calls[index] = item
+                        yield event(
+                            "response.output_item.added",
+                            output_index=index + 1,
+                            item=item,
+                        )
+                    item = tool_calls[index]
+                    if tool_delta.get("id"):
+                        item["call_id"] = tool_delta["id"]
+                    if function.get("name"):
+                        item["name"] = function["name"]
+                    arguments = function.get("arguments")
+                    if isinstance(arguments, str) and arguments:
+                        item["arguments"] = str(item["arguments"]) + arguments
+                        yield event(
+                            "response.function_call_arguments.delta",
+                            response_id=response_id,
+                            item_id=item["id"],
+                            output_index=index + 1,
+                            delta=arguments,
+                        )
 
         text = "".join(text_parts)
         part: dict[str, object] = {
@@ -251,9 +285,21 @@ async def responses_sse(
             part=part,
         )
         yield event("response.output_item.done", output_index=0, item=completed_message)
+        completed_output = [completed_message]
+        for index, item in sorted(tool_calls.items()):
+            item["status"] = "completed"
+            yield event(
+                "response.function_call_arguments.done",
+                response_id=response_id,
+                item_id=item["id"],
+                output_index=index + 1,
+                arguments=item["arguments"],
+            )
+            yield event("response.output_item.done", output_index=index + 1, item=item)
+            completed_output.append(item)
         yield event(
             "response.completed",
-            response=response_payload("completed", [completed_message]),
+            response=response_payload("completed", completed_output),
         )
     finally:
         close = getattr(upstream, "aclose", None)

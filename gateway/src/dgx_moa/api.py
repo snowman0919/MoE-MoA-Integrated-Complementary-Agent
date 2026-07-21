@@ -139,8 +139,40 @@ def _coerce_responses_input_messages(
     if isinstance(raw_input, str):
         return [{"role": "user", "content": raw_input}]
     if isinstance(raw_input, list):
-        messages = [dict(message) for message in raw_input]
-        for message in messages:
+        messages: list[dict[str, Any]] = []
+        for item in raw_input:
+            item_type = item.get("type")
+            if item_type == "reasoning":
+                continue
+            if item_type == "function_call":
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": item["call_id"],
+                                "type": "function",
+                                "function": {
+                                    "name": item["name"],
+                                    "arguments": item.get("arguments", ""),
+                                },
+                            }
+                        ],
+                    }
+                )
+                continue
+            if item_type == "function_call_output":
+                output = item.get("output", "")
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": item["call_id"],
+                        "content": output if isinstance(output, str) else json.dumps(output),
+                    }
+                )
+                continue
+            message = dict(item)
             if isinstance(content := message.get("content"), list):
                 message["content"] = [
                     {**part, "type": "text"}
@@ -148,8 +180,30 @@ def _coerce_responses_input_messages(
                     else part
                     for part in content
                 ]
+            messages.append(message)
         return messages
     raise TypeError("invalid responses input type")
+
+
+def _coerce_responses_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+    if not tools:
+        return None
+    chat_tools = []
+    for tool in tools:
+        if tool.get("type") != "function":
+            continue
+        function = tool.get("function") if isinstance(tool.get("function"), dict) else tool
+        chat_tools.append(
+            {
+                "type": "function",
+                "function": {
+                    key: function[key]
+                    for key in ("name", "description", "parameters", "strict")
+                    if key in function
+                },
+            }
+        )
+    return chat_tools or None
 
 
 def _responses_payload(
@@ -188,6 +242,18 @@ def _responses_payload(
                     ],
                 }
             ]
+        for tool_call in message.get("tool_calls") or []:
+            function = tool_call.get("function") or {}
+            payload["output"].append(
+                {
+                    "type": "function_call",
+                    "id": f"fc_{uuid.uuid4().hex}",
+                    "call_id": tool_call.get("id"),
+                    "name": function.get("name"),
+                    "arguments": function.get("arguments", ""),
+                    "status": "completed",
+                }
+            )
     if usage := chat_response.get("usage"):
         payload["usage"] = usage
     return payload
@@ -1800,13 +1866,17 @@ def create_app(
         x_repository_commit: str | None = Header(default=None),
         x_dirty_state: str | None = Header(default=None),
     ) -> Response:
+        messages = _coerce_responses_input_messages(body.input)
+        if body.instructions:
+            messages.insert(0, {"role": "developer", "content": body.instructions})
+        tools = _coerce_responses_tools(body.tools)
         chat_body = ChatRequest(
             model=body.model,
-            messages=[
-                ChatMessage.model_validate(message)
-                for message in _coerce_responses_input_messages(body.input)
-            ],
+            messages=[ChatMessage.model_validate(message) for message in messages],
             stream=body.stream,
+            tools=tools,
+            tool_choice=body.tool_choice if tools else None,
+            parallel_tool_calls=body.parallel_tool_calls if tools else None,
             metadata=body.metadata,
             max_tokens=body.max_output_tokens,
             temperature=body.temperature,
