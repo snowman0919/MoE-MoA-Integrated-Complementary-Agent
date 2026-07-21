@@ -115,7 +115,7 @@ def test_v2_provenance_training_and_schema() -> None:
     assert training_default("dev", "benchmark") == "eligible"
     assert training_default("dev", "diagnostic") == "excluded"
     trace = trace_record(complete_state())
-    assert trace["schema_version"] == "agent-trace-v2"
+    assert trace["schema_version"] == "agent-trace-v3"
     assert trace["agent_decisions"][0]["context_manifest"]
     assert trace["tool_executions"][0]["decision_id"] == "decision"
     assert trace["evaluations"][0]["target_id"] == "complete"
@@ -225,7 +225,7 @@ def test_audit_prefers_v2_over_duplicate_legacy_session(tmp_path, settings) -> N
     assert report["legacy_sessions"] == 0
 
 
-def test_pre_moa_v2_trace_keeps_backward_compatible_audit(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]
+def test_explicit_pre_moa_v2_trace_keeps_backward_compatible_audit(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]
     traces = tmp_path / "traces"
     traces.mkdir()
     trace = trace_record(
@@ -241,9 +241,9 @@ def test_pre_moa_v2_trace_keeps_backward_compatible_audit(tmp_path, settings) ->
         ],
         models=settings.models,
     )
+    trace["schema_version"] = "agent-trace-v2"
     for field in MOA_TRACE_FIELDS:
         trace.pop(field)
-    trace["metrics"].pop("runtime_mode")
     validate_trace(trace)
     (traces / "pre-moa-v2.jsonl").write_text(json.dumps(trace) + "\n")
 
@@ -251,6 +251,37 @@ def test_pre_moa_v2_trace_keeps_backward_compatible_audit(tmp_path, settings) ->
 
     assert report["complete_sessions"] == 1
     assert report["missing_fields"] == {}
+
+
+def test_v3_trace_cannot_downgrade_by_removing_moa_fields(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    trace = trace_record(
+        complete_state(),
+        events=[
+            {"event_type": event_type}
+            for event_type in (
+                "session_started",
+                "route_selected",
+                "assistant_stream_finished",
+                "session_ended",
+            )
+        ],
+        models=settings.models,
+    )
+    trace.pop("reasoner_contributions")
+    trace["metrics"].pop("runtime_mode")
+    with pytest.raises(ValueError, match="reasoner_contributions"):
+        validate_trace(trace)
+    (traces / "invalid-v3.jsonl").write_text(json.dumps(trace) + "\n")
+
+    report = audit_traces(traces)
+
+    assert report["incomplete_sessions"] == 1
+    assert report["missing_fields"] == {
+        "metrics.runtime_mode": 1,
+        "reasoner_contributions": 1,
+    }
 
 
 def test_audit_uses_later_read_sequence_within_same_schema(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]

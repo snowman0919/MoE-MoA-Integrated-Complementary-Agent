@@ -128,6 +128,7 @@ async def test_planner_and_frontier_are_concurrent_and_frontier_evidence_survive
                 },
                 latency_ms=10,
                 transmitted_categories=sorted(evidence),
+                profile="secondary",
             )
 
     frontier = ConcurrentFrontier()
@@ -171,9 +172,21 @@ async def test_planner_and_frontier_are_concurrent_and_frontier_evidence_survive
 
     assert frontier.started.is_set()
     assert any(artifact.get("role") == "frontier" for artifact in state.agent_artifacts)
-    assert any(
-        event["event_type"] == "frontier_collaboration_completed"
+    completed_event = next(
+        event
         for event in store.events(state.session_id)
+        if event["event_type"] == "frontier_collaboration_completed"
+    )
+    assert completed_event["payload"]["profile"] == "secondary"
+    assert not set(completed_event["payload"]) & {
+        "profile_root",
+        "codex_home",
+        "credentials",
+        "api_key",
+    }
+    assert any(
+        invocation.get("role") == "frontier" and invocation.get("profile") == "secondary"
+        for invocation in state.agent_invocations
     )
     if planner_fails:
         assert state.derived_confidence == "low"

@@ -219,14 +219,20 @@ def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
 
 
 def test_codex_oauth_timeout_opens_circuit(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+    profiles: list[str] = []
+
     def timeout(command, **kwargs):  # type: ignore[no-untyped-def]
+        profiles.append(Path(kwargs["env"]["CODEX_HOME"]).name)
         raise subprocess.TimeoutExpired(command, 1)
 
     monkeypatch.setattr("dgx_moa.frontier.subprocess.run", timeout)
     runner = CodexOAuthCollaboration(
         FrontierConfig(
             enabled=True,
-            primary_profile="default",
+            primary_profile="primary",
+            secondary_profile="secondary",
+            allow_profile_failover=True,
+            profile_root=tmp_path / "profiles",
             collaboration_retries=0,
             circuit_failure_limit=1,
             circuit_cooldown_seconds=300,
@@ -238,10 +244,12 @@ def test_codex_oauth_timeout_opens_circuit(tmp_path, monkeypatch: pytest.MonkeyP
         runner._run("architecture", {"objective": "x"}, "one")
     with pytest.raises(RuntimeError, match="FRONTIER_CIRCUIT_OPEN"):
         runner._run("architecture", {"objective": "x"}, "two")
+    assert profiles == ["primary"]
 
 
+@pytest.mark.parametrize("primary_failure", ["not logged in", "usage limit", "rate limit"])
 def test_codex_oauth_falls_back_to_secondary_profile(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path, monkeypatch: pytest.MonkeyPatch, primary_failure: str
 ) -> None:  # type: ignore[no-untyped-def]
     profiles: list[str] = []
 
@@ -249,7 +257,7 @@ def test_codex_oauth_falls_back_to_secondary_profile(
         profile = Path(kwargs["env"]["CODEX_HOME"]).name
         profiles.append(profile)
         if profile == "primary":
-            return subprocess.CompletedProcess(command, 1, stdout="", stderr="not logged in")
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr=primary_failure)
         result_path = Path(command[command.index("--output-last-message") + 1])
         result_path.write_text(
             json.dumps(
@@ -289,6 +297,76 @@ def test_codex_oauth_falls_back_to_secondary_profile(
     assert profiles == ["primary", "secondary"]
     assert result.profile == "secondary"
     assert result.total_tokens == 10
+
+
+@pytest.mark.parametrize(
+    ("primary_failure", "failure_class"),
+    [
+        ("connection refused", "FRONTIER_PROVIDER_UNAVAILABLE"),
+        ("malformed response", "FRONTIER_PROTOCOL_ERROR"),
+    ],
+)
+def test_codex_oauth_does_not_fail_over_unapproved_failures(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    primary_failure: str,
+    failure_class: str,
+) -> None:  # type: ignore[no-untyped-def]
+    profiles: list[str] = []
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        profiles.append(Path(kwargs["env"]["CODEX_HOME"]).name)
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr=primary_failure)
+
+    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(
+            enabled=True,
+            primary_profile="primary",
+            secondary_profile="secondary",
+            allow_profile_failover=True,
+            profile_root=tmp_path / "profiles",
+            collaboration_retries=0,
+        ),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    with pytest.raises(RuntimeError, match=failure_class):
+        runner._run("architecture", {"objective": "x"}, "no-fallback")
+
+    assert profiles == ["primary"]
+
+
+def test_codex_oauth_does_not_fail_over_validation_failure(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    profiles: list[str] = []
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        profiles.append(Path(kwargs["env"]["CODEX_HOME"]).name)
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        result_path.write_text("{}")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(
+            enabled=True,
+            primary_profile="primary",
+            secondary_profile="secondary",
+            allow_profile_failover=True,
+            profile_root=tmp_path / "profiles",
+            collaboration_retries=0,
+        ),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    with pytest.raises(ValueError):
+        runner._run("architecture", {"objective": "x"}, "invalid-result")
+
+    assert profiles == ["primary"]
 
 
 def test_frontier_output_schema_uses_strict_property_types() -> None:

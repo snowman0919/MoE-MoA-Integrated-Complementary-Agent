@@ -1853,15 +1853,29 @@ eight commands:
   `git diff --check` all exited zero. The one pytest warning is the existing
   third-party Starlette TestClient deprecation.
 - A later publication audit correctly failed `0/10` because the Python auditor
-  had made seven backward-compatible Dynamic-MoA extensions retroactively
-  mandatory for pre-MoA `agent-trace-v2` archives, despite the JSON schema
-  leaving them optional. The trace code now separates the original v2 required
-  fields from the full current export fields and requires the MoA extensions
-  when `metrics.runtime_mode` identifies a current runtime record. A regression
-  validates a pre-MoA v2 record without those extensions; focused tests passed
-  `20/20`, and the unchanged checked-in corpus audit returned `10/10`, zero
-  incomplete/legacy records, no missing fields/events, and 100.0% completeness.
+  had made seven Dynamic-MoA extensions retroactively mandatory for pre-MoA
+  `agent-trace-v2` archives. An initial runtime-metric discriminator restored
+  `10/10`, but an independent Frontier review correctly rejected it: a current
+  trace could delete that optional metric and the MoA fields to masquerade as an
+  archive. Current traces now use explicit `agent-trace-v3`, where all MoA
+  fields are mandatory; v2 keeps its immutable pre-MoA contract. Regressions
+  cover authentic v2 acceptance, v3 downgrade rejection, and missing
+  `metrics.runtime_mode`. The unchanged corpus remains `10/10`, zero
+  incomplete/legacy records, with no missing fields/events.
 - Final serial publication gates passed with `612` tests and the existing one
+  upstream Starlette warning; Ruff format/check, mypy for 28 source files,
+  user-systemd verification, every shell syntax check, trace audit `10/10` at
+  100.0%, and `git diff --check` all exited zero.
+- A real secondary-profile Frontier code review of the 16.8-KB post-
+  implementation diff returned `revise`, Critical 0 and Important 1, confidence
+  0.97, in `26818.303` ms with `18957` tokens. It identified the optional
+  runtime-metric downgrade in the initial trace compatibility fix. The finding
+  was accepted and replaced by explicit v3 as described above. Requested
+  regressions now cover auth/usage/rate failover, no failover for timeout,
+  provider, protocol, or validation failures, selected-profile trace metadata
+  without paths/credentials, authentic v2 acceptance, and v3 downgrade
+  rejection.
+- Post-fix serial publication gates passed with `618` tests and the existing one
   upstream Starlette warning; Ruff format/check, mypy for 28 source files,
   user-systemd verification, every shell syntax check, trace audit `10/10` at
   100.0%, and `git diff --check` all exited zero.

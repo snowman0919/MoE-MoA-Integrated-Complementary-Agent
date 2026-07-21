@@ -1,6 +1,6 @@
 # Trace schema
 
-`schemas/agent-trace-v2.json` defines the current decision-trajectory archive.
+`schemas/agent-trace-v3.json` defines the current decision-trajectory archive.
 Each record links runtime provenance and repository identity to first-class
 agent decisions, tool executions, evaluations, failure attribution/resolution,
 completion evidence, training eligibility, and observability state. Context
@@ -14,9 +14,10 @@ facts, test-confirmed facts, and unverified assumptions. Edges use `supports`,
 `contradicts`, `depends_on`, `supersedes`, `generated_from`, or `validated_by`.
 Frontier records transmitted evidence categories, latency, token counts, and
 cost only when the provider reports or configuration can calculate them.
-These are backward-compatible v2 extensions: records whose metrics identify a
-current runtime mode must contain them, while pre-Dynamic-MoA v2 archives remain
-valid without them. New exports always write the complete current field set.
+These fields are mandatory in v3. Pre-Dynamic-MoA v2 archives retain their
+original immutable contract and remain readable without the v3 fields; new
+exports always write v3. The explicit version prevents a current trace from
+downgrading itself by deleting optional fields or runtime metrics.
 
 Strict provenance values are `main|dev|candidate` and
 `production|benchmark|validation|diagnostic|candidate_evaluation`. Production is
@@ -24,8 +25,8 @@ valid only with `main`; candidate evaluation is valid only with `candidate`.
 Archives use `data/traces/<runtime>/<origin>/<date>/<session>.jsonl` and remain
 discoverable through the SQLite trace index.
 
-V1 remains readable as `legacy`, but is never silently counted as complete v2 or
-exported for training. Run `scripts/audit-trace-completeness.sh data/traces` to
+V1 remains readable as `legacy`, but is never silently counted as complete v2/v3
+or exported for training. Run `scripts/audit-trace-completeness.sh data/traces` to
 report complete, incomplete, legacy, missing fields, and missing lifecycle events.
 
 Benchmark traces read pinned role provenance from `config/models.yaml`; the
@@ -48,7 +49,7 @@ bounded state/evidence; SSE events are forwarded before review. Native content
 and tool deltas are not copied into request timing metrics.
 
 `scripts/export-agentic-traces.sh` exports stable file-order JSONL. Training
-export is separate from collection and includes only explicit eligible v2 traces.
+export is separate from collection and includes only explicit eligible v2/v3 traces.
 Full source, authorization headers, and environment secrets are excluded.
 
 Frontier decisions use events `frontier_eligible`, `frontier_profile_selected`,

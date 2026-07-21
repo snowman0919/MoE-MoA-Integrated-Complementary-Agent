@@ -235,7 +235,7 @@ class StateStore:
         path: str | Path,
         runtime_channel: RuntimeChannel,
         trace_origin: TraceOrigin,
-        schema_version: str = "agent-trace-v2",
+        schema_version: str = "agent-trace-v3",
     ) -> None:
         with self._connect() as database:
             database.execute(

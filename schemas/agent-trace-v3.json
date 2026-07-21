@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "agent-trace-v2",
+  "$id": "agent-trace-v3",
   "type": "object",
   "required": [
     "schema_version",
@@ -11,6 +11,13 @@
     "controller_commit",
     "selected_route",
     "agent_decisions",
+    "reasoner_contributions",
+    "orchestration_decisions",
+    "agent_invocations",
+    "agent_artifacts",
+    "recommendation_resolutions",
+    "evidence_graph",
+    "derived_confidence",
     "tool_executions",
     "evaluations",
     "failures",
@@ -20,7 +27,7 @@
     "observability_status"
   ],
   "properties": {
-    "schema_version": {"const": "agent-trace-v2"},
+    "schema_version": {"const": "agent-trace-v3"},
     "session_id": {"type": "string", "minLength": 1},
     "runtime_channel": {"enum": ["main", "dev", "candidate"]},
     "trace_origin": {
@@ -34,6 +41,21 @@
     "controller_commit": {"type": "string"},
     "selected_route": {"type": "object"},
     "agent_decisions": {"type": "array", "items": {"type": "object"}},
+    "reasoner_contributions": {"type": "array", "items": {"type": "object"}},
+    "orchestration_decisions": {"type": "array", "items": {"type": "object"}},
+    "agent_invocations": {"type": "array", "items": {"type": "object"}},
+    "agent_artifacts": {"type": "array", "items": {"type": "object"}},
+    "recommendation_resolutions": {"type": "array", "items": {"type": "object"}},
+    "evidence_graph": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "properties": {
+        "nodes": {"type": "array", "items": {"type": "object"}},
+        "edges": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": false
+    },
+    "derived_confidence": {"enum": ["high", "medium", "low", "conflicted"]},
     "tool_executions": {"type": "array", "items": {"type": "object"}},
     "evaluations": {"type": "array", "items": {"type": "object"}},
     "failures": {"type": "array", "items": {"type": "object"}},

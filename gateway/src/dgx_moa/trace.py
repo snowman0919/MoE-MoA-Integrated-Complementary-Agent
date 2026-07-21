@@ -75,7 +75,7 @@ TRACE_FIELDS = (
         }
     )
 )
-V2_REQUIRED_TRACE_FIELDS = TRACE_FIELDS - MOA_TRACE_FIELDS
+V2_TRACE_FIELDS = TRACE_FIELDS - MOA_TRACE_FIELDS
 
 LIST_FIELDS = {
     "events",
@@ -136,13 +136,19 @@ def validate_provenance(runtime_channel: str, trace_origin: str) -> None:
 
 def validate_trace(trace: dict[str, Any]) -> None:
     version = trace.get("schema_version")
-    required = LEGACY_TRACE_FIELDS if version == "agent-trace-v1" else V2_REQUIRED_TRACE_FIELDS
+    required = (
+        LEGACY_TRACE_FIELDS
+        if version == "agent-trace-v1"
+        else V2_TRACE_FIELDS
+        if version == "agent-trace-v2"
+        else TRACE_FIELDS
+    )
     missing = required - trace.keys()
     if missing:
         raise ValueError(f"trace fields missing: {', '.join(sorted(missing))}")
-    if version not in {"agent-trace-v1", "agent-trace-v2"}:
+    if version not in {"agent-trace-v1", "agent-trace-v2", "agent-trace-v3"}:
         raise ValueError("unsupported trace schema version")
-    if version == "agent-trace-v2":
+    if version in {"agent-trace-v2", "agent-trace-v3"}:
         validate_provenance(str(trace["runtime_channel"]), str(trace["trace_origin"]))
         for decision in trace["agent_decisions"]:
             if decision.get("role") not in {
@@ -191,7 +197,7 @@ def trace_record(
     repository = state.repository
     ending = state.ending_repository
     return {
-        "schema_version": "agent-trace-v2",
+        "schema_version": "agent-trace-v3",
         "session_id": state.session_id,
         "task_id": task_id or state.task_id,
         "runtime_channel": state.runtime_channel,
@@ -260,8 +266,14 @@ def trace_record(
 
 
 def export_trace(path: str | Path, trace: dict[str, Any]) -> None:
-    version = str(trace.get("schema_version", "agent-trace-v2"))
-    fields = LEGACY_TRACE_FIELDS if version == "agent-trace-v1" else TRACE_FIELDS
+    version = str(trace.get("schema_version", "agent-trace-v3"))
+    fields = (
+        LEGACY_TRACE_FIELDS
+        if version == "agent-trace-v1"
+        else V2_TRACE_FIELDS
+        if version == "agent-trace-v2"
+        else TRACE_FIELDS
+    )
     output = {}
     defaults = {
         "runtime_channel": "dev",
@@ -319,12 +331,18 @@ class TraceRecorder:
 
 
 def trace_missing(trace: dict[str, Any]) -> list[str]:
-    if trace.get("schema_version") == "agent-trace-v1":
+    version = trace.get("schema_version")
+    if version == "agent-trace-v1":
         return ["legacy_v1"]
-    required = V2_REQUIRED_TRACE_FIELDS
-    if isinstance(trace.get("metrics"), dict) and "runtime_mode" in trace["metrics"]:
-        required = TRACE_FIELDS
+    if version not in {"agent-trace-v2", "agent-trace-v3"}:
+        return ["unsupported_schema_version"]
+    required = V2_TRACE_FIELDS if version == "agent-trace-v2" else TRACE_FIELDS
     missing = [field for field in required if field not in trace]
+    metrics = trace.get("metrics")
+    if version == "agent-trace-v3" and (
+        not isinstance(metrics, dict) or not metrics.get("runtime_mode")
+    ):
+        missing.append("metrics.runtime_mode")
     for field in (
         "session_id",
         "task_id",
@@ -413,7 +431,9 @@ def audit_traces(directory: str | Path) -> dict[str, Any]:
                 trace = json.loads(line)
                 session_id = str(trace.get("session_id") or f"legacy:{read_sequence}")
                 candidate = (
-                    int(trace.get("schema_version") == "agent-trace-v2"),
+                    {"agent-trace-v1": 1, "agent-trace-v2": 2, "agent-trace-v3": 3}.get(
+                        str(trace.get("schema_version")), 0
+                    ),
                     read_sequence,
                     trace,
                 )
@@ -430,7 +450,7 @@ def audit_traces(directory: str | Path) -> dict[str, Any]:
         trace_incomplete = bool(missing)
         for missing_path in missing:
             missing_by_path[missing_path] = missing_by_path.get(missing_path, 0) + 1
-        if trace.get("schema_version") == "agent-trace-v2":
+        if trace.get("schema_version") in {"agent-trace-v2", "agent-trace-v3"}:
             event_types = {event.get("event_type") for event in trace.get("events", [])}
             for event_type in ("session_started", "route_selected", "session_ended"):
                 if event_type not in event_types:

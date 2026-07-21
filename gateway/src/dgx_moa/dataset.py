@@ -70,7 +70,7 @@ def build(
     for path in sorted(trace_dir.rglob("*.jsonl")):
         for line in path.read_text().splitlines():
             trace = json.loads(line)
-            if trace.get("schema_version") != "agent-trace-v2":
+            if trace.get("schema_version") not in {"agent-trace-v2", "agent-trace-v3"}:
                 legacy_excluded += 1
                 continue
             if trace.get("training_eligibility") != "eligible":
