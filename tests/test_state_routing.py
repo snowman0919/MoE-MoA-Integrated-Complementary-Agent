@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 from dgx_moa.routing import (
+    COMPATIBILITY_MODEL_ALIASES,
+    MODEL_MODES,
     ChangeRisk,
     classify_request,
     heavy_eligible,
@@ -81,6 +83,13 @@ def test_configured_name_cannot_override_public_model_alias(model: str, mode: st
 def test_unknown_model_is_rejected() -> None:
     with pytest.raises(ValueError, match="unknown model"):
         resolve_runtime_mode("missing", "dgx-moa-agent")
+
+
+def test_codex_utility_model_uses_fast_compatibility_path() -> None:
+    assert COMPATIBILITY_MODEL_ALIASES["gpt-5.6-luna"] == "dgx-moa-fast"
+    assert "gpt-5.6-luna" not in MODEL_MODES
+    with pytest.raises(ValueError, match="unknown model"):
+        resolve_runtime_mode("gpt-5.6-luna", "dgx-moa")
 
 
 def test_request_classes_and_roles() -> None:

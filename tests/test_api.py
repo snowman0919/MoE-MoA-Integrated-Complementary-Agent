@@ -20,7 +20,7 @@ from dgx_moa.lifecycle import (
     calculate_idle_policy,
     continuation_correlation,
 )
-from dgx_moa.schemas import ChatRequest
+from dgx_moa.schemas import ChatRequest, ResponsesRequest
 from dgx_moa.state import Phase, SessionState
 from dgx_moa.streaming import forward_sse as unclosed_forward_sse
 from fastapi import HTTPException, Request
@@ -2394,6 +2394,41 @@ def test_required_reasoner_failure_is_typed_and_never_degrades(
         "status_code": None,
     }
     assert reasoner_event["payload"]["latency_ms"] >= 0
+
+
+def test_reasoner_retries_one_malformed_structured_response(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.models["reasoner"] = settings.models["reasoner"].model_copy(
+        update={"provider": "ollama"}
+    )
+    attempts = 0
+    original = stub_provider.complete
+
+    async def malformed_once(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal attempts
+        if role == "reasoner":
+            attempts += 1
+            if attempts == 1:
+                return {"choices": [{"message": {"content": "not json"}}]}
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = malformed_once  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "reasoner-retry"},
+            json={"model": "dgx-moa", "messages": [{"role": "user", "content": "work"}]},
+        )
+        retry = next(
+            event
+            for event in client.app.state.store.events("reasoner-retry")
+            if event["event_type"] == "reasoner_structured_retry"
+        )
+
+    assert response.status_code == 200
+    assert attempts == 2
+    assert retry["payload"] == {"attempt": 2, "failure_class": "JSONDecodeError"}
 
 
 def test_executor_selected_planner_gets_usage_and_lease_tracking(
@@ -4782,6 +4817,7 @@ def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert response.headers["x-session-id"] == "responses-stream"
+    assert response.text.startswith(": keep-alive\n\n")
     assert "event: response.output_text.delta" in response.text
     assert "event: response.completed" in response.text
     assert "data: [DONE]" not in response.text
@@ -4789,6 +4825,85 @@ def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def
         {"type": "text", "text": "hello"}
     ]
     assert stub_provider.requests[-1]["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.asyncio
+async def test_responses_heartbeat_close_cancels_pending_chat(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    entered = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def pending_stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        try:
+            entered.set()
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    stub_provider.stream = pending_stream  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await endpoint(app, "/v1/responses", "POST")(
+            ResponsesRequest(model="dgx-moa-fast", input="work", stream=True),
+            Request({"type": "http", "app": app}),
+            x_session_id="responses-cancel",
+            x_runtime_channel=None,
+            x_trace_origin=None,
+            x_task_id=None,
+            x_workspace_path=None,
+            x_workspace_id=None,
+            x_repository_branch=None,
+            x_repository_commit=None,
+            x_dirty_state=None,
+        )
+        assert isinstance(response, StreamingResponse)
+        assert await anext(response.body_iterator) == b": keep-alive\n\n"
+        await asyncio.wait_for(entered.wait(), timeout=1)
+
+        await response.body_iterator.aclose()
+
+    assert cancelled.is_set()
+    assert_usage(app, "cancelled")
+
+
+def test_codex_utility_model_uses_unadvertised_fast_alias(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "gpt-5.6-luna", "input": "title", "stream": True},
+        )
+        aliases = {
+            model["id"]
+            for model in client.get(
+                "/v1/models", headers={"Authorization": "Bearer test-secret"}
+            ).json()["data"]
+        }
+        usage = client.app.state.usage.recent_requests()[-1]
+        near_match = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "gpt-5.6-luna-preview", "input": "title", "stream": True},
+        )
+
+    assert response.status_code == 200
+    assert "event: response.completed" in response.text
+    completed = next(
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and '"type":"response.completed"' in line
+    )
+    assert completed["response"]["model"] == "dgx-moa-fast"
+    assert stub_provider.calls == ["executor"]
+    assert usage.model_alias == "dgx-moa-fast"
+    assert "gpt-5.6-luna" not in aliases
+    assert near_match.text.count("event: response.failed") == 1
+    assert stub_provider.calls == ["executor"]
 
 
 def test_responses_post_preserves_function_tool_loop(  # type: ignore[no-untyped-def]
@@ -5075,6 +5190,29 @@ def test_responses_post_maps_upstream_502_to_http_200(  # type: ignore[no-untype
     assert stream_response.headers["x-session-id"] == "failed-stream"
     assert "event: response.failed" in stream_response.text
     assert "event: response.completed" not in stream_response.text
+
+
+def test_responses_stream_terminates_unhandled_pre_stream_error(
+    settings, stub_provider: StubProvider, caplog
+) -> None:  # type: ignore[no-untyped-def]
+    def fail_start(record) -> None:  # type: ignore[no-untyped-def]
+        raise RuntimeError("private detail")
+
+    with client_with_stub(settings, stub_provider) as client:
+        client.app.state.usage.start = fail_start
+        with caplog.at_level("WARNING"):
+            response = client.post(
+                "/v1/responses",
+                headers={"Authorization": "Bearer test-secret"},
+                json={"model": "dgx-moa-fast", "input": "hello", "stream": True},
+            )
+
+    assert response.status_code == 200
+    assert response.text.count("event: response.failed") == 1
+    assert "event: response.completed" not in response.text
+    assert "source=chat_unhandled_exception" in caplog.text
+    assert "failure_class=RuntimeError" in caplog.text
+    assert "private detail" not in caplog.text
 
 
 def test_upstream_openai_400_envelope_and_status_are_preserved(
