@@ -1,5 +1,45 @@
 # Validation
 
+## Production Codex Responses tool loop — 2026-07-22
+
+Production incident trace
+`data/traces/main/production/2026-07-21/869069ff-5a0c-41c4-a037-bf9eca278400.jsonl`
+returned HTTP 200 but ended the Executor stream with `finish_reason=stop` and
+no native tool delta. The client-visible result was a Bash code block rather
+than an executed command. Inspection confirmed that the Responses adapter did
+not forward `instructions`, `tools`, `tool_choice`, or `parallel_tool_calls`
+to the Chat/Executor path and translated only text deltas.
+
+Dev commit `63e32b3` added bounded function-tool conversion, streamed Responses
+function-call events, non-stream function-call output, and
+`function_call`/`function_call_output` continuation conversion. The complete
+suite passed `625` tests with the existing Starlette TestClient deprecation
+warning; focused Ruff checks passed. PR `#23` merged as production main
+`037edaa`.
+
+The production gateway restart caused the lifecycle controller to perform the
+selected full Executor service stop/start. The unchanged Phase 3 baseline was
+observed in the new argv: context `65536`, one sequence, `1700000000` KV bytes,
+`gpu_memory_utilization=0.5`, and MARLIN. Weight loading took `250.77` seconds;
+the gateway, Executor, and Reasoner subsequently reported ready.
+
+A real authenticated streaming `dgx-moa` request used a flat Responses
+`exec_command` function schema and `tool_choice=required`. It returned call ID
+`chatcmpl-tool-8d20a0982ea80d6a`, accumulated valid arguments
+`{"cmd":"pwd"}`, emitted both `response.function_call_arguments.done` and
+`response.output_item.done`, then emitted `response.completed`. Production
+trace `41880c39-99ae-43ff-9522-2868e44ca6ff` recorded
+`finish_reason=tool_calls`.
+
+The authenticated continuation supplied the matching `function_call` and
+`function_call_output` with observed stdout
+`/home/kotori9/dgx-moa-agent`. Trace
+`3c935a05-5ec8-4f40-a7a2-91c042c11ee9` recorded the tool execution and the
+stream returned the observed directory in `response.output_text.done`, followed
+by `response.completed`. Both requests returned HTTP 200. Final `/readyz`
+reported profile `resident`, Executor `ready`, Reasoner `ready`, and optional
+Planner/Reviewer/Judge stopped.
+
 ## Dynamic MoA isolated validation — 2026-07-21
 
 This section records only observed results for the current `dev` candidate. The
