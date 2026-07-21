@@ -50,7 +50,7 @@ reported a non-blocking model-catalog metadata warning because the gateway's
 OpenAI-compatible `/v1/models` list has `data` rather than Codex's additional
 top-level `models` field; it defaulted metadata and completed the tool loop.
 
-### Responses custom/freeform tool candidate — 2026-07-22
+### Responses custom/freeform tool production deployment — 2026-07-22
 
 The follow-up audit found that the deployed adapter preserved standard
 `function` tools but silently omitted Responses `custom` tools such as Codex
@@ -74,9 +74,65 @@ and Important 2, confidence 0.90, in `40899.016` ms with `25060` tokens. It
 identified premature stream-kind classification and unchecked decoded input
 types. Both were fixed with regressions. The bounded re-review returned
 `approve`, Critical 0, Important 0, missing tests 0, confidence 0.93, in
-`6448.757` ms with `14708` tokens. No API key was created or used. This is dev
-candidate evidence until the reviewed PR is merged and a real Codex custom tool
-executes through production.
+`6448.757` ms with `14708` tokens. No API key was created or used. PR `#26`
+merged the reviewed custom/freeform adapter as production main `14579f4`.
+
+An authenticated production wire probe then returned a native
+`custom_tool_call` for `emit_marker`, exact `CUSTOM_WIRE_OK` input delta/done,
+`response.output_item.done`, and `response.completed`. The first real Codex
+edit counterexample deliberately required `apply_patch` while CLI fallback
+metadata did not advertise it. Trace
+`e8057a51-3eb1-4e0f-b983-e90068ecb319` retained the resulting
+`unsupported call: apply_patch`; its workspace sandbox also retained the
+independent Bubblewrap `RTM_NEWADDR` denial. Repeating with the tool actually
+advertised by fallback metadata and a controlled no-sandbox temporary Git
+workspace passed two `exec_command` calls, exact file content, final
+`CODEX_TOOL_EDIT_OK`, and `turn.completed` in trace
+`2423adcf-f40c-43d3-8be3-a389146b0be3`.
+
+PR `#27` merged Responses usage normalization and a Codex catalog alongside the
+unchanged OpenAI `data` list as main `20b5296`. Full gates passed `630` tests,
+Ruff, and Mypy. Two primary-profile OAuth reviews approved with Critical 0 and
+Important 0; confidence was 0.90 and 0.97. Production physical validation
+reported nonzero Codex usage (`31503` input, `203` output), proving that the
+stream now includes upstream usage. It also exposed one installed-version
+contract difference: Codex CLI `0.144.6` required
+`supports_reasoning_summaries`, while the initially consulted current protocol
+source used a different compatibility field. The retained parser error named
+that exact missing field; it did not disconnect an inference stream.
+
+PR `#28` added the installed CLI's complete serialized metadata field set and
+merged as production main `993d653`. A bounded primary OAuth review approved
+with Critical 0, Important 0, no missing tests, confidence 0.96, and `14542`
+tokens. Both deployment restarts used the selected exact full Executor
+stop/start and preserved context `65536`, one sequence, `1700000000` KV bytes,
+`gpu_memory_utilization=0.5`, and MARLIN. Measured weight loads were `265.913`
+and `265.277` seconds; the final cache held `67121` tokens and reported `1.02x`
+maximum concurrency at `65536`.
+
+The final real Codex run had no catalog fallback or stream-disconnect warning.
+It exercised three malformed freeform patches; Codex rejected each with the
+correct first-line, last-line, or hunk-header error and made no file change.
+The fourth native `apply_patch` emitted a completed `file_change`, created
+`marker.txt`, and `exec_command` read exact bytes `CUSTOM_PATCH_OK\n`. Codex
+returned exact `CODEX_CUSTOM_TOOL_OK`, `turn.completed`, and nonzero usage
+(`36122` input, `527` output). Production trace
+`0cb2e314-2b6d-4d56-9ce5-3db12ad65153` retains all rejected and successful
+tool observations; its `degraded` status is expected because the deliberate
+negative calls and one invalid `write_stdin` process ID remain visible. Final
+`/readyz` reported resident profile with Executor and external Reasoner ready;
+Planner and Judge were inactive, while Reviewer independently resumed its
+previous lifecycle generation after the snapshot.
+
+The final trace itself has no missing mandatory field and contains all four
+required lifecycle events: `session_started`, `route_selected`,
+`assistant_stream_finished`, and `session_ended`. The whole production archive
+audit is not clean: it measured 191 sessions, 121 complete, 70 incomplete, 11
+legacy, and 63.35% completeness. Its historical gaps are 57 absent
+`session_ended` events plus older task/workspace/model-revision fields. This
+pre-existing archive debt is retained rather than rewritten; it does not erase
+the complete final production trace or the development publication audit that
+passed 10/10.
 
 ## Dynamic MoA isolated validation — 2026-07-21
 
