@@ -6,18 +6,18 @@ Updated: 2026-07-21
 
 | Capability | Designed | Implemented on `dev` | Unit-tested | Physically validated | Production-enabled |
 | --- | --- | --- | --- | --- | --- |
-| `dgx-moa` Reasoner + Executor core | yes | yes | yes | isolated yes | no |
-| Dynamic Planner/Reviewer routing | yes | yes | yes | isolated generic + OpenCode + Hermes yes | no |
-| Codex OAuth Frontier modes/fallback | yes | yes | yes | isolated yes | no |
-| Heavy Judge adjudication | yes | yes | yes | isolated yes | no |
-| Evidence graph and per-agent trace | yes | yes | yes | isolated yes | no |
-| Multiple API tokens and per-token usage | yes | yes | yes | isolated yes | no |
+| `dgx-moa` Reasoner + Executor core | yes | yes | yes | production yes | yes |
+| Dynamic Planner/Reviewer routing | yes | yes | yes | Planner production; Reviewer isolated | yes |
+| Codex OAuth Frontier modes/fallback | yes | yes | yes | production architecture yes | yes |
+| Heavy Judge adjudication | yes | yes | yes | isolated exclusive-profile yes | deployed, operator-only |
+| Evidence graph and per-agent trace | yes | yes | yes | production yes | yes |
+| Multiple API tokens and per-token usage | yes | yes | yes | production yes | yes |
 
-This table is the current authority. "Isolated yes" does not mean the full
-physical matrix passed. Later sections preserve historical Phase
-1–4 evidence and must not be read as validation of the new dynamic MoA. The
-checked-in gateway still has lifecycle control disabled, Frontier disabled, and
-an empty local unit map. Production is unchanged.
+This table is the current authority. Later sections preserve historical Phase
+1–4 evidence and must not be read as later production evidence. Checked-in safe
+defaults still have lifecycle control and Frontier disabled with an empty unit
+map. The production-only 0600 environment overrides authentication, Frontier,
+and the reviewed adaptive Executor/Planner/Reviewer unit map.
 
 ## Branch and deployment
 
@@ -30,12 +30,36 @@ an empty local unit map. Production is unchanged.
 - Promotion remains `dev` -> reviewed PR -> `main` fast-forward pull -> controlled
   gateway restart. Runtime services never execute from the development worktree.
 
+## Production enablement — 2026-07-21
+
+- PRs 15, 16, and 17 were reviewed, merged to `main`, and fast-forwarded into
+  the production worktree. The gateway was restarted under the reviewed
+  production environment; model endpoints remained loopback-only and only the
+  authenticated gateway remained on the tailnet address.
+- Authentication is enabled with non-secret usage IDs `legacy`, `opencode`,
+  `hermes`, and `operator`. New client secrets are held outside Git in a 0600
+  operator file; the legacy value remains accepted for existing Codex clients.
+  OpenCode and Hermes local configs use their distinct credentials.
+- Codex OAuth Frontier is enabled with ordered `primary`, `secondary` profiles.
+  Primary remained usage-limited, and a production architecture collaboration
+  physically completed through `secondary` with the selected profile persisted
+  in task evidence.
+- Production lifecycle mode is `adaptive` for Executor, Planner, and Reviewer.
+  Executor idle unload remains disabled. The external Ollama Reasoner reports
+  `control=external`; Judge remains outside the adaptive unit map and available
+  only through the separately controlled exclusive profile.
+- The post-deployment state had automation enabled with zero retained failures,
+  Executor and external Reasoner ready, Planner generation 10 ready after the
+  architecture smoke, Reviewer cold/inactive, Judge inactive, and the resident
+  target active. Planner remains subject to its normal minimum-residency and
+  adaptive idle-unload policy.
+
 ## Runtime
 
 - Gateway: authenticated direct tailnet TCP at `100.125.239.72:9000`.
 - Model endpoints: loopback-only executor `8101`, planner `8102`, reviewer `8103`.
 - Context limits are executor, planner, and reviewer `65536`.
-- The current `dev` candidate exposes `dgx-moa`, `dgx-moa-fast`,
+- The deployed `main` runtime exposes `dgx-moa`, `dgx-moa-fast`,
   `dgx-moa-agent`, and `dgx-moa-orchestrated`. `dgx-moa` is the primary
   Reasoner + Executor core; `dgx-moa-fast` is the explicitly Executor-only
   compatibility alias. The orchestrated profile combines deterministic safety
@@ -50,10 +74,11 @@ an empty local unit map. Production is unchanged.
 - KV reservations, model selection, unit topology, and memory gates are unchanged.
 - A configurable 10-second prestart memory-settle delay prevents reloads from
   racing unified-memory reclamation. The final resident restoration passed.
-- These contracts are implemented on `dev` and passed isolated physical curl,
+- These contracts first passed isolated physical curl,
   OpenAI Python, HTTPX, OpenCode `1.17.18`, and Hermes Agent `0.18.2` checks in
   Task 9. The post-fix stream reached the client before executor completion and
-  used no planner or reviewer. Production was not deployed or restarted.
+  used no planner or reviewer. Task 9 itself did not deploy production; the
+  later production enablement above supersedes that historical boundary.
 - Current dynamic OpenCode evidence additionally passes architecture with
   Planner + Codex OAuth Frontier in parallel and an evidence-bearing review
   continuation with local Reviewer + Frontier in parallel. Its automatic title
