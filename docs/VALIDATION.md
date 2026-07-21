@@ -1840,6 +1840,14 @@ parts before routing. The exact regression check passed, followed by the full
 suite at `624 passed` with the existing Starlette TestClient warning; Ruff and
 Mypy passed on the changed path.
 
+Production deployment PR `#21` merged as
+`23e9631d7ffef0414060c9ac6f1c3284a548dd33`. After resident recovery, the
+primary `dgx-moa` path received the same nested `input_text` shape and returned
+HTTP 200 with eleven ordered events, exact text `INPUT_TEXT_OK`, and terminal
+`response.completed`. The post-deployment gateway/executor journal contained
+no validation error or traceback; gateway, executor, and resident target were
+active.
+
 ### Heavy Judge validation and OAuth profile fallback (2026-07-21)
 
 - The production Executor, Planner, and Reviewer were stopped for an approved
