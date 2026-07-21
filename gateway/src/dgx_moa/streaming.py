@@ -447,6 +447,7 @@ async def responses_error_sse(
     code: str,
     source: str,
     status_code: int,
+    failure_class: str | None = None,
 ) -> AsyncGenerator[bytes, None]:
     response_id = f"resp_{uuid.uuid4().hex}"
     response = {
@@ -462,13 +463,14 @@ async def responses_error_sse(
     }
     LOGGER.warning(
         "responses_stream_terminal session_id=%s model=%s status=failed source=%s "
-        "status_code=%d error_type=%s code=%s",
+        "status_code=%d error_type=%s code=%s failure_class=%s",
         _log_token(session_id),
         _log_token(model),
         _log_token(source),
         status_code,
         _log_token(error_type),
         _log_token(code),
+        _log_token(failure_class or error_type),
     )
     yield (
         "event: response.failed\ndata: "

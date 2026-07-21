@@ -65,6 +65,9 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   Reasoner + Executor core; `dgx-moa-fast` is the explicitly Executor-only
   compatibility alias. The orchestrated profile combines deterministic safety
   policy with a structured Executor routing decision.
+- Codex utility requests using the measured `gpt-5.6-luna` slug are accepted as
+  unadvertised `dgx-moa-fast` compatibility traffic. They never invoke Frontier;
+  Frontier remains the separate Codex OAuth collaboration path.
 - Chat SSE forwarding preserves complete events and a single DONE. The Responses
   adapter buffers at most 1,000,000 characters until it can distinguish a final
   answer from a tool-call preamble; tool preambles and failed streams are never

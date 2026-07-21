@@ -1,5 +1,57 @@
 # Validation
 
+## Intermittent Responses disconnect and invocation rates — 2026-07-22
+
+The reported production window contained 21 gateway requests: 13 completed, 6
+failed, and 2 were cancelled. One cancelled trace waited `79566.922` ms for its
+first downstream byte while Reasoner and Executor routing ran before the HTTP
+stream existed. Another continuation failed after `29876.735` ms because the
+external `Qwythos-v2-9B:Q4` response raised `JSONDecodeError`; the following
+client retry succeeded. Six simultaneous Codex utility requests used
+`gpt-5.6-luna` and were rejected as unknown-model 404s. These are the measured
+sources of the intermittent reconnects; model services had zero restarts.
+
+The shared Responses endpoint now returns its HTTP stream immediately, sends an
+SSE comment heartbeat at once and every 15 seconds until Chat preprocessing
+finishes, and converts unexpected pre-stream exceptions to terminal
+`response.failed`. Q4 structured-output parsing retries once internally. The
+observed Codex utility slug is normalized to the existing Executor-only
+`dgx-moa-fast` path but is not advertised as a public model. Arbitrary unknown
+models remain rejected, and Frontier remains Codex OAuth only.
+
+Eight tool results occurred in the measured hour: six `exec_command`, one
+`read_mcp_resources`, and one `read_mcp_resource`. All reported exit code zero,
+but the MCP results contained `unsupported call` and `unknown MCP server` and
+were incorrectly recorded as successes. The existing observation boundary now
+classifies these as `UNSUPPORTED_TOOL` and `MCP_SERVER_UNAVAILABLE`, enabling
+the existing replan and duplicate-failure guard. No MCP server is synthesized
+or mutated by the gateway.
+
+Role invocation rate uses gateway requests as the denominator. The measured
+one-hour window was Executor 21/21 (`100%`), Q4 Reasoner 21/21 (`100%`), Planner
+2/21 (`9.5%`), Reviewer 3/21 (`14.3%`), primary Codex OAuth Frontier 4/21
+(`19.0%`), and Heavy Judge 0/21 (`0%`). The cumulative usage snapshot was 244
+requests: Executor 244 (`100%`), Reasoner 71 (`29.1%`), Planner 99 (`40.6%`),
+Reviewer 98 (`40.2%`), Frontier 7 (`2.9%`), and Judge 0. Rates can exceed a
+combined 100% because one request may invoke multiple roles.
+
+Isolated physical validation returned the first heartbeat in `30.758` ms and
+completed the Luna compatibility request as exact `LUNA_FAST_OK` in `0.370`
+seconds. A real Q4 core request returned its first heartbeat in `1.027` ms,
+sent two heartbeats, and completed exact `Q4_HEARTBEAT_OK` in `17.075` seconds.
+A real Q4 + Executor tool request returned its first heartbeat in `1.428` ms,
+exposed zero text deltas, produced `pwd` arguments, and ended
+`response.completed` in `9.585` seconds.
+
+Final gates passed 643 tests with the existing Starlette warning, Ruff, Mypy,
+and diff check. The cancellation regression proves that closing after the first
+heartbeat cancels and awaits pending Chat work and finalizes usage as cancelled.
+Primary-profile Codex OAuth review approved with Critical 0, Important 0 and
+confidence `0.76`; no API key was created or used. A client that has already
+disconnected cannot receive a terminal SSE event, so the enforceable contract
+is terminal completed/failed for server-controlled endings plus task cleanup on
+client cancellation.
+
 ## Responses privacy/terminal fix and Q4 Reasoner — 2026-07-22
 
 Production trace

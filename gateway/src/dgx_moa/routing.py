@@ -25,6 +25,7 @@ MODEL_MODES: dict[str, RuntimeMode] = {
     "dgx-moa-orchestrated": "orchestrated",
     "dgx-moa-chat": "fast",
 }
+COMPATIBILITY_MODEL_ALIASES = {"gpt-5.6-luna": "dgx-moa-fast"}
 HIGH_RISK_FIELDS = (
     "authentication",
     "cryptography",

@@ -653,8 +653,32 @@ def test_stdout_missing_file_is_a_failure(settings, stub_provider: StubProvider)
     assert state.tool_executions[0]["failure_class"] == "NONEXISTENT_PATH"
 
 
+@pytest.mark.parametrize(
+    ("output", "failure_class"),
+    [
+        ("unsupported call: read_mcp_resources", "UNSUPPORTED_TOOL"),
+        ("resources/read failed: unknown MCP server 'missing'", "MCP_SERVER_UNAVAILABLE"),
+    ],
+)
+def test_semantic_tool_failures_are_not_recorded_as_success(
+    settings, stub_provider: StubProvider, output: str, failure_class: str
+) -> None:  # type: ignore[no-untyped-def]
+    state = SessionState(session_id=failure_class)
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    controller._observe(state, tool_messages("mcp", output))
+
+    assert state.tool_executions[0]["failure_class"] == failure_class
+    assert state.failed_call_fingerprints
+
+
 def test_failure_classification() -> None:
     assert classify_failure("No such file or directory") == "NONEXISTENT_PATH"
+    assert classify_failure("unsupported call: read_mcp_resources") == "UNSUPPORTED_TOOL"
+    assert (
+        classify_failure("resources/read failed: unknown MCP server 'missing'")
+        == "MCP_SERVER_UNAVAILABLE"
+    )
     assert classify_failure("SyntaxError: invalid syntax") == "SYNTAX_ERROR"
     assert classify_failure("request timed out") == "TIMEOUT"
 

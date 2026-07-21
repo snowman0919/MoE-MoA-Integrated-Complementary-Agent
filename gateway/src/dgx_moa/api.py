@@ -38,6 +38,7 @@ from .lifecycle import (
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
 from .routing import (
+    COMPATIBILITY_MODEL_ALIASES,
     MODEL_MODES,
     ReasonerMode,
     classify_request,
@@ -970,13 +971,15 @@ def create_app(
                 "coding requests unavailable during heavy-judge profile",
                 headers={"Retry-After": "30"},
             )
+        model_alias = COMPATIBILITY_MODEL_ALIASES.get(body.model, body.model)
         try:
-            mode = resolve_runtime_mode(body.model, configured.model_name)
+            mode = resolve_runtime_mode(model_alias, configured.model_name)
         except ValueError as error:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown model") from error
         if "executor" not in configured.models:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "executor is not configured")
         raw = body.model_dump(exclude_none=True)
+        raw["model"] = model_alias
         provided_session_id = x_session_id or str(body.metadata.get("session_id") or "")
         session_id = provided_session_id or str(uuid.uuid4())
         api_token_id = getattr(request.state, "api_token_id", "legacy")
@@ -1112,7 +1115,7 @@ def create_app(
                 ),
                 model_alias=cast(
                     ModelAlias,
-                    body.model,
+                    model_alias,
                 ),
                 runtime_mode=mode,
                 request_class=request_class,
@@ -1964,27 +1967,7 @@ def create_app(
             for tool in body.tools or []
             if tool.get("type") == "custom" and tool.get("name")
         }
-
-        def failed_stream(
-            error_type: str,
-            code: str,
-            source: str,
-            status_code: int,
-            session_id: str | None = None,
-        ) -> StreamingResponse:
-            response_session_id = session_id or x_session_id or "unknown"
-            return StreamingResponse(
-                responses_error_sse(
-                    body.model,
-                    session_id=response_session_id,
-                    error_type=error_type,
-                    code=code,
-                    source=source,
-                    status_code=status_code,
-                ),
-                media_type="text/event-stream",
-                headers={"X-Session-ID": response_session_id, "Cache-Control": "no-cache"},
-            )
+        response_model = COMPATIBILITY_MODEL_ALIASES.get(body.model, body.model)
 
         tool_choice = body.tool_choice
         if isinstance(tool_choice, dict) and tool_choice.get("type") in {"function", "custom"}:
@@ -1993,7 +1976,7 @@ def create_app(
                 "function": {"name": tool_choice.get("name")},
             }
         chat_body = ChatRequest(
-            model=body.model,
+            model=response_model,
             messages=[ChatMessage.model_validate(message) for message in messages],
             stream=body.stream,
             stream_options={"include_usage": True} if body.stream else None,
@@ -2006,6 +1989,106 @@ def create_app(
             top_p=body.top_p,
             stop=body.stop,
         )
+        if body.stream:
+            response_session_id = (
+                x_session_id or str(body.metadata.get("session_id") or "") or str(uuid.uuid4())
+            )
+
+            async def response_stream() -> AsyncIterator[bytes]:
+                chat_task = asyncio.create_task(
+                    chat(
+                        chat_body,
+                        request,
+                        response_session_id,
+                        x_runtime_channel,
+                        x_trace_origin,
+                        x_task_id,
+                        x_workspace_path,
+                        x_workspace_id,
+                        x_repository_branch,
+                        x_repository_commit,
+                        x_dirty_state,
+                    )
+                )
+                try:
+                    yield b": keep-alive\n\n"
+                    while not chat_task.done():
+                        await asyncio.wait((chat_task,), timeout=15)
+                        if not chat_task.done():
+                            yield b": keep-alive\n\n"
+                    try:
+                        chat_result = chat_task.result()
+                    except HTTPException as error:
+                        error_type = (
+                            "invalid_request_error"
+                            if error.status_code
+                            in {status.HTTP_503_SERVICE_UNAVAILABLE, status.HTTP_404_NOT_FOUND}
+                            else "backend_error"
+                        )
+                        async for chunk in responses_error_sse(
+                            response_model,
+                            session_id=response_session_id,
+                            error_type=error_type,
+                            code=(
+                                "invalid_request"
+                                if error_type == "invalid_request_error"
+                                else "backend_error"
+                            ),
+                            source="chat_http_exception",
+                            status_code=error.status_code,
+                        ):
+                            yield chunk
+                        return
+                    except Exception as error:
+                        async for chunk in responses_error_sse(
+                            response_model,
+                            session_id=response_session_id,
+                            error_type="backend_error",
+                            code="backend_error",
+                            source="chat_unhandled_exception",
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            failure_class=type(error).__name__,
+                        ):
+                            yield chunk
+                        return
+                    if isinstance(chat_result, StreamingResponse):
+                        async for chunk in responses_sse(
+                            chat_result.body_iterator,
+                            response_model,
+                            custom_tool_names=custom_tool_names,
+                            session_id=response_session_id,
+                        ):
+                            yield chunk
+                        return
+                    chat_payload = _chat_response_payload(chat_result)
+                    upstream_error = chat_payload.get("error") if chat_payload else None
+                    async for chunk in responses_error_sse(
+                        response_model,
+                        session_id=response_session_id,
+                        error_type=(
+                            str(upstream_error.get("type", "backend_error"))
+                            if isinstance(upstream_error, dict)
+                            else "backend_error"
+                        ),
+                        code=(
+                            str(upstream_error.get("code", "backend_error"))
+                            if isinstance(upstream_error, dict)
+                            else "backend_error"
+                        ),
+                        source="chat_non_stream_response",
+                        status_code=chat_result.status_code,
+                    ):
+                        yield chunk
+                finally:
+                    if not chat_task.done():
+                        chat_task.cancel()
+                        await asyncio.gather(chat_task, return_exceptions=True)
+
+            return StreamingResponse(
+                response_stream(),
+                media_type="text/event-stream",
+                headers={"X-Session-ID": response_session_id, "Cache-Control": "no-cache"},
+            )
         try:
             chat_response = await chat(
                 chat_body,
@@ -2021,22 +2104,6 @@ def create_app(
                 x_dirty_state,
             )
         except HTTPException as error:
-            if body.stream:
-                error_type = (
-                    "invalid_request_error"
-                    if error.status_code
-                    in {status.HTTP_503_SERVICE_UNAVAILABLE, status.HTTP_404_NOT_FOUND}
-                    else "backend_error"
-                )
-                code = (
-                    "invalid_request" if error_type == "invalid_request_error" else "backend_error"
-                )
-                return failed_stream(
-                    error_type,
-                    code,
-                    "chat_http_exception",
-                    error.status_code,
-                )
             if error.status_code in {
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 status.HTTP_404_NOT_FOUND,
@@ -2046,7 +2113,7 @@ def create_app(
                 )
             return JSONResponse(
                 _responses_payload(
-                    body.model,
+                    response_model,
                     {
                         "error": {
                             "message": str(error.detail),
@@ -2058,44 +2125,7 @@ def create_app(
                 ),
                 status_code=200,
             )
-        if isinstance(chat_response, StreamingResponse):
-            response_session_id = (
-                chat_response.headers.get("X-Session-ID") or x_session_id or "unknown"
-            )
-            return StreamingResponse(
-                responses_sse(
-                    chat_response.body_iterator,
-                    body.model,
-                    custom_tool_names=custom_tool_names,
-                    session_id=response_session_id,
-                ),
-                media_type="text/event-stream",
-                headers={
-                    "X-Session-ID": chat_response.headers.get("X-Session-ID", ""),
-                    "Cache-Control": "no-cache",
-                },
-            )
         chat_payload = _chat_response_payload(chat_response)
-        response_session_id = chat_response.headers.get("X-Session-ID") or x_session_id or "unknown"
-        if body.stream:
-            upstream_error = chat_payload.get("error") if chat_payload else None
-            error_type = (
-                str(upstream_error.get("type", "backend_error"))
-                if isinstance(upstream_error, dict)
-                else "backend_error"
-            )
-            code = (
-                str(upstream_error.get("code", "backend_error"))
-                if isinstance(upstream_error, dict)
-                else "backend_error"
-            )
-            return failed_stream(
-                error_type,
-                code,
-                "chat_non_stream_response",
-                chat_response.status_code,
-                response_session_id,
-            )
         if chat_payload is None:
             return error_response(
                 status.HTTP_502_BAD_GATEWAY,
@@ -2105,12 +2135,12 @@ def create_app(
             )
         if chat_response.status_code == status.HTTP_502_BAD_GATEWAY:
             return JSONResponse(
-                _responses_payload(body.model, chat_payload, status="failed"),
+                _responses_payload(response_model, chat_payload, status="failed"),
                 status_code=status.HTTP_200_OK,
             )
         return JSONResponse(
             _responses_payload(
-                body.model,
+                response_model,
                 chat_payload,
                 custom_tool_names=custom_tool_names,
             )

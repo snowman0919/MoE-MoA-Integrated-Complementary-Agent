@@ -63,6 +63,10 @@ response bodies, or exception messages. `source=chat_http_exception` and
 `source=chat_non_stream_response` identify failures before streaming;
 `source=upstream_iterator` identifies an error frame, truncated EOF, buffer
 limit, or iterator failure after streaming began.
+`source=chat_unhandled_exception` identifies an unexpected failure before the
+Chat stream exists and includes only its exception class. Responses clients may
+receive `: keep-alive` SSE comments while Reasoner or routing work is pending;
+these are transport heartbeats, not model output.
 
 Lifecycle states and safety rules are canonical in
 `docs/MODEL_LIFECYCLE.md`.

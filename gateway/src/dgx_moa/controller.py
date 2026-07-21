@@ -69,6 +69,10 @@ def failure_family(observation: str) -> str:
 
 def classify_failure(observation: str) -> str:
     normalized = observation.lower()
+    if "unsupported call" in normalized:
+        return "UNSUPPORTED_TOOL"
+    if "unknown mcp server" in normalized:
+        return "MCP_SERVER_UNAVAILABLE"
     if any(marker in normalized for marker in ("no such file", "not found", "nonexistent")):
         return "NONEXISTENT_PATH"
     if any(marker in normalized for marker in ("syntaxerror", "syntax error")):
@@ -505,7 +509,13 @@ class Controller:
                 )
                 or any(
                     marker in result["stdout"].lower()
-                    for marker in ("not found", "no such file", "permission denied")
+                    for marker in (
+                        "not found",
+                        "no such file",
+                        "permission denied",
+                        "unsupported call",
+                        "resources/read failed",
+                    )
                 )
             )
             failure_class = classify_failure(observation) if failed else None
@@ -1058,16 +1068,27 @@ class Controller:
             )
             reasoner_started = time.monotonic()
             try:
-                reasoner_response = await self.provider.complete(
-                    "reasoner",
-                    reasoner,
-                    reasoner_request,
-                    timeout_seconds=self.settings.limits.reasoner_timeout_seconds,
-                    stage="reasoner",
-                )
-                contribution = ReasonerContribution.model_validate(
-                    parse_json_content(reasoner_response)
-                )
+                for attempt in range(2):
+                    try:
+                        reasoner_response = await self.provider.complete(
+                            "reasoner",
+                            reasoner,
+                            reasoner_request,
+                            timeout_seconds=self.settings.limits.reasoner_timeout_seconds,
+                            stage="reasoner",
+                        )
+                        contribution = ReasonerContribution.model_validate(
+                            parse_json_content(reasoner_response)
+                        )
+                        break
+                    except ValueError as error:
+                        if attempt or reasoner.provider != "ollama":
+                            raise
+                        self.store.event(
+                            state.session_id,
+                            "reasoner_structured_retry",
+                            {"attempt": 2, "failure_class": type(error).__name__},
+                        )
             except (httpx.HTTPError, StageTimeout, ValueError) as error:
                 status_code = (
                     error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
