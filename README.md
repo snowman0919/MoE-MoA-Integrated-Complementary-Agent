@@ -1,9 +1,16 @@
 # DGX MoA Agent
 
-OpenAI-compatible coding-agent gateway. OpenCode and other clients connect to
-one authenticated tailnet endpoint. `dgx-moa-chat` and `dgx-moa-agent` use the
-executor directly; `dgx-moa-orchestrated` selects planner and reviewer roles by
-deterministic policy. The heavy judge remains a mutually-exclusive profile.
+OpenAI-compatible, Executor-directed dynamic Mixture-of-Agents gateway. OpenCode
+and other clients connect to one authenticated tailnet endpoint. The primary
+`dgx-moa` path always combines an external Ollama Reasoner with the local 80B
+Executor. The Executor owns routing, native tool calls, and final synthesis; it
+adds Planner, Reviewer, Codex OAuth Frontier collaboration, or the mutually
+exclusive Heavy Judge only when the task and evidence require them.
+
+`dgx-moa-fast` is the explicitly named Executor-only compatibility path.
+`dgx-moa-agent` keeps the Reasoner + Executor core while the external client owns
+the tool loop. `dgx-moa-orchestrated` enables dynamic local specialists and
+frequent Frontier architecture/review collaboration.
 
 ```bash
 uv sync
@@ -24,17 +31,23 @@ See `docs/API_CLIENT_MODES.md` for the model aliases, standard request and SSE
 contracts, typed errors, curl/OpenAI SDK/OpenCode examples, and output limits.
 See `docs/HERMES_AGENT.md` for the environment-only Hermes configuration.
 
-The `dev` release candidate implements role-aware request statistics and adaptive
-full-stop lifecycle control. The recommended policy keeps the 65,536-token
-executor resident by default, while planner, reviewer, and reasoner may unload
-after bounded role-local idle periods. A cold request returns retryable `503`
+The `dev` release candidate implements the new MoA contracts and role-aware
+request statistics. The intended lifecycle policy keeps the 65,536-token
+Executor resident and keeps the external Ollama Reasoner persistently available;
+Planner and Reviewer may unload after bounded role-local idle periods. A cold
+managed local role returns retryable `503`
 state, generation, weight progress, overall progress, and ETA fields while one
 load owns the role. An isolated user-systemd run physically passed the four-role
 control path, idle unload/reload, circuit breaker, and idempotent rollback. It
 used fake weights to avoid duplicating the active 45G production executor, so it
 does not add a new real-weight memory claim. Checked-in and production lifecycle
-settings remain `disabled` with an empty unit map; production was not restarted
-or changed.
+settings remain `disabled` with an empty unit map. The dynamic MoA candidate has
+isolated physical evidence for the core, real clients, Planner, Reviewer, and
+Codex OAuth Frontier, and the exclusive Heavy Judge resume path. The 2026-07-21
+Heavy Judge validation rejected a drifted 12-GB KV configuration, then passed
+the approved 4-GB readiness gate, normal adjudication, guard errors, teardown,
+and fixed-resident restoration. The candidate is still not production-enabled;
+production configuration and code remain unchanged.
 
 See `docs/MODEL_LIFECYCLE.md` for model states, role policies and statistics,
 retryable loading responses, blockers, status routes, circuit breaker, and
@@ -43,5 +56,6 @@ unit map until a reviewed deployment supplies exact authorized units.
 
 Authoritative references: `docs/STATE.md` for current state,
 `docs/OPERATIONS.md` for operation, `docs/VALIDATION.md` for measured evidence,
+`docs/MOA_ORCHESTRATION.md` for collaboration, `docs/FRONTIER.md` for Codex OAuth,
 `docs/TRACE_SCHEMA.md` for logging, and `docs/RECURSIVE_IMPROVEMENT.md` for the
 branch workflow.

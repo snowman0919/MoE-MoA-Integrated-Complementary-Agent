@@ -62,7 +62,18 @@ class StubProvider:
         elif role == "reviewer":
             content = json.dumps({"status": "approved", "findings": []})
         elif role == "reasoner":
-            content = "Use the verified task facts and keep the next action focused."
+            content = json.dumps(
+                {
+                    "problem_interpretation": "Complete the requested task.",
+                    "constraints": ["Use verified evidence."],
+                    "reasoning": ["Take one bounded next step."],
+                    "risks": [],
+                    "unknowns": [],
+                    "recommended_actions": ["Proceed with the Executor."],
+                    "additional_agents": [],
+                    "confidence": 0.9,
+                }
+            )
         elif role == "judge":
             content = json.dumps(
                 {
@@ -72,6 +83,21 @@ class StubProvider:
                     "mandatory_changes": [],
                     "risk_level": "low",
                     "completion_allowed": True,
+                }
+            )
+        elif role == "executor" and (
+            request.get("response_format", {}).get("json_schema", {}).get("name")
+            == "orchestration_decision"
+        ):
+            content = json.dumps(
+                {
+                    "action": "respond",
+                    "required_agents": [],
+                    "optional_agents": [],
+                    "reason": {},
+                    "parallelizable": False,
+                    "continue_after": "respond",
+                    "confidence": 0.9,
                 }
             )
         else:

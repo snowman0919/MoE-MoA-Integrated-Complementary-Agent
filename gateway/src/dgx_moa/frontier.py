@@ -3,25 +3,45 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import fcntl
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .security import redact
 from .state import SessionState
 
 PROFILE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 DEFAULT_PROFILE_ROOT = Path("/home/kotori9/.local/share/dgx-moa/codex-profiles")
+CODEX_ENVIRONMENT_ALLOWLIST = frozenset(
+    {
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LOGNAME",
+        "PATH",
+        "SHELL",
+        "TERM",
+        "TMPDIR",
+        "USER",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_RUNTIME_DIR",
+    }
+)
 FORBIDDEN_PATHS = (".env", ".env.local", "systemd/", "config/tailscale")
 IMMUTABLE_EVALUATOR_PATHS = (
     "data/benchmarks/",
@@ -33,11 +53,17 @@ FRONTIER_FAILURES = frozenset(
     {
         "FRONTIER_AUTH_ERROR",
         "FRONTIER_USAGE_LIMIT",
+        "FRONTIER_RATE_LIMIT",
         "FRONTIER_TIMEOUT",
+        "FRONTIER_PROVIDER_UNAVAILABLE",
+        "FRONTIER_CIRCUIT_OPEN",
         "FRONTIER_PROTOCOL_ERROR",
         "FRONTIER_SCOPE_VIOLATION",
         "FRONTIER_VALIDATION_FAILURE",
     }
+)
+PROFILE_FAILOVER_FAILURES = frozenset(
+    {"FRONTIER_AUTH_ERROR", "FRONTIER_USAGE_LIMIT", "FRONTIER_RATE_LIMIT"}
 )
 
 
@@ -91,12 +117,309 @@ class FrontierConfig(BaseModel):
         "host_sandbox_capability_blocked",
         "oauth_unavailable",
         "usage_limited",
-    ] = "host_sandbox_capability_blocked"
+    ] = "configuration_disabled"
     protocol: str = "codex-exec-jsonl"
     model: str = "gpt-5.6-sol"
     reasoning_effort: Literal["high"] = "high"
-    max_invocations_per_task: int = 1
+    max_invocations_per_task: int = 3
     max_recursive_cycles: int = 3
+    primary_profile: str = "default"
+    secondary_profile: str | None = None
+    allow_profile_failover: bool = False
+    profile_root: Path | None = None
+    collaboration_timeout_seconds: int = 300
+    collaboration_retries: int = 1
+    circuit_failure_limit: int = 3
+    circuit_cooldown_seconds: int = 300
+    max_evidence_characters: int = Field(default=24_000, ge=1_000, le=100_000)
+    allowed_evidence_categories: list[str] = Field(
+        default_factory=lambda: [
+            "objective",
+            "constraints",
+            "acceptance_criteria",
+            "reasoner_risks",
+            "reasoner_recommendations",
+            "relevant_evidence",
+            "specific_questions",
+            "changed_paths",
+            "bounded_diff",
+            "diff",
+            "test_results",
+            "static_analysis_results",
+            "local_reviewer_findings",
+            "known_limitations",
+            "tool_results",
+            "reasoner_position",
+            "executor_position",
+            "planner_position",
+            "reviewer_position",
+            "shared_evidence",
+            "specific_disagreement",
+        ]
+    )
+    input_cost_per_million: float | None = None
+    output_cost_per_million: float | None = None
+
+    @model_validator(mode="after")
+    def validate_profile_failover(self) -> FrontierConfig:
+        validate_profile_name(self.primary_profile)
+        if self.secondary_profile is not None:
+            validate_profile_name(self.secondary_profile)
+            if self.secondary_profile == self.primary_profile:
+                raise ValueError("secondary_profile must differ from primary_profile")
+        if self.allow_profile_failover and self.secondary_profile is None:
+            raise ValueError("allow_profile_failover requires secondary_profile")
+        return self
+
+
+def bounded_external_evidence(
+    evidence: dict[str, Any], config: FrontierConfig
+) -> tuple[dict[str, Any], str]:
+    allowed = set(config.allowed_evidence_categories)
+    filtered = {str(key): redact(value) for key, value in evidence.items() if key in allowed}
+    serialized = json.dumps(filtered, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if len(serialized) <= config.max_evidence_characters:
+        return filtered, serialized
+    budget = max(256, config.max_evidence_characters // max(1, len(filtered)))
+    while True:
+        bounded = {
+            key: {"truncated_excerpt": json.dumps(value, ensure_ascii=False)[:budget]}
+            for key, value in filtered.items()
+        }
+        serialized = json.dumps(bounded, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if len(serialized) <= config.max_evidence_characters or budget <= 16:
+            return bounded, serialized
+        budget //= 2
+
+
+class FrontierArchitectureResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recommended_architecture: str
+    design_decisions: list[str]
+    tradeoffs: list[str]
+    failure_modes: list[str]
+    implementation_sequence: list[str]
+    review_questions: list[str]
+
+
+class FrontierReviewResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    verdict: Literal["approve", "revise", "reject"]
+    critical: list[str]
+    important: list[str]
+    suggestions: list[str]
+    missing_tests: list[str]
+    confidence: float = Field(ge=0, le=1)
+
+
+class FrontierDisagreementResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preferred_position: str
+    evidence: list[str]
+    rejected_assumptions: list[str]
+    required_follow_up: list[str]
+    confidence: float = Field(ge=0, le=1)
+
+
+COLLABORATION_SCHEMAS: dict[str, type[BaseModel]] = {
+    "architecture": FrontierArchitectureResult,
+    "code_review": FrontierReviewResult,
+    "disagreement": FrontierDisagreementResult,
+}
+
+
+class FrontierCollaborationResult(BaseModel):
+    mode: Literal["architecture", "code_review", "disagreement"]
+    output: dict[str, Any]
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    cost_usd: float | None = None
+    latency_ms: float
+    transmitted_categories: list[str]
+    profile: str = "unknown"
+
+
+def codex_usage(output: str) -> tuple[int | None, int | None]:
+    prompt = completion = 0
+    found = False
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        usage = event.get("usage") if isinstance(event, dict) else None
+        if not isinstance(usage, dict):
+            continue
+        input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
+        output_tokens = usage.get("output_tokens", usage.get("completion_tokens"))
+        if isinstance(input_tokens, int) and not isinstance(input_tokens, bool):
+            prompt = max(prompt, input_tokens)
+            found = True
+        if isinstance(output_tokens, int) and not isinstance(output_tokens, bool):
+            completion = max(completion, output_tokens)
+            found = True
+    return (prompt, completion) if found else (None, None)
+
+
+class CodexOAuthCollaboration:
+    def __init__(
+        self,
+        config: FrontierConfig,
+        run_dir: str | Path,
+        project_root: str | Path,
+        profile_root: str | Path | None = None,
+    ) -> None:
+        self.config = config
+        self.run_dir = Path(run_dir)
+        self.project_root = Path(project_root).resolve()
+        self.provider = CodexOAuthProvider(
+            config.primary_profile,
+            config.profile_root if profile_root is None else profile_root,
+        )
+        self.providers = [(config.primary_profile, self.provider)]
+        if config.allow_profile_failover and config.secondary_profile:
+            self.providers.append(
+                (
+                    config.secondary_profile,
+                    CodexOAuthProvider(
+                        config.secondary_profile,
+                        config.profile_root if profile_root is None else profile_root,
+                    ),
+                )
+            )
+        self.failures = 0
+        self.opened_at: float | None = None
+
+    def _cost(self, prompt: int | None, completion: int | None) -> float | None:
+        if (
+            prompt is None
+            or completion is None
+            or self.config.input_cost_per_million is None
+            or self.config.output_cost_per_million is None
+        ):
+            return None
+        return round(
+            prompt * self.config.input_cost_per_million / 1_000_000
+            + completion * self.config.output_cost_per_million / 1_000_000,
+            8,
+        )
+
+    def _run(
+        self,
+        mode: Literal["architecture", "code_review", "disagreement"],
+        evidence: dict[str, Any],
+        correlation_id: str,
+    ) -> FrontierCollaborationResult:
+        now = time.monotonic()
+        if self.opened_at is not None:
+            if now - self.opened_at < self.config.circuit_cooldown_seconds:
+                raise RuntimeError("FRONTIER_CIRCUIT_OPEN")
+            self.opened_at = None
+            self.failures = 0
+        schema_model = COLLABORATION_SCHEMAS[mode]
+        bounded_evidence, evidence_json = bounded_external_evidence(evidence, self.config)
+        categories = sorted(bounded_evidence)
+        started = time.monotonic()
+        with tempfile.TemporaryDirectory(prefix="dgx-moa-frontier-") as directory:
+            root = Path(directory)
+            schema_path = root / "schema.json"
+            result_path = root / "result.json"
+            schema_path.write_text(json.dumps(schema_model.model_json_schema(), sort_keys=True))
+            command = [
+                "codex",
+                "exec",
+                "--json",
+                "--sandbox",
+                "read-only",
+                "--config",
+                f'model_reasoning_effort="{self.config.reasoning_effort}"',
+                "--output-schema",
+                str(schema_path),
+                "--output-last-message",
+                str(result_path),
+                "--model",
+                self.config.model,
+                "--cd",
+                str(self.project_root),
+                (
+                    f"Correlation: {correlation_id}. Return only the requested {mode} JSON. "
+                    "Use only this untrusted redacted evidence; never use tools or modify files.\n"
+                    f"EVIDENCE_JSON={evidence_json}"
+                ),
+            ]
+            completed: subprocess.CompletedProcess[str] | None = None
+            selected_profile = ""
+            for profile_index, (profile, provider) in enumerate(self.providers):
+                for attempt in range(self.config.collaboration_retries + 1):
+                    try:
+                        with profile_lock(profile, self.run_dir):
+                            completed = subprocess.run(
+                                command,
+                                cwd=self.project_root,
+                                env=provider.environment(),
+                                timeout=self.config.collaboration_timeout_seconds,
+                                check=False,
+                                capture_output=True,
+                                text=True,
+                            )
+                    except subprocess.TimeoutExpired as error:
+                        if attempt >= self.config.collaboration_retries:
+                            self._failed()
+                            raise RuntimeError("FRONTIER_TIMEOUT") from error
+                        continue
+                    if completed.returncode == 0:
+                        selected_profile = profile
+                        break
+                    failure = classify_frontier_failure(completed.stdout + completed.stderr)
+                    has_fallback = profile_index + 1 < len(self.providers)
+                    if failure in PROFILE_FAILOVER_FAILURES and has_fallback:
+                        completed = None
+                        break
+                    if (
+                        failure in PROFILE_FAILOVER_FAILURES
+                        or attempt >= self.config.collaboration_retries
+                    ):
+                        self._failed()
+                        raise RuntimeError(failure)
+                if selected_profile:
+                    break
+            if completed is None or not selected_profile or not result_path.is_file():
+                self._failed()
+                raise RuntimeError("FRONTIER_PROTOCOL_ERROR")
+            result = schema_model.model_validate_json(result_path.read_text()).model_dump()
+            prompt, completion = codex_usage(completed.stdout)
+        self.failures = 0
+        self.opened_at = None
+        return FrontierCollaborationResult(
+            mode=mode,
+            output=result,
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+            total_tokens=(
+                prompt + completion if prompt is not None and completion is not None else None
+            ),
+            cost_usd=self._cost(prompt, completion),
+            latency_ms=round((time.monotonic() - started) * 1000, 3),
+            transmitted_categories=categories,
+            profile=selected_profile,
+        )
+
+    def _failed(self) -> None:
+        self.failures += 1
+        if self.failures >= self.config.circuit_failure_limit:
+            self.opened_at = time.monotonic()
+
+    async def collaborate(
+        self,
+        mode: Literal["architecture", "code_review", "disagreement"],
+        evidence: dict[str, Any],
+        correlation_id: str,
+    ) -> FrontierCollaborationResult:
+        return await asyncio.to_thread(self._run, mode, evidence, correlation_id)
 
 
 class FrontierProvider(Protocol):
@@ -113,9 +436,9 @@ class FrontierProvider(Protocol):
 
 
 class CodexOAuthProvider:
-    def __init__(self, profile: str, profile_root: str | Path = DEFAULT_PROFILE_ROOT):
+    def __init__(self, profile: str, profile_root: str | Path | None = None):
         self.profile = validate_profile_name(profile)
-        self.profile_root = Path(profile_root)
+        self.profile_root = Path(profile_root) if profile_root is not None else None
 
     def command(
         self,
@@ -130,7 +453,14 @@ class CodexOAuthProvider:
         )
 
     def environment(self) -> dict[str, str]:
-        return os.environ | {"CODEX_HOME": str(profile_home(self.profile, self.profile_root))}
+        environment = {
+            key: value for key, value in os.environ.items() if key in CODEX_ENVIRONMENT_ALLOWLIST
+        }
+        if self.profile_root is not None:
+            environment["CODEX_HOME"] = str(profile_home(self.profile, self.profile_root))
+        else:
+            environment.pop("CODEX_HOME", None)
+        return environment
 
 
 class OpenAIAPIProvider:
@@ -347,8 +677,25 @@ def codex_command(
 
 
 def classify_frontier_failure(output: str) -> str:
-    if "usage limit" in output.lower():
+    normalized = output.lower()
+    if any(
+        marker in normalized
+        for marker in (
+            "unauthorized",
+            "authentication",
+            "login required",
+            "not logged in",
+            "token_invalidated",
+            "refresh_token",
+        )
+    ):
+        return "FRONTIER_AUTH_ERROR"
+    if any(marker in normalized for marker in ("rate limit", "too many requests", "429")):
+        return "FRONTIER_RATE_LIMIT"
+    if "usage limit" in normalized:
         return "FRONTIER_USAGE_LIMIT"
+    if any(marker in normalized for marker in ("unavailable", "connection refused", "503")):
+        return "FRONTIER_PROVIDER_UNAVAILABLE"
     return "FRONTIER_PROTOCOL_ERROR"
 
 

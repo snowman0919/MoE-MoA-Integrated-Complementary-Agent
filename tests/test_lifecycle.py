@@ -1063,6 +1063,26 @@ def test_main_and_isolated_dev_lifecycle_units_are_accepted() -> None:
     assert dev.lifecycle_unit_map == {"executor": "dgx-moa-dev-executor.service"}
 
 
+def test_external_lifecycle_role_rejects_systemd_unit() -> None:
+    with pytest.raises(ValidationError, match="external lifecycle role"):
+        Settings(
+            auth_enabled=False,
+            lifecycle_unit_map={"reasoner": "dgx-moa-dev-reasoner.service"},
+            models={
+                "reasoner": {
+                    "repository": "ollama/reasoner",
+                    "revision": "local",
+                    "classification": "external",
+                    "base_url": "http://127.0.0.1:11434",
+                    "served_name": "reasoner",
+                    "destination": "/tmp/reasoner",
+                    "lifecycle_control": "external",
+                    "context_length": 65_536,
+                }
+            },
+        )
+
+
 def test_lifecycle_environment_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     config = tmp_path / "models.yaml"
     config.write_text("gateway: {}\nmodels: {}\n")
@@ -2388,10 +2408,10 @@ async def test_twenty_concurrent_cold_checks_share_one_load(
     )
 
     checks = await asyncio.gather(*(coordinator.ensure_ready("executor") for _ in range(20)))
-    for _ in range(100):
+    for _ in range(1_000):
         if ("start", "executor") in driver.calls:
             break
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.001)
 
     assert sum(check.load_triggered for check in checks) == 1
     assert {check.record.state for check in checks} == {"load_queued"}

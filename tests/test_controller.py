@@ -1,12 +1,568 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
+import httpx
 import pytest
-from dgx_moa.controller import Controller, DuplicateFailedCall, classify_failure, fingerprint
+from dgx_moa.controller import (
+    Controller,
+    DuplicateFailedCall,
+    JudgeRequired,
+    classify_failure,
+    fingerprint,
+)
+from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
 from dgx_moa.state import Phase, SessionState, StateStore
 
 from .conftest import StubProvider
+
+
+@pytest.mark.asyncio
+async def test_unresolved_high_risk_disagreement_persists_judge_resume(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class LowConfidenceFrontier:
+        config = FrontierConfig(enabled=True, max_invocations_per_task=1)
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            return FrontierCollaborationResult(
+                mode="disagreement",
+                output={
+                    "preferred_position": "unknown",
+                    "evidence": [],
+                    "rejected_assumptions": [],
+                    "required_follow_up": ["independent adjudication"],
+                    "confidence": 0.4,
+                },
+                latency_ms=1,
+                transmitted_categories=sorted(evidence),
+            )
+
+    store = StateStore(settings.state_db)
+    frontier = LowConfidenceFrontier()
+    controller = Controller(settings, store, stub_provider, frontier)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="judge-required",
+        objective="Resolve a security architecture disagreement",
+        runtime_mode="orchestrated",
+        request_class="high_risk_task",
+        roles_required=["reasoner", "planner", "executor", "reviewer"],
+    )
+    state.route = "standard"
+    request = {
+        "model": "dgx-moa-orchestrated",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {"unresolved_disagreement": True, "heavy_review": True},
+    }
+
+    with pytest.raises(JudgeRequired, match="adjudication required"):
+        await controller.prepare_executor(
+            state,
+            request,
+            ("reasoner", "planner", "executor", "reviewer"),
+        )
+
+    persisted = store.get(state.session_id)
+    assert persisted is not None
+    assert persisted.judge_status == "required"
+    assert persisted.pending_judge_evidence
+    assert persisted.judge_verdict is None
+    assert any(
+        event["event_type"] == "judge_adjudication_required"
+        for event in store.events(state.session_id)
+    )
+
+    persisted.judge_status = "accept"
+    persisted.judge_verdict = {
+        "verdict": "accept",
+        "summary": "independently resolved",
+        "resolved_disagreements": ["architecture"],
+        "mandatory_changes": [],
+        "risk_level": "low",
+        "completion_allowed": True,
+    }
+    persisted.pending_judge_evidence = ""
+    store.save(persisted)
+    prepared = await controller.prepare_executor(
+        persisted,
+        request,
+        ("reasoner", "planner", "executor", "reviewer"),
+    )
+
+    assert frontier.calls == 1
+    assert "Heavy Judge verdict" in json.dumps(prepared["messages"])
+    assert any(
+        event["event_type"] == "judge_adjudication_resumed"
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("planner_fails", [False, True])
+async def test_planner_and_frontier_are_concurrent_and_frontier_evidence_survives(
+    settings, stub_provider: StubProvider, planner_fails: bool
+) -> None:  # type: ignore[no-untyped-def]
+    class ConcurrentFrontier:
+        config = FrontierConfig(enabled=True, max_invocations_per_task=1)
+
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            self.started.set()
+            await asyncio.sleep(0.01)
+            return FrontierCollaborationResult(
+                mode="architecture",
+                output={
+                    "recommended_architecture": "bounded",
+                    "design_decisions": [],
+                    "tradeoffs": [],
+                    "failure_modes": [],
+                    "implementation_sequence": [],
+                    "review_questions": [],
+                },
+                latency_ms=10,
+                transmitted_categories=sorted(evidence),
+                profile="secondary",
+            )
+
+    frontier = ConcurrentFrontier()
+    original = stub_provider.complete
+
+    async def concurrent_provider(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "planner":
+            await asyncio.sleep(0)
+            assert frontier.started.is_set()
+            if planner_fails:
+                raise httpx.ConnectError("planner offline")
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = concurrent_provider  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider, frontier)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id=f"parallel-{planner_fails}",
+        objective="Design a bounded service architecture",
+        runtime_mode="orchestrated",
+        request_class="explicit_orchestrated",
+        roles_required=["reasoner", "planner", "executor", "reviewer"],
+    )
+    state.route = "standard"
+    request = {
+        "model": "dgx-moa-orchestrated",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {"architecture": True},
+    }
+
+    if planner_fails:
+        with pytest.raises(httpx.ConnectError, match="planner offline"):
+            await controller.prepare_executor(
+                state, request, ("reasoner", "planner", "executor", "reviewer")
+            )
+    else:
+        prepared = await controller.prepare_executor(
+            state, request, ("reasoner", "planner", "executor", "reviewer")
+        )
+        assert "Frontier contribution" in json.dumps(prepared["messages"])
+
+    assert frontier.started.is_set()
+    assert any(artifact.get("role") == "frontier" for artifact in state.agent_artifacts)
+    completed_event = next(
+        event
+        for event in store.events(state.session_id)
+        if event["event_type"] == "frontier_collaboration_completed"
+    )
+    assert completed_event["payload"]["profile"] == "secondary"
+    assert not set(completed_event["payload"]) & {
+        "profile_root",
+        "codex_home",
+        "credentials",
+        "api_key",
+    }
+    assert any(
+        invocation.get("role") == "frontier" and invocation.get("profile") == "secondary"
+        for invocation in state.agent_invocations
+    )
+    if planner_fails:
+        assert state.derived_confidence == "low"
+
+
+@pytest.mark.asyncio
+async def test_executor_declared_dependency_keeps_planner_before_frontier(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class SequentialFrontier:
+        config = FrontierConfig(enabled=True, max_invocations_per_task=1)
+
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.evidence: dict[str, object] = {}
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            self.evidence = evidence
+            self.started.set()
+            return FrontierCollaborationResult(
+                mode="architecture",
+                output={
+                    "recommended_architecture": "bounded",
+                    "design_decisions": [],
+                    "tradeoffs": [],
+                    "failure_modes": [],
+                    "implementation_sequence": [],
+                    "review_questions": [],
+                },
+                latency_ms=1,
+                transmitted_categories=sorted(evidence),
+            )
+
+    frontier = SequentialFrontier()
+    original = stub_provider.complete
+
+    async def dependent_provider(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor" and (
+            request.get("response_format", {}).get("json_schema", {}).get("name")
+            == "orchestration_decision"
+        ):
+            stub_provider.calls.append(role)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "action": "invoke_agents",
+                                    "required_agents": ["planner", "frontier"],
+                                    "optional_agents": [],
+                                    "reason": {
+                                        "planner": "produce the proposal first",
+                                        "frontier": "review the proposal",
+                                    },
+                                    "parallelizable": False,
+                                    "continue_after": "synthesize",
+                                    "confidence": 0.8,
+                                }
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        if role == "planner":
+            assert not frontier.started.is_set()
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = dependent_provider  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider, frontier)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="sequential-frontier",
+        objective="Analyze a bounded change",
+        runtime_mode="orchestrated",
+        request_class="small_clear_edit",
+        roles_required=["reasoner", "executor"],
+    )
+    state.route = "standard"
+    request = {
+        "model": "dgx-moa-orchestrated",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {},
+    }
+
+    prepared = await controller.prepare_executor(state, request, ("reasoner", "executor"))
+
+    assert frontier.started.is_set()
+    assert frontier.evidence["planner_position"] == [{"step": "change"}]
+    assert "Frontier contribution" in json.dumps(prepared["messages"])
+    started = [
+        event
+        for event in store.events(state.session_id)
+        if event["event_type"] == "frontier_collaboration_started"
+    ]
+    assert started[0]["payload"]["parallel"] is False
+
+
+@pytest.mark.asyncio
+async def test_invalid_executor_orchestration_gets_one_minimal_retry(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+    orchestration_calls = 0
+
+    async def invalid_then_valid(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal orchestration_calls
+        schema_name = request.get("response_format", {}).get("json_schema", {}).get("name")
+        if role == "executor" and schema_name == "orchestration_decision":
+            orchestration_calls += 1
+            if orchestration_calls == 1:
+                stub_provider.calls.append(role)
+                stub_provider.requests.append(request)
+                return {"choices": [{"message": {"content": '{"action":"respond"'}}]}
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = invalid_then_valid  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="orchestration-retry",
+        objective="bounded task",
+        runtime_mode="orchestrated",
+        roles_required=["reasoner", "executor"],
+    )
+
+    await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-orchestrated",
+            "messages": [{"role": "user", "content": "bounded task"}],
+            "metadata": {},
+        },
+        ("reasoner", "executor"),
+    )
+
+    assert orchestration_calls == 2
+    retry_request = stub_provider.requests[-1]
+    assert retry_request["max_tokens"] == 512
+    assert "fewer than 300 tokens" in retry_request["messages"][0]["content"]
+    assert [
+        invocation["mode"]
+        for invocation in state.agent_invocations
+        if invocation["role"] == "executor"
+    ] == ["orchestration", "orchestration_retry"]
+    assert any(
+        event["event_type"] == "executor_orchestration_retry"
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_optional_frontier_unavailable_keeps_derived_confidence_low(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def material_review(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reviewer":
+            return {
+                "choices": [
+                    {"message": {"content": '{"status":"rejected","findings":["critical: bug"]}'}}
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = material_review  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="frontier-disabled-confidence",
+        objective="Design a bounded service architecture",
+        runtime_mode="orchestrated",
+        roles_required=["reasoner", "executor"],
+    )
+
+    await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-orchestrated",
+            "messages": [{"role": "user", "content": state.objective}],
+            "metadata": {
+                "architecture": True,
+                "code_review": True,
+                "changed_paths": ["gateway/auth.py"],
+            },
+        },
+        ("reasoner", "executor"),
+    )
+
+    assert state.derived_confidence == "low"
+    assert any(
+        event["event_type"] == "frontier_unavailable"
+        and event["payload"]["failure_class"] == "FRONTIER_DISABLED"
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_material_local_review_escalates_to_frontier_code_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class ReviewFrontier:
+        config = FrontierConfig(enabled=True, max_invocations_per_task=3)
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            self.calls.append((mode, evidence))
+            return FrontierCollaborationResult(
+                mode="code_review",
+                output={
+                    "verdict": "revise",
+                    "critical": [],
+                    "important": ["fix the boundary"],
+                    "suggestions": [],
+                    "missing_tests": ["boundary test"],
+                    "confidence": 0.9,
+                },
+                latency_ms=1,
+                transmitted_categories=sorted(evidence),
+            )
+
+    frontier = ReviewFrontier()
+    original = stub_provider.complete
+
+    async def review_then_escalate(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        schema_name = request.get("response_format", {}).get("json_schema", {}).get("name")
+        if role == "executor" and schema_name == "orchestration_decision":
+            stub_provider.calls.append(role)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "action": "invoke_agents",
+                                    "required_agents": ["reviewer"],
+                                    "optional_agents": [],
+                                    "reason": {"reviewer": "inspect implementation evidence"},
+                                    "parallelizable": False,
+                                    "continue_after": "synthesize",
+                                    "confidence": 0.8,
+                                }
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        if role == "reviewer":
+            stub_provider.calls.append(role)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "rejected",
+                                    "findings": ["Important: boundary is untested"],
+                                }
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = review_then_escalate  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider, frontier)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="review-escalation",
+        objective="Implement the bounded change",
+        runtime_mode="orchestrated",
+        request_class="explicit_orchestrated",
+        roles_required=["reasoner", "executor"],
+    )
+    request = {
+        "model": "dgx-moa-orchestrated",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {
+            "changed_paths": ["gateway/src/example.py"],
+            "diff_summary": "bounded implementation diff",
+            "validation_results": [{"name": "unit", "passed": True}],
+        },
+    }
+
+    prepared = await controller.prepare_executor(state, request, ("reasoner", "executor"))
+
+    assert [mode for mode, _ in frontier.calls] == ["code_review"]
+    assert frontier.calls[0][1]["local_reviewer_findings"]["status"] == "rejected"
+    assert state.frontier_invocations == 1
+    assert state.derived_confidence == "conflicted"
+    assert "Frontier contribution" in json.dumps(prepared["messages"])
+    assert any(
+        event["event_type"] == "frontier_collaboration_started"
+        and event["payload"].get("trigger") == "material_reviewer_finding"
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_executor_rejects_unsupported_reasoner_agent_recommendation(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def recommend_without_support(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reasoner":
+            stub_provider.calls.append(role)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "problem_interpretation": "Make one deterministic edit.",
+                                    "constraints": [],
+                                    "reasoning": ["The target is already clear."],
+                                    "risks": [],
+                                    "unknowns": [],
+                                    "recommended_actions": ["Proceed directly."],
+                                    "additional_agents": [
+                                        {
+                                            "role": "planner",
+                                            "needed": True,
+                                            "reason": "unsupported preference",
+                                        }
+                                    ],
+                                    "confidence": 0.9,
+                                }
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = recommend_without_support  # type: ignore[method-assign]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="reject-advice",
+        objective="Make the focused edit",
+        runtime_mode="orchestrated",
+        request_class="small_clear_edit",
+        roles_required=["reasoner", "executor"],
+    )
+    prepared = await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-orchestrated",
+            "messages": [{"role": "user", "content": state.objective}],
+            "metadata": {"target_clear": True, "expected_files": 1},
+        },
+        ("reasoner", "executor"),
+    )
+
+    assert "planner" not in state.roles_required
+    assert state.recommendation_resolutions == [
+        {
+            "role": "planner",
+            "recommendation": "invoke",
+            "resolution": "rejected",
+            "reason": "Executor did not select this recommendation",
+        }
+    ]
+    assert "unsupported recommendations must be rejected" in json.dumps(prepared["messages"])
 
 
 def tool_messages(call_id: str, observation: str):  # type: ignore[no-untyped-def]
@@ -85,6 +641,16 @@ def test_successful_output_can_describe_failures(settings, stub_provider: StubPr
     controller._observe(state, tool_messages("read", "tests failed before the fix"))
 
     assert state.failed_call_fingerprints == []
+
+
+def test_stdout_missing_file_is_a_failure(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    state = SessionState(session_id="stdout-failure")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    controller._observe(state, tool_messages("read", "File not found: missing.txt"))
+
+    assert state.failures[0]["failure_class"] == "NONEXISTENT_PATH"
+    assert state.tool_executions[0]["failure_class"] == "NONEXISTENT_PATH"
 
 
 def test_failure_classification() -> None:
@@ -178,6 +744,45 @@ async def test_planner_retries_one_malformed_structured_response(  # type: ignor
     )
     assert calls == 2
     assert state.plan == [{"step": "change"}]
+
+
+@pytest.mark.asyncio
+async def test_reviewer_retries_one_malformed_structured_response(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+    calls = 0
+
+    async def malformed_then_valid(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        if role == "reviewer":
+            calls += 1
+            if calls == 1:
+                stub_provider.calls.append(role)
+                return {
+                    "choices": [{"message": {"content": '{"status":"approved","findings":"none"}'}}]
+                }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = malformed_then_valid  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="retry-review")
+
+    result = await controller.review(state, "bounded evidence")
+
+    assert calls == 2
+    assert result == {"status": "approved", "findings": []}
+    assert stub_provider.requests[-1]["max_tokens"] == 1024
+    assert "bounded evidence" in stub_provider.requests[-1]["messages"][0]["content"]
+    assert [
+        invocation["mode"]
+        for invocation in state.agent_invocations
+        if invocation["role"] == "reviewer"
+    ] == ["default", "review_retry"]
+    assert any(
+        event["event_type"] == "review_retry_requested" for event in store.events(state.session_id)
+    )
 
 
 @pytest.mark.asyncio
@@ -321,6 +926,7 @@ def test_executor_prompt_does_not_force_json(settings, stub_provider: StubProvid
     )
     assert "Return one JSON object only" not in prompt
     assert "Use native OpenAI tool calls" in prompt
+    assert "output formatting in the current objective exactly" in prompt
 
 
 def test_review_requires_external_evidence(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

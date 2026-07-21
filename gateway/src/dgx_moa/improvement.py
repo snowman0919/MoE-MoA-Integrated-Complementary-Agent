@@ -102,7 +102,7 @@ def trace_tasks(directory: Path) -> list[dict[str, Any]]:
         for line in path.read_text().splitlines():
             if line:
                 trace = json.loads(line)
-                if trace.get("schema_version") == "agent-trace-v2":
+                if trace.get("schema_version") in {"agent-trace-v2", "agent-trace-v3"}:
                     latest[str(trace["session_id"])] = trace
     tasks = []
     for trace in latest.values():

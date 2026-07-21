@@ -1,5 +1,387 @@
 # Validation
 
+## Dynamic MoA isolated validation — 2026-07-21
+
+This section records only observed results for the current `dev` candidate. The
+gateway ran on loopback `127.0.0.1:19300` with isolated SQLite at
+`/tmp/dgx-moa-dynamic-validation.8P4ruq/gateway.db`, lifecycle disabled, and
+Frontier enabled only in that process. It used the already-running loopback
+Executor for inference and the external Ollama Reasoner. Later optional-role
+rows started direct loopback-only development Planner/Reviewer processes; all
+were stopped after measurement. No production service was restarted or
+reconfigured.
+
+- Final automated validation: 610 tests passed with one upstream Starlette
+  deprecation warning; Ruff passed; mypy passed for all 29 source files;
+  `git diff --check` passed.
+- Ollama `/api/tags` exposed `Qwythos-v2-9B:Q5`, size `7632668897` bytes. A
+  32-token strict probe exhausted its budget in `thinking` and returned empty
+  content. A 512-token probe returned `{"ready": true}`, used 63 prompt and 167
+  eval tokens, and reported `2073546671` ns total duration. The candidate keeps
+  a 1,500-token Reasoner budget.
+- `/api/ps` then exposed that the persistent model was actually loaded with only
+  8,192 context. Adding the configured `num_ctx=65536` to native Ollama requests
+  reloaded it and returned `{"ready":true}` in `11420701139` ns total, including
+  `4043920028` ns load time, 47 prompt tokens, and 183 eval tokens. The following
+  `/api/ps` reported exact model `Qwythos-v2-9B:Q5`, context `65536`, size
+  `9672494936` bytes, and `7392303512` VRAM bytes. Readiness now uses `/api/ps`
+  rather than treating `/api/tags` installation metadata as residency evidence.
+- A fresh isolated gateway using the corrected provider returned exact
+  `POST_CONTEXT_OK` from `dgx-moa`, HTTP 200, with Executor usage `566/4/570`.
+  Its separate SQLite recorded mode `moa`, roles `[reasoner, executor]`, one
+  successful warm row for each role, one `reasoner_completed`, and one terminal
+  session. The follow-up `/api/ps` still reported context `65536`. The temporary
+  loopback listener was stopped; production gateway/Executor stayed active and
+  Planner/Reviewer/Judge stayed inactive.
+- The first integrated core request exposed a real system-only template defect:
+  Ollama returned HTTP 400 because the model requires a user query. The gateway
+  returned typed `reasoner_required_unavailable` 503 and did not degrade. After
+  adding bounded user task data, non-streaming `dgx-moa` returned
+  `CORE_MOA_OK`, HTTP 200, with Executor usage `483/5/488` prompt/output/total.
+  SQLite recorded Reasoner confidence 1.0 and roles `[reasoner, executor]`.
+- Streaming `dgx-moa` returned `STREAM_MOA_OK` in native SSE deltas, exactly one
+  `[DONE]`, and Executor usage `586/5/591`.
+- Native agent mode issued `get_validation_marker` with ID
+  `chatcmpl-tool-b456f776ad48d719` and arguments `{"name":"core"}`. The matching
+  tool-result continuation returned `TOOL_MOA_OK`. Reasoner participated in
+  both requests; only Executor emitted the tool call and final content.
+- Real OpenCode `1.17.18` returned `OPENCODE_DYNAMIC_MOA_OK` with usage
+  `3084/7/3091`. Its relative-path read attempt asked for a path and made no tool
+  call. The explicit absolute-path retry issued native `read` on the isolated
+  fixture, observed `OPENCODE_DYNAMIC_MOA_FIXTURE`, and continued with
+  `OPENCODE_TOOL_MOA_OK`; step usages were `3243/40/3283` and `3518/7/3525`.
+- Real Hermes Agent `0.18.2` returned `HERMES_DYNAMIC_MOA_OK` in one API call
+  with usage `3344/7/3351`. Its isolated `read_file` task returned
+  `HERMES_TOOL_MOA_OK` in two API calls with aggregate usage `7360/48/7408`.
+  Hermes probe requests to unsupported compatibility paths received 404 before
+  it selected `/v1/models`; inference and tool continuation passed.
+- Across the isolated database there were 14 completed MoA requests and exactly
+  14 `reasoner_completed` events. Twelve agent-mode requests, including client
+  title/continuation turns, all recorded roles `[reasoner, executor]`. Three
+  tool-result and three tool-execution events were observed.
+- Codex CLI `0.144.6` reported both isolated profile directories as logged in,
+  but real calls returned 401 `token_invalidated`/`refresh_token_invalidated`.
+  The active default Codex OAuth profile returned `OAUTH_OK`; no API key was
+  created. The Frontier adapter was changed to use this explicit default OAuth
+  home.
+- Real Frontier architecture mode succeeded after strict schemas added
+  `additionalProperties:false`: `34961/598/35559` tokens and `20365.547` ms.
+  Real disagreement mode preferred the default OAuth profile from the supplied
+  evidence with confidence 1.0: `33254/275/33529` tokens and `28160.595` ms.
+  The first code-review mode embedded a sandbox startup failure as a Critical
+  finding and rejected; this is retained failed evidence. Replacing temporary
+  shell file reads with inline redacted/allowlisted/bounded evidence produced a
+  successful `approve`, no findings or missing tests, confidence 0.92,
+  `20721/117/20838` tokens, and `6073.12` ms.
+- After changing Frontier subprocess inheritance to an explicit safe environment
+  allowlist, a real disagreement call ran while sentinel gateway/OpenAI key
+  variables existed in the parent. The child environment excluded both by
+  construction; OAuth still succeeded and preferred the allowlist boundary in
+  `7395.451` ms with `16648` total tokens.
+- A post-implementation Codex OAuth code review initially rejected with one
+  Critical and two Important findings (`24835/1330/26165` tokens,
+  `37775.64` ms). The optional-role and duplicate-stream claims were disproved
+  by the active empty optional-role policy, idempotent stream cleanup, and
+  direct regressions. The valid unconfigured-dynamic-role finding was fixed with
+  a typed `model_not_managed` response and cold per-role accounting. A second
+  bounded Codex OAuth review approved with Critical 0 and Important 0,
+  confidence 0.9, `20819/666/21485` tokens, and `23014.673` ms. Its only missing
+  test was the already-declared full physical Planner/Reviewer/Heavy Judge
+  integration matrix.
+- A later bounded Codex OAuth re-review was requested only for stdout failure
+  classification and exact-output enforcement. Codex CLI `0.144.6` selected
+  OpenAI `gpt-5.6-terra` through the logged-in OAuth provider but exited `1`
+  with `You've hit your usage limit`; no review verdict was produced. Focused
+  regressions, the 609-test suite, Ruff, and mypy passed, but this failed OAuth
+  review attempt is retained rather than described as approval.
+- Integrated architecture routing recorded Reasoner `1712` total tokens,
+  Executor routing `708`, Planner/Frontier parallel selection, Planner
+  `ConnectError`, and a completed Frontier architecture artifact
+  (`16667/616/17283`, `25270.012` ms). The request correctly ended HTTP 502
+  because Planner was unavailable; Frontier evidence was not cancelled.
+- Integrated security code review recorded Reasoner `1615`, Executor routing
+  `431`, local Planner and Reviewer connection failures, and completed Frontier
+  code-review evidence (`16600/224/16824`, `10095.351` ms). The request correctly
+  ended HTTP 502. This measurement exposed and led to a fix for derived
+  confidence remaining high after local-agent failures.
+- A later sequential real-weight run kept the production Executor active and
+  started only a direct development Planner. Planner loaded five shards in
+  `32.73` seconds, used `19.57 GiB` model memory, exposed 83,740 KV tokens at
+  context 65,536, and stopped cleanly after the test. The corrected architecture
+  request returned exact `ARCH_DYNAMIC_OK`, HTTP 200, in `110.091` seconds.
+  SQLite recorded roles `[reasoner, executor, planner]`; the Executor selected
+  Planner + Frontier in parallel. Agent totals were Reasoner `2293`, Executor
+  routing `659`, Planner `784`, Frontier `16735/782/17517` in `27053.394` ms,
+  and Executor synthesis `2379/4/2383`. No Reviewer invocation was recorded
+  because this was security architecture without implementation evidence.
+- The first direct Reviewer start failed before weight loading because the
+  development command omitted the checked-in `flash_attn.ops` namespace shim.
+  Repeating with the same read-only `compat` path used by the reviewed unit
+  succeeded: four shards loaded in `108.35` seconds, model memory was
+  `18.09 GiB`, and KV capacity was 67,383 tokens at context 65,536. The real
+  code-review request returned exact `REVIEW_DYNAMIC_OK`, HTTP 200, in `43.379`
+  seconds with roles `[reasoner, executor, reviewer]`. Reviewer + Frontier ran
+  in parallel; local Reviewer approved with no findings. Agent totals were
+  Reasoner `1545`, Executor routing `480`, Reviewer `882`, Frontier
+  `16643/225/16868` in `9596.842` ms, and Executor synthesis `1119/5/1124`.
+  Derived confidence remained honestly low because the Reasoner reported 0.0.
+- A real OpenCode `1.17.18` architecture request then returned exact
+  `OPENCODE_ARCH_DYNAMIC_OK`. Its work session recorded roles
+  `[reasoner, executor, planner]` and completed in `101.877` seconds. Agent
+  totals were Reasoner `2015`, Executor routing `494`, Planner `1158`, Codex
+  OAuth Frontier architecture `20818/411/21229` in `14720.662` ms, and
+  Executor synthesis `4359/6/4365`. Planner and Frontier ran in parallel.
+  Capturing the concurrent OpenCode title request exposed its current exact
+  system marker, `You are a title generator. You output ONLY a thread title.`
+  The first isolated run separated the title state but still let its
+  orchestrated alias select Planner. The corrected path overrides only that
+  automatic title request to `fast`. A second real OpenCode run returned exact
+  `OPENCODE_TITLE_ISOLATION_OK`; its title request used only Executor, `300`
+  tokens, and `0.251` seconds, while the work session independently used the
+  Reasoner + Executor core and no optional agent.
+- A real OpenCode review task issued native `read` for `FIXTURE.txt`, observed
+  `OPENCODE_DYNAMIC_MOA_FIXTURE`, and sent the tool evidence back through the
+  external client loop. The continuation reinvoked Reasoner and returned exact
+  `OPENCODE_REVIEW_DYNAMIC_OK`. Its successful evidence-bearing round ran local
+  Reviewer and Codex OAuth Frontier code review in parallel: Reviewer used
+  `991` total tokens in `5852.177` ms; Frontier used
+  `16708/244/16952` in `13562.639` ms; final Executor synthesis used
+  `4045/7/4052`. One preceding continuation attempt failed after the Executor's
+  structured routing response exhausted its `1500`-token bound; OpenCode retried
+  and the next bounded decision succeeded. The retained usage rows report this
+  failed attempt instead of hiding it. The automatic title request again used
+  only the fast Executor path (`307` tokens, `0.540` seconds).
+- Real Hermes Agent `0.18.2` using `dgx-moa-orchestrated` returned exact
+  `HERMES_ARCH_DYNAMIC_OK` in one API call and `88.453` seconds. SQLite recorded
+  roles `[reasoner, executor, planner]`: Reasoner used `1214` total tokens,
+  Executor routing `404`, Planner `1505` in `70212.833` ms, Codex OAuth
+  Frontier architecture `16615/542/17157` in `19767.367` ms, and final Executor
+  synthesis `4782/6/4788`. Planner and Frontier ran in parallel while Hermes
+  remained the external client.
+- The first bounded Hermes missing-file recovery completed four API calls but
+  exposed that Hermes sends neither the gateway session header nor body session
+  metadata. Each tool continuation therefore created a new state, and Hermes
+  reports missing files as exit code `0` with `File not found` in stderr. The
+  gateway now retains bounded streaming tool-call IDs, correlates headerless
+  continuations only within the same authenticated token, and classifies common
+  missing/denied stderr markers as failures. A regression proves a second token
+  cannot claim the pending continuation.
+- The corrected real Hermes recovery kept all four calls in one state, observed
+  two `NONEXISTENT_PATH` failures and the final fixture, reinvoked Reasoner on
+  every turn, and invoked Codex OAuth Frontier after the second failure. The
+  state recorded two Frontier architecture collaborations (`17065` and `17129`
+  total tokens), four Executor final-synthesis calls, two active failure rows,
+  derived confidence `low`, and no pending tool-call IDs. Hermes exited `0` and
+  included `HERMES_RECOVERY_CORRELATED_OK`, but added an explanatory fixture
+  paragraph despite the exact-output instruction; this row is therefore a
+  recovery success and an exact-output failure, not an exact pass.
+- A real Hermes evidence-bearing review first hit one retained backend failure
+  when the Executor routing JSON exhausted the `1500`-token cap. Hermes retried;
+  the successful state kept both API calls correlated, invoked Frontier code
+  review before the tool call, issued `read_file`, then reinvoked Reasoner and
+  ran local Reviewer + Frontier code review in parallel. The evidence-bearing
+  round used Reasoner `1517`, Executor routing `410`, Reviewer `830` in
+  `5878.852` ms, Frontier `16681/195/16876` in `9497.463` ms, and Executor
+  synthesis `4176/96/4272`. Hermes exited `0` and included
+  `HERMES_REVIEW_DYNAMIC_OK`, but added a paragraph explaining the fixture had
+  no substantive implementation. This is a dynamic review/tool success and an
+  exact-output failure.
+- Post-fix Hermes strict-format reruns closed both retained output failures. The
+  first recovery attempt was rejected by the harness because it supplied the
+  invalid trace origin `physical-validation`; three HTTP 502 retries were
+  retained and the gateway was restarted with the allowed `validation` origin.
+  The identical recovery task then returned exactly
+  `HERMES_RECOVERY_CORRELATED_OK` in four API calls with `18726/133/18859`
+  client-reported tokens. Gateway state recorded four Reasoner and two Frontier
+  invocations, derived confidence `low`, and no pending tool IDs.
+- The identical evidence-bearing review task then returned exactly
+  `HERMES_REVIEW_DYNAMIC_OK` in two API calls with `8593/48/8641`
+  client-reported tokens. Gateway state recorded two Reasoner, two Reviewer, and
+  two Frontier invocations, no pending tool IDs, and derived confidence
+  `conflicted`, preserving rather than hiding the independent review conflict.
+  The direct Reviewer and isolated gateway stopped cleanly; ports `8103` and
+  `19300` closed while the production Executor remained active at context
+  `65536`.
+- Real structured-output failures exposed three bounded recovery defects. The
+  Executor controller now retries one invalid/truncated routing decision with a
+  512-token minimal-schema request. Reviewer results are validated by one
+  strict Pydantic schema (`status` enum and `findings: list[str]`) on both the
+  original response and one evidence-preserving retry; a parseable
+  `{"status":"approved","findings":"none"}` is rejected rather than recorded
+  as approval. The Reviewer retry is capped at 1,024 tokens because the real
+  North model can spend more than 512 completion tokens reasoning before it
+  emits final JSON. Optional Frontier unavailability is reapplied as derived
+  confidence `low` after local-review conflict handling.
+- A final all-relevant-role security-boundary request returned the exact seven
+  expected booleans, HTTP 200, in `125.950` seconds. Roles were Reasoner,
+  Executor, Planner, Reviewer, and Codex OAuth Frontier. Planner + Reviewer +
+  Frontier ran concurrently; the pre-Reviewer rejected with all six stated
+  defects, Frontier rejected independently, Executor synthesized the exact
+  answer, and the post-Reviewer approved it. Both Reviewer outputs passed the
+  strict schema without retry. All-agent usage was `31314` tokens: Reasoner
+  `1954`, Executor routing `705`, Planner `1254`, pre-Reviewer `1937`, Frontier
+  `21042`, final Executor `1837`, and post-Reviewer `2585`.
+- The final Reviewer-only candidate row (Frontier intentionally unavailable)
+  returned the same exact seven booleans in `126.501` seconds and `9434`
+  all-agent tokens. The post-review passed, but the pre-review exhausted its
+  original budget and its evidence-preserving retry still failed schema
+  validation. The gateway did not synthesize approval: it recorded degraded
+  observability and derived confidence `low`. A separate direct compact probe
+  of the same real Reviewer rejected with all six findings in `596` total
+  tokens. This demonstrates prompt sensitivity, not a reliable Reviewer-only
+  quality gain.
+- Real OpenCode `1.17.18` completed the missing multi-file row in an isolated
+  directory through `dgx-moa-agent`. It edited exactly `tags.py`, `report.py`,
+  and `test_tags.py`, ran `python -m unittest -q`, passed 7 tests, and returned
+  exact `OPENCODE_MULTIFILE_MOA_OK`. One work state retained four Reasoner
+  rounds, five tool results, roles `[reasoner, executor]`, and no optional
+  agent; its automatic title state remained fast Executor-only.
+- A real OpenCode recovery row then issued two failed reads and one successful
+  fixture read in one Executor tool-call response. This exposed that OpenCode
+  reports `File not found` as exit `0` in stdout, unlike Hermes stderr. The
+  common observer now treats only reliable stdout markers (`not found`, `no
+  such file`, `permission denied`) as failures while preserving benign text
+  such as `tests failed before the fix`. The post-fix rerun returned exact
+  `OPENCODE_RECOVERY_CLASSIFIED_OK`; SQLite recorded two
+  `NONEXISTENT_PATH` failures, two Reasoner rounds, empty pending tool IDs, and
+  derived confidence `low`. Codex OAuth Frontier was selected after the second
+  failure; the CLI returned optional `FRONTIER_USAGE_LIMIT`, which was recorded
+  and safely fell back to local synthesis.
+- Real Hermes Agent `0.18.2` completed the missing multi-file implementation in
+  an isolated directory through `dgx-moa-agent`. It implemented `slugs.py`,
+  `links.py`, and `test_links.py`; `python -m unittest -q` passed 5 tests.
+  Hermes reported 6 API calls and `39162` aggregate tokens. Gateway state kept
+  six Reasoner rounds, Executor-only tool ownership, two correlated tool-result
+  continuations, and no pending tool IDs. The first final response contained
+  the required marker but prefixed explanatory text, so exact formatting
+  failed.
+- The shared Executor prompt now explicitly preserves client-visible formatting
+  from the current objective. A real post-fix Hermes two-tool continuation read
+  the implementation, ran the same 5 tests, and returned exact
+  `HERMES_MULTIFILE_EXACT_OK` with no extra text. It used 2 API calls, `10948`
+  aggregate client-reported tokens, two Reasoner rounds, two tool results, and
+  no pending tool IDs. This validates the one-line fix after a real Hermes tool
+  loop without repeating the full file rewrite.
+- Both direct development role servers and both loopback gateways were stopped.
+  Ports 8102, 8103, and 19300 were closed, MemAvailable recovered to
+  `69052440 kB`, production gateway/Executor remained active, and the Executor
+  still reported context 65,536. No systemd unit or topology was changed.
+- Production observation found gateway and Executor services active on tailnet
+  port 9000 and loopback 8101, while the stored profile state said `stopped` and
+  both targets reported inactive. The production worktree already contained six
+  user-owned modifications before validation. This run did not alter them.
+
+The Heavy Judge resume path was later physically exercised and passed. Later
+Hermes recovery and review reruns also passed strict formatting, completing the
+declared client rows. This is representative coverage, not a full cross-product.
+OpenCode now covers its declared small read/edit, multi-file, architecture,
+failure-recovery, and review rows. Hermes now covers normal, multi-step tool,
+multi-file, failure-recovery, architecture, and review rows. Hermes architecture passed;
+its correlated recovery passed the evidence/routing contract but failed exact
+output formatting, and its review passed routing while also failing exact
+formatting.
+OpenCode architecture and evidence-bearing review now pass with the expected
+real Planner/Reviewer and Codex OAuth Frontier paths. The controlled
+same-task comparison and representative task coverage below jointly cover the
+declared variants and task classes; they do not claim a full cross-product.
+
+An additional isolated authenticated gateway used two temporary environment-
+only tokens with IDs `opencode` and `hermes`. Both completed one
+`dgx-moa-fast` request with HTTP 200; an unknown token returned 401. SQLite
+grouping reported one request and 276 tokens for each safe ID. The token values
+were not committed and are not production credentials.
+
+### Limited Executor-only versus core comparison
+
+Six isolated real requests compared `dgx-moa-fast` and `dgx-moa` on the same
+Executor and three prompts. This is a small diagnostic, not the required full
+representative evaluation.
+
+| Variant | Simple | Retry-boundary | Architecture strict check | Median latency | All-agent tokens |
+| --- | --- | --- | --- | ---: | ---: |
+| Executor only | pass, 279.577 ms | pass, 347.055 ms | fail, 914.797 ms | 347.055 ms | 971 |
+| Reasoner + Executor | pass, 4194.684 ms | pass, 11709.950 ms | fail, 16605.674 ms | 11709.950 ms | 7092 |
+
+Executor-only agent totals were `289`, `327`, and `355`. Core totals including
+the separately traced Reasoner were `1756`, `2471`, and `2865`. Thus this small
+sample measured about 7.3 times as many tokens for the core. Both variants were
+equally correct on the two exact tasks. The first architecture parser check
+failed both. A direct repeat showed Executor-only returning the four required
+keys as empty objects, while the core returned non-empty trust boundaries,
+failure modes, migration steps, and test-plan content. That single qualitative
+difference is insufficient to establish a quality benefit.
+
+Measured conclusion: the Reasoner adds substantial latency and token cost on
+trivial tasks, and the current sample does not yet demonstrate enough quality
+gain to justify it across the required representative matrix. Keep
+`dgx-moa-fast` explicit. Planner/Reviewer/Frontier and defect/claim metrics are
+measured in the tables below; this limited table must not be read alone.
+
+### Controlled seven-key security-boundary comparison
+
+One fixed non-streaming task stated six gateway security defects and one
+unsupported database risk, then required seven exact booleans. This isolates
+routing and collaboration cost; it is not the required representative
+multi-task evaluation. First-byte latency equals total latency because these
+were non-streaming requests. No implementation or test execution was part of
+the task, so test-pass rate is not applicable.
+
+| Variant | Successful result | Exact criteria | Total latency | All-agent tokens | Retained caveat |
+| --- | --- | ---: | ---: | ---: | --- |
+| Executor only | yes | 7/7 | 1.439 s | 683 | baseline |
+| Reasoner + Executor | yes | 7/7 | 38.746 s | 3,270 | no measured quality gain |
+| Reasoner + Executor + Frontier | yes | 7/7 | 41.863 s | 21,149 | one earlier typed Reasoner 503 |
+| Reasoner + Executor + Planner | yes | 7/7 | 124.271 s | 6,432 | one earlier truncated-routing 502 |
+| Reasoner + Executor + Reviewer | yes | 7/7 | 126.501 s | 9,434 | pre-review schema failure; low confidence |
+| Full relevant collaboration | yes | 7/7 | 125.950 s | 31,314 | all strict reviews valid |
+
+Every successful final answer had acceptance coverage `7/7`, stated-defect
+recall `6/6`, and unsupported-claim suppression `1/1`; no row had a tool
+failure. The latest full row's local pre-Reviewer also recalled `6/6`. The
+latest Reviewer-only row cannot claim Reviewer defect recall because its
+pre-review artifact failed validation. The Codex OAuth CLI reported token use
+but no billable price, so Frontier cost is recorded as unavailable rather than
+inferred. With Planner and Reviewer simultaneously resident, a measured
+pre-request host snapshot had `20309760 kB` MemAvailable and a post-request
+snapshot had `19951464 kB`; these are noisy unified-memory observations, not
+GPU-byte attribution.
+
+Measured conclusion for this task: every variant was equally correct, while
+the always-active Reasoner and each specialist path added substantial latency
+and tokens. This row does not demonstrate enough quality improvement to justify
+the added cost.
+
+### Representative task coverage
+
+The controlled security row supplies the same-task comparison across every
+required agent variant. Existing real-client rows supply the other required
+task classes without rerunning a 36-cell cross-product.
+
+| Task class | Physical row | Outcome | Measured cost/evidence |
+| --- | --- | --- | --- |
+| Simple question | fast versus core diagnostic | both exact tasks passed | median 0.347 s / 971 tokens versus 11.710 s / 7,092 tokens across three prompts |
+| Repository architecture | OpenCode Planner + OAuth Frontier | exact architecture marker; parallel specialists | 101.877 s; 29,261 all-agent tokens |
+| Multi-file implementation | OpenCode core agent | exact marker; 3 files; 7/7 tests | 37,286 all-agent tokens; 5 tool results; 4 Reasoner rounds; 0 failures |
+| Debugging/recovery | OpenCode orchestrated | exact marker after 2 expected failures | 18,308 all-agent tokens; 3 tool results; 2 Reasoner rounds; 1 recovery continuation |
+| Code review | OpenCode Reviewer + OAuth Frontier | exact marker; independent parallel review | 991 Reviewer, 16,952 Frontier, and 4,052 final-Executor tokens reported |
+| Security-sensitive change | full relevant collaboration | exact 7/7; defect recall 6/6; unsupported claim suppressed | 125.950 s; 31,314 all-agent tokens |
+
+The multi-file final turn recorded downstream first byte at `29270.105` ms;
+the recovery final turn recorded `36270.375` ms. Non-streaming security rows
+have first-byte equal to total latency. Streaming behavior was independently
+validated with native deltas and one `[DONE]`. Frontier cost remains unknown
+because Codex OAuth reports tokens but no billable price; no price is inferred.
+Only the implementation row has an applicable test pass rate. Tool failures
+were zero except the two intentionally induced recovery failures; that task
+needed one correction boundary. Memory evidence remains the simultaneous
+Planner/Reviewer host snapshots recorded above.
+
+Measured product conclusion: the Reasoner and specialists improved structure
+on one architecture repeat, but did not improve exact correctness on the
+controlled tasks enough to justify their latency and token cost. Keep
+`dgx-moa-fast` available and treat `dgx-moa` default status as a product-policy
+choice, not a benchmark-proven quality win.
+
 ## Environment
 
 - `docker run --rm --gpus all ubuntu:24.04 nvidia-smi -L`: exit `0`; detected NVIDIA GB10.
@@ -75,6 +457,20 @@ below. Heavy-judge validation is appended after its first isolated startup.
 - Bearer rejection, malformed tool call, timeout, HTTP 500, replay blocking,
   no-progress blocking, planner/reviewer/judge routing, rollback, redaction,
   compression, integrity, capacity, and completion gates have automated tests.
+
+- Production-tailnet service check (`100.125.239.72:9000`) after main-branch
+  runtime restart:
+  - `POST /v1/responses` with `dgx-moa-orchestrated` and no `reasoner_mode`:
+    `200`, completion success.
+  - `GET /v1/responses?input=...`:
+    `200` (response shim path works).
+  - `GET /v1/responses` with missing `input`:
+    `405 Method Not Allowed` (by design; query-only GET shim requires `input`).
+  - `POST /v1/responses` with `metadata.reasoner_mode=required` now returns
+    `200` after `reasoner` control transition to external mode (`control:
+    external`, `unmanaged_roles` no longer includes reasoner).
+  - `/v1/model-status` shows reasoner control as `external` and `unmanaged_roles`
+    = `["judge"]` (previously included `reasoner`).
 
 ## Build And Tests
 
@@ -1395,6 +1791,146 @@ eight commands:
 7. `scripts/audit-trace-completeness.sh data/traces`: 10/10 complete, 0
    incomplete, 0 legacy, and 100.0% mandatory-field completeness.
 8. `git diff --check`: no output.
+
+### Heavy Judge validation and OAuth profile fallback (2026-07-21)
+
+- The production Executor, Planner, and Reviewer were stopped for an approved
+  isolated Heavy Judge run. The installed Judge unit revealed configuration
+  drift: it launched at context `8192`, one sequence, ModelOpt FP4,
+  `gpu_memory_utilization=0.85`, and `12000000000` KV bytes instead of the
+  documented `4000000000`. Weight loading took `586.36` seconds and model
+  loading reported `88.85 GiB` in `592.701` seconds. KV initialization left
+  `6796004` KiB `MemAvailable`, below the 16-GiB Judge gate, so the Judge was
+  stopped before readiness. Its systemd stop consumed the configured five-minute
+  timeout and ended failed; memory recovered to `120529240` KiB.
+- A direct development rerun restored the declared `4000000000` KV bytes with
+  the same context, sequence count, utilization, and quantization. It loaded ten
+  shards in `546.73` seconds and reported `88.85 GiB` model memory in
+  `558.704` seconds, `22192` KV tokens, and `2.71x` concurrency. During kernel
+  autotuning, `MemAvailable` reached `13810768` KiB, below the same 16-GiB
+  safety line. The process was interrupted before readiness; port `8110` closed
+  and memory recovered to `120686556` KiB. Therefore neither the new normal
+  adjudication-resume path nor production promotion passed. This preserves the
+  earlier 2026-07-11 ready-state result but does not treat it as evidence for
+  the changed resume path.
+- The fixed resident Executor was restored with context `65536`, one sequence,
+  `1700000000` KV bytes, `gpu_memory_utilization=0.5`, and MARLIN. It returned
+  `/v1/models` HTTP `200`; `wait-profile.sh` reported
+  `available_bytes=69101035520`. The gateway health check returned `ok`, the
+  resident target and Executor were active, and Planner, Reviewer, Judge, and
+  the Judge target were inactive.
+- The authoritative retry used the same approved `4000000000` KV bytes,
+  context `8192`, one sequence, `gpu_memory_utilization=0.85`, and ModelOpt FP4.
+  It loaded ten shards in `541.43` seconds and reported `88.85 GiB` model
+  memory in `553.070` seconds, `22192` KV tokens, and `2.71x` concurrency.
+  Port `8110` returned the exact `dgx-moa-judge` model at context `8192`.
+  Readiness-time `MemAvailable` was `18073493504` bytes against the unchanged
+  `17179869184`-byte minimum, so the authoritative gate passed. Earlier
+  sub-threshold samples occurred during weight loading and autotuning; the
+  repository's selected gate is explicitly evaluated after readiness.
+- An isolated authenticated dev gateway and isolated SQLite state exercised the
+  resume API against that real Judge. Wrong profile returned HTTP `409`
+  `judge_profile_required`; a missing session returned `404`
+  `session_not_found`; and a session without pending evidence returned `409`
+  `judge_not_pending`. The valid pending session returned HTTP `200` in 39
+  seconds with `accept`, low risk, `completion_allowed=true`, and
+  `resume_profile=resident`. Persisted state cleared pending evidence, set phase
+  and final status to completed, recorded `judge_requested` and
+  `judge_completed`, and measured 1056 prompt + 93 completion = 1149 total
+  Judge tokens at `39278.236` ms.
+- The isolated gateway and Judge exited cleanly, ports `19300` and `8110`
+  closed, and `MemAvailable` recovered to `120334176` KiB. The fixed resident
+  Executor was restored at context `65536`; `wait-profile.sh` reported
+  `available_bytes=69124612096`. Final health reported resident ready with
+  Executor and Reasoner ready, Planner/Reviewer/Judge stopped, the resident
+  target active, and the Judge target inactive.
+- The Codex OAuth adapter now tries `primary` and changes to `secondary` only on
+  authentication, usage-limit, or rate-limit failures. A subprocess-level test
+  forced primary `not logged in`, observed the ordered calls
+  `[primary, secondary]`, and recorded `profile=secondary` on success. The
+  selected profile is also persisted in collaboration invocation and trace
+  evidence. Real primary and secondary calls each returned HTTP `401` with
+  `token_invalidated` / `refresh_token_invalidated`; interactive OAuth re-login
+  for both profiles is required before a physical fallback success can be
+  claimed.
+  The local CLI used for these calls was `codex-cli 0.144.6`.
+- Both profiles were then reauthenticated with device OAuth. Primary's real
+  read-only smoke authenticated but returned its account usage limit until
+  2026-07-25 16:25. Secondary returned `READY` and `turn.completed`. A real
+  `CodexOAuthCollaboration` architecture call subsequently observed the primary
+  usage-limit failure, fell back to secondary, returned a schema-valid artifact,
+  and reported `profile=secondary`, `mode=architecture`, and `13613` total
+  tokens. This physically validates the ordered OAuth fallback without an API
+  key or repository modification.
+- Publication checks passed: `611` tests, Ruff format/check, mypy for 28 source
+  files, user-systemd unit verification, shell syntax checks, and
+  `git diff --check` all exited zero. The one pytest warning is the existing
+  third-party Starlette TestClient deprecation.
+- A later publication audit correctly failed `0/10` because the Python auditor
+  had made seven Dynamic-MoA extensions retroactively mandatory for pre-MoA
+  `agent-trace-v2` archives. An initial runtime-metric discriminator restored
+  `10/10`, but an independent Frontier review correctly rejected it: a current
+  trace could delete that optional metric and the MoA fields to masquerade as an
+  archive. Current traces now use explicit `agent-trace-v3`, where all MoA
+  fields are mandatory; v2 keeps its immutable pre-MoA contract. Regressions
+  cover authentic v2 acceptance, v3 downgrade rejection, and missing
+  `metrics.runtime_mode`. The unchanged corpus remains `10/10`, zero
+  incomplete/legacy records, with no missing fields/events.
+- Final serial publication gates passed with `612` tests and the existing one
+  upstream Starlette warning; Ruff format/check, mypy for 28 source files,
+  user-systemd verification, every shell syntax check, trace audit `10/10` at
+  100.0%, and `git diff --check` all exited zero.
+- A real secondary-profile Frontier code review of the 16.8-KB post-
+  implementation diff returned `revise`, Critical 0 and Important 1, confidence
+  0.97, in `26818.303` ms with `18957` tokens. It identified the optional
+  runtime-metric downgrade in the initial trace compatibility fix. The finding
+  was accepted and replaced by explicit v3 as described above. Requested
+  regressions now cover auth/usage/rate failover, no failover for timeout,
+  provider, protocol, or validation failures, selected-profile trace metadata
+  without paths/credentials, authentic v2 acceptance, and v3 downgrade
+  rejection.
+- Post-fix serial publication gates passed with `618` tests and the existing one
+  upstream Starlette warning; Ruff format/check, mypy for 28 source files,
+  user-systemd verification, every shell syntax check, trace audit `10/10` at
+  100.0%, and `git diff --check` all exited zero.
+- A real secondary-profile Frontier re-review of the explicit-v3 fix returned
+  `approve`, Critical 0, Important 0, missing tests 0, suggestions 0, confidence
+  0.93, in `25380.793` ms with `20658` tokens. The review covered v2/v3
+  consumers and schemas, downgrade rejection, fallback classification, and
+  selected-profile trace metadata.
+- Production-hotfix reconciliation gates passed with `621` tests and the
+  existing upstream Starlette warning; Ruff format/check, mypy for 28 source
+  files, user-systemd verification, every shell syntax check, trace audit
+  `10/10` at 100.0%, and `git diff --check` all exited zero. The reconciliation
+  preserves the authenticated `GET /v1/responses` shim and reports externally
+  controlled roles without treating them as unmanaged.
+- Frontier reconciliation review used the secondary OAuth profile throughout.
+  The first review returned `revise`, Important 1, confidence 0.93, in
+  `26174.539` ms with `15947` tokens because an external role could also appear
+  in the systemd unit map. Configuration now rejects that contradiction and
+  status rendering gives external control defensive precedence. The second
+  review returned `revise`, Important 1, confidence 0.97, in `17859.387` ms
+  with `15957` tokens because the omitted-model GET test did not assert the
+  selected default. The assertion was added. The final review returned
+  `approve`, Critical 0, Important 0, missing tests 0, confidence 0.99, in
+  `10961.058` ms with `15564` tokens.
+
+## Codex cold-start 503 diagnosis — 2026-07-21
+
+Production journal and SQLite inspection showed three lifecycle failures within
+the automation window. Planner generations 6 and 7 and reviewer generation 6
+were recorded as `load_start_timeout` after 10 seconds, disabling automation.
+The corresponding systemd services continued starting and later returned their
+expected model IDs from loopback `/v1/models`; measured startup was roughly 151
+seconds for reviewer and 90 seconds for planner. The failure was therefore a
+controller timeout mismatch, not a model-load failure or `/v1/responses`
+compatibility failure.
+
+The dev fix passes the configured `model_load_timeout_seconds` to the systemd
+lifecycle driver instead of its 10-second default. Final validation passed 610
+tests, Ruff formatting and lint, and mypy for 29 source files. Production state,
+services, latch, and configuration were not changed; recovery still requires
+separate deployment approval.
 
 ## Role-Aware Lifecycle Gap Closure — 2026-07-20
 

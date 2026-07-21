@@ -42,11 +42,81 @@ class ChatRequest(BaseModel):
         if self.stream_options is not None and not self.stream:
             raise ValueError("stream_options requires stream=true")
         reasoner_mode = self.metadata.get("reasoner_mode")
-        if reasoner_mode is not None and reasoner_mode not in {"required", "optional"}:
-            raise ValueError("metadata.reasoner_mode must be required or optional")
+        if reasoner_mode is not None and reasoner_mode != "required":
+            raise ValueError("Reasoner is required; use dgx-moa-fast to bypass it")
         if reasoner_mode is not None and self.model != "dgx-moa-orchestrated":
             raise ValueError("metadata.reasoner_mode requires dgx-moa-orchestrated")
         return self
+
+
+class ResponsesRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    model: str
+    input: str | list[dict[str, Any]]
+    stream: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    max_output_tokens: int | None = Field(default=None, gt=0)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    top_p: float | None = Field(default=None, ge=0, le=1)
+    stop: str | list[str] | None = None
+
+    @model_validator(mode="after")
+    def require_input_messages(self) -> ResponsesRequest:
+        if isinstance(self.input, str):
+            if not self.input.strip():
+                raise ValueError("input must not be empty")
+            return self
+        if not self.input:
+            raise ValueError("input must not be empty")
+        for message in self.input:
+            if not isinstance(message, dict):
+                raise ValueError("input entries must be message objects")
+            if not isinstance(message.get("role"), str):
+                raise ValueError("input message must include role")
+            if message.get("content") is None:
+                raise ValueError("input message must include content")
+        return self
+
+
+class AdditionalAgentRecommendation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["planner", "reviewer", "frontier", "judge"]
+    needed: bool
+    reason: str
+
+
+class ReasonerContribution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    problem_interpretation: str
+    constraints: list[str]
+    reasoning: list[str]
+    risks: list[str]
+    unknowns: list[str]
+    recommended_actions: list[str]
+    additional_agents: list[AdditionalAgentRecommendation]
+    confidence: float = Field(ge=0, le=1)
+
+
+class OrchestrationDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["respond", "invoke_agents"]
+    required_agents: list[Literal["planner", "reviewer", "frontier", "judge"]]
+    optional_agents: list[Literal["planner", "reviewer", "frontier", "judge"]]
+    reason: dict[str, str]
+    parallelizable: bool
+    continue_after: Literal["respond", "synthesize", "reason_again"]
+    confidence: float = Field(ge=0, le=1)
+
+
+class ReviewResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["approved", "rejected"]
+    findings: list[str]
 
 
 class ProfileResponse(BaseModel):

@@ -12,7 +12,7 @@ KV_CACHE = {
     "planner": 600_000_000,
     "reviewer": 2_300_000_000,
     "reasoner": 2_450_000_000,
-    "judge": 12_000_000_000,
+    "judge": 4_000_000_000,
 }
 GPU_UTILIZATION = {
     "executor": 0.50,
