@@ -2,12 +2,25 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import shutil
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from dgx_moa.loop_engineering import (
+    begin_iteration,
+    completion_ready,
+    new_loop,
+    record_progress,
+    register_failure,
+    set_criterion,
+    terminate,
+)
+from dgx_moa.policy import redact_fields
+from dgx_moa.replay import ReplayEngine, load_snapshot, save_snapshot, snapshot_from_trace
+from dgx_moa.skills import SkillCandidateEvaluation, SkillPattern, SkillRegistry
 from dgx_moa.state import StateStore
 from dgx_moa.training import (
     ContentStore,
@@ -16,6 +29,7 @@ from dgx_moa.training import (
     TrainingStore,
     assess_candidate,
     candidate_from_trace,
+    candidates_from_trace,
     sanitize,
 )
 from dgx_moa.weekly import ArchiveRegistry, WeeklyPackager, previous_complete_week, sha256
@@ -65,6 +79,10 @@ def main() -> None:
         {"authorization": "Bearer synthetic-token", "email": "synthetic@example.invalid"}
     )
     assert privacy.secret_redactions >= 1 and privacy.pii_redactions == 1
+    assert redact_fields(
+        {"secret": "value", "steps": ["private"], "metadata": {"private": True}},
+        ["secret", "steps", "metadata"],
+    ) == {"secret": "[REDACTED_BY_POLICY]", "steps": [], "metadata": {}}
     quality = assess_candidate(candidate())
     assert quality.errors == []
 
@@ -99,6 +117,129 @@ def main() -> None:
     )
     assert not denied.training_eligible and not opted_out.training_eligible
     assert "external_output_license_unverified" in external.transformations
+    generated = candidates_from_trace(
+        trace()
+        | {
+            "engineering_loop": {
+                "loop_id": "loop_physical",
+                "termination_reason": "SUCCESS",
+                "observed_evidence_ids": ["synthetic-test-exit-0"],
+            },
+            "failures": [{"failure_class": "TEST_FAILURE", "strategy": "failed repair"}],
+        },
+        repository_policy="training_allowed",
+    )
+    assert {item.candidate_type for item in generated}.issuperset({"loop", "preference"})
+    replay_trace = trace() | {
+        "task_id": "synthetic-task",
+        "selected_route": {"route": "standard"},
+        "evidence_graph": {
+            "nodes": [
+                {
+                    "node_id": "synthetic-test-exit-0",
+                    "node_type": "test_result",
+                    "kind": "test_result",
+                    "trust_class": "test_confirmed_fact",
+                    "source": "physical-validator",
+                    "payload": {"status": "passed"},
+                    "created_at": "2026-07-22T00:00:00Z",
+                }
+            ],
+            "edges": [],
+        },
+        "engineering_loop": {
+            "loop_id": "loop_physical",
+            "termination_reason": "SUCCESS",
+            "observed_evidence_ids": ["synthetic-test-exit-0"],
+        },
+        "agent_invocations": [{"role": "executor"}],
+        "model_revisions": {"executor": {"repository": "synthetic", "revision": "one"}},
+        "metrics": {"runtime_mode": "moa", "request_class": "validation"},
+        "review_outcome": {"status": "approved"},
+        "derived_confidence": "high",
+    }
+    snapshot = snapshot_from_trace(
+        replay_trace, mocked_provider_outputs={"executor": [{"answer": "validated"}]}
+    )
+    snapshot_path = root / "replay/snapshot.json"
+    digest = save_snapshot(snapshot_path, snapshot)
+    restored = load_snapshot(snapshot_path)
+    replay_result = asyncio.run(ReplayEngine().run(restored, mode="regression", exact=True))
+    assert restored.task_state["engineering_loop"]["termination_reason"] == "SUCCESS"
+    assert replay_result.deterministic_claim and replay_result.snapshot_hash == digest
+
+    success_loop = new_loop("success", "finish with evidence")
+    assert begin_iteration(success_loop)
+    assert record_progress(success_loop, "test-evidence")
+    set_criterion(success_loop, "tests pass", "passed", evidence_ids=["test-evidence"])
+    assert completion_ready(success_loop)
+    terminate(success_loop, "SUCCESS")
+    no_progress_loop = new_loop(
+        "no-progress", "stop without evidence", no_progress_iteration_limit=2
+    )
+    assert begin_iteration(no_progress_loop)
+    assert not begin_iteration(no_progress_loop)
+    assert not begin_iteration(no_progress_loop)
+    assert no_progress_loop.termination_reason == "NO_PROGRESS"
+    duplicate_loop = new_loop("duplicate", "stop repeated repair")
+    for _ in range(3):
+        register_failure(
+            duplicate_loop,
+            "TEST_FAILURE",
+            strategy="unchanged repair",
+            tool_name="pytest",
+            exit_code=1,
+            affected_path="tests/test_synthetic.py",
+        )
+    assert duplicate_loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
+
+    skills = SkillRegistry(root / "skills")
+    draft = skills.draft_from_pattern(
+        SkillPattern(
+            pattern_id="synthetic-repeat",
+            kind="repair_sequence",
+            occurrences=2,
+            evidence_ids=["trace-one", "trace-two"],
+            description="Repeat a synthetic verified repair",
+            procedure=["Run the synthetic bounded check"],
+            task_types=["validation"],
+        ),
+        created_by="physical-pattern-detector",
+    )
+    evaluated, evaluation = skills.evaluate_candidate(
+        draft.skill_id,
+        draft.version,
+        evaluator=lambda _: SkillCandidateEvaluation(
+            isolated_validation=True,
+            historical_replay=True,
+            regression_evaluation=True,
+            reviewer_inspection=True,
+            evidence_ids=["isolated", "replay", "regression", "reviewer"],
+        ),
+        created_by="physical-evaluator",
+    )
+    assert evaluation.passed
+    skills.record_canary(
+        evaluated.skill_id,
+        evaluated.version,
+        outcome="helpful",
+        evidence_ids=["executor-canary"],
+        activated_by="executor",
+    )
+    promoted = skills.promote(
+        evaluated.skill_id,
+        evaluated.version,
+        approval_id="physical-promotion-approval",
+        created_by="physical-operator",
+    )
+    rolled_back = skills.rollback(
+        promoted.skill_id,
+        promoted.version,
+        evaluated.version,
+        approval_id="physical-rollback-approval",
+        created_by="physical-operator",
+    )
+    assert promoted.state == rolled_back.state == "active"
 
     operational = StateStore(root / "capacity/operational.db")
     guarded = TrainingStore(
@@ -121,8 +262,9 @@ def main() -> None:
     near = base.model_copy(
         update={"candidate_id": "cand_near", "accepted_answer": "Synthetic validated answer!"}
     )
+    package_candidates = [base, near, *generated]
     created = packager.package(
-        [base, near],
+        package_candidates,
         window=closed_window,
         production_commit="physical-validation",
         policy_version="physical-policy-v1",
@@ -131,7 +273,7 @@ def main() -> None:
     )
     verified = packager.verify(created["idempotency_key"])
     replayed = packager.package(
-        [base, near],
+        package_candidates,
         window=closed_window,
         production_commit="physical-validation",
         policy_version="physical-policy-v1",
@@ -139,6 +281,21 @@ def main() -> None:
         model_configuration={"executor": {"revision": "synthetic"}},
     )
     assert replayed["idempotent_replay"] is True
+    inspection = root / "candidate-inspection"
+    subprocess.run(
+        [seven_zip, "x", "-y", f"-o{inspection}", str(created["archive_path"])],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert any(
+        path.read_text().strip()
+        for path in inspection.rglob("datasets/loops/state-transitions.jsonl")
+    )
+    assert any(
+        path.read_text().strip()
+        for path in inspection.rglob("datasets/preference/repair-preferences.jsonl")
+    )
     registry.revoke(created["idempotency_key"], "synthetic physical revocation")
     regenerated = packager.regenerate(created["idempotency_key"], [base])
     assert packager.verify(regenerated["idempotency_key"])["verified"] is True
@@ -197,6 +354,11 @@ def main() -> None:
         "empty_archive_verification_failure": True,
         "archive_creation_failure": True,
         "late_arrival_excluded": True,
+        "loop_preference_packaged": True,
+        "exact_loop_replay": True,
+        "evidence_graph_validated": True,
+        "bounded_loop_termination": True,
+        "skill_evaluation_canary_promotion_rollback": True,
         "capacity_guard_isolated": True,
         "privacy_redactions": {
             "secret": privacy.secret_redactions,

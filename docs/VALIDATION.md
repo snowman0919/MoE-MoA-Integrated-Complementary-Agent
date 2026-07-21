@@ -119,6 +119,48 @@ row. Discord/Telegram physical provider behavior and the broader runtime/Skill
 failure matrix remain separate gates; they are not established by the real-7z
 or client results.
 
+### Self-evolving data-path physical extension
+
+The retained `r3` attempt correctly refused to reuse the same deterministic
+weekly archive identity after its candidate source changed. The validator now
+uses one stable initial candidate set for idempotency checks and reserves source
+changes for the explicit regeneration path instead of weakening the collision
+guard.
+
+The authoritative corrected result is
+`/tmp/dgx-moa-self-evolving-physical-20260722-r9/physical-validation.json`,
+SHA-256 `cc98684cfbbc8055dc21328c09db27c7131631cd2742be4db74f95d39df56f26`.
+It reports `status=passed` with real 7-Zip 23.01 arm64. The initial candidate
+archive checksum was
+`9a2201f12cf47535f74368a834ba14752ed2ef9277abad71457b5fb87246d8be`;
+the explicitly regenerated archive checksum was
+`c646f9f4b3d3d09f8595ed5c657a58616fff8680bf154a3cdee230eae298a556`.
+
+The run physically validated policy redaction with scalar/list/object schema
+preservation, a non-empty Evidence Graph, hash-protected exact replay of the
+persisted engineering loop, successful/no-progress/duplicate loop termination,
+and generated-Skill draft creation through isolated validation, historical
+replay, regression evaluation, Reviewer inspection, an Executor-evidenced
+helpful canary, explicit promotion, and explicit rollback. Before regeneration,
+the real archive contained non-empty `state-transitions.jsonl` and
+`repair-preferences.jsonl`. Existing CAS, privacy, licensing, opt-out, SQLite
+backup, capacity isolation, idempotency, revocation/regeneration, empty-week,
+corruption, and archiver-failure checks also passed with synthetic data.
+
+This result does not validate live provider replay, actual Discord/Telegram
+delivery, a wall-clock scheduler firing, or production enablement. Those gates
+remain disabled.
+
+After these persistence and dataset-path changes, the focused policy/replay/
+trace/training/weekly run initially reported `66 passed`. A final Codex OAuth
+`gpt-5.6-sol`/high review found that repair preferences needed an explicit
+successful completion-evidence gate. The fix and failed/ungrounded counterexamples
+reported `68 passed`; physical run `r9` passed afterward. The final complete
+suite reported `802 passed` with the existing third-party Starlette warning;
+all 75 files were formatted, Ruff passed, mypy passed for 38 source files, the
+trace schema parsed, all shell scripts passed syntax checks, and
+`git diff --check` was clean.
+
 ## Policy persistence and training-review follow-up — 2026-07-22
 
 Policy tests now cover actual tool admission globs plus dotted redaction at

@@ -12,6 +12,7 @@ from dgx_moa.weekly import (
     ArchiveRegistry,
     CronSchedule,
     WeeklyPackager,
+    candidate_path,
     prepare_candidates,
     previous_complete_week,
     sha256,
@@ -46,6 +47,51 @@ def runtime_skill(skill_id: str, procedure: list[str]) -> RuntimeSkill:
         provenance=SkillProvenance(source="human", created_by="test", approval_id="a-1"),
         validation=SkillValidation(status="passed", evidence_ids=["test-1"]),
     )
+
+
+@pytest.mark.parametrize(
+    ("quality_labels", "expected"),
+    [
+        (
+            {"failure_classes": ["INVALID_STRUCTURED_OUTPUT"]},
+            "datasets/negatives/invalid-structured-output.jsonl",
+        ),
+        (
+            {"failure_classes": ["TOOL_EXECUTION_FAILURE"]},
+            "datasets/negatives/failed-tools.jsonl",
+        ),
+        (
+            {"failure_classes": ["DUPLICATE_FAILURE"]},
+            "datasets/negatives/duplicate-repairs.jsonl",
+        ),
+        (
+            {"unsupported_claim_count": 1},
+            "datasets/negatives/unsupported-claims.jsonl",
+        ),
+    ],
+)
+def test_negative_candidates_route_to_specific_datasets(
+    quality_labels: dict[str, object], expected: str
+) -> None:
+    negative = candidate().model_copy(
+        update={"quality_tier": "negative", "quality_labels": quality_labels}
+    )
+
+    assert candidate_path(negative) == expected
+
+
+def test_loop_and_repair_preference_candidates_use_dedicated_datasets() -> None:
+    loop = candidate().model_copy(update={"candidate_type": "loop"})
+    preference = candidate().model_copy(
+        update={
+            "candidate_type": "preference",
+            "rejected_answers": ["failed repair"],
+            "transformations": ["failed_repair_preference"],
+        }
+    )
+
+    assert candidate_path(loop) == "datasets/loops/state-transitions.jsonl"
+    assert candidate_path(preference) == "datasets/preference/repair-preferences.jsonl"
 
 
 def fake_7z(path: Path, *, fail_test: bool = False) -> Path:

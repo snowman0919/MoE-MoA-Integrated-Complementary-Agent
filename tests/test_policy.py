@@ -245,3 +245,59 @@ def test_controller_enforces_tool_deny_and_evidence_field_redaction(tmp_path) ->
         controller.admit_tool_call(state, "shell")
     assert state.engineering_loop is not None
     assert state.engineering_loop.termination_reason == "POLICY_BLOCKED"
+
+
+@pytest.mark.asyncio
+async def test_policy_redacts_specialist_state_event_and_evaluation_boundaries(
+    settings, stub_provider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)
+    state = SessionState(
+        session_id="specialist-redaction",
+        objective="Review a bounded change",
+        runtime_mode="orchestrated",
+        request_class="standard_task",
+        policy_redact_fields=[
+            "problem_interpretation",
+            "reason",
+            "plan",
+            "acceptance_criteria",
+            "output.findings",
+            "summary",
+            "observation",
+        ],
+    )
+    request = {
+        "model": "dgx-moa-orchestrated",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {
+            "code_review": True,
+            "changed_paths": ["gateway.py"],
+            "diff_summary": "+safe change",
+            "validation_results": [{"status": "passed"}],
+        },
+    }
+
+    await controller.prepare_executor(
+        state,
+        request,
+        ("reasoner", "planner", "executor", "reviewer"),
+    )
+    await controller.judge(state, "synthetic private observation")
+
+    assert state.reasoner_contributions[-1]["problem_interpretation"] == ("[REDACTED_BY_POLICY]")
+    assert state.orchestration_decisions[-1]["reason"] == {}
+    assert state.plan == []
+    assert state.acceptance_criteria == []
+    reviewer = next(item for item in state.agent_artifacts if item["role"] == "reviewer")
+    assert reviewer["output"]["findings"] == []
+    assert state.judge_verdict and state.judge_verdict["summary"] == "[REDACTED_BY_POLICY]"
+    events = store.events(state.session_id)
+    review_event = next(item for item in events if item["event_type"] == "review_completed")
+    judge_request = next(item for item in events if item["event_type"] == "judge_requested")
+    judge_event = next(item for item in events if item["event_type"] == "judge_completed")
+    assert review_event["payload"]["findings"] == []
+    assert judge_request["payload"]["observation"] == "[REDACTED_BY_POLICY]"
+    assert judge_event["payload"]["summary"] == "[REDACTED_BY_POLICY]"
+    assert state.evaluations[-1]["result"]["summary"] == "[REDACTED_BY_POLICY]"

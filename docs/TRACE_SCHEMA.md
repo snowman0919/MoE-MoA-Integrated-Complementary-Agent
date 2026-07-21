@@ -8,16 +8,19 @@ manifests record visible identifiers and bounded summaries, never hidden reasoni
 
 Dynamic MoA records additionally contain bounded `reasoner_contributions`,
 structured `orchestration_decisions`, `agent_invocations`, `agent_artifacts`,
-`recommendation_resolutions`, `derived_confidence`, and an `evidence_graph`.
+`recommendation_resolutions`, `derived_confidence`, an `evidence_graph`, and an
+optional `engineering_loop` snapshot for role-specific loop training and exact
+replay.
 Evidence nodes distinguish user constraints, model assertions, tool-observed
 facts, test-confirmed facts, and unverified assumptions. Edges use `supports`,
 `contradicts`, `depends_on`, `supersedes`, `generated_from`, or `validated_by`.
 Frontier records transmitted evidence categories, latency, token counts, and
 cost only when the provider reports or configuration can calculate them.
-These fields are mandatory in v3. Pre-Dynamic-MoA v2 archives retain their
-original immutable contract and remain readable without the v3 fields; new
-exports always write v3. The explicit version prevents a current trace from
-downgrading itself by deleting optional fields or runtime metrics.
+The original fields are mandatory in v3. Older valid v3 archives remain readable
+without `engineering_loop`; new exports always include it. Pre-Dynamic-MoA v2
+archives retain their original immutable contract and remain readable without
+the v3 fields. The explicit version prevents a current trace from downgrading
+itself by deleting mandatory fields or runtime metrics.
 
 Strict provenance values are `main|dev|candidate` and
 `production|benchmark|validation|diagnostic|candidate_evaluation`. Production is

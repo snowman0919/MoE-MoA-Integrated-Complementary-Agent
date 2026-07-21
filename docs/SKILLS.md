@@ -60,6 +60,12 @@ high-impact candidates also require a successful Frontier review. The result is
 a new immutable candidate version. Even a passed candidate remains
 experimental until the existing explicit approval-based promotion gate is used.
 
+The 2026-07-22 isolated physical run exercised recurring-pattern draft creation,
+isolated validation, historical replay, regression evaluation, Reviewer
+inspection, an Executor-evidenced helpful canary, explicit promotion, and
+explicit rollback. It created no production registry and does not authorize
+automatic promotion.
+
 ## Packs
 
 Pack export creates a ZIP containing `manifest.json` and versioned Skill JSON.

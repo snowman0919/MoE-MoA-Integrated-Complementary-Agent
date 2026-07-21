@@ -148,7 +148,9 @@ class TrainingCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidate_id: str = Field(default_factory=lambda: f"cand_{uuid.uuid4().hex}")
-    candidate_type: Literal["sft", "preference", "tool_use", "routing", "review", "repair", "skill"]
+    candidate_type: Literal[
+        "sft", "preference", "tool_use", "routing", "review", "repair", "skill", "loop"
+    ]
     source_request_ids: list[str]
     role_target: str
     messages: list[dict[str, Any]] = Field(default_factory=list)
@@ -857,6 +859,10 @@ def candidate_from_trace(
             "task_success": successful,
             "review_status": trace.get("review_outcome", {}).get("status"),
             "iteration_count": trace.get("metrics", {}).get("iteration_count"),
+            "failure_classes": sorted(trace.get("failure_classification", {})),
+            "unsupported_claim_count": int(
+                trace.get("metrics", {}).get("unsupported_claim_count", 0) or 0
+            ),
         },
         privacy_labels={
             "secret_redactions": sanitized.secret_redactions,
@@ -888,6 +894,15 @@ def candidates_from_trace(
     if not base.training_eligible:
         return [base]
     candidates = [base]
+
+    def privacy_labels(cleaned: SanitizationResult) -> dict[str, int]:
+        return {
+            "secret_redactions": int(base.privacy_labels.get("secret_redactions", 0))
+            + cleaned.secret_redactions,
+            "pii_redactions": int(base.privacy_labels.get("pii_redactions", 0))
+            + cleaned.pii_redactions,
+        }
+
     sources: tuple[tuple[str, str, str, Any], ...] = (
         ("reasoner", "sft", "reasoner_contributions", trace.get("reasoner_contributions", [])),
         ("planner", "sft", "planner_output", trace.get("planner_output", [])),
@@ -922,11 +937,45 @@ def candidates_from_trace(
                     "role_target": role,
                     "accepted_answer": cleaned.value,
                     "rejected_answers": [],
-                    "privacy_labels": {
-                        "secret_redactions": cleaned.secret_redactions,
-                        "pii_redactions": cleaned.pii_redactions,
-                    },
+                    "privacy_labels": privacy_labels(cleaned),
                     "transformations": [*base.transformations, transformation],
+                }
+            )
+        )
+    loop = trace.get("engineering_loop")
+    if isinstance(loop, dict) and loop:
+        cleaned = sanitize(loop)
+        candidates.append(
+            base.model_copy(
+                update={
+                    "candidate_id": f"cand_{uuid.uuid4().hex}",
+                    "candidate_type": "loop",
+                    "accepted_answer": cleaned.value,
+                    "rejected_answers": [],
+                    "evidence_summary": list(loop.get("observed_evidence_ids", []))
+                    or base.evidence_summary,
+                    "privacy_labels": privacy_labels(cleaned),
+                    "transformations": [*base.transformations, "loop_state_transition"],
+                }
+            )
+        )
+    failures = trace.get("failures", [])
+    grounded_success = (
+        base.quality_labels.get("task_success") is True
+        and bool(trace.get("completion_evidence"))
+        and base.accepted_answer is not None
+    )
+    if grounded_success and isinstance(failures, list) and failures:
+        cleaned = sanitize(failures)
+        candidates.append(
+            base.model_copy(
+                update={
+                    "candidate_id": f"cand_{uuid.uuid4().hex}",
+                    "candidate_type": "preference",
+                    "accepted_answer": base.accepted_answer,
+                    "rejected_answers": [cleaned.value],
+                    "privacy_labels": privacy_labels(cleaned),
+                    "transformations": [*base.transformations, "failed_repair_preference"],
                 }
             )
         )

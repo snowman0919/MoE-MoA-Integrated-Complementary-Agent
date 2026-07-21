@@ -136,7 +136,14 @@ def redact_fields(value: Any, dotted_paths: list[str]) -> Any:
                 break
             current = current[part]
         if isinstance(current, dict) and parts[-1] in current:
-            current[parts[-1]] = "[REDACTED_BY_POLICY]"
+            original = current[parts[-1]]
+            current[parts[-1]] = (
+                []
+                if isinstance(original, list)
+                else {}
+                if isinstance(original, dict)
+                else "[REDACTED_BY_POLICY]"
+            )
     return result
 
 

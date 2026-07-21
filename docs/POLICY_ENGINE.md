@@ -15,9 +15,11 @@ Planner/Reviewer/Judge role requirements, Frontier escalation metadata, and
 globbed per-tool denial before client-visible execution. Denial and missing
 approval persist `POLICY_BLOCKED` and `PERMISSION_REQUIRED` respectively.
 Configured dotted-field redaction is applied before Evidence Graph, decision,
-raw tool-result and normalized tool-execution persistence. Other optional
-artifact boundaries still require an explicit audit before Phase D can be
-described as complete, so it remains disabled in production.
+raw tool-result, normalized tool-execution, orchestration, Reasoner, Planner,
+Reviewer, Frontier, and Judge persistence. Redacting a whole list or object
+preserves its container type so downstream schemas remain valid. Unit tests and
+isolated physical validation cover these boundaries; the engine remains
+disabled in production.
 
 ```yaml
 gateway:

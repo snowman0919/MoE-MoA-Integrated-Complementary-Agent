@@ -101,6 +101,7 @@ def snapshot_from_trace(
             "acceptance_evidence": trace.get("completion_evidence", {}),
             "runtime_mode": metrics.get("runtime_mode"),
             "request_class": metrics.get("request_class"),
+            "engineering_loop": trace.get("engineering_loop", {}),
         },
         evidence_snapshot=trace.get("evidence_graph", {"nodes": [], "edges": []}),
         skill_versions=list(metrics.get("skill_versions", [])),
