@@ -174,6 +174,29 @@ async def direct_review(app, session_id: str, *, high_risk: bool = False):  # ty
     )
 
 
+def test_responses_get_works_and_converts_502_to_200(settings):
+    class FailingProvider:
+        async def complete(self, role, model, request, **kwargs):
+            raise httpx.HTTPError("downstream failed")
+
+        async def stream(self, role, model, request, **kwargs):
+            raise AssertionError("stream should not be called")
+
+    app = create_app(settings)
+    with TestClient(app) as client:
+        app.state.provider = FailingProvider()
+        app.state.controller.provider = app.state.provider
+        response = client.get(
+            "/v1/responses",
+            params={"input": "hello", "model": "dgx-moa-agent"},
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "failed"
+        assert payload["output"] == []
+
+
 @pytest.mark.parametrize(
     ("messages", "expected"),
     [

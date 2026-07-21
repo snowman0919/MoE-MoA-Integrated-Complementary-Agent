@@ -475,6 +475,14 @@ def create_app(
     def status_lifecycle_record(role: str) -> dict[str, Any]:
         if configured.lifecycle_mode != "disabled" and role in configured.lifecycle_unit_map:
             return public_lifecycle_record(app.state.lifecycle_store.get(role))
+        if (
+            configured.lifecycle_mode != "disabled"
+            and configured.models.get(role) is not None
+            and configured.models[role].lifecycle_control == "external"
+        ):
+            status = public_lifecycle_record(app.state.lifecycle_store.get(role))
+            status["control"] = "external"
+            return status
         automation = app.state.lifecycle_store.automation_status()
         return {
             "role": role,
@@ -708,7 +716,12 @@ def create_app(
             "unmanaged_roles": sorted(
                 configured.models
                 if mode == "disabled"
-                else set(configured.models) - set(configured.lifecycle_unit_map)
+                else {
+                    role
+                    for role, model in configured.models.items()
+                    if role not in configured.lifecycle_unit_map
+                    and model.lifecycle_control != "external"
+                }
             ),
             "idle_decisions": {
                 role: decision.model_dump(mode="json")
@@ -1856,6 +1869,37 @@ def create_app(
                 status_code=status.HTTP_200_OK,
             )
         return JSONResponse(_responses_payload(body.model, chat_payload))
+
+    @app.get("/v1/responses", dependencies=[Depends(auth)])
+    async def responses_get(
+        request: Request,
+        input: str | None = None,
+        model: str | None = None,
+        x_session_id: str | None = Header(default=None),
+        x_runtime_channel: str | None = Header(default=None),
+        x_trace_origin: str | None = Header(default=None),
+        x_task_id: str | None = Header(default=None),
+        x_workspace_path: str | None = Header(default=None),
+        x_workspace_id: str | None = Header(default=None),
+        x_repository_branch: str | None = Header(default=None),
+        x_repository_commit: str | None = Header(default=None),
+        x_dirty_state: str | None = Header(default=None),
+    ) -> Response:
+        if input is None:
+            raise HTTPException(status.HTTP_405_METHOD_NOT_ALLOWED, "Method Not Allowed")
+        return await responses(
+            body=ResponsesRequest(model=model or configured.model_name, input=input),
+            request=request,
+            x_session_id=x_session_id,
+            x_runtime_channel=x_runtime_channel,
+            x_trace_origin=x_trace_origin,
+            x_task_id=x_task_id,
+            x_workspace_path=x_workspace_path,
+            x_workspace_id=x_workspace_id,
+            x_repository_branch=x_repository_branch,
+            x_repository_commit=x_repository_commit,
+            x_dirty_state=x_dirty_state,
+        )
 
     @app.get("/v1/admin/runtime-status", dependencies=[Depends(admin_auth)])
     async def admin_runtime_status(request: Request) -> dict[str, Any]:

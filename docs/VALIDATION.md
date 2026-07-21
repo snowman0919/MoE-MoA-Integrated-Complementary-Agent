@@ -458,6 +458,20 @@ below. Heavy-judge validation is appended after its first isolated startup.
   no-progress blocking, planner/reviewer/judge routing, rollback, redaction,
   compression, integrity, capacity, and completion gates have automated tests.
 
+- Production-tailnet service check (`100.125.239.72:9000`) after main-branch
+  runtime restart:
+  - `POST /v1/responses` with `dgx-moa-orchestrated` and no `reasoner_mode`:
+    `200`, completion success.
+  - `GET /v1/responses?input=...`:
+    `200` (response shim path works).
+  - `GET /v1/responses` with missing `input`:
+    `405 Method Not Allowed` (by design; query-only GET shim requires `input`).
+  - `POST /v1/responses` with `metadata.reasoner_mode=required` now returns
+    `200` after `reasoner` control transition to external mode (`control:
+    external`, `unmanaged_roles` no longer includes reasoner).
+  - `/v1/model-status` shows reasoner control as `external` and `unmanaged_roles`
+    = `["judge"]` (previously included `reasoner`).
+
 ## Build And Tests
 
 - `uv run ruff format --check .`: passed.
@@ -1884,6 +1898,12 @@ eight commands:
   0.93, in `25380.793` ms with `20658` tokens. The review covered v2/v3
   consumers and schemas, downgrade rejection, fallback classification, and
   selected-profile trace metadata.
+- Production-hotfix reconciliation gates passed with `619` tests and the
+  existing upstream Starlette warning; Ruff format/check, mypy for 28 source
+  files, user-systemd verification, every shell syntax check, trace audit
+  `10/10` at 100.0%, and `git diff --check` all exited zero. The reconciliation
+  preserves the authenticated `GET /v1/responses` shim and reports externally
+  controlled roles without treating them as unmanaged.
 
 ## Codex cold-start 503 diagnosis — 2026-07-21
 
