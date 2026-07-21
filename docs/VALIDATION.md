@@ -186,6 +186,22 @@ reconfigured.
   `HERMES_REVIEW_DYNAMIC_OK`, but added a paragraph explaining the fixture had
   no substantive implementation. This is a dynamic review/tool success and an
   exact-output failure.
+- Post-fix Hermes strict-format reruns closed both retained output failures. The
+  first recovery attempt was rejected by the harness because it supplied the
+  invalid trace origin `physical-validation`; three HTTP 502 retries were
+  retained and the gateway was restarted with the allowed `validation` origin.
+  The identical recovery task then returned exactly
+  `HERMES_RECOVERY_CORRELATED_OK` in four API calls with `18726/133/18859`
+  client-reported tokens. Gateway state recorded four Reasoner and two Frontier
+  invocations, derived confidence `low`, and no pending tool IDs.
+- The identical evidence-bearing review task then returned exactly
+  `HERMES_REVIEW_DYNAMIC_OK` in two API calls with `8593/48/8641`
+  client-reported tokens. Gateway state recorded two Reasoner, two Reviewer, and
+  two Frontier invocations, no pending tool IDs, and derived confidence
+  `conflicted`, preserving rather than hiding the independent review conflict.
+  The direct Reviewer and isolated gateway stopped cleanly; ports `8103` and
+  `19300` closed while the production Executor remained active at context
+  `65536`.
 - Real structured-output failures exposed three bounded recovery defects. The
   Executor controller now retries one invalid/truncated routing decision with a
   512-token minimal-schema request. Reviewer results are validated by one
@@ -255,8 +271,9 @@ reconfigured.
   both targets reported inactive. The production worktree already contained six
   user-owned modifications before validation. This run did not alter them.
 
-The full physical matrix is not complete: the new Heavy Judge resume path was
-not physically exercised.
+The Heavy Judge resume path was later physically exercised and passed. Later
+Hermes recovery and review reruns also passed strict formatting, completing the
+declared client rows. This is representative coverage, not a full cross-product.
 OpenCode now covers its declared small read/edit, multi-file, architecture,
 failure-recovery, and review rows. Hermes now covers normal, multi-step tool,
 multi-file, failure-recovery, architecture, and review rows. Hermes architecture passed;
@@ -1761,7 +1778,7 @@ eight commands:
    incomplete, 0 legacy, and 100.0% mandatory-field completeness.
 8. `git diff --check`: no output.
 
-### Heavy Judge safety rejection and OAuth profile fallback (2026-07-21)
+### Heavy Judge validation and OAuth profile fallback (2026-07-21)
 
 - The production Executor, Planner, and Reviewer were stopped for an approved
   isolated Heavy Judge run. The installed Judge unit revealed configuration
@@ -1788,6 +1805,31 @@ eight commands:
   `available_bytes=69101035520`. The gateway health check returned `ok`, the
   resident target and Executor were active, and Planner, Reviewer, Judge, and
   the Judge target were inactive.
+- The authoritative retry used the same approved `4000000000` KV bytes,
+  context `8192`, one sequence, `gpu_memory_utilization=0.85`, and ModelOpt FP4.
+  It loaded ten shards in `541.43` seconds and reported `88.85 GiB` model
+  memory in `553.070` seconds, `22192` KV tokens, and `2.71x` concurrency.
+  Port `8110` returned the exact `dgx-moa-judge` model at context `8192`.
+  Readiness-time `MemAvailable` was `18073493504` bytes against the unchanged
+  `17179869184`-byte minimum, so the authoritative gate passed. Earlier
+  sub-threshold samples occurred during weight loading and autotuning; the
+  repository's selected gate is explicitly evaluated after readiness.
+- An isolated authenticated dev gateway and isolated SQLite state exercised the
+  resume API against that real Judge. Wrong profile returned HTTP `409`
+  `judge_profile_required`; a missing session returned `404`
+  `session_not_found`; and a session without pending evidence returned `409`
+  `judge_not_pending`. The valid pending session returned HTTP `200` in 39
+  seconds with `accept`, low risk, `completion_allowed=true`, and
+  `resume_profile=resident`. Persisted state cleared pending evidence, set phase
+  and final status to completed, recorded `judge_requested` and
+  `judge_completed`, and measured 1056 prompt + 93 completion = 1149 total
+  Judge tokens at `39278.236` ms.
+- The isolated gateway and Judge exited cleanly, ports `19300` and `8110`
+  closed, and `MemAvailable` recovered to `120334176` KiB. The fixed resident
+  Executor was restored at context `65536`; `wait-profile.sh` reported
+  `available_bytes=69124612096`. Final health reported resident ready with
+  Executor and Reasoner ready, Planner/Reviewer/Judge stopped, the resident
+  target active, and the Judge target inactive.
 - The Codex OAuth adapter now tries `primary` and changes to `secondary` only on
   authentication, usage-limit, or rate-limit failures. A subprocess-level test
   forced primary `not logged in`, observed the ordered calls
@@ -1810,6 +1852,19 @@ eight commands:
   files, user-systemd unit verification, shell syntax checks, and
   `git diff --check` all exited zero. The one pytest warning is the existing
   third-party Starlette TestClient deprecation.
+- A later publication audit correctly failed `0/10` because the Python auditor
+  had made seven backward-compatible Dynamic-MoA extensions retroactively
+  mandatory for pre-MoA `agent-trace-v2` archives, despite the JSON schema
+  leaving them optional. The trace code now separates the original v2 required
+  fields from the full current export fields and requires the MoA extensions
+  when `metrics.runtime_mode` identifies a current runtime record. A regression
+  validates a pre-MoA v2 record without those extensions; focused tests passed
+  `20/20`, and the unchanged checked-in corpus audit returned `10/10`, zero
+  incomplete/legacy records, no missing fields/events, and 100.0% completeness.
+- Final serial publication gates passed with `612` tests and the existing one
+  upstream Starlette warning; Ruff format/check, mypy for 28 source files,
+  user-systemd verification, every shell syntax check, trace audit `10/10` at
+  100.0%, and `git diff --check` all exited zero.
 
 ## Codex cold-start 503 diagnosis — 2026-07-21
 

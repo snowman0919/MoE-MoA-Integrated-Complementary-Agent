@@ -54,6 +54,7 @@ review occurred. Only the Executor response is returned to ordinary clients.
 The contracts are implemented and unit-tested in the `dev` candidate. The core,
 external-client loops, Codex OAuth modes, evidence traces, and token accounting
 have isolated physical evidence. Planner and Reviewer passed real-weight client
-paths; the new Heavy Judge resume path remains physically unverified. Checked-in
-lifecycle mode and the gateway Frontier feature gate are disabled, the local
-lifecycle unit map is empty, and production is unchanged.
+paths; the exclusive Heavy Judge resume path passed a real-weight adjudication,
+guard-error matrix, teardown, and resident restoration. Checked-in lifecycle
+mode and the gateway Frontier feature gate are disabled, the local lifecycle
+unit map is empty, and production is unchanged.

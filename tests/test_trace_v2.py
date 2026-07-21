@@ -10,11 +10,13 @@ from dgx_moa.improvement import cooldown_active, mine, proposal_fingerprint
 from dgx_moa.runtime_status import minimum_memory, report, state_counts
 from dgx_moa.state import Phase, SessionState, StateStore, validate_failure_record
 from dgx_moa.trace import (
+    MOA_TRACE_FIELDS,
     TraceRecorder,
     audit_traces,
     trace_record,
     training_default,
     validate_provenance,
+    validate_trace,
 )
 
 from .conftest import StubProvider
@@ -221,6 +223,34 @@ def test_audit_prefers_v2_over_duplicate_legacy_session(tmp_path, settings) -> N
     assert report["total_sessions"] == 1
     assert report["complete_sessions"] == 1
     assert report["legacy_sessions"] == 0
+
+
+def test_pre_moa_v2_trace_keeps_backward_compatible_audit(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    trace = trace_record(
+        complete_state(),
+        events=[
+            {"event_type": event_type}
+            for event_type in (
+                "session_started",
+                "route_selected",
+                "assistant_stream_finished",
+                "session_ended",
+            )
+        ],
+        models=settings.models,
+    )
+    for field in MOA_TRACE_FIELDS:
+        trace.pop(field)
+    trace["metrics"].pop("runtime_mode")
+    validate_trace(trace)
+    (traces / "pre-moa-v2.jsonl").write_text(json.dumps(trace) + "\n")
+
+    report = audit_traces(traces)
+
+    assert report["complete_sessions"] == 1
+    assert report["missing_fields"] == {}
 
 
 def test_audit_uses_later_read_sequence_within_same_schema(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]

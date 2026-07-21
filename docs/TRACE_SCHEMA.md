@@ -14,6 +14,9 @@ facts, test-confirmed facts, and unverified assumptions. Edges use `supports`,
 `contradicts`, `depends_on`, `supersedes`, `generated_from`, or `validated_by`.
 Frontier records transmitted evidence categories, latency, token counts, and
 cost only when the provider reports or configuration can calculate them.
+These are backward-compatible v2 extensions: records whose metrics identify a
+current runtime mode must contain them, while pre-Dynamic-MoA v2 archives remain
+valid without them. New exports always write the complete current field set.
 
 Strict provenance values are `main|dev|candidate` and
 `production|benchmark|validation|diagnostic|candidate_evaluation`. Production is

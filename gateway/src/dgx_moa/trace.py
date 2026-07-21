@@ -34,27 +34,8 @@ LEGACY_TRACE_FIELDS = frozenset(
         "human_correction",
     }
 )
-TRACE_FIELDS = LEGACY_TRACE_FIELDS | frozenset(
+MOA_TRACE_FIELDS = frozenset(
     {
-        "runtime_channel",
-        "trace_origin",
-        "repository_identity",
-        "starting_branch",
-        "starting_commit",
-        "ending_branch",
-        "ending_commit",
-        "dirty_state_start",
-        "dirty_state_end",
-        "controller_commit",
-        "gateway_version",
-        "vllm_version",
-        "adapter_identifiers",
-        "started_at",
-        "ended_at",
-        "training_eligibility",
-        "observability_status",
-        "observability_degraded",
-        "agent_decisions",
         "reasoner_contributions",
         "orchestration_decisions",
         "agent_invocations",
@@ -62,11 +43,39 @@ TRACE_FIELDS = LEGACY_TRACE_FIELDS | frozenset(
         "recommendation_resolutions",
         "evidence_graph",
         "derived_confidence",
-        "tool_executions",
-        "evaluations",
-        "failures",
     }
 )
+TRACE_FIELDS = (
+    LEGACY_TRACE_FIELDS
+    | MOA_TRACE_FIELDS
+    | frozenset(
+        {
+            "runtime_channel",
+            "trace_origin",
+            "repository_identity",
+            "starting_branch",
+            "starting_commit",
+            "ending_branch",
+            "ending_commit",
+            "dirty_state_start",
+            "dirty_state_end",
+            "controller_commit",
+            "gateway_version",
+            "vllm_version",
+            "adapter_identifiers",
+            "started_at",
+            "ended_at",
+            "training_eligibility",
+            "observability_status",
+            "observability_degraded",
+            "agent_decisions",
+            "tool_executions",
+            "evaluations",
+            "failures",
+        }
+    )
+)
+V2_REQUIRED_TRACE_FIELDS = TRACE_FIELDS - MOA_TRACE_FIELDS
 
 LIST_FIELDS = {
     "events",
@@ -127,7 +136,7 @@ def validate_provenance(runtime_channel: str, trace_origin: str) -> None:
 
 def validate_trace(trace: dict[str, Any]) -> None:
     version = trace.get("schema_version")
-    required = LEGACY_TRACE_FIELDS if version == "agent-trace-v1" else TRACE_FIELDS
+    required = LEGACY_TRACE_FIELDS if version == "agent-trace-v1" else V2_REQUIRED_TRACE_FIELDS
     missing = required - trace.keys()
     if missing:
         raise ValueError(f"trace fields missing: {', '.join(sorted(missing))}")
@@ -312,7 +321,10 @@ class TraceRecorder:
 def trace_missing(trace: dict[str, Any]) -> list[str]:
     if trace.get("schema_version") == "agent-trace-v1":
         return ["legacy_v1"]
-    missing = [field for field in TRACE_FIELDS if field not in trace]
+    required = V2_REQUIRED_TRACE_FIELDS
+    if isinstance(trace.get("metrics"), dict) and "runtime_mode" in trace["metrics"]:
+        required = TRACE_FIELDS
+    missing = [field for field in required if field not in trace]
     for field in (
         "session_id",
         "task_id",

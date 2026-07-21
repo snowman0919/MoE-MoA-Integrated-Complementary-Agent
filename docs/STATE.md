@@ -7,9 +7,9 @@ Updated: 2026-07-21
 | Capability | Designed | Implemented on `dev` | Unit-tested | Physically validated | Production-enabled |
 | --- | --- | --- | --- | --- | --- |
 | `dgx-moa` Reasoner + Executor core | yes | yes | yes | isolated yes | no |
-| Dynamic Planner/Reviewer routing | yes | yes | yes | isolated generic + OpenCode yes | no |
+| Dynamic Planner/Reviewer routing | yes | yes | yes | isolated generic + OpenCode + Hermes yes | no |
 | Codex OAuth Frontier modes/fallback | yes | yes | yes | isolated yes | no |
-| Heavy Judge adjudication | yes | yes | yes | no | no |
+| Heavy Judge adjudication | yes | yes | yes | isolated yes | no |
 | Evidence graph and per-agent trace | yes | yes | yes | isolated yes | no |
 | Multiple API tokens and per-token usage | yes | yes | yes | isolated yes | no |
 
@@ -59,13 +59,13 @@ an empty local unit map. Production is unchanged.
   continuation with local Reviewer + Frontier in parallel. Its automatic title
   request is isolated to a separate session and forced to the fast Executor-only
   path. Hermes architecture also passes with Planner + Frontier, and its real
-  four-turn failure recovery now preserves one token-scoped state, reinvokes
-  Reasoner, and selects Frontier after two failures. That recovery included the
-  required marker but failed exact-output formatting. Hermes evidence-bearing
-  review also selects local Reviewer + Frontier after its read continuation,
-  but similarly adds text around the required marker. OpenCode multi-file/
-  recovery now pass with exact output. Hermes multi-file implementation and a
-  post-fix exact-output tool continuation now pass.
+  four-turn failure recovery preserves one token-scoped state, reinvokes
+  Reasoner, and selects Frontier after two failures. A 2026-07-21 rerun returned
+  the exact required recovery marker with four Reasoner rounds and two Frontier
+  rounds. Hermes evidence-bearing review also selects local Reviewer + Frontier
+  after its read continuation; its rerun returned the exact review marker with
+  two Reasoner, two Reviewer, and two Frontier invocations. OpenCode multi-file/
+  recovery and Hermes multi-file/recovery/review now pass with exact output.
 - A controlled real-weight seven-key security task now covers Executor-only,
   core, Planner, Reviewer, Codex OAuth Frontier, and full relevant-agent
   variants. All successful final answers scored 7/7, but specialists added
@@ -263,15 +263,20 @@ an empty local unit map. Production is unchanged.
 
 ## Heavy Judge and Frontier
 
-- A 2026-07-21 Heavy Judge rerun found configuration drift to a
+- A 2026-07-21 Heavy Judge rerun first found configuration drift to a
   `12000000000`-byte KV reservation. It loaded weights but left only
   `6796004` KiB available during KV initialization, so it was rejected and
-  stopped. Restoring the approved `4000000000`-byte reservation still crossed
-  below the 16-GiB safety line during initialization (`13810768` KiB) before
-  readiness, so the new adjudication-resume path was not exercised. The fixed
-  resident Executor was restored and passed readiness with
-  `69101035520` available bytes. This is rejection evidence, not a new Heavy
-  Judge approval.
+  stopped. The first approved `4000000000`-byte retry was conservatively
+  interrupted before the repository's readiness-time memory gate.
+- The authoritative 4-GB retry then reached HTTP readiness at context `8192`,
+  one sequence, `gpu_memory_utilization=0.85`, and ModelOpt FP4 with
+  `18073493504` available bytes, above the 16-GiB minimum. An isolated
+  authenticated gateway returned the expected `409`, `404`, and `409` guard
+  errors, then completed a real pending adjudication in 39 seconds with
+  `accept`, low risk, `completion_allowed=true`, and `resume_profile=resident`.
+  Persisted state cleared pending evidence, recorded 1149 Judge tokens, and
+  completed the task. Judge teardown closed both temporary ports; the fixed
+  resident Executor was restored with `69124612096` available bytes.
 - Frontier Codex uses separate OAuth profiles (`primary` and `secondary`) with
   automatic fallback from primary on authentication, usage-limit, or rate-limit
   failures. Each can also be invoked independently with
