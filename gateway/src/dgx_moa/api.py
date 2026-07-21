@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import os
 import time
@@ -40,7 +41,7 @@ from .routing import (
 )
 from .runtime_status import memory_available as runtime_memory_available
 from .runtime_status import report as runtime_report
-from .schemas import ChatRequest, ProfileResponse
+from .schemas import ChatRequest, ProfileResponse, ResponsesRequest
 from .security import admin_dependency, auth_dependency
 from .state import StateStore
 from .streaming import StreamObservation, forward_sse, reported_usage
@@ -89,6 +90,67 @@ def title_request_index(messages: list[dict[str, Any]]) -> int | None:
             content = str(message.get("content", "")).strip().lower()
             return index if content.startswith("generate a title for this conversation") else None
     return None
+
+
+def _coerce_responses_input_messages(
+    raw_input: str | list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if isinstance(raw_input, str):
+        return [{"role": "user", "content": raw_input}]
+    if isinstance(raw_input, list):
+        return list(raw_input)
+    raise TypeError("invalid responses input type")
+
+
+def _responses_payload(
+    model: str,
+    chat_response: dict[str, Any] | None = None,
+    *,
+    status: str = "completed",
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": f"resp-{uuid.uuid4().hex}",
+        "object": "response",
+        "created": int(time.time()),
+        "model": model,
+        "status": status,
+        "output": [],
+    }
+    if chat_response is None:
+        return payload
+    if error := chat_response.get("error"):
+        payload["error"] = error
+        payload["status"] = "failed"
+        return payload
+
+    choices = chat_response.get("choices") or []
+    if choices:
+        message = choices[0].get("message", {})
+        content = message.get("content")
+        if isinstance(content, str) and content:
+            payload["output"] = [
+                {
+                    "type": "message",
+                    "status": "completed",
+                    "role": message.get("role", "assistant"),
+                    "content": [
+                        {"type": "output_text", "text": content},
+                    ],
+                }
+            ]
+    if usage := chat_response.get("usage"):
+        payload["usage"] = usage
+    return payload
+
+
+def _chat_response_payload(response: Response) -> dict[str, Any] | None:
+    raw_body = getattr(response, "body", None)
+    if not raw_body:
+        return None
+    try:
+        return json.loads(raw_body.decode() if isinstance(raw_body, bytes) else raw_body)
+    except ValueError:
+        return None
 
 
 def elapsed_ms(started: float) -> float:
@@ -1305,6 +1367,96 @@ def create_app(
                 "backend_error",
                 "backend_error",
             )
+
+    @app.post("/v1/responses", dependencies=[Depends(auth)])
+    async def responses(
+        body: ResponsesRequest,
+        request: Request,
+        x_session_id: str | None = Header(default=None),
+        x_runtime_channel: str | None = Header(default=None),
+        x_trace_origin: str | None = Header(default=None),
+        x_task_id: str | None = Header(default=None),
+        x_workspace_path: str | None = Header(default=None),
+        x_workspace_id: str | None = Header(default=None),
+        x_repository_branch: str | None = Header(default=None),
+        x_repository_commit: str | None = Header(default=None),
+        x_dirty_state: str | None = Header(default=None),
+    ) -> Response:
+        if body.stream:
+            return error_response(
+                status.HTTP_400_BAD_REQUEST,
+                "stream is not supported for /v1/responses",
+                "invalid_request_error",
+                "invalid_request",
+            )
+
+        chat_body = ChatRequest(
+            model=body.model,
+            messages=_coerce_responses_input_messages(body.input),
+            stream=False,
+            metadata=body.metadata,
+            max_tokens=body.max_output_tokens,
+            temperature=body.temperature,
+            top_p=body.top_p,
+            stop=body.stop,
+        )
+        try:
+            chat_response = await chat(
+                chat_body,
+                request,
+                x_session_id,
+                x_runtime_channel,
+                x_trace_origin,
+                x_task_id,
+                x_workspace_path,
+                x_workspace_id,
+                x_repository_branch,
+                x_repository_commit,
+                x_dirty_state,
+            )
+        except HTTPException as error:
+            if error.status_code in {
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                status.HTTP_404_NOT_FOUND,
+            }:
+                return error_response(
+                    error.status_code, str(error.detail), "invalid_request_error", "invalid_request"
+                )
+            return JSONResponse(
+                _responses_payload(
+                    body.model,
+                    {
+                        "error": {
+                            "message": str(error.detail),
+                            "type": "backend_error",
+                            "code": "backend_error",
+                        }
+                    },
+                    status="failed",
+                ),
+                status_code=200,
+            )
+        if isinstance(chat_response, StreamingResponse):
+            return error_response(
+                status.HTTP_501_NOT_IMPLEMENTED,
+                "streaming responses are not yet supported for /v1/responses",
+                "invalid_request_error",
+                "invalid_request",
+            )
+        chat_payload = _chat_response_payload(chat_response)
+        if chat_payload is None:
+            return error_response(
+                status.HTTP_502_BAD_GATEWAY,
+                "upstream response could not be parsed",
+                "backend_error",
+                "backend_error",
+            )
+        if chat_response.status_code == status.HTTP_502_BAD_GATEWAY:
+            return JSONResponse(
+                _responses_payload(body.model, chat_payload, status="failed"),
+                status_code=status.HTTP_200_OK,
+            )
+        return JSONResponse(_responses_payload(body.model, chat_payload))
 
     @app.get("/v1/admin/runtime-status", dependencies=[Depends(admin_auth)])
     async def admin_runtime_status(request: Request) -> dict[str, Any]:

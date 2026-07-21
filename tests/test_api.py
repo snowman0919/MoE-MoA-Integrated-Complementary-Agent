@@ -3852,6 +3852,70 @@ def test_api_validation(settings, stub_provider: StubProvider) -> None:  # type:
         }
 
 
+def test_responses_post_returns_openai_response_shape(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider
+) -> None:
+    original = stub_provider.complete
+
+    async def complete(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor":
+            return {
+                "id": "chatcmpl-resp",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "ok",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = complete  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "input": [{"role": "user", "content": "hello"}],
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["object"] == "response"
+    assert body["model"] == "dgx-moa-agent"
+    assert body["status"] == "completed"
+    assert body["output"][0]["type"] == "message"
+    assert body["output"][0]["content"][0]["text"] == "ok"
+    assert body["usage"] == {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7}
+
+
+def test_responses_post_maps_upstream_502_to_http_200(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider
+) -> None:
+    async def connect_failed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        raise httpx.ConnectError("all endpoints unreachable")
+
+    stub_provider.complete = connect_failed  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa-agent", "input": "hello"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["error"]["type"] == "backend_error"
+    assert body["error"]["code"] == "backend_error"
+
+
 def test_upstream_openai_400_envelope_and_status_are_preserved(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

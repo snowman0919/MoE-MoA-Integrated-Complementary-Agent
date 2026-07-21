@@ -49,6 +49,36 @@ class ChatRequest(BaseModel):
         return self
 
 
+class ResponsesRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    model: str
+    input: str | list[dict[str, Any]]
+    stream: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    max_output_tokens: int | None = Field(default=None, gt=0)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    top_p: float | None = Field(default=None, ge=0, le=1)
+    stop: str | list[str] | None = None
+
+    @model_validator(mode="after")
+    def require_input_messages(self) -> ResponsesRequest:
+        if isinstance(self.input, str):
+            if not self.input.strip():
+                raise ValueError("input must not be empty")
+            return self
+        if not self.input:
+            raise ValueError("input must not be empty")
+        for message in self.input:
+            if not isinstance(message, dict):
+                raise ValueError("input entries must be message objects")
+            if not isinstance(message.get("role"), str):
+                raise ValueError("input message must include role")
+            if message.get("content") is None:
+                raise ValueError("input message must include content")
+        return self
+
+
 class ProfileResponse(BaseModel):
     active_profile: Literal["resident", "judge", "stopped"]
     status: Literal["ready", "transitioning", "failed", "degraded", "stopped"]
