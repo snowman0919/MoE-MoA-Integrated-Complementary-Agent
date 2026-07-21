@@ -4691,7 +4691,16 @@ def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def
         response = client.post(
             "/v1/responses",
             headers={"Authorization": "Bearer test-secret", "X-Session-ID": "responses-stream"},
-            json={"model": "dgx-moa-fast", "input": "hello", "stream": True},
+            json={
+                "model": "dgx-moa-fast",
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "hello"}],
+                    }
+                ],
+                "stream": True,
+            },
         )
 
     assert response.status_code == 200
@@ -4700,6 +4709,9 @@ def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def
     assert "event: response.output_text.delta" in response.text
     assert "event: response.completed" in response.text
     assert "data: [DONE]" not in response.text
+    assert stub_provider.requests[-1]["messages"][-1]["content"] == [
+        {"type": "text", "text": "hello"}
+    ]
 
 
 def test_responses_post_maps_upstream_502_to_http_200(  # type: ignore[no-untyped-def]

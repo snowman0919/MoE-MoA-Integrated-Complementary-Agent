@@ -1831,6 +1831,15 @@ completed response. An unauthenticated streaming request returned HTTP 401.
 No secret value was printed or stored, and no systemd topology or model weight
 was changed.
 
+The subsequent Codex production retries returned HTTP 200 headers but closed
+before `response.completed`. Executor journal evidence at `01:23:39` and
+`01:25:10` showed vLLM rejecting Responses content parts with
+`input_value='input_text'`; Chat Completions requires `type='text'`. The shared
+Responses-to-Chat conversion now normalizes `input_text` and `output_text`
+parts before routing. The exact regression check passed, followed by the full
+suite at `624 passed` with the existing Starlette TestClient warning; Ruff and
+Mypy passed on the changed path.
+
 ### Heavy Judge validation and OAuth profile fallback (2026-07-21)
 
 - The production Executor, Planner, and Reviewer were stopped for an approved

@@ -139,7 +139,16 @@ def _coerce_responses_input_messages(
     if isinstance(raw_input, str):
         return [{"role": "user", "content": raw_input}]
     if isinstance(raw_input, list):
-        return list(raw_input)
+        messages = [dict(message) for message in raw_input]
+        for message in messages:
+            if isinstance(content := message.get("content"), list):
+                message["content"] = [
+                    {**part, "type": "text"}
+                    if part.get("type") in {"input_text", "output_text"}
+                    else part
+                    for part in content
+                ]
+        return messages
     raise TypeError("invalid responses input type")
 
 
