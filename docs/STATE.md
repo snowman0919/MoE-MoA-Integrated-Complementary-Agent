@@ -65,9 +65,12 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   Reasoner + Executor core; `dgx-moa-fast` is the explicitly Executor-only
   compatibility alias. The orchestrated profile combines deterministic safety
   policy with a structured Executor routing decision.
-- Complete SSE events are forwarded as they arrive with a single DONE. Streaming
-  review is deferred; it does not buffer executor output. Capture and individual
-  event bounds are each 1,000,000 bytes.
+- Chat SSE forwarding preserves complete events and a single DONE. The Responses
+  adapter buffers at most 1,000,000 characters until it can distinguish a final
+  answer from a tool-call preamble; tool preambles and failed streams are never
+  exposed. A valid upstream terminal marker is required before completion.
+- The external Ollama Reasoner is exactly `Qwythos-v2-9B:Q4`; it remains external
+  to the local lifecycle unit map and is never silently replaced by fast mode.
 - Executor output defaults to `4096` tokens with a server cap of `16384`.
   `finish_reason=length` is preserved and recorded as truncation, not completion.
 - Standard OpenAI request fields suffice. Project metadata and provenance headers

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
@@ -8,7 +9,13 @@ from dataclasses import dataclass, field
 
 from .usage import SQLITE_MAX_INTEGER
 
+LOGGER = logging.getLogger(__name__)
 TOKEN_FIELDS = ("prompt_tokens", "completion_tokens", "total_tokens")
+MAX_BUFFERED_RESPONSE_CHARS = 1_000_000
+
+
+def _log_token(value: str) -> str:
+    return "".join(character if character.isprintable() else "?" for character in value)[:256]
 
 
 def reported_usage(value: object) -> dict[str, int]:
@@ -144,6 +151,7 @@ async def responses_sse(
     model: str,
     *,
     custom_tool_names: set[str] | None = None,
+    session_id: str = "unknown",
 ) -> AsyncGenerator[bytes, None]:
     """Translate Chat Completions SSE into Responses text and function-call events."""
     response_id = f"resp_{uuid.uuid4().hex}"
@@ -151,8 +159,11 @@ async def responses_sse(
     created_at = int(time.time())
     sequence_number = 0
     text_parts: list[str] = []
+    buffered_text_chars = 0
     tool_calls: dict[int, dict[str, object]] = {}
     usage: dict[str, object] | None = None
+    terminal_error: dict[str, str] | None = None
+    terminal_seen = False
 
     def response_payload(status: str, output: list[dict[str, object]]) -> dict[str, object]:
         return {
@@ -160,7 +171,7 @@ async def responses_sse(
             "object": "response",
             "created_at": created_at,
             "status": status,
-            "error": None,
+            "error": terminal_error,
             "incomplete_details": None,
             "instructions": None,
             "max_output_tokens": None,
@@ -216,26 +227,28 @@ async def responses_sse(
                 else chunk
             )
             for line in raw_chunk.decode(errors="replace").splitlines():
-                if not line.startswith("data: ") or line == "data: [DONE]":
+                if not line.startswith("data: "):
+                    continue
+                if line == "data: [DONE]":
+                    terminal_seen = True
                     continue
                 try:
                     chat_event = json.loads(line[6:])
                 except ValueError:
                     continue
+                if chat_event.get("error"):
+                    raise ValueError("upstream stream reported an error")
                 usage = response_usage(chat_event.get("usage")) or usage
                 choice = (chat_event.get("choices") or [{}])[0]
+                if choice.get("finish_reason"):
+                    terminal_seen = True
                 delta = choice.get("delta") or {}
                 content = delta.get("content")
                 if isinstance(content, str) and content:
                     text_parts.append(content)
-                    yield event(
-                        "response.output_text.delta",
-                        item_id=message_id,
-                        output_index=0,
-                        content_index=0,
-                        delta=content,
-                        logprobs=[],
-                    )
+                    buffered_text_chars += len(content)
+                    if buffered_text_chars > MAX_BUFFERED_RESPONSE_CHARS:
+                        raise ValueError("upstream response exceeds buffer limit")
                 for tool_delta in delta.get("tool_calls") or []:
                     index = int(tool_delta.get("index", 0))
                     function = tool_delta.get("function") or {}
@@ -290,7 +303,19 @@ async def responses_sse(
                                 delta=pending_arguments,
                             )
 
-        text = "".join(text_parts)
+        if not terminal_seen:
+            raise ValueError("upstream stream ended before terminal marker")
+        text = "" if tool_calls else "".join(text_parts)
+        if not tool_calls:
+            for content in text_parts:
+                yield event(
+                    "response.output_text.delta",
+                    item_id=message_id,
+                    output_index=0,
+                    content_index=0,
+                    delta=content,
+                    logprobs=[],
+                )
         part: dict[str, object] = {
             "type": "output_text",
             "text": text,
@@ -385,7 +410,71 @@ async def responses_sse(
             "response.completed",
             response=response_payload("completed", completed_output),
         )
+        LOGGER.info(
+            "responses_stream_terminal session_id=%s model=%s status=completed "
+            "tool_calls=%d text_chars=%d output_items=%d",
+            _log_token(session_id),
+            _log_token(model),
+            len(tool_calls),
+            len(text),
+            len(completed_output),
+        )
+    except Exception as error:
+        terminal_error = {
+            "type": "backend_error",
+            "code": "backend_error",
+            "message": "response stream failed",
+        }
+        LOGGER.warning(
+            "responses_stream_terminal session_id=%s model=%s status=failed "
+            "source=upstream_iterator error_type=%s",
+            _log_token(session_id),
+            _log_token(model),
+            type(error).__name__,
+        )
+        yield event("response.failed", response=response_payload("failed", []))
     finally:
         close = getattr(upstream, "aclose", None)
         if close is not None:
             await close()
+
+
+async def responses_error_sse(
+    model: str,
+    *,
+    session_id: str,
+    error_type: str,
+    code: str,
+    source: str,
+    status_code: int,
+) -> AsyncGenerator[bytes, None]:
+    response_id = f"resp_{uuid.uuid4().hex}"
+    response = {
+        "id": response_id,
+        "object": "response",
+        "created_at": int(time.time()),
+        "status": "failed",
+        "error": {"type": error_type, "code": code, "message": "request failed"},
+        "incomplete_details": None,
+        "model": model,
+        "output": [],
+        "usage": None,
+    }
+    LOGGER.warning(
+        "responses_stream_terminal session_id=%s model=%s status=failed source=%s "
+        "status_code=%d error_type=%s code=%s",
+        _log_token(session_id),
+        _log_token(model),
+        _log_token(source),
+        status_code,
+        _log_token(error_type),
+        _log_token(code),
+    )
+    yield (
+        "event: response.failed\ndata: "
+        + json.dumps(
+            {"type": "response.failed", "sequence_number": 0, "response": response},
+            separators=(",", ":"),
+        )
+        + "\n\n"
+    ).encode()

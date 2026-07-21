@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 
 import pytest
 from dgx_moa.streaming import (
+    MAX_BUFFERED_RESPONSE_CHARS,
     StreamObservation,
     forward_sse,
     reported_usage,
@@ -103,6 +105,110 @@ async def test_responses_sse_defers_custom_kind_and_rejects_non_string_input() -
     assert added["item"]["type"] == "custom_tool_call"
     assert all("function_call_arguments" not in event["type"] for event in emitted)
     assert custom_done["input"] == '{"input":42}'
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_hides_tool_preamble_and_terminates_failures(caplog) -> None:  # type: ignore[no-untyped-def]
+    async def tool_upstream():
+        yield b'data: {"choices":[{"delta":{"content":"private plan"}}]}\n\n'
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call-one","function":{"name":"exec_command",'
+            b'"arguments":"{\\"cmd\\":\\"pwd\\"}"}}]},'
+            b'"finish_reason":"tool_calls"}]}\n\n'
+        )
+
+    tool_events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(tool_upstream(), "dgx-moa", session_id="tool-session")
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+    assert all(event.get("delta") != "private plan" for event in tool_events)
+    assert tool_events[-1]["type"] == "response.completed"
+
+    async def failed_upstream():
+        yield b'data: {"choices":[{"delta":{"content":"must stay private"}}]}\n\n'
+        raise RuntimeError("sensitive upstream detail")
+
+    with caplog.at_level(logging.WARNING):
+        failed_events = [
+            json.loads(line[6:])
+            async for chunk in responses_sse(
+                failed_upstream(), "dgx-moa", session_id="failed-session"
+            )
+            for line in chunk.decode().splitlines()
+            if line.startswith("data: ")
+        ]
+    assert failed_events[-1]["type"] == "response.failed"
+    assert failed_events[-1]["response"]["error"]["code"] == "backend_error"
+    assert "failed-session" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "must stay private" not in caplog.text
+    assert "sensitive upstream detail" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "terminal",
+    [
+        b'data: {"error":{"message":"private backend detail"}}\n\n',
+        b"",
+    ],
+)
+async def test_responses_sse_rejects_error_frames_and_unterminated_eof(terminal: bytes) -> None:
+    async def upstream():
+        yield b'data: {"choices":[{"delta":{"content":"private plan"}}]}\n\n'
+        if terminal:
+            yield terminal
+
+    events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(upstream(), "dgx-moa")
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+
+    assert events[-1]["type"] == "response.failed"
+    assert all(event.get("delta") != "private plan" for event in events)
+    assert not any(event["type"] == "response.completed" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_sanitizes_terminal_log_fields(caplog) -> None:  # type: ignore[no-untyped-def]
+    async def upstream():
+        raise RuntimeError("private detail")
+        yield b""  # pragma: no cover
+
+    with caplog.at_level(logging.WARNING):
+        _ = [
+            chunk
+            async for chunk in responses_sse(
+                upstream(), "model\nforged", session_id="session\rforged"
+            )
+        ]
+
+    assert "session?forged" in caplog.text
+    assert "model?forged" in caplog.text
+    assert "session\rforged" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_rejects_oversized_buffer_without_exposing_text() -> None:
+    private_text = "x" * (MAX_BUFFERED_RESPONSE_CHARS + 1)
+
+    async def upstream():
+        yield f'data: {{"choices":[{{"delta":{{"content":"{private_text}"}}}}]}}\n\n'
+
+    events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(upstream(), "dgx-moa")
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+
+    assert events[-1]["type"] == "response.failed"
+    assert not any(event["type"] == "response.output_text.delta" for event in events)
 
 
 async def chunks(*values: bytes) -> AsyncIterator[bytes]:

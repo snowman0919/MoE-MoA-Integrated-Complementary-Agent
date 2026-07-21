@@ -1,5 +1,48 @@
 # Validation
 
+## Responses privacy/terminal fix and Q4 Reasoner — 2026-07-22
+
+Production trace
+`data/traces/main/production/2026-07-21/bf7ce95c-fe52-4a08-bf61-d70cb59c9adc.jsonl`
+matched the reported Codex task. Successful tool turns ended with
+`finish_reason=tool_calls`, but Planner/Reasoner and unsupported-tool failures
+returned non-stream JSON or ended without a Responses terminal event. Codex
+therefore retried and reported `stream closed before response.completed`.
+Executor text emitted before a later tool delta was also translated immediately,
+which exposed its tool-selection narrative as ordinary output.
+
+The adapter now delays Responses text until upstream classification, discards it
+when a tool call or failure follows, requires `[DONE]` or `finish_reason`, and
+emits `response.failed` for pre-stream HTTP errors, non-stream error responses,
+upstream error frames, truncated EOF, oversized buffers, and iterator failures.
+Content-free `responses_stream_terminal` records preserve the correlated session,
+model, source, status, error class/code, and safe counts without prompts,
+reasoning, tool arguments, bodies, or exception messages. Reasoner failure traces
+add provider, served model, latency, HTTP status, and failure class.
+
+The configured external Ollama Reasoner changed from `Qwythos-v2-9B:Q5` to exact
+`Qwythos-v2-9B:Q4`. `/api/tags` physically reported digest
+`9f14...` and stored size `6,825,527,520` bytes. A schema-constrained request at
+context `65536` completed with all eight contribution keys in `17.469` seconds,
+including `4.390` seconds load. `/api/ps` then reported runtime size
+`8,630,462,050`, VRAM `7,402,244,012`, and context `65536`.
+
+An isolated real gateway produced a terminal `response.failed` and safe journal
+record for an HTTP exception. A real Executor tool request exposed no narrative
+text delta and completed with `pwd`; a real `dgx-moa` request returned exact
+`Q4_CORE_OK`. Trace `q4-core-validation` recorded Reasoner revision `Q4`,
+Reasoner `7355.864` ms, Executor `320.025` ms, no Reasoner-unavailable event,
+and a completed session. The degraded trace label reflected intentionally absent
+workspace provenance headers, not an inference failure.
+
+Automated gates passed 632 tests before Frontier review. Primary-profile Codex
+OAuth review rejected two missing counterexamples: top-level error-only frames
+and EOF without a terminal marker. Both were fixed with privacy regressions,
+control-character-safe log fields, and an explicit 1,000,000-character bound.
+Focused gates then passed 187 tests plus Ruff and Mypy. The bounded OAuth
+re-review approved with Critical 0, Important 0, confidence `0.96`; no API key
+was created or used.
+
 ## Production Codex Responses tool loop — 2026-07-22
 
 Production incident trace

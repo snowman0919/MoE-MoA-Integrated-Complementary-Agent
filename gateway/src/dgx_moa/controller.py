@@ -1069,10 +1069,19 @@ class Controller:
                     parse_json_content(reasoner_response)
                 )
             except (httpx.HTTPError, StageTimeout, ValueError) as error:
+                status_code = (
+                    error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
+                )
                 self.store.event(
                     state.session_id,
                     "reasoner_unavailable",
-                    {"failure_class": type(error).__name__},
+                    {
+                        "failure_class": type(error).__name__,
+                        "provider": reasoner.provider,
+                        "model": reasoner.served_name,
+                        "latency_ms": round((time.monotonic() - reasoner_started) * 1000, 3),
+                        "status_code": status_code,
+                    },
                 )
                 raise ReasonerUnavailable("required Reasoner unavailable") from error
             self.record_invocation(state, "reasoner", reasoner_response, reasoner_started)
