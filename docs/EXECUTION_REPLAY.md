@@ -1,6 +1,7 @@
 # Execution Replay
 
-The Phase H foundation snapshots task state, Evidence Graph, exact Skill
+The Phase H foundation snapshots task state, engineering-loop state, Evidence
+Graph, exact Skill
 versions, policy version/hash, model-role revisions, invoked roles, structured
 mock provider outputs and the original outcome. Snapshot files are written
 atomically and protected by a canonical SHA-256 content hash.
@@ -17,5 +18,7 @@ Audit replay can inspect the original bounded outcome without provider calls.
 Other modes accept an explicit evaluator and either complete mocks or a live
 provider callback. The authenticated admin API accepts audit replay and exact
 mock replay. It refuses live comparative replay because that requires the
-internal provider callback and a separately controlled environment. This has
-unit evidence only and is not production-enabled.
+internal provider callback and a separately controlled environment. The
+2026-07-22 isolated physical run verified the snapshot hash and exact-replayed a
+non-empty loop state and Evidence Graph. Live-provider and production replay
+remain unvalidated and the feature is not production-enabled.

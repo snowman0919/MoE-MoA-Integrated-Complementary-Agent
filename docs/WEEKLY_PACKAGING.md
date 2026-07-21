@@ -31,10 +31,14 @@ the installed binary/module/wrapper SHA-256 values are respectively
 `e50e9cd58cc8ec1a2fdb7f64e3e0f87ce29cad2dd78c5da36712234d208f690b`,
 `c1f1e2e03c325ee48ec2727168e6812a602dcb67ac828cc09d3de18fc3d7ead0`, and
 `ae16c842a851d11cb28c382021065d49db13070044ec00e7a7efe4fdd89eeb56`.
-The 2026-07-22 isolated physical run produced and tested a real archive,
-verified its SHA-256 sidecar, exercised idempotent rerun and explicit
-revocation/regeneration, and detected deliberate corruption and archiver
-failure. It used synthetic data only; no production data was exported.
+The authoritative 2026-07-22 isolated physical result is
+`/tmp/dgx-moa-self-evolving-physical-20260722-r9/physical-validation.json`,
+SHA-256 `cc98684cfbbc8055dc21328c09db27c7131631cd2742be4db74f95d39df56f26`.
+It produced and tested real archives, retained non-empty loop-transition and
+repair-preference datasets, verified the SHA-256 sidecar, exercised idempotent
+rerun and explicit revocation/regeneration, and detected deliberate corruption
+and archiver failure. It used synthetic data only; no production data was
+exported.
 No timer was installed because systemd topology changes require separate human
 approval. Instead, enabling weekly jobs starts a bounded in-process scheduler:
 Skill reports Sunday 03:00 and previous-complete-week packaging Monday 02:00 in

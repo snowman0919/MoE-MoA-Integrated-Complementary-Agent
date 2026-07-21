@@ -44,6 +44,7 @@ MOA_TRACE_FIELDS = frozenset(
         "recommendation_resolutions",
         "evidence_graph",
         "derived_confidence",
+        "engineering_loop",
     }
 )
 TRACE_FIELDS = (
@@ -105,6 +106,7 @@ DICT_FIELDS = {
     "failure_classification",
     "review_outcome",
     "evidence_graph",
+    "engineering_loop",
 }
 
 
@@ -242,6 +244,9 @@ def trace_record(
         "tool_executions": state.tool_executions,
         "evaluations": state.evaluations,
         "failures": state.failures,
+        "engineering_loop": (
+            state.engineering_loop.model_dump(mode="json") if state.engineering_loop else {}
+        ),
         "final_status": final_status(state),
         "completion_evidence": state.completion_evidence,
         "training_eligibility": state.training_eligibility,
@@ -356,7 +361,9 @@ def trace_missing(trace: dict[str, Any]) -> list[str]:
         return ["legacy_v1"]
     if version not in {"agent-trace-v2", "agent-trace-v3"}:
         return ["unsupported_schema_version"]
-    required = V2_TRACE_FIELDS if version == "agent-trace-v2" else TRACE_FIELDS
+    required = (
+        V2_TRACE_FIELDS if version == "agent-trace-v2" else TRACE_FIELDS - {"engineering_loop"}
+    )
     missing = [field for field in required if field not in trace]
     metrics = trace.get("metrics")
     if version == "agent-trace-v3" and (

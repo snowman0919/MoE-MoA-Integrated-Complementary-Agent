@@ -7,12 +7,14 @@ import pytest
 from dgx_moa.controller import Controller
 from dgx_moa.dataset import build
 from dgx_moa.improvement import cooldown_active, mine, proposal_fingerprint
+from dgx_moa.loop_engineering import new_loop
 from dgx_moa.runtime_status import minimum_memory, report, state_counts
 from dgx_moa.state import Phase, SessionState, StateStore, validate_failure_record
 from dgx_moa.trace import (
     MOA_TRACE_FIELDS,
     TraceRecorder,
     audit_traces,
+    trace_missing,
     trace_record,
     training_default,
     validate_provenance,
@@ -125,6 +127,22 @@ def test_v2_provenance_training_and_schema() -> None:
     assert trace["agent_invocations"] == []
     assert trace["evidence_graph"] == {"nodes": [], "edges": []}
     assert trace["derived_confidence"] == "medium"
+    assert trace["engineering_loop"] == {}
+
+
+def test_trace_captures_bounded_engineering_loop_snapshot() -> None:
+    state = complete_state()
+    state.engineering_loop = new_loop("request-1", "ship bounded change")
+
+    loop = trace_record(state)["engineering_loop"]
+
+    assert loop["loop_id"] == state.engineering_loop.loop_id
+    assert loop["remaining_budget"]["iterations"] == 4
+    assert loop["input_fingerprints"]
+
+    legacy_v3 = trace_record(state)
+    legacy_v3.pop("engineering_loop")
+    assert "engineering_loop" not in trace_missing(legacy_v3)
 
 
 def test_trace_metrics_include_content_free_runtime_timing() -> None:

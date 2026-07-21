@@ -1564,11 +1564,12 @@ class Controller:
             }
         )
         data = decision.model_dump()
-        state.orchestration_decisions.append(redact(data))
+        safe_data = cast(dict[str, Any], self.safe_payload(state, data))
+        state.orchestration_decisions.append(safe_data)
         state.orchestration_decisions = state.orchestration_decisions[
             -self.settings.limits.max_steps :
         ]
-        state.decisions[-1]["structured_decision"] = redact(data)
+        state.decisions[-1]["structured_decision"] = safe_data
         self.record_evidence(
             state,
             "orchestration_decision",
@@ -1579,13 +1580,23 @@ class Controller:
         reasoner_recommendations = {item.role for item in reasoner.additional_agents if item.needed}
         selected = set(required)
         state.recommendation_resolutions.extend(
-            {
-                "role": role,
-                "recommendation": "invoke",
-                "resolution": "accepted" if role in selected else "rejected",
-                "reason": decision.reason.get(role, "Executor did not select this recommendation"),
-            }
-            for role in sorted(reasoner_recommendations | selected)
+            cast(
+                list[dict[str, Any]],
+                self.safe_payload(
+                    state,
+                    [
+                        {
+                            "role": role,
+                            "recommendation": "invoke",
+                            "resolution": "accepted" if role in selected else "rejected",
+                            "reason": decision.reason.get(
+                                role, "Executor did not select this recommendation"
+                            ),
+                        }
+                        for role in sorted(reasoner_recommendations | selected)
+                    ],
+                ),
+            )
         )
         state.recommendation_resolutions = state.recommendation_resolutions[
             -self.settings.limits.max_steps :
@@ -1720,11 +1731,12 @@ class Controller:
             reasoner_advice = compress_text(
                 json.dumps(contribution_data, ensure_ascii=False), self.settings.limits
             )
-            state.reasoner_contributions.append(redact(contribution_data))
+            safe_contribution = cast(dict[str, Any], self.safe_payload(state, contribution_data))
+            state.reasoner_contributions.append(safe_contribution)
             state.reasoner_contributions = state.reasoner_contributions[
                 -self.settings.limits.max_steps :
             ]
-            state.decisions[-1]["structured_decision"] = redact(contribution_data)
+            state.decisions[-1]["structured_decision"] = safe_contribution
             self.record_evidence(
                 state,
                 "model_assertion",
@@ -1849,7 +1861,8 @@ class Controller:
                 state, dict(request.get("metadata", {}))
             ):
                 review_evidence = json.dumps(
-                    redact(
+                    self.safe_payload(
+                        state,
                         {
                             "objective": state.objective,
                             "acceptance_criteria": state.acceptance_criteria,
@@ -1859,7 +1872,7 @@ class Controller:
                                 "validation_results", []
                             ),
                             "tool_results": state.tool_results[-4:],
-                        }
+                        },
                     ),
                     ensure_ascii=False,
                 )
@@ -1964,8 +1977,9 @@ class Controller:
                 state.timings_ms["planner"] = round((time.monotonic() - planner_started) * 1000, 3)
             if planner is not None and planner_error is None:
                 self.record_invocation(state, "planner", planner, planner_started)
-                state.plan = parsed.get("plan", [])
-                state.acceptance_criteria = parsed.get("acceptance_criteria", [])
+                safe_planner = cast(dict[str, Any], self.safe_payload(state, parsed))
+                state.plan = safe_planner.get("plan", [])
+                state.acceptance_criteria = safe_planner.get("acceptance_criteria", [])
                 self._sync_loop_criteria(state)
                 self.store.event(state.session_id, "plan_created", {"steps": len(state.plan)})
                 self.record_evidence(
@@ -1993,10 +2007,11 @@ class Controller:
                 state.observability_status = "degraded"
             else:
                 reviewer_artifact = {"role": "reviewer", "output": pre_review_result}
-                state.agent_artifacts.append(redact(reviewer_artifact))
+                safe_reviewer = cast(dict[str, Any], self.safe_payload(state, reviewer_artifact))
+                state.agent_artifacts.append(safe_reviewer)
                 state.agent_artifacts = state.agent_artifacts[-self.settings.limits.max_steps :]
                 collaboration_context += "\nLocal Reviewer contribution:\n" + json.dumps(
-                    redact(pre_review_result), ensure_ascii=False
+                    safe_reviewer["output"], ensure_ascii=False
                 )
                 if self.material_review_issue(pre_review_result):
                     state.derived_confidence = "conflicted"
@@ -2095,10 +2110,14 @@ class Controller:
                     raise FrontierRequiredUnavailable("required Frontier unavailable") from error
             else:
                 artifact = frontier_result.model_dump()
-                state.agent_artifacts.append({"role": "frontier", **redact(artifact)})
+                safe_frontier = cast(
+                    dict[str, Any], self.safe_payload(state, {"role": "frontier", **artifact})
+                )
+                state.agent_artifacts.append(safe_frontier)
                 state.agent_artifacts = state.agent_artifacts[-self.settings.limits.max_steps :]
                 collaboration_context += "\nFrontier contribution:\n" + json.dumps(
-                    redact(artifact), ensure_ascii=False
+                    {key: value for key, value in safe_frontier.items() if key != "role"},
+                    ensure_ascii=False,
                 )
                 self.record_observed_invocation(
                     state,
@@ -2398,10 +2417,11 @@ class Controller:
                 state.timings_ms["reviewer"] = round(
                     (time.monotonic() - reviewer_started) * 1000, 3
                 )
+        safe_result = cast(dict[str, Any], self.safe_payload(state, result))
         state.review_status = result.get("status", "rejected")
         state.phase = Phase.CORRECTION if state.review_status != "approved" else Phase.EXECUTING
         self.store.save(state)
-        self.store.event(state.session_id, "review_completed", result)
+        self.store.event(state.session_id, "review_completed", safe_result)
         state.evaluations.append(
             {
                 "evaluation_id": str(uuid.uuid4()),
@@ -2410,7 +2430,7 @@ class Controller:
                 "evaluator_type": "reviewer",
                 "evaluator_model": self.settings.models["reviewer"].repository,
                 "evaluator_revision": self.settings.models["reviewer"].revision,
-                "result": result,
+                "result": safe_result,
                 "evidence_references": [],
                 "requirement_ids": [],
                 "created_at": now(),
@@ -2429,8 +2449,13 @@ class Controller:
 
     async def judge(self, state: SessionState, observation: str) -> dict[str, Any]:
         state.phase = Phase.HEAVY_REVIEW
+        safe_observation = cast(
+            dict[str, Any], self.safe_payload(state, {"observation": observation})
+        )
         self.store.event(
-            state.session_id, "judge_requested", {"observation": str(redact(observation))[:500]}
+            state.session_id,
+            "judge_requested",
+            {"observation": str(safe_observation["observation"])[:500]},
         )
         schema = JudgeVerdict.model_json_schema()
         request = {
@@ -2466,8 +2491,9 @@ class Controller:
         self.record_invocation(state, "judge", response, judge_started)
         verdict = JudgeVerdict.model_validate(parse_json_content(response))
         result = verdict.model_dump()
+        safe_result = cast(dict[str, Any], self.safe_payload(state, result))
         state.judge_status = verdict.verdict
-        state.judge_verdict = redact(result)
+        state.judge_verdict = safe_result
         state.pending_judge_evidence = ""
         state.heavy_switch_count += 1
         if verdict.verdict == "blocked":
@@ -2486,7 +2512,7 @@ class Controller:
         else:
             state.phase = Phase.CORRECTION
         self.store.save(state)
-        self.store.event(state.session_id, "judge_completed", result)
+        self.store.event(state.session_id, "judge_completed", safe_result)
         state.evaluations.append(
             {
                 "evaluation_id": str(uuid.uuid4()),
@@ -2495,7 +2521,7 @@ class Controller:
                 "evaluator_type": "mistral",
                 "evaluator_model": self.settings.models["judge"].repository,
                 "evaluator_revision": self.settings.models["judge"].revision,
-                "result": result,
+                "result": safe_result,
                 "evidence_references": [],
                 "requirement_ids": [],
                 "created_at": now(),

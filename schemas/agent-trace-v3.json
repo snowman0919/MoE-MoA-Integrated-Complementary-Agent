@@ -59,6 +59,7 @@
     "tool_executions": {"type": "array", "items": {"type": "object"}},
     "evaluations": {"type": "array", "items": {"type": "object"}},
     "failures": {"type": "array", "items": {"type": "object"}},
+    "engineering_loop": {"type": "object"},
     "completion_evidence": {"type": "object"}
   },
   "additionalProperties": true

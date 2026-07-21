@@ -44,6 +44,11 @@ def trace() -> dict:  # type: ignore[type-arg]
         "final_status": "completed",
         "review_outcome": {"status": "approved"},
         "derived_confidence": "high",
+        "engineering_loop": {
+            "loop_id": "loop-1",
+            "termination_reason": "SUCCESS",
+            "observed_evidence_ids": ["evidence-1"],
+        },
     }
 
 
@@ -63,6 +68,7 @@ def test_snapshot_roundtrip_hash_covers_state_evidence_skills_policy_and_models(
     assert restored.skill_versions == ["python-test@1.0.0"]
     assert restored.policy_version == "policy-1"
     assert set(restored.model_role_configuration) == {"reasoner", "executor"}
+    assert restored.task_state["engineering_loop"]["termination_reason"] == "SUCCESS"
     payload = json.loads(path.read_text())
     payload["snapshot"]["task_state"]["objective"] = "tampered"
     path.write_text(json.dumps(payload))

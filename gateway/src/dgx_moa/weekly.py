@@ -343,9 +343,24 @@ def sha256(path: Path) -> str:
 
 def candidate_path(candidate: TrainingCandidate) -> str:
     if candidate.quality_tier == "negative":
+        failure_classes = set(candidate.quality_labels.get("failure_classes", []))
+        if "INVALID_STRUCTURED_OUTPUT" in failure_classes:
+            return "datasets/negatives/invalid-structured-output.jsonl"
+        if failure_classes.intersection({"TOOL_EXECUTION_FAILURE", "UNSUPPORTED_TOOL"}):
+            return "datasets/negatives/failed-tools.jsonl"
+        if "DUPLICATE_FAILURE" in failure_classes:
+            return "datasets/negatives/duplicate-repairs.jsonl"
+        if int(candidate.quality_labels.get("unsupported_claim_count", 0)):
+            return "datasets/negatives/unsupported-claims.jsonl"
         return "datasets/loops/repair-trajectories.jsonl"
     if candidate.candidate_type == "preference":
-        return "datasets/preference/executor-preferences.jsonl"
+        return (
+            "datasets/preference/repair-preferences.jsonl"
+            if "failed_repair_preference" in candidate.transformations
+            else "datasets/preference/executor-preferences.jsonl"
+        )
+    if candidate.candidate_type == "loop":
+        return "datasets/loops/state-transitions.jsonl"
     if candidate.candidate_type == "tool_use":
         return "datasets/tool_use/tool-calls.jsonl"
     if candidate.candidate_type == "routing":

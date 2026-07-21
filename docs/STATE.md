@@ -14,15 +14,15 @@ Updated: 2026-07-22
 | Multiple API tokens and per-token usage | yes | yes | yes | production yes | yes |
 | Codex Responses text/function/custom tool loop | yes | yes | yes | production yes | yes |
 | Runtime model invocation-rate CSV | yes | yes | yes | production live clients | yes |
-| Bounded Loop Engineering Phase A + action-boundary B | yes | yes | yes | unit only | no |
-| Runtime Skills Phase C foundation | yes | yes | yes | unit only | no |
-| Declarative Policy Phase D foundation | yes | partial | yes | unit only | no |
-| Typed Evidence Graph Phase E foundation | yes | yes | yes | unit only | no |
+| Bounded Loop Engineering Phase A + action-boundary B | yes | yes | yes | isolated success/no-progress/duplicate | no |
+| Runtime Skills Phase C foundation | yes | yes | yes | isolated governed lifecycle | no |
+| Declarative Policy Phase D foundation | yes | yes | yes | isolated redaction | no |
+| Typed Evidence Graph Phase E foundation | yes | yes | yes | isolated replay validation | no |
 | Discord/Telegram Live Observation Phase E | yes | yes | yes | unit only | no |
-| Privacy-aware Training Collection Phase F | yes | partial | yes | unit only | no |
+| Privacy-aware Training Collection Phase F | yes | yes | yes | isolated role/loop/preference archive | no |
 | Weekly Skill/Data Packaging Phase G | yes | yes | yes | isolated real 7z; scheduler/provider pending | no |
-| Execution Replay Phase H foundation | yes | yes | yes | unit only | no |
-| Fixed label-free Goal metrics endpoint | yes | partial | yes | unit only | no |
+| Execution Replay Phase H foundation | yes | yes | yes | isolated exact loop replay | no |
+| Fixed label-free Goal metrics endpoint | yes | yes | yes | production yes | yes |
 
 This table is the current authority. Later sections preserve historical Phase
 1–4 evidence and must not be read as later production evidence. Checked-in safe
@@ -98,22 +98,26 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 - Deployed source contains disabled Phase A state and Phase B action
   admission. Evidence-linked criteria, iterations, role/tool/token/known-cost/
   wall-time budgets, progress evidence allowlisting, stable repeated-failure
-  policy, and explicit termination reasons are unit-tested. Physical validation
-  remains incomplete; production stays disabled.
+  policy, and explicit termination reasons are unit-tested. An isolated physical
+  run exercised success, no-progress, and duplicate-failure termination;
+  production stays disabled.
 - Deployed source also contains a disabled runtime Skill registry with
   immutable versions, bounded active-only retrieval, Executor-only activation,
   structured recurring-pattern drafts, isolated multi-gate candidate evaluation,
   Executor-evidenced canaries, governed versioned lifecycle changes, separate
-  metrics, evidence-gated promotion/rollback, and verified pack hashes. It has
-  unit evidence only; no production registry or canary was created.
+  metrics, evidence-gated promotion/rollback, and verified pack hashes. An
+  isolated physical run exercised draft generation, every evaluation gate, an
+  Executor-evidenced helpful canary, explicit promotion, and rollback. No
+  production registry or canary was created.
 - A disabled declarative policy engine records versioned, hashed decisions and
   enforces request denial, approval requirements, role requirements, loop
   limits, and per-tool deny globs. Policy field redaction covers evidence,
-  decisions, tool results and normalized executions; the remaining optional
-  artifact boundaries still require an explicit audit.
+  decisions, tool results, normalized executions, and persisted Reasoner,
+  Planner, Reviewer, Frontier, and Judge artifacts while preserving container
+  schemas.
 - Task evidence now records canonical node types and trust classes without
-  changing the existing edge serialization. Deterministic trust precedence is
-  unit-tested; replay and graph-wide consistency checks remain incomplete.
+  changing the existing edge serialization. Deterministic trust precedence and
+  graph consistency passed an isolated exact replay.
 - A bounded internal event bus, Discord/Telegram senders, safe event projection,
   batching, drop/error metrics, and optional authenticated control commands are
   implemented but disabled. No platform message has been sent physically.
@@ -122,7 +126,8 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   deduplication, transactional review audit, request/repository exclusion, and
   candidate revocation, hashed user opt-out, quality consistency gates,
   integrity/backup, holds, and dry-run-first retention are implemented but
-  disabled.
+  disabled. Isolated physical packaging retained role-specific loop-transition
+  and evidence-grounded failed-repair preference candidates.
 - Weekly Skill reports and atomic verified-archive logic are implemented and
   disabled. An in-process Seoul scheduler, aggregate reports, safe observation
   summaries, authenticated verify/revoke/regenerate, holds, and archive
@@ -131,8 +136,9 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   corruption, archiver-failure, late-arrival, and capacity-isolation checks on
   synthetic data. No scheduled or production run exists.
 - Hash-protected replay snapshots and exact/mock versus live/comparative replay
-  modes plus an exact/audit admin API are implemented. No physical provider or
-  production replay has been exercised.
+  modes plus an exact/audit admin API are implemented. An isolated exact replay
+  reproduced the persisted loop state and validated the non-empty Evidence
+  Graph; no live-provider or production replay has been exercised.
 - The authenticated development `/metrics` endpoint exposes the fixed Goal
   metric names without labels or event content. Loop events and current
   Skill/observer/training aggregates are connected; scheduler/package and some

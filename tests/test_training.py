@@ -131,6 +131,73 @@ def test_preference_candidate_requires_observable_grounding() -> None:
         )
 
 
+def test_successful_repair_produces_loop_and_grounded_preference_candidates() -> None:
+    trace = eligible_trace() | {
+        "engineering_loop": {
+            "loop_id": "loop-1",
+            "termination_reason": "SUCCESS",
+            "observed_evidence_ids": ["test-evidence"],
+        },
+        "failures": [
+            {
+                "failure_class": "TEST_FAILURE",
+                "attempted_strategy": "repeat unchanged command",
+            }
+        ],
+    }
+
+    candidates = candidates_from_trace(trace, repository_policy="training_allowed")
+    loop = next(item for item in candidates if item.candidate_type == "loop")
+    preference = next(item for item in candidates if item.candidate_type == "preference")
+
+    assert loop.evidence_summary == ["test-evidence"]
+    assert loop.accepted_answer["termination_reason"] == "SUCCESS"
+    assert preference.accepted_answer == {"name": "apply_patch"}
+    assert preference.rejected_answers[0][0]["failure_class"] == "TEST_FAILURE"
+    assert preference.evidence_summary == ["evidence-1"]
+    assert "failed_repair_preference" in preference.transformations
+
+
+@pytest.mark.parametrize(
+    "trace_update",
+    [
+        {"final_status": "failed"},
+        {"completion_evidence": {}, "review_outcome": {"status": "rejected"}},
+    ],
+)
+def test_failed_or_ungrounded_answer_does_not_produce_repair_preference(
+    trace_update: dict,  # type: ignore[type-arg]
+) -> None:
+    trace = (
+        eligible_trace()
+        | trace_update
+        | {
+            "failures": [{"failure_class": "TEST_FAILURE"}],
+        }
+    )
+
+    candidates = candidates_from_trace(trace, repository_policy="training_allowed")
+
+    assert all(item.candidate_type != "preference" for item in candidates)
+
+
+def test_derived_candidates_preserve_base_privacy_counts() -> None:
+    trace = eligible_trace() | {
+        "objective": "api_key=syntheticSecret1234567890",
+        "engineering_loop": {"loop_id": "loop-privacy"},
+        "failures": [{"failure_class": "TEST_FAILURE"}],
+    }
+
+    candidates = candidates_from_trace(trace, repository_policy="training_allowed")
+
+    assert candidates[0].privacy_labels["secret_redactions"] >= 1
+    assert all(
+        item.privacy_labels["secret_redactions"]
+        >= candidates[0].privacy_labels["secret_redactions"]
+        for item in candidates
+    )
+
+
 def test_training_store_is_separate_append_only_and_tombstone_aware(tmp_path: Path) -> None:
     objects = ContentStore(tmp_path / "objects")
     store = TrainingStore(tmp_path / "training.db", objects, minimum_free_bytes=0)

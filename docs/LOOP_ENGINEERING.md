@@ -2,9 +2,10 @@
 
 ## Current development boundary
 
-The `dev` source contains the Phase A state foundation and the first Phase B
-bounded action loop. It is disabled by default and has not been physically
-validated or enabled in production.
+The `dev` source contains the Phase A state foundation and the Phase B bounded
+action loop. It is disabled by default and has not been enabled in production.
+An isolated synthetic physical run has exercised successful, no-progress, and
+duplicate-failure termination.
 
 `LoopState` is persisted inside the existing task-scoped `SessionState`, so it
 uses the existing SQLite WAL transaction and rollback boundary. It records:
@@ -69,13 +70,11 @@ gateway:
 An isolated process may provide the same object through
 `DGX_MOA_LOOP_ENGINEERING`. Request-class overrides are applied before
 low/medium/high risk overrides. Do not enable it in production until isolated
-physical providers and real-client validation pass.
+live providers and real-client validation pass.
 
-## Still missing
+## Remaining production gates
 
 Permission, operator-decision, policy-block and unresolved-disagreement paths
-now terminate explicitly. Runtime Skills have a disabled, unit-tested Phase C
-foundation documented in `docs/SKILLS.md`. Declarative policy, autonomous Skill
-generation/maintenance, observers, training data, weekly packaging, physical
-provider validation and replay are not implemented and must not be described
-as active.
+terminate explicitly. Runtime Skills, declarative policy, observers, training,
+weekly packaging, and replay are implemented behind disabled gates. Live-provider
+loop execution, real-client validation, and production enablement remain pending.
