@@ -1792,6 +1792,33 @@ eight commands:
    incomplete, 0 legacy, and 100.0% mandatory-field completeness.
 8. `git diff --check`: no output.
 
+## Responses Streaming Compatibility — 2026-07-22
+
+The Codex custom-model failure was reproduced from the checked-in route: an
+authenticated `POST /v1/responses` request with `stream=true` was rejected with
+HTTP 400 and `stream is not supported for /v1/responses` before inference.
+
+The development gateway now translates the existing Chat Completions text SSE
+stream into Responses API events. The focused checks observed ordered
+`sequence_number` values, `response.output_text.delta` chunks, a terminal
+`response.completed` object, converted token usage, no Chat Completions
+`data: [DONE]` sentinel, HTTP 200, `text/event-stream`, and preservation of the
+request session ID. Non-streaming Responses behavior remained covered.
+
+Measured development checks:
+
+1. Focused Responses checks: `3 passed`.
+2. `ruff check` on the four changed Python files: all checks passed.
+3. `mypy` on the two changed gateway modules: no issues found.
+4. Full `pytest -q`: `624 passed`, with the existing third-party Starlette
+   TestClient deprecation warning.
+5. Host OpenAI Python client `2.6.1` parsed all nine emitted typed events from
+   `ResponseCreatedEvent` through `ResponseCompletedEvent`; final text was `ok`
+   and total token usage was `2`.
+
+This is development-only evidence. No production service, lifecycle profile,
+systemd topology, model process, secret, or model weight was changed.
+
 ### Heavy Judge validation and OAuth profile fallback (2026-07-21)
 
 - The production Executor, Planner, and Reviewer were stopped for an approved

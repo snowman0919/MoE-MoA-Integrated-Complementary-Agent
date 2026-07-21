@@ -51,7 +51,7 @@ from .runtime_status import report as runtime_report
 from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest
 from .security import admin_dependency, auth_dependency
 from .state import StateStore
-from .streaming import StreamObservation, forward_sse, reported_usage
+from .streaming import StreamObservation, forward_sse, reported_usage, responses_sse
 from .trace import TraceRecorder
 from .usage import (
     ModelAlias,
@@ -1791,21 +1791,13 @@ def create_app(
         x_repository_commit: str | None = Header(default=None),
         x_dirty_state: str | None = Header(default=None),
     ) -> Response:
-        if body.stream:
-            return error_response(
-                status.HTTP_400_BAD_REQUEST,
-                "stream is not supported for /v1/responses",
-                "invalid_request_error",
-                "invalid_request",
-            )
-
         chat_body = ChatRequest(
             model=body.model,
             messages=[
                 ChatMessage.model_validate(message)
                 for message in _coerce_responses_input_messages(body.input)
             ],
-            stream=False,
+            stream=body.stream,
             metadata=body.metadata,
             max_tokens=body.max_output_tokens,
             temperature=body.temperature,
@@ -1849,11 +1841,13 @@ def create_app(
                 status_code=200,
             )
         if isinstance(chat_response, StreamingResponse):
-            return error_response(
-                status.HTTP_501_NOT_IMPLEMENTED,
-                "streaming responses are not yet supported for /v1/responses",
-                "invalid_request_error",
-                "invalid_request",
+            return StreamingResponse(
+                responses_sse(chat_response.body_iterator, body.model),
+                media_type="text/event-stream",
+                headers={
+                    "X-Session-ID": chat_response.headers.get("X-Session-ID", ""),
+                    "Cache-Control": "no-cache",
+                },
             )
         chat_payload = _chat_response_payload(chat_response)
         if chat_payload is None:

@@ -4684,6 +4684,24 @@ def test_responses_post_returns_openai_response_shape(  # type: ignore[no-untype
     assert body["usage"] == {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7}
 
 
+def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider
+) -> None:
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "responses-stream"},
+            json={"model": "dgx-moa-fast", "input": "hello", "stream": True},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["x-session-id"] == "responses-stream"
+    assert "event: response.output_text.delta" in response.text
+    assert "event: response.completed" in response.text
+    assert "data: [DONE]" not in response.text
+
+
 def test_responses_post_maps_upstream_502_to_http_200(  # type: ignore[no-untyped-def]
     settings, stub_provider: StubProvider
 ) -> None:

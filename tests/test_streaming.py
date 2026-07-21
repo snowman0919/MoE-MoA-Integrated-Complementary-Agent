@@ -1,10 +1,40 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 
 import pytest
-from dgx_moa.streaming import StreamObservation, forward_sse, reported_usage
+from dgx_moa.streaming import StreamObservation, forward_sse, reported_usage, responses_sse
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_translates_chat_text_and_usage() -> None:
+    async def upstream():
+        yield b'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n'
+        yield b'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'
+        yield (
+            b'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
+            b'"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    chunks = [chunk async for chunk in responses_sse(upstream(), "dgx-moa-agent")]
+    events = [
+        json.loads(line[6:])
+        for chunk in chunks
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+
+    assert [event["sequence_number"] for event in events] == list(range(len(events)))
+    deltas = [event["delta"] for event in events if event["type"] == "response.output_text.delta"]
+    assert deltas == ["hel", "lo"]
+    completed = events[-1]
+    assert completed["type"] == "response.completed"
+    assert completed["response"]["output"][0]["content"][0]["text"] == "hello"
+    assert completed["response"]["usage"]["total_tokens"] == 5
+    assert all(b"data: [DONE]" not in chunk for chunk in chunks)
 
 
 async def chunks(*values: bytes) -> AsyncIterator[bytes]:
