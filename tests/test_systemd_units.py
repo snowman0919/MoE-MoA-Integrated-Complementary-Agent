@@ -32,8 +32,12 @@ def test_targets_and_services_are_mutually_exclusive() -> None:
         service = (SYSTEMD / f"dgx-moa-{role}.service").read_text()
         assert "Conflicts=dgx-moa-judge.service dgx-moa-judge.target" in service
         assert f"dgx-moa-{role}.service" in judge
-    assert "After=dgx-moa-executor.service" in (SYSTEMD / "dgx-moa-reviewer.service").read_text()
-    assert "After=dgx-moa-reviewer.service" in (SYSTEMD / "dgx-moa-planner.service").read_text()
+    executor_wait = "ExecStartPre=/home/kotori9/dgx-moa-agent/scripts/wait-model.sh executor"
+    for role in ("planner", "reviewer"):
+        service = (SYSTEMD / f"dgx-moa-{role}.service").read_text()
+        assert "After=dgx-moa-executor.service" in service
+        assert executor_wait in service
+    assert "wait-model.sh reviewer" not in (SYSTEMD / "dgx-moa-planner.service").read_text()
     assert "After=dgx-moa-planner.service" in (SYSTEMD / "dgx-moa-reasoner.service").read_text()
 
 

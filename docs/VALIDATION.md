@@ -1925,6 +1925,18 @@ eight commands:
   passed `622` tests with the existing Starlette warning, Ruff format/check,
   mypy for 28 source files, user-systemd verification, trace audit `10/10` at
   100.0%, and `git diff --check`.
+- The first production architecture smoke returned typed `model_loading` and
+  exposed a systemd ordering contradiction: `dgx-moa-planner.service` remained
+  in `start-pre` while `wait-model.sh reviewer` polled port 8103. Planner was
+  intentionally stopped; the lifecycle store recorded one
+  `start_command_failed` without disabling automation. Planner and Reviewer are
+  independent optional roles, so both now order after and preflight only the
+  normally resident Executor. This preserves the resident prerequisite without
+  making Planner depend on a cold Reviewer.
+- A secondary-profile Frontier review of the bounded unit/test/documentation
+  diff returned `approve`, Critical 0, Important 0, confidence 0.97, in
+  `16307.331` ms with `14935` tokens. It requested the post-fix physical smoke
+  below before considering the production acceptance criterion fully evidenced.
 
 ## Codex cold-start 503 diagnosis — 2026-07-21
 
