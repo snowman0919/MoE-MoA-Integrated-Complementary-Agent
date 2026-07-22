@@ -741,6 +741,11 @@ class Controller:
             [str(item) for item in denied_tools] if isinstance(denied_tools, list) else []
         )
         state.policy_redact_fields = decision.redact
+        state.policy_fail_closed_roles = [
+            role for role, enabled in decision.fail_closed.items() if enabled
+        ]
+        if "reviewer" in state.policy_fail_closed_roles:
+            state.review_fail_closed = True
         if decision.require.get("frontier"):
             metadata["frontier_required"] = True
             state.route = "escalation"
@@ -2123,10 +2128,7 @@ class Controller:
                 state.observability_degraded = True
                 state.observability_status = "degraded"
             else:
-                reviewer_artifact = {"role": "reviewer", "output": pre_review_result}
-                safe_reviewer = cast(dict[str, Any], self.safe_payload(state, reviewer_artifact))
-                state.agent_artifacts.append(safe_reviewer)
-                state.agent_artifacts = state.agent_artifacts[-self.settings.limits.max_steps :]
+                safe_reviewer = state.agent_artifacts[-1]
                 collaboration_context += "\nLocal Reviewer contribution:\n" + json.dumps(
                     safe_reviewer["output"], ensure_ascii=False
                 )
@@ -2587,6 +2589,8 @@ class Controller:
         safe_result = cast(dict[str, Any], self.safe_payload(state, result))
         state.review_status = result.get("status", "rejected")
         state.phase = Phase.CORRECTION if state.review_status != "approved" else Phase.EXECUTING
+        state.agent_artifacts.append({"role": "reviewer", "output": safe_result})
+        state.agent_artifacts = state.agent_artifacts[-self.settings.limits.max_steps :]
         self.store.save(state)
         self.store.event(state.session_id, "review_completed", safe_result)
         state.evaluations.append(
@@ -2612,7 +2616,7 @@ class Controller:
             generated_from=decision_id,
         )
         self.store.save(state)
-        return result
+        return safe_result
 
     async def judge(self, state: SessionState, observation: str) -> dict[str, Any]:
         if self.remote_judge is not None:
@@ -2705,7 +2709,7 @@ class Controller:
             generated_from=decision_id,
         )
         self.store.save(state)
-        return result
+        return safe_result
 
     def judge_evidence_package(self, state: SessionState, observation: str) -> JudgeEvidencePackage:
         metadata = {
@@ -2804,7 +2808,9 @@ class Controller:
                 "judge_provider_failed",
                 {"failure_class": failure_class, "fallback": "local_reviewer"},
             )
-            if package.risk_class in {"high", "critical"}:
+            if package.risk_class in {"high", "critical"} or (
+                "judge" in state.policy_fail_closed_roles
+            ):
                 self.terminate_loop(state, "PROVIDER_UNAVAILABLE")
                 raise
             fallback = await self.review(state, observation)
@@ -2887,4 +2893,4 @@ class Controller:
         state.evaluations = state.evaluations[-self.settings.limits.max_steps :]
         self.record_evidence(state, "judge_verdict", "judge", result, generated_from=decision_id)
         self.store.save(state)
-        return result
+        return safe_result

@@ -347,7 +347,7 @@ def test_recurring_pattern_generates_only_an_experimental_immutable_draft(
         )
 
 
-def test_generated_skill_evaluation_requires_all_checks_and_frontier_when_high_impact(
+def test_generated_skill_evaluation_requires_all_checks_and_judge_when_high_impact(
     tmp_path: Path,
 ) -> None:
     registry = SkillRegistry(tmp_path)
@@ -371,7 +371,7 @@ def test_generated_skill_evaluation_requires_all_checks_and_frontier_when_high_i
             regression_evaluation=True,
             reviewer_inspection=True,
             high_impact=True,
-            frontier_review=False,
+            judge_validation=False,
             evidence_ids=["evaluation-failed"],
         ),
         created_by="isolated-evaluator",
@@ -394,8 +394,8 @@ def test_generated_skill_evaluation_requires_all_checks_and_frontier_when_high_i
             regression_evaluation=True,
             reviewer_inspection=True,
             high_impact=True,
-            frontier_review=True,
-            evidence_ids=["isolated", "replay", "regression", "reviewer", "frontier"],
+            judge_validation=True,
+            evidence_ids=["isolated", "replay", "regression", "reviewer", "judge"],
         ),
         created_by="isolated-evaluator",
     )

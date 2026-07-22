@@ -1,4 +1,4 @@
-# DGX MoA Agent
+# DGX MoA Agent 2.0
 
 OpenAI-compatible, Executor-directed dynamic Mixture-of-Agents gateway. OpenCode
 and other clients connect to one authenticated tailnet endpoint. The primary

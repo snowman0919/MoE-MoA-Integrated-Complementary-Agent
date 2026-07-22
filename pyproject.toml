@@ -1,6 +1,6 @@
 [project]
 name = "dgx-moa-agent"
-version = "0.1.0"
+version = "2.0.0"
 description = "Deterministic OpenAI-compatible MoA gateway for DGX Spark"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -11,6 +11,7 @@ dependencies = [
   "pydantic>=2.10",
   "pyyaml>=6.0",
   "uvicorn>=0.34",
+  "zstandard>=0.23",
 ]
 
 [dependency-groups]

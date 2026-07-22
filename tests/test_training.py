@@ -120,6 +120,55 @@ def test_trace_material_produces_separate_role_routing_tool_and_skill_candidates
     }
 
 
+def test_permitted_remote_judge_trace_produces_categorical_role_datasets() -> None:
+    trace = eligible_trace() | {
+        "evaluations": [
+            {
+                "evaluator_type": "nvidia_nim",
+                "evidence_references": ["test-1"],
+                "later_confirmation": "false_approval",
+                "result": {
+                    "verdict": "approve",
+                    "criteria": {"test_consistency": "pass"},
+                    "findings": [
+                        {
+                            "severity": "important",
+                            "category": "unsupported_claim",
+                            "description": "raw provider prose must not be copied",
+                        }
+                    ],
+                    "required_edits": [
+                        {
+                            "operation": "replace",
+                            "target": "raw target",
+                            "instruction": "raw provider instruction",
+                        }
+                    ],
+                },
+            }
+        ]
+    }
+
+    candidates = candidates_from_trace(
+        trace,
+        repository_policy="training_allowed",
+        external_output_permitted=True,
+    )
+    judge = [item for item in candidates if item.candidate_type == "judge"]
+
+    assert {item.quality_labels["judge_dataset"] for item in judge} == {
+        "verdicts",
+        "findings",
+        "corrections",
+        "false-approvals",
+    }
+    assert all(item.role_target == "judge" and item.training_eligible for item in judge)
+    serialized = str([item.accepted_answer for item in judge])
+    assert "raw provider prose" not in serialized
+    assert "raw provider instruction" not in serialized
+    assert "unsupported_claim" in serialized
+
+
 def test_preference_candidate_requires_observable_grounding() -> None:
     with pytest.raises(ValidationError, match="grounding evidence"):
         TrainingCandidate(
@@ -253,7 +302,7 @@ def test_training_store_integrity_and_atomic_backup_detect_content_corruption(
         assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
 
     digest = objects.put(candidate.model_dump(mode="json"))
-    object_path = tmp_path / "objects/sha256" / digest[:2] / digest[2:4] / f"{digest}.json.gz"
+    object_path = tmp_path / "objects/sha256" / digest[:2] / digest[2:4] / f"{digest}.json.zst"
     object_path.write_bytes(b"synthetic corruption")
     with pytest.raises(ValueError, match="content integrity"):
         store.verify_integrity()

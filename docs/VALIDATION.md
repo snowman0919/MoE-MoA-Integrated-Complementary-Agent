@@ -3523,3 +3523,38 @@ The isolated self-evolving-runtime validator reported `status=passed` at
 `8590690031b3c3b721ff6ac91b1672ae731888112fd00fb734d45f7f0cfd04ca`.
 This remains isolated synthetic evidence; it is not a live NVIDIA NIM call, a
 real Discord notification, a production weekly window, or release approval.
+
+## MoA Runtime 2.0 local gap closure — 2026-07-22
+
+The development package, FastAPI metadata, and persisted gateway default now
+identify version `2.0.0`. Selective Remote Judge correction now stays within the
+same request: one bounded Executor correction, targeted local Reviewer
+validation, and at most one recheck. A deterministic revise-then-approve case
+delivered only the corrected draft; a repeated revise case suppressed delivery
+after exactly two Judge calls. Reviewer artifacts are present in both initial
+and recheck evidence packages.
+
+The declarative Policy schema now includes per-role `fail_closed`; a low-risk
+Remote Judge outage with a Judge fail-closed policy did not use the Reviewer
+fallback. High-impact generated Skills require Judge validation rather than a
+Frontier substitute. New training objects are real Zstandard frames at the
+specified `.json.zst` content-addressed path, with bounded legacy gzip reads.
+Permitted NVIDIA evaluation traces produce categorical role-specific Judge
+datasets, including only explicitly later-confirmed false approvals or false
+rejections and no verbatim finding/correction prose.
+
+The serialized gate passed with `837 passed` and the existing third-party
+Starlette warning, 82 formatted files, clean Ruff, and strict mypy across 41
+source files. User-systemd verification, every shell script `bash -n`, and
+`git diff --check` exited zero. The checked-in trace audit reported 10/10
+complete sessions, zero incomplete or legacy sessions, and 100.0% mandatory
+field completeness.
+
+The isolated self-evolving-runtime validator reported `status=passed` at
+`/tmp/dgx-moa-v2-gap-closure.3JuQPn/runtime/physical-validation.json` using real
+7-Zip 23.01. The regenerated archive SHA-256 is
+`747720b74f06f00976f1fad3d3f99e912a20fe5d7f7564191713a5b3672af90b`.
+Protected production configuration inspection exposed no values and found
+Telegram configured, Discord unconfigured, and no NVIDIA endpoint/key variable.
+Therefore the live NVIDIA matrix and real Discord delivery gate remain unmet;
+this section is not release approval.

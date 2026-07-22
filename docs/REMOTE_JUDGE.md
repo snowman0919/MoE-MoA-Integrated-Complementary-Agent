@@ -32,12 +32,14 @@ as final drafts. A high-risk streaming request returns a bounded non-streaming
 retry requirement before any model output can escape.
 
 Timeout, rate-limit, and provider failures fall back once to the local Reviewer
-for low/medium risk. High/critical risk fails closed. No Executor/Judge rewrite
-loop is created. Approval permits final delivery. Any other verdict suppresses
-the draft, persists structured correction instructions, and returns a bounded
-correction state; the next Executor turn receives those instructions. Remote
-approval alone is evaluation evidence, not an objective fact or automatic
-gold-training label.
+for low/medium risk. High/critical risk and policy-selected Judge paths fail
+closed. No Executor/Judge rewrite loop is created. Approval permits final
+delivery. `approve_with_edits`, `revise`, and `retry_with_evidence` cause one
+bounded same-request Executor correction followed by targeted local Reviewer
+validation. An Important/Critical or explicitly requested recheck consumes the
+single remaining Judge call. A failed correction or recheck suppresses the
+draft and returns a bounded correction state. Remote approval alone is
+evaluation evidence, not an objective fact or automatic gold-training label.
 
 Physical NVIDIA NIM validation and production enablement remain pending. Do not
 enable the provider until the cases in `docs/VALIDATION.md` cover valid approval,

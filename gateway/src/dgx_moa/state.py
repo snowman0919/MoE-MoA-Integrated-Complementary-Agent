@@ -114,6 +114,7 @@ class SessionState(BaseModel):
     policy_decisions: list[dict[str, Any]] = Field(default_factory=list)
     policy_denied_tools: list[str] = Field(default_factory=list)
     policy_redact_fields: list[str] = Field(default_factory=list)
+    policy_fail_closed_roles: list[str] = Field(default_factory=list)
     completion_evidence: dict[str, str] = Field(default_factory=dict)
     approved_scope: list[str] = Field(default_factory=list)
     last_tool_call: dict[str, Any] | None = None
@@ -147,7 +148,7 @@ class SessionState(BaseModel):
     observability_status: Literal["ok", "degraded"] = "ok"
     observability_degraded: bool = False
     controller_commit: str = "unknown"
-    gateway_version: str = "0.1.0"
+    gateway_version: str = "2.0.0"
     vllm_version: str = "unknown"
     decisions: list[dict[str, Any]] = Field(default_factory=list)
     reasoner_contributions: list[dict[str, Any]] = Field(default_factory=list)

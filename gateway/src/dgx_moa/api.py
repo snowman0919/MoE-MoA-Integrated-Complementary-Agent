@@ -803,7 +803,7 @@ def create_app(
                 await app.state.observation.close()
             await app.state.lifecycle.close()
 
-    app = FastAPI(title="DGX MoA Agent", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="DGX MoA Agent", version="2.0.0", lifespan=lifespan)
 
     @app.exception_handler(HTTPException)
     async def handle_http_exception(request: Request, error: HTTPException) -> JSONResponse:
@@ -2453,7 +2453,112 @@ def create_app(
                 verdict = await request.app.state.controller.judge(state, observation)
                 stage_status["judge"] = "completed"
                 if verdict.get("verdict") != "approve":
-                    raise JudgeCorrectionRequired(str(verdict.get("verdict", "revise")))
+                    correction_verdict = str(verdict.get("verdict", "revise"))
+                    if correction_verdict in {
+                        "approve_with_edits",
+                        "revise",
+                        "retry_with_evidence",
+                    }:
+                        correction_request = dict(prepared)
+                        correction_request["stream"] = False
+                        correction_request["messages"] = [
+                            *prepared.get("messages", []),
+                            assistant_message,
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Apply only the bounded Remote Judge corrections below. "
+                                    "Preserve verified content, do not claim unobserved tests or "
+                                    "tool results, and return a complete corrected final answer.\n"
+                                    + json.dumps(
+                                        {
+                                            "findings": verdict.get("findings", []),
+                                            "required_edits": verdict.get("required_edits", []),
+                                        },
+                                        ensure_ascii=False,
+                                        sort_keys=True,
+                                    )
+                                ),
+                            },
+                        ]
+                        request.app.state.store.event(
+                            state_session_id,
+                            "judge_correction_started",
+                            {"verdict": correction_verdict},
+                        )
+                        active_stage = "executor_total"
+                        correction_started = time.monotonic()
+                        response = await request.app.state.provider.complete(
+                            "executor",
+                            configured.models["executor"],
+                            correction_request,
+                            timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                            stage="judge_correction",
+                        )
+                        token_usage.update(reported_usage(response.get("usage")))
+                        request.app.state.controller.record_invocation(
+                            state,
+                            "executor",
+                            response,
+                            correction_started,
+                            mode="judge_correction",
+                        )
+                        validate_assistant_response(response)
+                        assistant_message = response.get("choices", [{}])[0].get("message", {})
+                        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+                        state.finish_reasons = [str(finish_reason)] if finish_reason else []
+                        state.truncated = finish_reason == "length"
+                        if finish_reason == "length" or assistant_message.get("tool_calls"):
+                            raise JudgeCorrectionRequired(correction_verdict)
+                        request.app.state.controller.record_evidence(
+                            state,
+                            "final_synthesis",
+                            "executor",
+                            {
+                                "finish_reason": finish_reason,
+                                "has_tool_calls": False,
+                                "correction_applied": True,
+                            },
+                            generated_from=state.last_decision_id,
+                        )
+                        active_stage = "reviewer"
+                        corrected_observation = request.app.state.controller.review_observation(
+                            state, response, body.metadata
+                        )
+                        targeted_review = await request.app.state.controller.review(
+                            state, corrected_observation
+                        )
+                        stage_status["reviewer"] = "completed"
+                        if targeted_review.get("status") != "approved":
+                            raise JudgeCorrectionRequired(correction_verdict)
+                        important_correction = any(
+                            finding.get("severity") in {"important", "critical"}
+                            for finding in verdict.get("findings", [])
+                            if isinstance(finding, dict)
+                        )
+                        recheck_needed = bool(
+                            verdict.get("recheck_required") or important_correction
+                        )
+                        if recheck_needed:
+                            active_stage = "judge"
+                            verdict = await request.app.state.controller.judge(
+                                state, corrected_observation
+                            )
+                            stage_status["judge"] = "completed"
+                            if verdict.get("verdict") != "approve":
+                                raise JudgeCorrectionRequired(
+                                    str(verdict.get("verdict", correction_verdict))
+                                )
+                        request.app.state.store.event(
+                            state_session_id,
+                            "judge_correction_completed",
+                            {
+                                "targeted_validation": "approved",
+                                "rechecked": recheck_needed,
+                            },
+                        )
+                    else:
+                        raise JudgeCorrectionRequired(correction_verdict)
             state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
             first_byte_at = time.time()
             request.app.state.store.event(

@@ -221,7 +221,7 @@ class SkillCandidateEvaluation(BaseModel):
     regression_evaluation: bool
     reviewer_inspection: bool
     high_impact: bool = False
-    frontier_review: bool | None = None
+    judge_validation: bool | None = None
     evidence_ids: list[str] = Field(min_length=1, max_length=64)
 
     @property
@@ -232,7 +232,7 @@ class SkillCandidateEvaluation(BaseModel):
             self.regression_evaluation,
             self.reviewer_inspection,
         )
-        return all(required) and (not self.high_impact or self.frontier_review is True)
+        return all(required) and (not self.high_impact or self.judge_validation is True)
 
 
 class SkillPackManifest(BaseModel):
@@ -441,7 +441,7 @@ class SkillRegistry:
                         "historical_replay",
                         "regression_evaluation",
                         "reviewer_inspection",
-                        *(["frontier_review"] if evaluation.high_impact else []),
+                        *(["judge_validation"] if evaluation.high_impact else []),
                     ],
                     validated_at=utc_now(),
                 ),

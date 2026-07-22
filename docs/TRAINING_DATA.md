@@ -2,9 +2,11 @@
 
 The disabled Phase F collector is separate from operational traces. Completed
 trace snapshots may be projected into a dedicated SQLite WAL database and a
-content-addressed gzip JSON object store only when collection is explicitly
+content-addressed Zstandard JSON object store only when collection is explicitly
 enabled. Object writes are bounded, hash-verified, deduplicated and atomically
-renamed. A free-space guard rejects training writes without failing inference.
+renamed at `objects/sha256/ab/cd/<hash>.json.zst`. Legacy gzip objects remain
+readable for migration. A free-space guard rejects training writes without
+failing inference.
 
 Eligibility fails closed unless the trace is explicitly eligible and its
 repository is configured `training_allowed`. Request/user opt-out, repository
@@ -20,6 +22,13 @@ with retained failures produces a repair preference; Frontier prestige alone
 never does. Derived candidates retain the source trace's privacy counters. Exact
 candidate deduplication is transactional; normalized Jaccard near-duplicate
 detection is available for the weekly pipeline.
+
+When external-output training is explicitly permitted, NVIDIA NIM evaluations
+produce separate categorical Judge verdict, finding, correction, escalation,
+and explicitly later-confirmed false-approval/false-rejection candidates. These
+projections retain severity/category and deterministic confirmation metadata,
+not verbatim provider findings or correction prose. Without that explicit
+permission, raw external output remains ineligible.
 
 The disabled admin workflow can inspect a candidate, perform only allowlisted
 review-state transitions, and retrieve the immutable audit history. Approval

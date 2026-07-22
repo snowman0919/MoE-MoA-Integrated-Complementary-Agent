@@ -35,6 +35,8 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 
 ## Branch and deployment
 
+- `dev` now declares package/runtime version `2.0.0`; this is not yet the
+  production version because the live NVIDIA and Discord gates remain unmet.
 - `main` is the reviewed production target and stable recursive control plane.
 - `dev` is the integration branch; recursive experiments must use isolated
   `auto/<layer>/<proposal-id>` worktrees created from `dev`.

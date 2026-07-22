@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import zstandard
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .state import StateStore
@@ -295,15 +296,15 @@ class ContentStore:
         if len(raw) > self.maximum_bytes:
             raise ValueError("content object exceeds size limit")
         digest = hashlib.sha256(raw).hexdigest()
-        path = self.root / "sha256" / digest[:2] / digest[2:4] / f"{digest}.json.gz"
+        path = self.root / "sha256" / digest[:2] / digest[2:4] / f"{digest}.json.zst"
         if path.exists():
             return digest
         path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=".object-", suffix=".tmp")
         os.close(descriptor)
         try:
-            with gzip.open(temporary, "wb") as stream:
-                stream.write(raw)
+            with open(temporary, "wb") as stream:
+                stream.write(zstandard.ZstdCompressor(level=3).compress(raw))
             with open(temporary, "rb") as stream:
                 os.fsync(stream.fileno())
             os.replace(temporary, path)
@@ -315,9 +316,20 @@ class ContentStore:
     def get(self, digest: str) -> Any:
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise KeyError("invalid content digest")
-        path = self.root / "sha256" / digest[:2] / digest[2:4] / f"{digest}.json.gz"
-        with gzip.open(path, "rb") as stream:
-            raw = stream.read()
+        directory = self.root / "sha256" / digest[:2] / digest[2:4]
+        path = directory / f"{digest}.json.zst"
+        if path.exists():
+            try:
+                raw = zstandard.ZstdDecompressor().decompress(
+                    path.read_bytes(), max_output_size=self.maximum_bytes
+                )
+            except zstandard.ZstdError as error:
+                raise ValueError("content object decompression failed") from error
+        else:
+            with gzip.open(directory / f"{digest}.json.gz", "rb") as stream:
+                raw = stream.read(self.maximum_bytes + 1)
+        if len(raw) > self.maximum_bytes:
+            raise ValueError("content object exceeds size limit")
         if hashlib.sha256(raw).hexdigest() != digest:
             raise ValueError("content object hash mismatch")
         return json.loads(raw)
@@ -325,8 +337,9 @@ class ContentStore:
     def delete(self, digest: str) -> None:
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise KeyError("invalid content digest")
-        path = self.root / "sha256" / digest[:2] / digest[2:4] / f"{digest}.json.gz"
-        path.unlink(missing_ok=True)
+        directory = self.root / "sha256" / digest[:2] / digest[2:4]
+        (directory / f"{digest}.json.zst").unlink(missing_ok=True)
+        (directory / f"{digest}.json.gz").unlink(missing_ok=True)
 
 
 class TrainingStore:
@@ -954,6 +967,68 @@ def candidates_from_trace(
                 }
             )
         )
+    for evaluation in trace.get("evaluations", []):
+        if not isinstance(evaluation, dict) or evaluation.get("evaluator_type") != "nvidia_nim":
+            continue
+        result = evaluation.get("result")
+        if not isinstance(result, dict) or not result.get("verdict"):
+            continue
+        findings = result.get("findings", [])
+        edits = result.get("required_edits", [])
+        compact_result = {
+            "objective": trace.get("objective", ""),
+            "constraints": trace.get("completion_evidence", {}),
+            "evidence_package": {
+                "evidence_ids": evaluation.get("evidence_references", []),
+                "requirement_ids": evaluation.get("requirement_ids", []),
+            },
+            "candidate_answer": trace.get("completion_evidence", {}),
+            "expected_verdict": result.get("verdict"),
+            "expected_findings": [
+                {
+                    "severity": item.get("severity"),
+                    "category": item.get("category"),
+                }
+                for item in findings
+                if isinstance(item, dict)
+            ],
+            "actual_downstream_outcome": {
+                "final_status": trace.get("final_status"),
+                "review_outcome": trace.get("review_outcome", {}),
+            },
+            "deterministic_confirmation": evaluation.get("later_confirmation"),
+            "criteria": result.get("criteria", {}),
+            "required_edit_operations": [
+                item.get("operation") for item in edits if isinstance(item, dict)
+            ],
+        }
+        cleaned = sanitize(compact_result)
+        targets = ["verdicts"]
+        if findings:
+            targets.append("findings")
+        if edits:
+            targets.append("corrections")
+        if result.get("verdict") in {"escalate", "reject"}:
+            targets.append("escalations")
+        confirmation = evaluation.get("later_confirmation")
+        if confirmation in {"false_approval", "false_rejection"}:
+            targets.append(str(confirmation).replace("_", "-") + "s")
+        for target in targets:
+            candidates.append(
+                base.model_copy(
+                    update={
+                        "candidate_id": f"cand_{uuid.uuid4().hex}",
+                        "candidate_type": "judge",
+                        "role_target": "judge",
+                        "accepted_answer": cleaned.value,
+                        "rejected_answers": [],
+                        "quality_labels": base.quality_labels | {"judge_dataset": target},
+                        "privacy_labels": privacy_labels(cleaned),
+                        "license_labels": {"external_output_permitted": True},
+                        "transformations": [*base.transformations, "judge_categorical_projection"],
+                    }
+                )
+            )
     loop = trace.get("engineering_loop")
     if isinstance(loop, dict) and loop:
         cleaned = sanitize(loop)

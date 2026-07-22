@@ -35,6 +35,15 @@ from fastapi.testclient import TestClient
 from .conftest import StubProvider
 
 
+def test_runtime_version_is_2_0(settings: Settings) -> None:
+    from dgx_moa import __version__
+
+    app = create_app(settings)
+
+    assert __version__ == "2.0.0"
+    assert app.version == "2.0.0"
+
+
 @pytest.fixture(autouse=True)
 def block_real_lifecycle_and_profile_commands(monkeypatch: pytest.MonkeyPatch) -> None:
     def tripwire(*args: object, **kwargs: object) -> None:
@@ -216,8 +225,12 @@ def test_selective_remote_judge_gates_final_delivery(
         )
 
     assert response.status_code == expected_status
-    assert provider.calls == ["executor", "reviewer"]
-    assert len(remote.packages) == 1
+    assert provider.calls == (
+        ["executor", "reviewer"]
+        if judge_value == "approve"
+        else ["executor", "reviewer", "executor", "reviewer"]
+    )
+    assert len(remote.packages) == (1 if judge_value == "approve" else 2)
     state = app.state.store.get(f"judge-{judge_value}")
     assert state is not None
     assert state.judge_status == judge_value
@@ -226,6 +239,65 @@ def test_selective_remote_judge_gates_final_delivery(
     else:
         assert response.json()["error"]["type"] == "judge_correction_required"
         assert state.phase == Phase.CORRECTION
+
+
+def test_selective_remote_judge_correction_is_validated_and_rechecked(
+    settings: Settings,
+) -> None:
+    class CorrectingProvider(StubProvider):
+        async def complete(self, role, model, request, **options):  # type: ignore[no-untyped-def]
+            if role != "executor":
+                return await super().complete(role, model, request, **options)
+            self.calls.append(role)
+            self.requests.append(request)
+            self.call_options.append(options)
+            corrected = options.get("stage") == "judge_correction"
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "corrected verified result" if corrected else "draft claim",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+
+    app = create_app(settings)
+    provider = CorrectingProvider()
+    remote = MockJudgeProvider([remote_verdict("revise"), remote_verdict("approve")])
+    with TestClient(app) as client:
+        app.state.provider = provider
+        app.state.controller.provider = provider
+        app.state.remote_judge = remote
+        app.state.remote_judge_available = True
+        app.state.controller.remote_judge = remote
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "judge-corrected",
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "verify security change"}],
+                "metadata": {"authentication": True},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "corrected verified result"
+    assert provider.calls == ["executor", "reviewer", "executor", "reviewer"]
+    assert len(remote.packages) == 2
+    assert "corrected verified result" in remote.packages[-1].executor_draft
+    assert remote.packages[0].reviewer_findings[-1]["output"]["status"] == "approved"
+    assert len(remote.packages[-1].reviewer_findings) == 2
+    correction_messages = provider.requests[2]["messages"]
+    assert "state the verified result only" in correction_messages[-1]["content"]
+    state = app.state.store.get("judge-corrected")
+    assert state is not None
+    assert state.judge_status == "approve"
 
 
 def test_selective_remote_judge_rejects_unbuffered_high_risk_stream(

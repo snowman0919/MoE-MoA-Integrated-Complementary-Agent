@@ -131,13 +131,13 @@ class DisabledJudgeProvider(JudgeProvider):
 
 
 class MockJudgeProvider(JudgeProvider):
-    def __init__(self, verdict: RemoteJudgeVerdict):
-        self.verdict = verdict
+    def __init__(self, verdict: RemoteJudgeVerdict | list[RemoteJudgeVerdict]):
+        self.verdicts = list(verdict) if isinstance(verdict, list) else [verdict]
         self.packages: list[JudgeEvidencePackage] = []
 
     async def judge(self, package: JudgeEvidencePackage) -> RemoteJudgeVerdict:
         self.packages.append(package.sanitized())
-        return self.verdict
+        return self.verdicts[min(len(self.packages) - 1, len(self.verdicts) - 1)]
 
     async def available(self) -> bool:
         return True

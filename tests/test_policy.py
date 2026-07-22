@@ -25,6 +25,7 @@ def policy_set() -> PolicySet:
                     },
                     "require": {"reviewer": True, "frontier": True},
                     "redact": ["tool.credentials"],
+                    "fail_closed": {"reviewer": True, "judge": True},
                 },
                 {
                     "id": "duplicate-failure",
@@ -62,6 +63,7 @@ def test_policy_engine_traces_versioned_aggregated_decision() -> None:
     assert decision.require == {"reviewer": True, "frontier": True}
     assert decision.limits["tool_calls"] == 10
     assert decision.approvals_required == ["operator"]
+    assert decision.fail_closed == {"reviewer": True, "judge": True}
     assert len(decision.policy_hash) == 64
 
 
@@ -147,6 +149,8 @@ def test_controller_applies_policy_roles_limits_and_trace(tmp_path) -> None:  # 
     assert state.route == "escalation"
     assert state.engineering_loop is not None
     assert state.policy_decisions[-1]["policy_version"] == policies.version
+    assert state.policy_fail_closed_roles == ["reviewer", "judge"]
+    assert state.review_fail_closed is True
     assert any(node["kind"] == "policy_decision" for node in state.evidence_nodes)
 
 

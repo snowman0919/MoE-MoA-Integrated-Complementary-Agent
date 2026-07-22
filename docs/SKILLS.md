@@ -56,7 +56,7 @@ architecture decisions. Drafts always start experimental and unvalidated.
 Candidate evaluation is injected as an isolated callback so the registry never
 grants tools or mutates a host. A passing evaluation requires isolated
 validation, historical replay, regression evaluation, and Reviewer inspection;
-high-impact candidates also require a successful Frontier review. The result is
+high-impact candidates also require a successful Remote Judge validation. The result is
 a new immutable candidate version. Even a passed candidate remains
 experimental until the existing explicit approval-based promotion gate is used.
 

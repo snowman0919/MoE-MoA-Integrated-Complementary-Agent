@@ -1164,6 +1164,31 @@ async def test_remote_judge_receives_bounded_evidence_and_owns_no_tools(
     assert stub_provider.calls == []
 
 
+@pytest.mark.asyncio
+async def test_policy_can_fail_closed_on_low_risk_remote_judge_outage(
+    settings, stub_provider: StubProvider
+) -> None:
+    from dgx_moa.remote_judge import DisabledJudgeProvider, JudgeUnavailable
+
+    state = SessionState(
+        session_id="policy-judge-fail-closed",
+        current_request_id="req-policy-judge",
+        objective="Validate a low-risk result",
+        policy_fail_closed_roles=["judge"],
+    )
+    controller = Controller(
+        settings,
+        StateStore(settings.state_db),
+        stub_provider,
+        remote_judge=DisabledJudgeProvider(),
+    )
+
+    with pytest.raises(JudgeUnavailable, match="disabled"):
+        await controller.judge(state, "executor draft")
+
+    assert stub_provider.calls == []
+
+
 def test_metadata_routes_heavy_and_gates_completion(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
     state = SessionState(
