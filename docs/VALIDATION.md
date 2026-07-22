@@ -3298,3 +3298,25 @@ The temporary synthetic evidence root was
 `/tmp/dgx-moa-v2-release-cHXe8L`. No production data was read or packaged.
 Production-disabled gates remain disabled unless separately documented as
 physically enabled.
+
+## MoA Runtime v2.0 production promotion — 2026-07-22
+
+PR `#42` merged the validated release evidence as `main@14fbd8f`. The production
+worktree fast-forwarded from `ec389c5` with its existing untracked runtime
+database preserved and no tracked-file changes. Restarting only
+`dgx-moa-gateway.service` exercised the selected exact Executor stop/start. The
+Executor entered activation at `13:26:42 KST`, exposed trustworthy shard counts
+through `10/10`, became active at `13:42:18 KST`, and restored the resident
+target with `67956502528` bytes MemAvailable at its readiness check. The Phase 3
+65,536 context, one sequence, 1,700,000,000 KV bytes, 0.5 GPU utilization, and
+MARLIN command remained unchanged.
+
+Authenticated health, model-catalog, and ready checks passed. One primary
+`dgx-moa` request sent immediately after port readiness returned `503` before
+the lifecycle state reached ready; after the service and resident target became
+active, the same production request returned exact `READY` with
+`finish_reason=stop`. Gateway, Executor, and resident target were all active;
+both services reported exit status zero and zero restarts. Model endpoints
+remained loopback-only and the authenticated gateway remained the only tailnet
+listener. Production-disabled Loop Engineering, Skills, policy, training,
+weekly, replay-admin, and automatic-promotion gates were not enabled.
