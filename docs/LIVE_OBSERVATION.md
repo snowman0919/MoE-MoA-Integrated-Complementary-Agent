@@ -40,6 +40,12 @@ An isolated 2026-07-22 physical check sent Discord- and Telegram-shaped requests
 through a real loopback HTTP server, including thread targets, safe payload
 projection, HTTP 429, connection outage, and non-blocking failure isolation.
 Separate checks passed allowlist denial, scoped nonce, expiration, audit, and
-idempotent replay. The runtime has not sent a message to an actual Discord or
-Telegram platform account; real thread lifecycle and platform identities remain
-the external physical-validation gate.
+idempotent replay.
+
+The real Telegram bot `@kodex9_AI_observer_bot` then authenticated, discovered
+one user-initiated private target, and accepted a safe validation event. Its
+token and target live only under `/home/kotori9/.config/dgx-moa/` and the ignored
+0600 production environment; no credential or chat ID is tracked or documented.
+Production Telegram observation is enabled with controls disabled. A real core
+request produced three sent events, zero drops, and zero Telegram errors.
+Discord still has only isolated transport evidence and remains disabled.
