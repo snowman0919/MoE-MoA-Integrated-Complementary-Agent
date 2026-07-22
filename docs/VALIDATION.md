@@ -13,7 +13,20 @@ external processors even when the gateway listener is tailnet-only.
 The focused observation/config run passed 36 tests. The full regression run
 passed 803 tests with the existing third-party Starlette TestClient deprecation
 warning. Ruff reported no issues, and strict mypy reported no issues in 37
-source files. No production provider delivery is claimed by this local result.
+source files.
+
+Production main `cda93203d8ec7568cd35b6eb776e66b7e4c5ab4f` was then deployed with
+the protected runtime override enabling prompt and structured Reasoner artifact
+delivery with a 3,000-character content bound. The first request issued
+immediately after lifecycle recovery returned `503`; the retry completed with
+HTTP 200 and `VALIDATION_OK` in 14,367.043 ms. Its stored `request_received`
+event contained a 67-character prompt, and `reasoner_completed` contained
+problem interpretation, two reasoning-summary steps, risks, unknowns, and
+recommended actions. Provider metrics after the batch reported three events
+sent, zero dropped, and zero Telegram errors. Gateway, Executor, and the
+resident target were all active after the selected exact Executor stop/start
+fallback; the Executor retained context 65,536, one sequence, 1,700,000,000 KV
+bytes, `gpu_memory_utilization=0.5`, and MARLIN.
 
 ## Governed data-path production deployment — 2026-07-22
 
