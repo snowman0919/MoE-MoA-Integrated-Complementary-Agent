@@ -9,7 +9,13 @@ DGX_MOA_REMOTE_JUDGE='{"enabled":true,"provider":"nvidia_nim","mode":"selective"
 Set `NVIDIA_NIM_BASE_URL` and `NVIDIA_API_KEY` outside Git. Never print the
 effective object or environment. The provider calls only the configured HTTPS
 OpenAI-compatible `/v1/models` and `/v1/chat/completions` routes. NVIDIA details
-do not enter the controller.
+do not enter the controller. The endpoint accepts either the service root
+(`https://integrate.api.nvidia.com`) or NVIDIA's documented OpenAI base URL
+(`https://integrate.api.nvidia.com/v1`) and normalizes both to one `/v1`.
+
+The current official references are NVIDIA's
+[GLM-5.2 inference API](https://docs.api.nvidia.com/nim/reference/z-ai-glm-5.2-infer)
+and [NIM LLM API reference](https://docs.nvidia.com/nim/large-language-models/latest/api-reference.html).
 
 Startup construction rejects unresolved endpoint variables. Availability is a
 credentialed, five-second-bounded model-catalog probe. `/healthz` and `/readyz`

@@ -166,6 +166,10 @@ class NvidiaNimJudgeProvider(JudgeProvider):
         self._usage: OrderedDict[str, dict[str, int]] = OrderedDict()
         self._call_lock = asyncio.Lock()
 
+    def _url(self, resource: str) -> str:
+        base = self.endpoint if self.endpoint.endswith("/v1") else f"{self.endpoint}/v1"
+        return f"{base}/{resource.lstrip('/')}"
+
     def _headers(self) -> dict[str, str]:
         api_key = os.getenv(self.api_key_env)
         if not api_key:
@@ -190,7 +194,7 @@ class NvidiaNimJudgeProvider(JudgeProvider):
             async with httpx.AsyncClient(
                 transport=self.transport, timeout=self.timeout_seconds
             ) as client:
-                response = await client.get(f"{self.endpoint}/v1/models", headers=self._headers())
+                response = await client.get(self._url("models"), headers=self._headers())
                 response.raise_for_status()
             return True
         except (httpx.HTTPError, JudgeUnavailable):
@@ -229,7 +233,7 @@ class NvidiaNimJudgeProvider(JudgeProvider):
                     transport=self.transport, timeout=self.timeout_seconds
                 ) as client:
                     response = await client.post(
-                        f"{self.endpoint}/v1/chat/completions",
+                        self._url("chat/completions"),
                         headers=self._headers(),
                         json=body,
                     )

@@ -3482,3 +3482,13 @@ The serialized gate passed with `832 passed`, the existing Starlette warning,
 81 formatted files, clean Ruff and strict mypy across 41 source files, clean
 systemd/shell/diff checks, and 10/10 complete traces with 100.0% mandatory-field
 completeness. This is unit/mock evidence; no live NIM token accounting occurred.
+
+## NVIDIA endpoint contract review — 2026-07-22
+
+The current official NVIDIA GLM-5.2 reference identifies model
+`z-ai/glm-5.2` and the OpenAI-compatible endpoint
+`https://integrate.api.nvidia.com/v1/chat/completions`; the model reference also
+lists structured output support. The provider now normalizes both a service-root
+configuration and NVIDIA's documented `/v1` base URL to exactly one `/v1`.
+Focused transport, Ruff, and strict mypy checks passed. This documentation and
+mock transport check is not a credentialed live-provider validation.

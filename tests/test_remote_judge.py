@@ -53,7 +53,7 @@ async def test_nim_judge_sends_redacted_bounded_strict_package(monkeypatch) -> N
 
     monkeypatch.setenv("TEST_NVIDIA_KEY", "synthetic-secret")
     provider = NvidiaNimJudgeProvider(
-        endpoint="https://nim.invalid",
+        endpoint="https://nim.invalid/v1",
         api_key_env="TEST_NVIDIA_KEY",
         transport=httpx.MockTransport(respond),
     )
@@ -69,6 +69,7 @@ async def test_nim_judge_sends_redacted_bounded_strict_package(monkeypatch) -> N
     body = json.loads(requests[0].content)
     assert "tools" not in body
     assert body["model"] == "z-ai/glm-5.2"
+    assert requests[0].url == "https://nim.invalid/v1/chat/completions"
     assert body["response_format"]["json_schema"]["strict"] is True
     assert "alice@example.invalid" not in body["messages"][1]["content"]
     assert "private-value" not in body["messages"][1]["content"]
