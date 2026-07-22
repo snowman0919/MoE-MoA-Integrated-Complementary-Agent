@@ -211,12 +211,21 @@ class NvidiaNimJudgeProvider(JudgeProvider):
                     "content": (
                         "You are an independent read-only engineering quality Judge. "
                         "Use only the supplied evidence. Return one JSON object matching "
-                        "the schema."
+                        "the schema; do not include hidden reasoning or prose outside it. "
+                        "Approve only when every acceptance criterion is supported and no "
+                        "open failure contradicts the draft. For approve, return no findings, "
+                        "no required edits, and no recheck. For every non-approval caused by "
+                        "an unsupported claim, failed criterion, or open failure, return at "
+                        "least one evidence-linked finding and one bounded required edit; do "
+                        "not replace the final response wholesale. Request a recheck only "
+                        "when an Important or Critical correction must be validated."
                     ),
                 },
                 {"role": "user", "content": evidence.model_dump_json()},
             ],
             "temperature": 0,
+            "max_tokens": 1024,
+            "seed": 0,
             "stream": False,
             "response_format": {
                 "type": "json_schema",

@@ -53,7 +53,8 @@ compatibility fixes were promoted through reviewed `dev`-to-`main` PRs.
 `dev` also contains disabled, unit-tested bounded Loop Engineering, runtime
 Skills and canaries, a separate Runtime Knowledge registry, NVIDIA NIM GLM-5.2
 Remote Judge transport, declarative policy, typed Evidence Graph/replay, safe
-Discord/Telegram observation, privacy-filtered training candidates, and Seoul
+Telegram observation (with an optional disabled Discord compatibility transport),
+privacy-filtered training candidates, and Seoul
 weekly 7z packaging/retention workflows. These are not production capabilities
 until the physical client/provider/archive gates in `docs/VALIDATION.md` pass.
 

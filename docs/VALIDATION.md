@@ -3598,4 +3598,75 @@ The isolated validator reported `status=passed` at
 `/tmp/dgx-moa-v2-judge-policy.CpR521/runtime/physical-validation.json`; its real
 7-Zip 23.01 archive SHA-256 is
 `cbc20c4347d01002d4fe400cd58d26a916ba074eb8ac8604db4fbb7a1dc10ca7`.
-Live NVIDIA and Discord evidence remains unavailable.
+Live NVIDIA evidence remains unavailable. Discord was subsequently removed from
+the production release scope by explicit operator direction; the already
+validated production Telegram path is the sole selected observation provider.
+
+## Production observation scope and live NIM credential check — 2026-07-22
+
+The operator explicitly discarded the Discord webhook requirement. Production
+observation therefore remains Telegram-only with controls disabled; Discord is
+unconfigured and is not a release gate. This changes scope, not evidence: the
+existing isolated Discord transport tests remain compatibility coverage, while
+the measured production Telegram identity, target, safe-send, and core-request
+evidence remains authoritative.
+
+A protected 0600 local `nim_api` credential was supplied for the live NVIDIA
+matrix. An initial operator-side runner incorrectly passed the complete
+`NVIDIA_API_KEY=...` assignment as the bearer value and received HTTP 401. The
+file was then parsed as an environment assignment; its value matched NVIDIA's
+documented `nvapi-...` contract, model-catalog authentication succeeded, and
+real GLM-5.2 verdicts were returned. No credential value was printed, copied to
+Git, or installed in production.
+
+The first full run stopped at the bounded-correction fixture because GLM-5.2
+returned `reject` with one required edit and `recheck_required=true` for an
+unsupported production-health claim. The fixture incorrectly allowed only
+`approve_with_edits` or `revise`, even though the required strict schema and
+specification also allow a correction-bearing `reject`. A focused repeat
+confirmed high-confidence rejection, failed grounding/completeness, passing
+test consistency, three findings, one required edit, and 709 total tokens. The
+validator expectation was corrected to accept the bounded non-approval verdict
+family only when required edits are present. This is partial live-provider
+evidence until the corrected full matrix passes.
+
+All credential-independent gates were rerun after the observation-scope change:
+
+- `uv run pytest -q`: `839 passed`, with the existing third-party Starlette
+  deprecation warning.
+- Ruff format/check and strict mypy: clean across 82 formatted files and 41
+  source files.
+- User-systemd verification, every shell script `bash -n`, and
+  `git diff --check`: clean.
+- Trace completeness: 10/10 sessions, zero incomplete or legacy sessions, and
+  100.0% mandatory-field completeness.
+- The isolated self-evolving-runtime validator reported `status=passed` at
+  `/tmp/dgx-moa-v2-final.2WwWd4/runtime/physical-validation.json` using real
+  7-Zip 23.01. Its regenerated archive SHA-256 is
+  `dd9b96960a165b86e4197dbf1fd44b028592b5da85d68506d686456cb9efcd0d`.
+
+These results isolate the remaining promotion blocker to completion of the
+corrected live Judge matrix.
+
+Subsequent live runs authenticated consistently and produced the expected
+individual outcomes across attempts: grounded evidence was approved; an
+unsupported production claim, a failed test reported as success, and a missing
+acceptance criterion were not approved; the unsupported health claim produced a
+bounded correction; and the minimal corrected draft was approved with all seven
+criteria passing, zero findings, zero edits, and 268 total tokens. The provider
+prompt was tightened to require evidence-linked findings and bounded edits for
+non-approval, forbid hidden reasoning/prose outside the schema, and limit
+rechecks to Important/Critical corrections. Requests now set `max_tokens=1024`
+and best-effort deterministic `seed=0`; focused mock/unit coverage verifies both
+parameters.
+
+The sustained gate still failed. Multiple calls exceeded 120 seconds twice and
+correctly surfaced `JudgeTimeout`; the latest checkpoint at
+`/tmp/dgx-moa-live-nim.U0bewF/validation.json` recorded
+`approve_valid_response` before the next case timed out. Other attempts reached
+the correction or corrected-recheck assertion but did not complete the entire
+matrix in one run. The validator now writes an atomic, sanitized checkpoint
+after every completed case so provider failures cannot erase measured progress.
+No production credential was installed, Remote Judge remains disabled, and
+`main`/production promotion remains blocked until one complete live matrix
+passes under the specified 120-second timeout and one-retry contract.

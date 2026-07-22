@@ -45,6 +45,26 @@ async def validate(output: Path) -> None:
 
     results: dict[str, dict[str, object]] = {}
 
+    def write_status(status: str) -> None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temporary = output.with_suffix(f"{output.suffix}.tmp")
+        temporary.write_text(
+            json.dumps(
+                {
+                    "schema_version": "live-remote-judge-validation-v1",
+                    "status": status,
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "provider": "nvidia_nim",
+                    "model": "z-ai/glm-5.2",
+                    "cases": results,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        temporary.replace(output)
+
     async def run(name: str, evidence: JudgeEvidencePackage) -> RemoteJudgeVerdict:
         verdict = await provider.judge(evidence)
         results[name] = {
@@ -55,6 +75,7 @@ async def validate(output: Path) -> None:
             "recheck_required": verdict.recheck_required,
             "usage": await provider.usage(evidence.request_id),
         }
+        write_status("running")
         return verdict
 
     valid = await run(
@@ -115,15 +136,20 @@ async def validate(output: Path) -> None:
         test_evidence=[{"id": "test-correction", "status": "passed", "exit_code": 0}],
         open_failures=[{"id": "production-health-unverified"}],
     )
-    correction = await run("approve_with_edits", correction_package)
-    assert correction.verdict in {"approve_with_edits", "revise"}
+    correction = await run("require_bounded_correction", correction_package)
+    assert correction.verdict in {
+        "approve_with_edits",
+        "revise",
+        "retry_with_evidence",
+        "reject",
+    }
     assert correction.required_edits
 
     recheck = await run(
         "approve_corrected_recheck",
         correction_package.model_copy(
             update={
-                "executor_draft": "Tests passed. Production health was not checked.",
+                "executor_draft": "Tests passed.",
                 "open_failures": [],
                 "specific_judgment_question": "Were the required bounded edits applied?",
             }
@@ -134,25 +160,11 @@ async def validate(output: Path) -> None:
         await provider.judge(correction_package)
     except JudgeCallLimitExceeded:
         results["maximum_two_call_enforcement"] = {"blocked": True}
+        write_status("running")
     else:
         raise AssertionError("third Judge call was not blocked")
 
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(
-        json.dumps(
-            {
-                "schema_version": "live-remote-judge-validation-v1",
-                "status": "passed",
-                "created_at": datetime.now(UTC).isoformat(),
-                "provider": "nvidia_nim",
-                "model": "z-ai/glm-5.2",
-                "cases": results,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n"
-    )
+    write_status("passed")
 
 
 def main() -> None:

@@ -69,6 +69,9 @@ async def test_nim_judge_sends_redacted_bounded_strict_package(monkeypatch) -> N
     body = json.loads(requests[0].content)
     assert "tools" not in body
     assert body["model"] == "z-ai/glm-5.2"
+    assert body["max_tokens"] == 1024
+    assert body["seed"] == 0
+    assert "one bounded required edit" in body["messages"][0]["content"]
     assert requests[0].url == "https://nim.invalid/v1/chat/completions"
     assert body["response_format"]["json_schema"]["strict"] is True
     assert "alice@example.invalid" not in body["messages"][1]["content"]
