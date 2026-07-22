@@ -282,6 +282,7 @@ def trace_record(
                 f"{item.get('knowledge_id')}@{item.get('knowledge_version')}"
                 for item in state.knowledge_selections
             ],
+            "prompt_versions": state.prompt_versions,
             "engineering_loop_id": state.engineering_loop.loop_id if state.engineering_loop else "",
         },
         "verified_state": state.verified_facts[-8:],

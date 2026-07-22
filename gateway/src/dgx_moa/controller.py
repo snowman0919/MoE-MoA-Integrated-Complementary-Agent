@@ -1497,7 +1497,12 @@ class Controller:
                 "calls in prose or Markdown fences."
             )
         )
-        registered_policy = self.prompts.active_template(role) if self.prompts else None
+        prompt_artifact = self.prompts.active_artifact(role) if self.prompts else None
+        registered_policy = (
+            str(prompt_artifact.payload["template"]) if prompt_artifact is not None else None
+        )
+        if prompt_artifact is not None:
+            state.prompt_versions[role] = f"{prompt_artifact.artifact_id}@{prompt_artifact.version}"
         return "\n\n".join(
             (
                 "IMMUTABLE ROLE POLICY\n"
