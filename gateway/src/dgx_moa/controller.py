@@ -2567,7 +2567,7 @@ class Controller:
         async with self._review_lock:
             owned_guard = False
             guard_transition_id: str | None = None
-            lifecycle_store = self.lifecycle_store
+            lifecycle_store = self.lifecycle_store if self.specialists is None else None
             if lifecycle_store is not None:
                 record = lifecycle_store.get("reviewer")
                 if record.evaluation_guard and not guard_already_owned:

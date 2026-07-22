@@ -24,7 +24,7 @@ from dgx_moa.lifecycle import (
 from dgx_moa.remote_judge import MockJudgeProvider, RemoteJudgeVerdict
 from dgx_moa.replay import ReplaySnapshot
 from dgx_moa.schemas import ChatRequest, ResponsesRequest
-from dgx_moa.specialists import MockPlannerProvider
+from dgx_moa.specialists import MockPlannerProvider, MockReviewerProvider
 from dgx_moa.state import Phase, SessionState
 from dgx_moa.streaming import forward_sse as unclosed_forward_sse
 from dgx_moa.training import TrainingCandidate
@@ -6407,6 +6407,61 @@ def test_loop_completion_closes_after_pre_synthesis_review(
     assert state.final_status == "completed"
     assert state.engineering_loop.termination_reason == "SUCCESS"
     assert state.completion_evidence == {"tests pass": "exit 0"}
+
+
+def test_remote_reviewer_does_not_own_local_evaluation_guard_during_ready_transition(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "specialist_routing": {
+                "enabled": True,
+                "provider": "opencode_go",
+                "endpoint": "https://opencode.invalid",
+            }
+        }
+    )
+    app = create_app(controlled)
+    remote = MockReviewerProvider(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps({"status": "approved", "findings": []}),
+                    },
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+    )
+    original_complete = remote.complete
+
+    async def complete_during_ready_transition(request, *, timeout_seconds):  # type: ignore[no-untyped-def]
+        app.state.lifecycle_store.recover_state("reviewer", "ready")
+        return await original_complete(request, timeout_seconds=timeout_seconds)
+
+    remote.complete = complete_during_ready_transition  # type: ignore[method-assign]
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.specialists.remote["reviewer"] = remote
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "review this change"}],
+                "metadata": {"diff_summary": "bounded diff"},
+            },
+        )
+        state = app.state.store.get(response.headers["X-Session-ID"])
+
+    assert response.status_code == 200
+    assert state is not None and state.review_status == "approved"
+    assert state.specialist_routing[-1]["selected_provider"] == "remote"
+    assert app.state.lifecycle_store.get("reviewer").evaluation_guard is False
 
 
 def test_timeout_and_http_500_mapping(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
