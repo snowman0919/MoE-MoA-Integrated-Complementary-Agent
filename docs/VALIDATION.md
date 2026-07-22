@@ -3771,3 +3771,22 @@ seconds. Throughout these Planner and Reviewer checks, the gateway, Executor,
 and Reasoner remained ready; no current request changed providers after
 dispatch. The final automated gate contains `847 passed`, clean Ruff, and clean
 strict mypy across 41 source files.
+
+## MoA Runtime v2.0 completion audit rerun — 2026-07-22
+
+The post-deployment completion audit reran `uv run pytest -q`: `847 passed`
+with the existing third-party Starlette TestClient deprecation warning. The
+isolated `scripts/validate-self-evolving-runtime.py` run used real 7-Zip 23.01
+and reported `status=passed`; its regenerated archive SHA-256 was
+`1de6b4fb91cc64cd60a99c758da14a657f1865b364a0ee27803a2a9ed8006e3c`.
+
+Protected production configuration inspection exposed no secret values. It
+confirmed adaptive lifecycle, OpenCode Go Remote Judge and specialist routing,
+and Telegram observation enabled; Loop Engineering, Runtime Skills, Runtime
+Knowledge, runtime evolution, declarative policy, training collection, weekly
+jobs, retention apply, replay administration, and observation controls remain
+disabled. Gateway, Executor, Planner, and Reviewer units were active, `/readyz`
+was ready, all three local model services plus the external Reasoner were ready,
+and the Remote Judge reported available. Consequently the OpenCode provider
+slice is production-complete, but the full self-evolving-runtime objective is
+not complete until its remaining documented physical production gates pass.
