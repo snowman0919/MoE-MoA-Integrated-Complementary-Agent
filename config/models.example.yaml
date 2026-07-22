@@ -88,6 +88,7 @@ gateway:
     package_schedule: "0 2 * * 1"
     package_root: data/weekly-packages
     archive_registry: data/archive-registry/weekly.db
+    minimum_free_bytes: 10000000000
     retention:
       raw_operational_days: 30
       sanitized_candidate_days: 90

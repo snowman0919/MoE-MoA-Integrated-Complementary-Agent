@@ -3918,3 +3918,32 @@ probe. A final authenticated `dgx-moa-fast` inference returned exact
 `DEPLOY_READY`. `/readyz` reported the resident profile ready with Executor,
 Reviewer, and Reasoner ready, Planner intentionally stopped, and the separate
 Remote Judge available.
+
+## Policy trace and Weekly storage audit — 2026-07-22
+
+PR `#56` fixed the pre-model Policy-block trace boundary. Production request
+`prod-policy-trace-145d1ce` returned HTTP 403 with `approval_required`, Loop
+termination `PERMISSION_REQUIRED`, zero agent decisions and invocations, a
+persisted `route_selected` event, and no missing trace fields. Deployment
+`main@145d1ce` restored the unchanged Executor baseline through 10/10 shards and
+the real readiness probe, then restored Reviewer through 4/4 shards and its
+readiness probe. Gateway, Executor, Reviewer, and resident target were active.
+
+The completion audit also found that Training enforced its 10 GB reserve while
+Weekly archive staging did not, and the production scheduler supplied placeholder
+registry versions. The fix adds the same configurable reserve before archive
+staging, content-derived SHA-256 versions for Skill, Knowledge, Prompt, Policy,
+and Routing state, exact model/Judge configuration in idempotency, concrete
+schema versions, and measured candidate analytics for the Runtime Improvement
+report.
+
+The isolated current-code run at
+`/dev/shm/dgx-moa-weekly-audit.iO2kWt/run/physical-validation.json` has SHA-256
+`d4d970925477b6750cf8bac1e88dc7fb395ad3967c8880ff96e1005601c2bbf2` and
+`status=passed`. It used real 7-Zip 23.01, verified and regenerated archive
+SHA-256 `244cf964bb36dee3ee4da91ab7f8e82dc1cce611644c3a9bb38eb03eaa7e5d79`,
+and rejected a deliberately impossible Weekly reserve before staging. The full
+suite passed `853 passed`; Ruff, strict mypy over 41 source files, shell syntax,
+systemd verification, and diff checks were clean. Production Training and
+Weekly jobs remain disabled because only 1.3 GB is free against the 10 GB
+reserve; no production data was collected or packaged.

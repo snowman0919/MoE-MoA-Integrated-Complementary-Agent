@@ -25,6 +25,8 @@ from dgx_moa.weekly import (
     prepare_candidates,
     previous_complete_week,
     sha256,
+    snapshot_version,
+    weekly_candidate_analysis,
     weekly_knowledge_report,
     weekly_runtime_improvement_report,
     weekly_skill_report,
@@ -103,6 +105,31 @@ def test_loop_and_repair_preference_candidates_use_dedicated_datasets() -> None:
 
     assert candidate_path(loop) == "datasets/loops/state-transitions.jsonl"
     assert candidate_path(preference) == "datasets/preference/repair-preferences.jsonl"
+
+
+def test_snapshot_versions_and_candidate_analysis_are_content_derived() -> None:
+    false_approval = candidate().model_copy(
+        update={
+            "candidate_id": "judge-false-approval",
+            "candidate_type": "judge",
+            "role_target": "judge",
+            "quality_labels": {
+                "judge_dataset": "false-approvals",
+                "failure_classes": ["MCP_SERVER_UNAVAILABLE"],
+                "iteration_count": 2,
+                "review_status": "approved",
+            },
+        }
+    )
+
+    assert snapshot_version(["b", "a"]) == snapshot_version(["a", "b"])
+    assert snapshot_version(["a"]) != snapshot_version(["b"])
+    analysis = weekly_candidate_analysis([false_approval])
+    assert analysis["judge_false_approvals"] == ["judge-false-approval"]
+    assert analysis["loop_efficiency"]["average_iterations"] == 2
+    assert analysis["mcp_failure_patterns"] == [
+        {"failure_class": "MCP_SERVER_UNAVAILABLE", "count": 1}
+    ]
 
 
 def fake_7z(path: Path, *, fail_test: bool = False) -> Path:
@@ -220,6 +247,11 @@ def test_verified_archive_publication_is_atomic_and_idempotent(tmp_path: Path) -
             [candidate().model_copy(update={"accepted_answer": "different synthetic answer"})],
             **arguments,
         )
+    with pytest.raises(FileExistsError, match="another source snapshot"):
+        packager.package(
+            [candidate()],
+            **(arguments | {"model_configuration": {"executor": "different"}}),
+        )
 
     archive = Path(first["archive_path"])
     assert archive.is_file()
@@ -244,6 +276,32 @@ def test_verified_archive_publication_is_atomic_and_idempotent(tmp_path: Path) -
     external_summary = json.loads((archive.parent / "weekly-summary.json").read_text())
     assert external_summary["archive"]["verified"] is True
     assert external_summary["archive"]["sha256"] == first["archive_sha256"]
+
+
+def test_weekly_package_reserves_space_before_staging(tmp_path: Path) -> None:
+    executable = fake_7z(tmp_path / "7zz")
+    notifications: list[tuple[str, dict[str, object]]] = []
+    packager = WeeklyPackager(
+        tmp_path / "weekly",
+        ArchiveRegistry(tmp_path / "registry.db"),
+        seven_zip=str(executable),
+        notifier=lambda event, payload: notifications.append((event, payload)),
+        minimum_free_bytes=10**30,
+    )
+
+    with pytest.raises(OSError, match="minimum free-space reserve"):
+        packager.package(
+            [candidate()],
+            window=previous_complete_week(datetime(2026, 7, 22, tzinfo=UTC)),
+            production_commit="abcdef123",
+            policy_version="policy-1",
+            skill_registry_version="skills-1",
+            model_configuration={},
+        )
+
+    assert packager.metrics["package_failures"] == 1
+    assert notifications[-1][0] == "weekly_package_failed"
+    assert not any((tmp_path / "weekly").rglob("*.tmp"))
 
 
 def test_weekly_package_verify_revoke_and_explicit_regeneration(tmp_path: Path) -> None:

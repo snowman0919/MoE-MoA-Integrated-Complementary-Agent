@@ -116,6 +116,8 @@ from .weekly import (
     WeeklyRetentionRequest,
     WeeklyScheduler,
     previous_complete_week,
+    snapshot_version,
+    weekly_candidate_analysis,
     weekly_knowledge_report,
     weekly_runtime_improvement_report,
     weekly_skill_report,
@@ -750,6 +752,7 @@ def create_app(
                 WeeklyPackager(
                     configured.weekly_jobs.package_root,
                     ArchiveRegistry(configured.weekly_jobs.archive_registry),
+                    minimum_free_bytes=configured.weekly_jobs.minimum_free_bytes,
                     notifier=lambda event_type, payload: store.event(
                         "weekly-maintenance", event_type, payload
                     ),
@@ -800,12 +803,21 @@ def create_app(
                         for artifact in evolution_artifacts
                         if artifact.state == "candidate"
                     ]
+                    maintenance_candidates = (
+                        app.state.training_store.packageable_candidates(
+                            created_from=window.utc_start.isoformat(),
+                            created_before=window.utc_end.isoformat(),
+                        )
+                        if app.state.training_store is not None
+                        else []
+                    )
                     await asyncio.to_thread(
                         weekly_runtime_improvement_report,
                         report_root,
                         skill_report=skill_report,
                         knowledge_report=knowledge_report,
-                        analyses={
+                        analyses=weekly_candidate_analysis(maintenance_candidates)
+                        | {
                             "prompt_regressions": [
                                 artifact.model_dump(mode="json")
                                 for artifact in evolution_artifacts
@@ -833,6 +845,18 @@ def create_app(
                     if app.state.training_store is None or app.state.weekly_packager is None:
                         raise RuntimeError("weekly training pipeline is disabled")
                     window = previous_complete_week(timezone=configured.weekly_jobs.timezone)
+                    skills = app.state.skills.list_skills() if app.state.skills is not None else []
+                    knowledge = (
+                        app.state.knowledge.list_entries()
+                        if app.state.knowledge is not None
+                        else []
+                    )
+                    prompts = (
+                        app.state.prompts.registry.list_artifacts()
+                        if app.state.prompts is not None
+                        else []
+                    )
+                    policy_set = configured.declarative_policy.policy_set()
                     await asyncio.to_thread(
                         app.state.weekly_packager.package,
                         app.state.training_store.packageable_candidates(
@@ -841,8 +865,36 @@ def create_app(
                         ),
                         window=window,
                         production_commit=configured.controller_commit,
-                        policy_version=configured.declarative_policy.version,
-                        skill_registry_version="runtime-skill-schema-v1",
+                        policy_version=(
+                            f"{configured.declarative_policy.version}@"
+                            f"{snapshot_version([policy_set.model_dump_json()])}"
+                        ),
+                        skill_registry_version=snapshot_version(
+                            f"{skill.skill_id}@{skill.version}:{skill.content_hash()}"
+                            for skill in skills
+                        ),
+                        knowledge_registry_version=snapshot_version(
+                            f"{entry.knowledge_id}@{entry.version}:{entry.content_hash()}"
+                            for entry in knowledge
+                        ),
+                        prompt_registry_version=snapshot_version(
+                            f"{artifact.artifact_id}@{artifact.version}:{artifact.content_hash()}"
+                            for artifact in prompts
+                        ),
+                        routing_version=snapshot_version(
+                            [
+                                json.dumps(
+                                    configured.specialist_routing.model_dump(mode="json"),
+                                    sort_keys=True,
+                                    separators=(",", ":"),
+                                )
+                            ]
+                        ),
+                        judge_configuration={
+                            "provider": configured.remote_judge.provider,
+                            "model": configured.remote_judge.model,
+                            "mode": configured.remote_judge.mode,
+                        },
                         model_configuration={
                             role: {
                                 "repository": model.repository,

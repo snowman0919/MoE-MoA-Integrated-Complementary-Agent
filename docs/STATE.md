@@ -175,7 +175,9 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 - Weekly Skill reports and atomic verified-archive logic are implemented and
   disabled. An in-process Seoul scheduler, aggregate reports, safe observation
   summaries, authenticated verify/revoke/regenerate, holds, and archive
-  retention exist. A user-local 7-Zip 23.01 binary physically passed archive
+  retention exist. Archive staging enforces its own configurable free-space
+  reserve; jobs fingerprint exact registry/configuration state and populate
+  measured candidate analytics. A user-local 7-Zip 23.01 binary physically passed archive
   creation, `7z t`, checksum, idempotency, revocation/regeneration, empty-week,
   corruption, archiver-failure, late-arrival, and capacity-isolation checks on
   synthetic data. No scheduled or production run exists.
