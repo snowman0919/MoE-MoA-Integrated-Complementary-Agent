@@ -254,6 +254,47 @@ class RuntimeSkillsPolicy(BaseModel):
     max_context_characters: int = Field(default=6_000, ge=256, le=32_000)
 
 
+class RuntimeKnowledgePolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    state_db: Path = Path("data/knowledge/knowledge.db")
+    retrieval_limit: int = Field(default=3, ge=1, le=10)
+    max_context_characters: int = Field(default=6_000, ge=256, le=32_000)
+
+
+class RemoteJudgeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    provider: Literal["disabled", "nvidia_nim", "mock"] = "disabled"
+    mode: Literal["selective"] = "selective"
+    model: str = "z-ai/glm-5.2"
+    endpoint: str | None = None
+    api_key_env: str = "NVIDIA_API_KEY"
+    timeout_seconds: float = Field(default=120, gt=0, le=600)
+    max_retries: int = Field(default=1, ge=0, le=3)
+    max_calls_per_request: int = Field(default=2, ge=1, le=2)
+    fail_closed_for: list[str] = Field(
+        default_factory=lambda: [
+            "production_deployment",
+            "destructive_migration",
+            "production_skill_promotion",
+            "security_sensitive_change",
+        ]
+    )
+
+    @model_validator(mode="after")
+    def validate_provider(self) -> RemoteJudgeConfig:
+        if self.enabled and self.provider == "disabled":
+            raise ValueError("enabled Remote Judge requires a provider")
+        if self.enabled and self.provider == "nvidia_nim" and not self.endpoint:
+            raise ValueError("NVIDIA NIM Remote Judge requires an endpoint")
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", self.api_key_env):
+            raise ValueError("Remote Judge credential must be an environment variable name")
+        return self
+
+
 class DeclarativePolicyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -402,6 +443,8 @@ class Settings(BaseModel):
     lifecycle: LifecyclePolicy = Field(default_factory=LifecyclePolicy)
     loop_engineering: LoopEngineeringPolicy = Field(default_factory=LoopEngineeringPolicy)
     runtime_skills: RuntimeSkillsPolicy = Field(default_factory=RuntimeSkillsPolicy)
+    runtime_knowledge: RuntimeKnowledgePolicy = Field(default_factory=RuntimeKnowledgePolicy)
+    remote_judge: RemoteJudgeConfig = Field(default_factory=RemoteJudgeConfig)
     declarative_policy: DeclarativePolicyConfig = Field(default_factory=DeclarativePolicyConfig)
     live_observation: LiveObservationConfig = Field(default_factory=LiveObservationConfig)
     training_data: TrainingDataConfig = Field(default_factory=TrainingDataConfig)
@@ -545,6 +588,18 @@ def load_settings(path: str | Path | None = None) -> Settings:
         with suppress(json.JSONDecodeError):
             runtime_skills = json.loads(runtime_skills)
     gateway["runtime_skills"] = runtime_skills
+    runtime_knowledge: Any = os.getenv(
+        "DGX_MOA_RUNTIME_KNOWLEDGE", gateway.get("runtime_knowledge", {})
+    )
+    if isinstance(runtime_knowledge, str):
+        with suppress(json.JSONDecodeError):
+            runtime_knowledge = json.loads(runtime_knowledge)
+    gateway["runtime_knowledge"] = runtime_knowledge
+    remote_judge: Any = os.getenv("DGX_MOA_REMOTE_JUDGE", gateway.get("remote_judge", {}))
+    if isinstance(remote_judge, str):
+        with suppress(json.JSONDecodeError):
+            remote_judge = json.loads(remote_judge)
+    gateway["remote_judge"] = remote_judge
     declarative_policy: Any = os.getenv(
         "DGX_MOA_DECLARATIVE_POLICY", gateway.get("declarative_policy", {})
     )

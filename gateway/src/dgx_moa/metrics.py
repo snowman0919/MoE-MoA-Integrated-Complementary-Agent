@@ -17,6 +17,24 @@ METRIC_NAMES = (
     "skill_candidate_created_total",
     "skill_promoted_total",
     "skill_deprecated_total",
+    "knowledge_retrieval_total",
+    "knowledge_helpful_total",
+    "knowledge_harmful_total",
+    "knowledge_conflict_total",
+    "knowledge_candidate_created_total",
+    "knowledge_promoted_total",
+    "knowledge_deprecated_total",
+    "judge_invocations_total",
+    "judge_approve_total",
+    "judge_revision_total",
+    "judge_reject_total",
+    "judge_timeout_total",
+    "judge_rate_limit_total",
+    "judge_provider_error_total",
+    "judge_false_approval_total",
+    "judge_false_rejection_total",
+    "judge_latency_seconds",
+    "judge_tokens_total",
     "observer_events_sent_total",
     "observer_events_dropped_total",
     "discord_errors_total",
@@ -74,6 +92,24 @@ class RuntimeMetrics:
             self.increment("failure_fingerprint_recurrence")
         elif event_type == "frontier_candidate_awaiting_approval":
             self.increment("approval_requests_total")
+        elif event_type == "judge_requested":
+            self.increment("judge_invocations_total")
+        elif event_type == "judge_completed":
+            verdict = payload.get("verdict")
+            if verdict in {"approve", "accept"}:
+                self.increment("judge_approve_total")
+            elif verdict in {"approve_with_edits", "revise", "retry_with_evidence"}:
+                self.increment("judge_revision_total")
+            elif verdict in {"reject", "blocked", "escalate"}:
+                self.increment("judge_reject_total")
+        elif event_type == "judge_provider_failed":
+            failure = payload.get("failure_class")
+            if failure == "PROVIDER_TIMEOUT":
+                self.increment("judge_timeout_total")
+            elif failure == "RATE_LIMITED":
+                self.increment("judge_rate_limit_total")
+            else:
+                self.increment("judge_provider_error_total")
 
     def snapshot(self, overlays: dict[str, int | float] | None = None) -> dict[str, int | float]:
         values = {name: self._values[name] for name in METRIC_NAMES}

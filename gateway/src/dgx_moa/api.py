@@ -29,6 +29,7 @@ from .controller import (
     ReasonerUnavailable,
 )
 from .frontier import CodexOAuthCollaboration, load_frontier_config
+from .knowledge import KnowledgeRegistry
 from .lifecycle import (
     LifecycleCoordinator,
     LifecycleDriver,
@@ -51,6 +52,7 @@ from .observation import (
 from .policy import PolicyEngine
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
+from .remote_judge import NvidiaNimJudgeProvider
 from .replay import ReplayEngine, ReplayRequest
 from .routing import (
     COMPATIBILITY_MODEL_ALIASES,
@@ -551,19 +553,42 @@ def create_app(
             if configured.runtime_skills.enabled
             else None
         )
+        app.state.knowledge = (
+            KnowledgeRegistry(configured.runtime_knowledge.state_db)
+            if configured.runtime_knowledge.enabled
+            else None
+        )
         app.state.policy = (
             PolicyEngine(configured.declarative_policy.policy_set())
             if configured.declarative_policy.enabled
             else None
         )
+        remote_judge = None
+        if configured.remote_judge.enabled:
+            if configured.remote_judge.provider != "nvidia_nim":
+                raise ValueError("only NVIDIA NIM is supported outside tests")
+            endpoint = os.path.expandvars(configured.remote_judge.endpoint or "")
+            if not endpoint or "$" in endpoint:
+                raise ValueError("Remote Judge endpoint environment is unresolved")
+            remote_judge = NvidiaNimJudgeProvider(
+                endpoint=endpoint,
+                api_key_env=configured.remote_judge.api_key_env,
+                model=configured.remote_judge.model,
+                timeout_seconds=configured.remote_judge.timeout_seconds,
+                max_retries=configured.remote_judge.max_retries,
+                max_calls_per_request=configured.remote_judge.max_calls_per_request,
+            )
+        app.state.remote_judge = remote_judge
         app.state.controller = Controller(
             configured,
             store,
             provider,
             frontier,
             app.state.usage,
-            app.state.skills,
-            app.state.policy,
+            skills=app.state.skills,
+            policy=app.state.policy,
+            knowledge=app.state.knowledge,
+            remote_judge=remote_judge,
         )
         app.state.lifecycle_store = LifecycleStore(
             configured.state_db,
@@ -2500,7 +2525,10 @@ def create_app(
     @app.post("/v1/judge/adjudications/{session_id}", dependencies=[Depends(auth)])
     async def adjudicate(session_id: str, request: Request) -> Response:
         profile = request.app.state.profiles.current()
-        if profile.get("active_profile") != "judge" or profile.get("status") != "ready":
+        remote = request.app.state.remote_judge is not None
+        if not remote and (
+            profile.get("active_profile") != "judge" or profile.get("status") != "ready"
+        ):
             return error_response(
                 status.HTTP_409_CONFLICT,
                 "Heavy Judge profile is not ready",
@@ -2526,7 +2554,7 @@ def create_app(
         state.current_request_id = request_id
         leases = await request.app.state.lifecycle.acquire_request_leases(
             request_id,
-            ("judge",),
+            () if remote else ("judge",),
             kind="active_request",
             require_ready=False,
         )
@@ -2558,7 +2586,7 @@ def create_app(
                 "session_id": session_id,
                 "status": state.judge_status,
                 "verdict": verdict,
-                "resume_profile": "resident",
+                "resume_profile": None if remote else "resident",
             }
         )
 

@@ -1,5 +1,12 @@
 # Dynamic MoA orchestration
 
+When enabled after physical gates, the Executor retrieves bounded active
+Runtime Knowledge before Skills and records both selection reasons. A required
+Remote Judge receives only sanitized evidence after concrete specialist/tool
+evidence exists. It cannot call tools or replace the final response; the
+Executor applies any required edits and owns targeted revalidation. Remote
+calls are capped at an initial judgment plus one recheck.
+
 ## Authority and profiles
 
 `dgx-moa` is the primary Reasoner + Executor profile. `dgx-moa-fast` is the

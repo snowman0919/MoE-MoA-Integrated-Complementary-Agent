@@ -39,6 +39,26 @@ gateway:
     root: data/skills
     retrieval_limit: 3
     max_context_characters: 6000
+  runtime_knowledge:
+    enabled: false
+    state_db: data/knowledge/knowledge.db
+    retrieval_limit: 3
+    max_context_characters: 6000
+  remote_judge:
+    enabled: false
+    provider: disabled
+    mode: selective
+    model: z-ai/glm-5.2
+    endpoint: null
+    api_key_env: NVIDIA_API_KEY
+    timeout_seconds: 120
+    max_retries: 1
+    max_calls_per_request: 2
+    fail_closed_for:
+      - production_deployment
+      - destructive_migration
+      - production_skill_promotion
+      - security_sensitive_change
   declarative_policy:
     enabled: false
     version: development-disabled

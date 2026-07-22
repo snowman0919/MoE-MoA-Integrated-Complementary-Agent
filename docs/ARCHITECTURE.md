@@ -1,5 +1,15 @@
 # Architecture
 
+The v2 development path adds two independent bounded resources. Runtime
+Knowledge is a versioned SQLite/WAL fact registry retrieved only by the
+Executor; it grants no procedure, tool, or policy authority. The Remote Judge
+is a read-only NVIDIA NIM `z-ai/glm-5.2` provider receiving only a sanitized
+Judge Evidence Package and returning strict structured corrections. The
+existing local Heavy Judge remains an operator-only compatibility profile while
+NIM physical validation is pending. Neither development feature changes the
+Executor's sole ownership of tools, routing, corrections, final validation, or
+client-visible synthesis.
+
 OpenCode connects over tailnet TCP to the authenticated gateway. The controller
 stores session state in SQLite and calls loopback-only local role servers. The
 Reasoner is an externally managed Ollama service configured as an explicit

@@ -17,6 +17,10 @@ LoopType = Literal[
     "recovery",
     "validation",
     "skill_evaluation",
+    "prompt_evaluation",
+    "policy_evaluation",
+    "routing_evaluation",
+    "dataset_validation",
 ]
 LOOP_TYPES = frozenset(
     {
@@ -27,6 +31,10 @@ LOOP_TYPES = frozenset(
         "recovery",
         "validation",
         "skill_evaluation",
+        "prompt_evaluation",
+        "policy_evaluation",
+        "routing_evaluation",
+        "dataset_validation",
     }
 )
 CriterionState = Literal["unknown", "passed", "failed", "waived"]
@@ -41,6 +49,7 @@ TerminationReason = Literal[
     "DUPLICATE_FAILURE_LIMIT",
     "BUDGET_EXHAUSTED",
     "PROVIDER_UNAVAILABLE",
+    "JUDGE_REJECTED",
     "UNRESOLVED_HIGH_RISK_DISAGREEMENT",
     "INTERNAL_FAILURE",
     "CLIENT_CANCELLED",
@@ -76,6 +85,8 @@ FailureClass = Literal[
     "NO_PROGRESS",
     "DUPLICATE_FAILURE",
     "BUDGET_EXHAUSTED",
+    "JUDGE_REJECTED",
+    "JUDGE_UNAVAILABLE",
     "INTERNAL_RUNTIME_ERROR",
 ]
 PROGRESS_EVIDENCE_KINDS = frozenset(
@@ -89,6 +100,7 @@ PROGRESS_EVIDENCE_KINDS = frozenset(
         "repository_observation",
         "file_change",
         "reviewer_finding",
+        "judge_finding",
         "external_expert_finding",
         "user_feedback",
         "provider_failure",
@@ -163,6 +175,7 @@ class LoopState(BaseModel):
     rejected_findings: list[str] = Field(default_factory=list)
     acceptance_criteria: list[AcceptanceCriterion] = Field(default_factory=list)
     selected_skills: list[str] = Field(default_factory=list)
+    retrieved_knowledge: list[str] = Field(default_factory=list)
     active_agents: list[str] = Field(default_factory=list)
     remaining_budget: LoopBudget = Field(default_factory=LoopBudget)
     progress_state: ProgressState = "progressing"

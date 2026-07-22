@@ -176,6 +176,7 @@ def test_trace_metrics_include_content_free_runtime_timing() -> None:
         "repository_training_policy": "unknown",
         "policy_version": "none",
         "skill_versions": [],
+        "knowledge_versions": [],
         "engineering_loop_id": "",
     }
     serialized = json.dumps(metrics)

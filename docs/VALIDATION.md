@@ -3320,3 +3320,38 @@ both services reported exit status zero and zero restarts. Model endpoints
 remained loopback-only and the authenticated gateway remained the only tailnet
 listener. Production-disabled Loop Engineering, Skills, policy, training,
 weekly, replay-admin, and automatic-promotion gates were not enabled.
+
+## Remote Judge and Runtime Knowledge foundations — 2026-07-22
+
+The corrected v2 completion audit found that the earlier release did not
+implement the specified NVIDIA NIM GLM-5.2 Remote Judge or a separate Runtime
+Knowledge registry. The new development foundation adds both behind disabled
+checked-in defaults.
+
+Mock-transport Remote Judge tests passed strict evidence-package redaction,
+OpenAI-compatible NIM request construction, `z-ai/glm-5.2` selection, strict
+seven-criterion verdict parsing, read-only/no-tools behavior, timeout and
+invalid-output classification, rate-limit retry, and the two-call request
+budget. A Controller test proved the remote provider receives bounded tool
+evidence without invoking the local model provider or Heavy Judge profile.
+
+Runtime Knowledge tests passed immutable SQLite/WAL versions, missing lookup,
+bounded active-latest retrieval, validation and explicit promotion, retrieval
+evidence, conflict retention, approved supersession, rollback ancestry, and
+database integrity. Trace and replay snapshots now retain Knowledge versions;
+replay also retains prompt versions, routing configuration, provider-output
+references, and all named comparison modes.
+
+The serialized verification passed:
+
+- `uv run pytest -q`: `813 passed`, with the existing third-party Starlette
+  TestClient deprecation warning.
+- `uv run ruff format --check .`: 79 files formatted.
+- `uv run ruff check .`: all checks passed.
+- `uv run mypy`: no issues in 40 source files.
+- `systemd-analyze --user verify systemd/*`, every shell script `bash -n`, and
+  `git diff --check`: clean.
+
+This is implementation and unit/mock evidence only. No NVIDIA credential was
+present or required, no live NIM/GLM-5.2 request occurred, no production
+Knowledge database was created, and neither feature is production-enabled.

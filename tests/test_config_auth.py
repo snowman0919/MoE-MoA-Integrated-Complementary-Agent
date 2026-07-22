@@ -103,6 +103,49 @@ def test_runtime_skills_environment_is_bounded_and_disabled_by_default(
     assert Settings(auth_enabled=False).runtime_skills.enabled is False
 
 
+def test_remote_judge_requires_explicit_endpoint_and_environment_credential(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text("gateway: {}\nmodels: {}\n")
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
+    monkeypatch.setenv(
+        "DGX_MOA_REMOTE_JUDGE",
+        '{"enabled":true,"provider":"nvidia_nim","endpoint":"https://nim.invalid",'
+        '"api_key_env":"NVIDIA_API_KEY","max_calls_per_request":2}',
+    )
+
+    settings = load_settings(config)
+
+    assert settings.remote_judge.enabled is True
+    assert settings.remote_judge.model == "z-ai/glm-5.2"
+    assert settings.remote_judge.max_calls_per_request == 2
+    assert Settings(auth_enabled=False).remote_judge.enabled is False
+    with pytest.raises(ValidationError, match="requires an endpoint"):
+        Settings(
+            auth_enabled=False,
+            remote_judge={"enabled": True, "provider": "nvidia_nim"},
+        )
+
+
+def test_runtime_knowledge_is_separate_bounded_and_disabled_by_default(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text("gateway: {}\nmodels: {}\n")
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
+    monkeypatch.setenv(
+        "DGX_MOA_RUNTIME_KNOWLEDGE",
+        f'{{"enabled":true,"state_db":"{tmp_path / "knowledge.db"}","retrieval_limit":2}}',
+    )
+
+    settings = load_settings(config)
+
+    assert settings.runtime_knowledge.enabled is True
+    assert settings.runtime_knowledge.retrieval_limit == 2
+    assert Settings(auth_enabled=False).runtime_knowledge.enabled is False
+
+
 def test_declarative_policy_environment_is_strict_and_disabled_by_default(
     monkeypatch, tmp_path: Path
 ) -> None:

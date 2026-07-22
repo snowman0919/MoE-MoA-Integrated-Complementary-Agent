@@ -1037,6 +1037,56 @@ async def test_strict_judge_verdict_allows_completion(  # type: ignore[no-untype
     assert state.heavy_switch_count == 1
 
 
+@pytest.mark.asyncio
+async def test_remote_judge_receives_bounded_evidence_and_owns_no_tools(
+    settings, stub_provider: StubProvider
+) -> None:
+    from dgx_moa.remote_judge import MockJudgeProvider, RemoteJudgeVerdict
+
+    remote = MockJudgeProvider(
+        RemoteJudgeVerdict.model_validate(
+            {
+                "verdict": "approve",
+                "risk": "low",
+                "criteria": {
+                    "instruction_following": "pass",
+                    "evidence_grounding": "pass",
+                    "logical_consistency": "pass",
+                    "tool_consistency": "pass",
+                    "test_consistency": "pass",
+                    "safety": "pass",
+                    "completeness": "pass",
+                },
+                "findings": [],
+                "required_edits": [],
+                "recheck_required": False,
+                "confidence_class": "high",
+            }
+        )
+    )
+    state = SessionState(
+        session_id="remote-judge",
+        current_request_id="req-remote",
+        objective="Validate the bounded result",
+        acceptance_criteria=["tests pass"],
+        tool_results=[{"tool_name": "pytest", "exit_code": 0}],
+    )
+    controller = Controller(
+        settings,
+        StateStore(settings.state_db),
+        stub_provider,
+        remote_judge=remote,
+    )
+
+    result = await controller.judge(state, "executor draft")
+
+    assert result["verdict"] == "approve"
+    assert state.phase == Phase.COMPLETED
+    assert state.heavy_switch_count == 0
+    assert remote.packages[0].tool_evidence == [{"tool_name": "pytest", "exit_code": 0}]
+    assert stub_provider.calls == []
+
+
 def test_metadata_routes_heavy_and_gates_completion(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
     state = SessionState(

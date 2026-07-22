@@ -272,6 +272,10 @@ def trace_record(
                 f"{item.get('skill_id')}@{item.get('skill_version')}"
                 for item in state.skill_selections
             ],
+            "knowledge_versions": [
+                f"{item.get('knowledge_id')}@{item.get('knowledge_version')}"
+                for item in state.knowledge_selections
+            ],
             "engineering_loop_id": state.engineering_loop.loop_id if state.engineering_loop else "",
         },
         "verified_state": state.verified_facts[-8:],

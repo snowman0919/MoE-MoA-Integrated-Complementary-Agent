@@ -16,7 +16,9 @@ Updated: 2026-07-22
 | Runtime model invocation-rate CSV | yes | yes | yes | production live clients | yes |
 | Bounded Loop Engineering Phase A + action-boundary B | yes | yes | yes | isolated success/no-progress/duplicate | no |
 | Runtime Skills Phase C foundation | yes | yes | yes | isolated governed lifecycle | no |
+| Runtime Knowledge Phase C foundation | yes | yes | yes | unit-only registry/retrieval/conflict | no |
 | Declarative Policy Phase D foundation | yes | yes | yes | isolated redaction | no |
+| NVIDIA NIM GLM-5.2 Remote Judge | yes | yes | yes | mocked transport only | no |
 | Typed Evidence Graph Phase E foundation | yes | yes | yes | isolated replay validation | no |
 | Discord/Telegram Live Observation Phase E | yes | yes | yes | production Telegram; isolated Discord/control | Telegram yes; controls no |
 | Privacy-aware Training Collection Phase F | yes | yes | yes | isolated role/loop/preference archive | no |

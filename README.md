@@ -51,7 +51,8 @@ and fixed-resident restoration. Production enablement and later Responses
 compatibility fixes were promoted through reviewed `dev`-to-`main` PRs.
 
 `dev` also contains disabled, unit-tested bounded Loop Engineering, runtime
-Skills and canaries, declarative policy, typed Evidence Graph/replay, safe
+Skills and canaries, a separate Runtime Knowledge registry, NVIDIA NIM GLM-5.2
+Remote Judge transport, declarative policy, typed Evidence Graph/replay, safe
 Discord/Telegram observation, privacy-filtered training candidates, and Seoul
 weekly 7z packaging/retention workflows. These are not production capabilities
 until the physical client/provider/archive gates in `docs/VALIDATION.md` pass.
@@ -66,6 +67,7 @@ Authoritative references: `docs/STATE.md` for current state,
 `docs/OPERATIONS.md` for operation, `docs/VALIDATION.md` for measured evidence,
 `docs/MOA_ORCHESTRATION.md` for collaboration, `docs/FRONTIER.md` for Codex OAuth,
 `docs/TRACE_SCHEMA.md` for logging, `docs/LOOP_ENGINEERING.md` for the disabled
-loop foundation, `docs/SKILLS.md`, `docs/LIVE_OBSERVATION.md`,
+loop foundation, `docs/SKILLS.md`, `docs/KNOWLEDGE_BASE.md`,
+`docs/REMOTE_JUDGE.md`, `docs/NVIDIA_NIM.md`, `docs/LIVE_OBSERVATION.md`,
 `docs/TRAINING_DATA.md`, and `docs/WEEKLY_PACKAGING.md` for the new disabled
 workflows, and `docs/RECURSIVE_IMPROVEMENT.md` for the branch workflow.

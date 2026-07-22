@@ -131,6 +131,7 @@ class TrainingEvent(BaseModel):
     prompt_template_version: str
     policy_version: str
     skill_versions: list[str] = Field(default_factory=list)
+    knowledge_versions: list[str] = Field(default_factory=list)
     input_ref: str | None = None
     output_ref: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)

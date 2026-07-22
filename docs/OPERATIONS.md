@@ -131,6 +131,25 @@ new-version operations and require evidence plus explicit approval. Set
 `require_signature` at the pack import boundary when unsigned packs must be
 rejected. See `docs/SKILLS.md` and `docs/SKILL_GOVERNANCE.md`.
 
+## Isolated Runtime Knowledge development
+
+The checked-in Knowledge registry is disabled. Use a development-owned SQLite
+path and never point an experiment at production state:
+
+```bash
+DGX_MOA_RUNTIME_KNOWLEDGE='{"enabled":true,"state_db":"/tmp/dgx-moa-knowledge.db","retrieval_limit":3,"max_context_characters":6000}'
+```
+
+Promotion, conflict resolution, lifecycle changes, and rollback require a new
+immutable version and explicit approval. See `docs/KNOWLEDGE_BASE.md`.
+
+## Isolated NVIDIA NIM Remote Judge development
+
+Remote Judge defaults are disabled and require no credential. Keep the endpoint
+and `NVIDIA_API_KEY` outside Git, use only bounded sanitized synthetic evidence,
+and do not enable production until the physical matrix passes. See
+`docs/REMOTE_JUDGE.md` and `docs/NVIDIA_NIM.md`.
+
 ## Isolated declarative policy development
 
 The checked-in `gateway.declarative_policy.enabled` value is `false`. Use only

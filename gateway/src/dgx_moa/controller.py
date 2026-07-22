@@ -26,6 +26,7 @@ from .frontier import (
     frontier_eligible,
     select_frontier_profile,
 )
+from .knowledge import KnowledgeQuery, KnowledgeRegistry
 from .loop_engineering import (
     LOOP_TYPES,
     PROGRESS_EVIDENCE_KINDS,
@@ -49,6 +50,14 @@ from .loop_engineering import (
 )
 from .policy import PolicyEngine, redact_fields
 from .providers import ModelProvider, StageTimeout, parse_json_content
+from .remote_judge import (
+    JudgeEvidencePackage,
+    JudgeProvider,
+    JudgeProviderError,
+    JudgeRateLimited,
+    JudgeTimeout,
+    RemoteJudgeVerdict,
+)
 from .routing import ChangeRisk, heavy_eligible, needs_planner, select_route
 from .schemas import JudgeVerdict, OrchestrationDecision, ReasonerContribution, ReviewResult
 from .security import redact
@@ -169,6 +178,8 @@ class Controller:
         usage: UsageStore | None = None,
         skills: SkillRegistry | None = None,
         policy: PolicyEngine | None = None,
+        knowledge: KnowledgeRegistry | None = None,
+        remote_judge: JudgeProvider | None = None,
     ):
         self.settings = settings
         self.store = store
@@ -177,6 +188,8 @@ class Controller:
         self.usage = usage
         self.skills = skills
         self.policy = policy
+        self.knowledge = knowledge
+        self.remote_judge = remote_judge
         self.lifecycle_store: Any | None = None
         self._review_lock = asyncio.Lock()
 
@@ -1210,6 +1223,9 @@ class Controller:
                 "activated_skills": state.skill_selections[
                     -self.settings.runtime_skills.retrieval_limit :
                 ],
+                "retrieved_knowledge": state.knowledge_selections[
+                    -self.settings.runtime_knowledge.retrieval_limit :
+                ],
                 "observation": observation,
             }
         if role == "planner":
@@ -1317,6 +1333,76 @@ class Controller:
         self.store.event(
             state.session_id,
             "executor_skills_selected",
+            {"evidence_id": evidence_id, "count": len(selections)},
+        )
+
+    def select_executor_knowledge(self, state: SessionState, metadata: dict[str, Any]) -> None:
+        if self.knowledge is None or not self.settings.runtime_knowledge.enabled:
+            return
+        try:
+            matches = self.knowledge.search(
+                KnowledgeQuery(
+                    text=" ".join((state.objective, " ".join(state.acceptance_criteria))),
+                    domains=[
+                        str(value)
+                        for value in (metadata.get("language"), metadata.get("framework"))
+                        if value
+                    ],
+                    repository=state.repository.get("workspace_identifier"),
+                ),
+                limit=self.settings.runtime_knowledge.retrieval_limit,
+            )
+        except (OSError, sqlite3.Error, ValueError) as error:
+            state.knowledge_selections = []
+            state.observability_degraded = True
+            state.observability_status = "degraded"
+            self.store.event(
+                state.session_id,
+                "knowledge_retrieval_failed",
+                {"failure_class": type(error).__name__},
+            )
+            return
+        selections: list[dict[str, Any]] = []
+        remaining = self.settings.runtime_knowledge.max_context_characters
+        for match in matches:
+            selection = {
+                "knowledge_id": match.knowledge.knowledge_id,
+                "knowledge_version": match.knowledge.version,
+                "selection_reason": ",".join(match.reasons),
+                "selection_score": round(match.score / (match.score + 10), 4),
+                "summary": match.knowledge.content.summary,
+                "conditions": match.knowledge.content.conditions,
+                "recommended_actions": match.knowledge.content.recommended_actions,
+                "contradiction_ids": match.contradiction_ids,
+            }
+            encoded = json.dumps(selection, ensure_ascii=False)
+            if len(encoded) <= remaining:
+                remaining -= len(encoded)
+                selections.append(selection)
+        state.knowledge_selections = selections
+        if state.engineering_loop is not None:
+            state.engineering_loop.retrieved_knowledge = [
+                f"{item['knowledge_id']}@{item['knowledge_version']}" for item in selections
+            ]
+        evidence_id = self.record_evidence(
+            state,
+            "knowledge_entry",
+            "executor",
+            {
+                "selected": [
+                    {
+                        "knowledge_id": item["knowledge_id"],
+                        "knowledge_version": item["knowledge_version"],
+                        "selection_reason": item["selection_reason"],
+                        "contradiction_ids": item["contradiction_ids"],
+                    }
+                    for item in selections
+                ]
+            },
+        )
+        self.store.event(
+            state.session_id,
+            "knowledge_retrieved",
             {"evidence_id": evidence_id, "count": len(selections)},
         )
 
@@ -2180,11 +2266,17 @@ class Controller:
                         self.store.event(
                             state.session_id,
                             "judge_adjudication_required",
-                            {"profile": "judge", "resume_profile": "resident"},
+                            {
+                                "provider": (
+                                    "remote" if self.remote_judge is not None else "local_profile"
+                                )
+                            },
                         )
                         self.store.save(state)
-                        raise JudgeRequired(state.session_id)
-                    collaboration_context += "\nHeavy Judge verdict:\n" + json.dumps(
+                        if self.remote_judge is None:
+                            raise JudgeRequired(state.session_id)
+                        await self.judge(state, state.pending_judge_evidence)
+                    collaboration_context += "\nJudge verdict:\n" + json.dumps(
                         redact(state.judge_verdict), ensure_ascii=False
                     )
         if frontier_degraded:
@@ -2198,6 +2290,7 @@ class Controller:
         state.phase = Phase.EXECUTING
         state.final_status = None
         state.step_count += 1
+        self.select_executor_knowledge(state, dict(request.get("metadata", {})))
         self.select_executor_skills(state, dict(request.get("metadata", {})))
         self._record_decision(
             "executor", state, {"type": "next_step_request"}, "Proceed from verified state"
@@ -2459,6 +2552,8 @@ class Controller:
         return result
 
     async def judge(self, state: SessionState, observation: str) -> dict[str, Any]:
+        if self.remote_judge is not None:
+            return await self.remote_judge_adjudication(state, observation)
         state.phase = Phase.HEAVY_REVIEW
         safe_observation = cast(
             dict[str, Any], self.safe_payload(state, {"observation": observation})
@@ -2546,5 +2641,176 @@ class Controller:
             result,
             generated_from=decision_id,
         )
+        self.store.save(state)
+        return result
+
+    def judge_evidence_package(self, state: SessionState, observation: str) -> JudgeEvidencePackage:
+        metadata = {
+            key: item
+            for decision in state.decisions[-8:]
+            for key, item in decision.items()
+            if key in {"changed_paths", "diff_summary", "validation_results", "build_results"}
+        }
+        return JudgeEvidencePackage(
+            request_id=state.current_request_id or state.session_id,
+            objective=state.objective,
+            request_constraints=list(state.acceptance_criteria),
+            risk_class=cast(
+                Literal["low", "medium", "high", "critical"],
+                self._loop_risk(
+                    {
+                        "heavy_review": state.request_class == "high_risk_task",
+                        "deployment_security": any(
+                            "deployment" in item.lower() for item in state.acceptance_criteria
+                        ),
+                    }
+                ),
+            ),
+            acceptance_criteria=(
+                [
+                    item.model_dump(mode="json")
+                    for item in state.engineering_loop.acceptance_criteria
+                ]
+                if state.engineering_loop is not None
+                else list(state.acceptance_criteria)
+            ),
+            executor_draft=observation,
+            changed_diff_summary=list(metadata.get("diff_summary", []))
+            if isinstance(metadata.get("diff_summary"), list)
+            else [metadata["diff_summary"]]
+            if metadata.get("diff_summary")
+            else [],
+            tool_evidence=state.tool_results[-8:],
+            test_evidence=list(metadata.get("validation_results", []))
+            if isinstance(metadata.get("validation_results"), list)
+            else [],
+            build_evidence=list(metadata.get("build_results", []))
+            if isinstance(metadata.get("build_results"), list)
+            else [],
+            reviewer_findings=[
+                item for item in state.agent_artifacts[-8:] if item.get("role") == "reviewer"
+            ],
+            frontier_findings=[
+                item for item in state.agent_artifacts[-8:] if item.get("role") == "frontier"
+            ],
+            open_failures=active_failures(state)[-8:],
+            resolved_failures=[
+                item for item in state.failures[-8:] if item.get("resolution_status") == "resolved"
+            ],
+            policy_decisions=state.policy_decisions[-8:],
+            selected_skills=state.skill_selections[-8:],
+            retrieved_knowledge=state.knowledge_selections[-8:],
+        )
+
+    async def remote_judge_adjudication(
+        self, state: SessionState, observation: str
+    ) -> dict[str, Any]:
+        assert self.remote_judge is not None
+        state.phase = Phase.HEAVY_REVIEW
+        package = self.judge_evidence_package(state, observation)
+        self.store.event(
+            state.session_id,
+            "judge_requested",
+            {
+                "provider": "nvidia_nim",
+                "model": self.settings.remote_judge.model,
+                "evidence_categories": [
+                    key
+                    for key, value in package.model_dump(mode="json").items()
+                    if value and key not in {"objective", "executor_draft"}
+                ],
+            },
+        )
+        decision_id = self._record_decision(
+            "judge", state, {"type": "remote_judge_request"}, package.specific_judgment_question
+        )
+        self.admit_loop_action(state, "judge_calls")
+        started = time.monotonic()
+        try:
+            verdict: RemoteJudgeVerdict = await self.remote_judge.judge(package)
+        except JudgeProviderError as error:
+            failure_class = (
+                "PROVIDER_TIMEOUT"
+                if isinstance(error, JudgeTimeout)
+                else "RATE_LIMITED"
+                if isinstance(error, JudgeRateLimited)
+                else "JUDGE_UNAVAILABLE"
+            )
+            self.store.event(
+                state.session_id,
+                "judge_provider_failed",
+                {"failure_class": failure_class, "fallback": "local_reviewer"},
+            )
+            if package.risk_class in {"high", "critical"}:
+                self.terminate_loop(state, "PROVIDER_UNAVAILABLE")
+                raise
+            fallback = await self.review(state, observation)
+            approved = fallback.get("status") == "approved"
+            verdict = RemoteJudgeVerdict.model_validate(
+                {
+                    "verdict": "approve" if approved else "revise",
+                    "risk": package.risk_class,
+                    "criteria": {
+                        key: "unknown"
+                        for key in (
+                            "instruction_following",
+                            "evidence_grounding",
+                            "logical_consistency",
+                            "tool_consistency",
+                            "test_consistency",
+                            "safety",
+                            "completeness",
+                        )
+                    },
+                    "findings": [],
+                    "required_edits": [],
+                    "recheck_required": not approved,
+                    "confidence_class": "low",
+                }
+            )
+        result = verdict.model_dump(mode="json")
+        safe_result = cast(dict[str, Any], self.safe_payload(state, result))
+        state.judge_status = verdict.verdict
+        state.judge_verdict = safe_result
+        state.pending_judge_evidence = ""
+        if verdict.verdict == "approve" and (
+            state.engineering_loop is None or completion_ready(state)
+        ):
+            state.phase = Phase.COMPLETED
+            state.final_status = "completed"
+            self.terminate_loop(state, "SUCCESS")
+        elif verdict.verdict in {"reject", "escalate"}:
+            state.phase = Phase.BLOCKED
+            state.final_status = "blocked"
+            self.terminate_loop(state, "JUDGE_REJECTED")
+        else:
+            state.phase = Phase.CORRECTION
+        self.record_observed_invocation(
+            state,
+            {
+                "role": "judge",
+                "provider": "nvidia_nim",
+                "model": self.settings.remote_judge.model,
+                "latency_ms": (time.monotonic() - started) * 1000,
+                "status": "completed",
+            },
+        )
+        self.store.event(state.session_id, "judge_completed", safe_result)
+        state.evaluations.append(
+            {
+                "evaluation_id": str(uuid.uuid4()),
+                "target_type": "decision",
+                "target_id": decision_id,
+                "evaluator_type": "nvidia_nim",
+                "evaluator_model": self.settings.remote_judge.model,
+                "evaluator_revision": "remote",
+                "result": safe_result,
+                "evidence_references": [],
+                "requirement_ids": [],
+                "created_at": now(),
+            }
+        )
+        state.evaluations = state.evaluations[-self.settings.limits.max_steps :]
+        self.record_evidence(state, "judge_verdict", "judge", result, generated_from=decision_id)
         self.store.save(state)
         return result

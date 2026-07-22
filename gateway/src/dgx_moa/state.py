@@ -110,6 +110,7 @@ class SessionState(BaseModel):
     acceptance_criteria: list[str] = Field(default_factory=list)
     engineering_loop: LoopState | None = None
     skill_selections: list[dict[str, Any]] = Field(default_factory=list)
+    knowledge_selections: list[dict[str, Any]] = Field(default_factory=list)
     policy_decisions: list[dict[str, Any]] = Field(default_factory=list)
     policy_denied_tools: list[str] = Field(default_factory=list)
     policy_redact_fields: list[str] = Field(default_factory=list)
