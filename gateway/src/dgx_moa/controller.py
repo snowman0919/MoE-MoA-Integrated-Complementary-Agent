@@ -69,6 +69,7 @@ from .schemas import (
 )
 from .security import redact
 from .skills import SkillQuery, SkillRegistry
+from .specialists import SpecialistRouter
 from .state import Phase, SessionState, StateStore, now
 from .trace import training_default, validate_provenance
 from .usage import UsageStore
@@ -205,8 +206,43 @@ class Controller:
         self.knowledge = knowledge
         self.prompts = prompts
         self.remote_judge = remote_judge
+        self.specialists: SpecialistRouter | None = None
         self.lifecycle_store: Any | None = None
         self._review_lock = asyncio.Lock()
+
+    async def complete_specialist(
+        self,
+        state: SessionState,
+        role: Literal["planner", "reviewer"],
+        request: dict[str, Any],
+        *,
+        mandatory: bool,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if self.specialists is None:
+            response = await self.provider.complete(
+                role,
+                self.settings.models[role],
+                request,
+                timeout_seconds=getattr(self.settings.limits, f"{role}_timeout_seconds"),
+                stage=role,
+            )
+            return response, {
+                "specialist_role": role,
+                "selected_provider": "local",
+                "routing_reason": "specialist_router_disabled",
+            }
+        response, decision = await self.specialists.complete(
+            role,
+            request,
+            request_id=state.session_id,
+            revision=self.settings.models[role].revision,
+            timeout_seconds=getattr(self.settings.limits, f"{role}_timeout_seconds"),
+            local_only=role in state.specialist_local_only_roles,
+            mandatory=mandatory,
+        )
+        state.specialist_routing.append(cast(dict[str, Any], self.safe_payload(state, decision)))
+        state.specialist_routing = state.specialist_routing[-self.settings.limits.max_steps :]
+        return response, decision
 
     @staticmethod
     def _sync_loop_criteria(state: SessionState) -> None:
@@ -412,6 +448,7 @@ class Controller:
         started: float,
         *,
         mode: str = "default",
+        provider: str | None = None,
     ) -> None:
         raw_usage = response.get("usage")
         usage = cast(dict[str, Any], raw_usage) if isinstance(raw_usage, dict) else {}
@@ -425,6 +462,7 @@ class Controller:
                 "completion_tokens": usage.get("completion_tokens"),
                 "total_tokens": usage.get("total_tokens"),
                 "status": "completed",
+                **({"provider": provider} if provider else {}),
             },
         )
 
@@ -450,7 +488,9 @@ class Controller:
             self.frontier.config.model
             if role == "frontier" and self.frontier is not None
             else self.settings.remote_judge.model
-            if role == "judge" and invocation.get("provider") == "nvidia_nim"
+            if role == "judge" and invocation.get("provider") == "opencode_go"
+            else self.settings.specialist_routing.models[cast(Literal["planner", "reviewer"], role)]
+            if role in {"planner", "reviewer"} and invocation.get("provider") == "remote"
             else self.settings.models[role].served_name
         )
         try:
@@ -1737,6 +1777,23 @@ class Controller:
         ensure_roles: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
         body = request.copy()
+        metadata = dict(request.get("metadata", {}))
+        local_only = metadata.get("specialist_local_only", [])
+        state.specialist_local_only_roles = (
+            [
+                cast(Literal["planner", "reviewer"], role)
+                for role in local_only
+                if role in {"planner", "reviewer"}
+            ]
+            if isinstance(local_only, list)
+            else []
+        )
+        if self.specialists is not None:
+            self.specialists.prewarm(
+                metadata,
+                state.session_id,
+                {role: self.settings.models[role].revision for role in ("planner", "reviewer")},
+            )
         roles = tuple(dict.fromkeys((*roles, *state.roles_required)))
         if state.control_state != "running":
             raise PolicyBlocked(f"request control state is {state.control_state}")
@@ -2044,15 +2101,15 @@ class Controller:
             self.store.event(state.session_id, "planner_invoked", {"role": "planner"})
             planner_started = time.monotonic()
             planner: dict[str, Any] | None = None
+            planner_routing: dict[str, Any] = {}
             parsed: dict[str, Any] = {}
             try:
                 self.admit_loop_action(state, "planner_calls")
-                planner = await self.provider.complete(
+                planner, planner_routing = await self.complete_specialist(
+                    state,
                     "planner",
-                    self.settings.models["planner"],
                     planner_request,
-                    timeout_seconds=self.settings.limits.planner_timeout_seconds,
-                    stage="planner",
+                    mandatory=state.request_class == "high_risk_task",
                 )
                 try:
                     parsed = PlannerPlan.model_validate(parse_json_content(planner)).model_dump()
@@ -2063,12 +2120,11 @@ class Controller:
                         {"reason": "planner_structured_output_invalid"},
                     )
                     self.admit_loop_action(state, "planner_calls")
-                    planner = await self.provider.complete(
+                    planner, planner_routing = await self.complete_specialist(
+                        state,
                         "planner",
-                        self.settings.models["planner"],
                         planner_request,
-                        timeout_seconds=self.settings.limits.planner_timeout_seconds,
-                        stage="planner",
+                        mandatory=state.request_class == "high_risk_task",
                     )
                     parsed = PlannerPlan.model_validate(parse_json_content(planner)).model_dump()
             except (httpx.HTTPError, StageTimeout, ValueError) as error:
@@ -2093,7 +2149,13 @@ class Controller:
             finally:
                 state.timings_ms["planner"] = round((time.monotonic() - planner_started) * 1000, 3)
             if planner is not None and planner_error is None:
-                self.record_invocation(state, "planner", planner, planner_started)
+                self.record_invocation(
+                    state,
+                    "planner",
+                    planner,
+                    planner_started,
+                    provider=str(planner_routing.get("selected_provider", "local")),
+                )
                 policy_planner = {
                     key: value for key, value in parsed.items() if key != "ordered_steps"
                 }
@@ -2102,7 +2164,13 @@ class Controller:
                 safe_planner["ordered_steps"] = safe_planner.pop("plan", [])
                 state.plan = safe_planner.get("ordered_steps", [])
                 state.acceptance_criteria = safe_planner.get("acceptance_criteria", [])
-                state.agent_artifacts.append({"role": "planner", "output": safe_planner})
+                state.agent_artifacts.append(
+                    {
+                        "role": "planner",
+                        "provider": planner_routing.get("selected_provider", "local"),
+                        "output": safe_planner,
+                    }
+                )
                 state.agent_artifacts = state.agent_artifacts[-self.settings.limits.max_steps :]
                 self._sync_loop_criteria(state)
                 self.store.event(state.session_id, "plan_created", {"steps": len(state.plan)})
@@ -2495,6 +2563,7 @@ class Controller:
             "reviewer", state, {"type": "review_request"}, observation
         )
         reviewer_started = time.monotonic()
+        reviewer_routing: dict[str, Any] = {}
         async with self._review_lock:
             owned_guard = False
             guard_transition_id: str | None = None
@@ -2514,14 +2583,19 @@ class Controller:
                     owned_guard = True
             try:
                 self.admit_loop_action(state, "reviewer_calls")
-                response = await self.provider.complete(
+                response, reviewer_routing = await self.complete_specialist(
+                    state,
                     "reviewer",
-                    self.settings.models["reviewer"],
                     request,
-                    timeout_seconds=self.settings.limits.reviewer_timeout_seconds,
-                    stage="reviewer",
+                    mandatory=state.request_class == "high_risk_task",
                 )
-                self.record_invocation(state, "reviewer", response, reviewer_started)
+                self.record_invocation(
+                    state,
+                    "reviewer",
+                    response,
+                    reviewer_started,
+                    provider=str(reviewer_routing.get("selected_provider", "local")),
+                )
                 try:
                     result = ReviewResult.model_validate(parse_json_content(response)).model_dump()
                 except ValueError:
@@ -2560,12 +2634,11 @@ class Controller:
                     retry_request["max_tokens"] = min(self.settings.limits.reviewer_tokens, 1024)
                     retry_started = time.monotonic()
                     self.admit_loop_action(state, "reviewer_calls")
-                    response = await self.provider.complete(
+                    response, reviewer_routing = await self.complete_specialist(
+                        state,
                         "reviewer",
-                        self.settings.models["reviewer"],
                         retry_request,
-                        timeout_seconds=self.settings.limits.reviewer_timeout_seconds,
-                        stage="reviewer_retry",
+                        mandatory=state.request_class == "high_risk_task",
                     )
                     self.record_invocation(
                         state,
@@ -2573,6 +2646,7 @@ class Controller:
                         response,
                         retry_started,
                         mode="review_retry",
+                        provider=str(reviewer_routing.get("selected_provider", "local")),
                     )
                     result = ReviewResult.model_validate(parse_json_content(response)).model_dump()
             finally:
@@ -2591,7 +2665,13 @@ class Controller:
         safe_result = cast(dict[str, Any], self.safe_payload(state, result))
         state.review_status = result.get("status", "rejected")
         state.phase = Phase.CORRECTION if state.review_status != "approved" else Phase.EXECUTING
-        state.agent_artifacts.append({"role": "reviewer", "output": safe_result})
+        state.agent_artifacts.append(
+            {
+                "role": "reviewer",
+                "provider": reviewer_routing.get("selected_provider", "local"),
+                "output": safe_result,
+            }
+        )
         state.agent_artifacts = state.agent_artifacts[-self.settings.limits.max_steps :]
         self.store.save(state)
         self.store.event(state.session_id, "review_completed", safe_result)
@@ -2831,7 +2911,7 @@ class Controller:
             state.session_id,
             "judge_requested",
             {
-                "provider": "nvidia_nim",
+                "provider": "opencode_go",
                 "model": self.settings.remote_judge.model,
                 "evidence_categories": [
                     key
@@ -2912,7 +2992,7 @@ class Controller:
             state,
             {
                 "role": "judge",
-                "provider": "nvidia_nim",
+                "provider": "opencode_go",
                 "model": self.settings.remote_judge.model,
                 "latency_ms": latency_seconds * 1000,
                 **judge_usage,
@@ -2933,7 +3013,7 @@ class Controller:
                 "evaluation_id": str(uuid.uuid4()),
                 "target_type": "decision",
                 "target_id": decision_id,
-                "evaluator_type": "nvidia_nim",
+                "evaluator_type": "opencode_go",
                 "evaluator_model": self.settings.remote_judge.model,
                 "evaluator_revision": "remote",
                 "result": safe_result,

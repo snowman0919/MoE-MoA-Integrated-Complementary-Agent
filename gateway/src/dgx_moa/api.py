@@ -54,7 +54,7 @@ from .observation import (
 from .policy import PolicyEngine
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
-from .remote_judge import JudgeProviderError, NvidiaNimJudgeProvider
+from .remote_judge import JudgeProviderError, OpenCodeGoJudgeProvider
 from .replay import ReplayEngine, ReplayRequest
 from .routing import (
     COMPATIBILITY_MODEL_ALIASES,
@@ -71,6 +71,13 @@ from .runtime_status import report as runtime_report
 from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest
 from .security import admin_dependency, auth_dependency
 from .skills import SkillRegistry
+from .specialists import (
+    LocalPlannerProvider,
+    LocalReviewerProvider,
+    RemotePlannerProvider,
+    RemoteReviewerProvider,
+    SpecialistRouter,
+)
 from .state import Phase, StateStore
 from .streaming import (
     StreamObservation,
@@ -464,13 +471,40 @@ def create_app(
         if model is None:
             return False
         try:
-            async with httpx.AsyncClient(timeout=2) as client:
+            async with httpx.AsyncClient(timeout=30) as client:
+                if role in {"planner", "reviewer"} and model.provider != "ollama":
+                    response = await client.post(
+                        f"{model.base_url.rstrip('/')}/v1/chat/completions",
+                        json={
+                            "model": model.served_name,
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": "Reply with exactly READY.",
+                                }
+                            ],
+                            "temperature": 0,
+                            "max_tokens": 8,
+                            "stream": False,
+                        },
+                    )
+                    if response.status_code != 200:
+                        return False
+                    payload = response.json()
+                    choices = payload.get("choices", [])
+                    return bool(
+                        choices
+                        and isinstance(choices[0], dict)
+                        and choices[0].get("message", {}).get("content")
+                    )
                 response = await client.get(
                     f"{model.base_url.rstrip('/')}/api/ps"
                     if model.provider == "ollama"
                     else f"{model.base_url.rstrip('/')}/v1/models"
                 )
         except httpx.HTTPError:
+            return False
+        except (TypeError, ValueError):
             return False
         return (
             ollama_model_ready(response, model)
@@ -574,12 +608,12 @@ def create_app(
         )
         remote_judge = None
         if configured.remote_judge.enabled:
-            if configured.remote_judge.provider != "nvidia_nim":
-                raise ValueError("only NVIDIA NIM is supported outside tests")
+            if configured.remote_judge.provider != "opencode_go":
+                raise ValueError("only OpenCode Go is supported outside tests")
             endpoint = os.path.expandvars(configured.remote_judge.endpoint or "")
             if not endpoint or "$" in endpoint:
                 raise ValueError("Remote Judge endpoint environment is unresolved")
-            remote_judge = NvidiaNimJudgeProvider(
+            remote_judge = OpenCodeGoJudgeProvider(
                 endpoint=endpoint,
                 api_key_env=configured.remote_judge.api_key_env,
                 model=configured.remote_judge.model,
@@ -637,6 +671,53 @@ def create_app(
             memory_probe=lifecycle_memory_probe,
             lifecycle_policy=configured.lifecycle,
         )
+        app.state.specialists = None
+        if configured.specialist_routing.enabled:
+            if configured.specialist_routing.provider != "opencode_go":
+                raise ValueError("only OpenCode Go specialist routing is supported")
+            remote_values = {
+                "endpoint": configured.specialist_routing.endpoint,
+                "api_key_env": configured.specialist_routing.api_key_env,
+            }
+
+            async def acquire_specialist(request_id: str, role: str) -> tuple[str, ...]:
+                leases = await app.state.lifecycle.acquire_request_leases(
+                    request_id,
+                    (role,),
+                    kind="active_request",
+                    require_ready=True,
+                )
+                return tuple(lease.lease_id for lease in leases)
+
+            app.state.specialists = SpecialistRouter(
+                configured.specialist_routing,
+                local={
+                    "planner": LocalPlannerProvider(provider, configured.models["planner"]),
+                    "reviewer": LocalReviewerProvider(provider, configured.models["reviewer"]),
+                },
+                remote={
+                    "planner": RemotePlannerProvider(
+                        **remote_values,
+                        model=configured.specialist_routing.models["planner"],
+                        min_completion_tokens=configured.specialist_routing.remote_min_completion_tokens[
+                            "planner"
+                        ],
+                    ),
+                    "reviewer": RemoteReviewerProvider(
+                        **remote_values,
+                        model=configured.specialist_routing.models["reviewer"],
+                        min_completion_tokens=configured.specialist_routing.remote_min_completion_tokens[
+                            "reviewer"
+                        ],
+                    ),
+                },
+                lifecycle_store=app.state.lifecycle_store,
+                warmup=app.state.lifecycle.ensure_ready,
+                event=store.event,
+                acquire_local=acquire_specialist,
+                release_local=app.state.lifecycle_store.release_leases,
+            )
+            app.state.controller.specialists = app.state.specialists
         try:
             managed_roles = tuple(configured.lifecycle_unit_map)
             if configured.lifecycle_mode in {"observe", "fixed", "adaptive"}:
@@ -801,6 +882,8 @@ def create_app(
                 await app.state.weekly_scheduler.close()
             if app.state.observation is not None:
                 await app.state.observation.close()
+            if app.state.specialists is not None:
+                await app.state.specialists.close()
             await app.state.lifecycle.close()
 
     app = FastAPI(title="DGX MoA Agent", version="2.0.0", lifespan=lifespan)
@@ -841,6 +924,39 @@ def create_app(
         )
 
     def record_trace_safely(request: Request, state: Any, task_id: str) -> None:
+        for decision in getattr(state, "specialist_routing", []):
+            if isinstance(decision, dict):
+                decision["quality_outcome"] = (
+                    getattr(state, "review_status", None)
+                    or getattr(state, "judge_status", None)
+                    or "not_evaluated"
+                )
+                decision["task_outcome"] = getattr(state, "final_status", None) or str(
+                    getattr(state, "phase", "unknown")
+                )
+        state.specialist_eviction_decisions = []
+        for role in ("planner", "reviewer"):
+            if role not in configured.models:
+                continue
+            idle = request.app.state.lifecycle_store.latest_decision(role)
+            if idle is None:
+                continue
+            local = request.app.state.lifecycle_store.get(role)
+            state.specialist_eviction_decisions.append(
+                idle.model_dump(mode="json")
+                | {
+                    "residency_state": SpecialistRouter.public_state(local.state),
+                    "task_queue": {
+                        "active_requests": local.active_request_count,
+                        "open_streams": local.open_stream_count,
+                    },
+                    "reload_latency_seconds": local.last_load_duration_seconds,
+                    "remote_api_cost_per_million_tokens_usd": (
+                        configured.specialist_routing.remote_cost_per_million_tokens_usd
+                    ),
+                    "model_importance": "optional_specialist",
+                }
+            )
         try:
             request.app.state.traces.record(state, task_id=task_id)
         except OSError as error:
@@ -859,10 +975,16 @@ def create_app(
         model = configured.models.get(record.role)
         if decision is not None and decision.mode != configured.lifecycle_mode:
             decision = None
+        specialist_state = None
+        if configured.specialist_routing.enabled and record.role in {"planner", "reviewer"}:
+            specialist_state = SpecialistRouter.public_state(record.state)
+            if specialist_state == "READY" and record.active_request_count:
+                specialist_state = "BUSY"
         return {
             "role": record.role,
             "lifecycle_control": model.lifecycle_control if model else "unconfigured",
             "state": record.state,
+            **({"specialist_state": specialist_state} if specialist_state is not None else {}),
             "generation": record.generation,
             "ready": record.state == "ready",
             "transition_id": record.transition_id,
@@ -1718,6 +1840,20 @@ def create_app(
             for role in candidate_roles:
                 is_optional = role in optional
                 model = configured.models.get(role)
+                if configured.specialist_routing.enabled and role in {"planner", "reviewer"}:
+                    record = request.app.state.lifecycle_store.get(role)
+                    role_load = False
+                    if role in configured.lifecycle_unit_map and record.state != "ready":
+                        check = await request.app.state.lifecycle.ensure_ready(role)
+                        record = check.record
+                        role_load = check.load_triggered
+                    role_states[role] = "warm" if record.state == "ready" else record.state
+                    role_load_triggered[role] = role_load
+                    role_ready_at[role] = record.ready_at
+                    load_triggered = load_triggered or role_load
+                    if record.state == "ready" and is_optional:
+                        roles += (role,)
+                    continue
                 if model is None:
                     role_states[role] = "cold"
                     if is_optional:
@@ -1933,11 +2069,16 @@ def create_app(
 
         ensured_roles = list(roles)
         try:
+            initial_lease_roles = tuple(
+                role
+                for role in roles
+                if not (configured.specialist_routing.enabled and role in {"planner", "reviewer"})
+            )
             active_lease_ids = tuple(
                 lease.lease_id
                 for lease in await request.app.state.lifecycle.acquire_request_leases(
                     usage_request_id,
-                    roles,
+                    initial_lease_roles,
                     kind="active_request",
                     require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
                 )
@@ -1964,8 +2105,21 @@ def create_app(
             new_ready_at: dict[str, float | None] = {}
             not_ready: LifecycleRecord | None = None
             unmanaged: str | None = None
+            lease_roles: list[str] = []
             for role in new_roles:
                 model = configured.models.get(role)
+                if configured.specialist_routing.enabled and role in {"planner", "reviewer"}:
+                    record = request.app.state.lifecycle_store.get(role)
+                    role_load = False
+                    if role in configured.lifecycle_unit_map and record.state != "ready":
+                        check = await request.app.state.lifecycle.ensure_ready(role)
+                        record = check.record
+                        role_load = check.load_triggered
+                        load_triggered = load_triggered or role_load
+                    new_states[role] = "warm" if record.state == "ready" else record.state
+                    new_loads[role] = role_load
+                    new_ready_at[role] = record.ready_at
+                    continue
                 if model is None:
                     unmanaged = unmanaged or role
                     new_states[role] = "cold"
@@ -2004,6 +2158,7 @@ def create_app(
                 )
                 new_loads[role] = role_load
                 new_ready_at[role] = record.ready_at
+                lease_roles.append(role)
             tracked_roles.extend(role for role in new_roles if role not in tracked_roles)
             ensured_roles.extend(new_roles)
             request.app.state.usage.add_required_roles(usage_request_id, new_roles)
@@ -2028,7 +2183,7 @@ def create_app(
                 raise LifecycleNotReadyError(not_ready)
             leases = await request.app.state.lifecycle.acquire_request_leases(
                 usage_request_id,
-                new_roles,
+                lease_roles,
                 kind="active_request",
                 require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
             )

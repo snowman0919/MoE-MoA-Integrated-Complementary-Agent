@@ -6,7 +6,7 @@ response author.
 
 `gateway.remote_judge` selects a bounded provider. Checked-in defaults use
 `enabled: false` and `provider: disabled`. The implemented production provider
-is NVIDIA NIM with model `z-ai/glm-5.2`; mock and disabled providers support
+is OpenCode Go with model `glm-5.2`; mock and disabled providers support
 isolated deterministic validation. Provider credentials are read only from the
 configured environment variable at call time.
 
@@ -44,11 +44,12 @@ single remaining Judge call. A failed correction or recheck suppresses the
 draft and returns a bounded correction state. Remote approval alone is
 evaluation evidence, not an objective fact or automatic gold-training label.
 
-Physical NVIDIA NIM validation and production enablement remain pending. Do not
+Physical OpenCode Go validation and production enablement remain gated. Do not
 enable the provider until the cases in `docs/VALIDATION.md` cover valid approval,
 unsupported claims, failed-test inconsistency, missing acceptance evidence,
 edits, timeout, rate limit, invalid output, redaction, denied training policy,
 and two-call enforcement.
-Use `scripts/validate-remote-judge.py` for the credentialed quality cases. Mock
+Use `scripts/validate-remote-judge.py` with `OPENCODE_GO_API_KEY` for the
+credentialed quality cases. Mock
 transport tests remain the authority for deterministic timeout, rate-limit,
 invalid-output, redaction, and retry fault injection.

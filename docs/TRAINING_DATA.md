@@ -9,7 +9,7 @@ readable for migration. A free-space guard rejects training writes without
 failing inference.
 
 Raw training events use the fixed provider classes `local`, `frontier`, and
-`nvidia_nim`. Required quality-label fields remain explicitly null when the
+`opencode_go`. Required quality-label fields remain explicitly null when the
 trace contains no trustworthy measurement; the collector does not infer them.
 
 Eligibility fails closed unless the trace is explicitly eligible and its
@@ -27,7 +27,7 @@ never does. Derived candidates retain the source trace's privacy counters. Exact
 candidate deduplication is transactional; normalized Jaccard near-duplicate
 detection is available for the weekly pipeline.
 
-When external-output training is explicitly permitted, NVIDIA NIM evaluations
+When external-output training is explicitly permitted, OpenCode Go evaluations
 produce separate categorical Judge verdict, finding, correction, escalation,
 and explicitly later-confirmed false-approval/false-rejection candidates. These
 projections retain severity/category and deterministic confirmation metadata,

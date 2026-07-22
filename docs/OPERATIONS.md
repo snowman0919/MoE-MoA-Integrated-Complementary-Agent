@@ -143,12 +143,12 @@ DGX_MOA_RUNTIME_KNOWLEDGE='{"enabled":true,"state_db":"/tmp/dgx-moa-knowledge.db
 Promotion, conflict resolution, lifecycle changes, and rollback require a new
 immutable version and explicit approval. See `docs/KNOWLEDGE_BASE.md`.
 
-## Isolated NVIDIA NIM Remote Judge development
+## Isolated OpenCode Go specialist and Remote Judge development
 
 Remote Judge defaults are disabled and require no credential. Keep the endpoint
-and `NVIDIA_API_KEY` outside Git, use only bounded sanitized synthetic evidence,
-and do not enable production until the physical matrix passes. See
-`docs/REMOTE_JUDGE.md` and `docs/NVIDIA_NIM.md`.
+and `OPENCODE_GO_API_KEY` outside Git, use only bounded sanitized synthetic
+evidence, and do not enable production until the physical matrix passes. See
+`docs/REMOTE_JUDGE.md` and `docs/SPECIALIST_ROUTING.md`.
 
 ## Isolated runtime evolution development
 

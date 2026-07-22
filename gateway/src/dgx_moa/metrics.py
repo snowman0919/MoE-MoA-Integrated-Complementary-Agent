@@ -53,6 +53,18 @@ METRIC_NAMES = (
     "weekly_package_failures_total",
     "weekly_package_bytes",
     "archive_verification_failures_total",
+    "specialist_local_calls_total",
+    "specialist_remote_calls_total",
+    "specialist_cold_miss_total",
+    "specialist_warmup_started_total",
+    "specialist_warmup_completed_total",
+    "specialist_warmup_failed_total",
+    "specialist_unused_warmup_total",
+    "specialist_local_queue_seconds",
+    "specialist_remote_latency_seconds",
+    "specialist_load_latency_seconds",
+    "specialist_remote_cost_total",
+    "specialist_provider_switch_prevented_total",
 )
 
 
@@ -118,6 +130,44 @@ class RuntimeMetrics:
             self.increment("judge_false_rejection_total")
         elif event_type == "approval_timeout":
             self.increment("approval_timeouts_total")
+        elif event_type == "specialist_provider_selected":
+            provider = payload.get("selected_provider")
+            if provider == "local":
+                self.increment("specialist_local_calls_total")
+            elif provider == "remote":
+                self.increment("specialist_remote_calls_total")
+            if payload.get("residency_state") not in {"READY", "BUSY"}:
+                self.increment("specialist_cold_miss_total")
+            queue = payload.get("queue_state", {})
+            if isinstance(queue, dict):
+                self.increment(
+                    "specialist_local_queue_seconds",
+                    float(queue.get("local_queue_delay_seconds", 0)),
+                )
+        elif event_type == "specialist_provider_completed":
+            if payload.get("selected_provider") == "remote":
+                self.increment(
+                    "specialist_remote_latency_seconds",
+                    float(payload.get("actual_completion_latency_seconds", 0)),
+                )
+                self.increment(
+                    "specialist_remote_cost_total",
+                    float(payload.get("remote_cost_usd", 0)),
+                )
+        elif event_type == "specialist_provider_failed":
+            if payload.get("provider_switch_prevented"):
+                self.increment("specialist_provider_switch_prevented_total")
+        elif event_type == "specialist_warmup_started":
+            self.increment("specialist_warmup_started_total")
+        elif event_type == "specialist_warmup_completed":
+            self.increment("specialist_warmup_completed_total")
+            self.increment(
+                "specialist_load_latency_seconds", float(payload.get("latency_ms", 0)) / 1000
+            )
+        elif event_type == "specialist_warmup_failed":
+            self.increment("specialist_warmup_failed_total")
+        elif event_type == "specialist_unused_warmup":
+            self.increment("specialist_unused_warmup_total")
 
     def snapshot(self, overlays: dict[str, int | float] | None = None) -> dict[str, int | float]:
         values = {name: self._values[name] for name in METRIC_NAMES}

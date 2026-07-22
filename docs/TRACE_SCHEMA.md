@@ -8,6 +8,8 @@ manifests record visible identifiers and bounded summaries, never hidden reasoni
 
 Dynamic MoA records additionally contain bounded `reasoner_contributions`,
 structured `orchestration_decisions`, `agent_invocations`, `agent_artifacts`,
+provider-pinned `specialist_routing`, content-free
+`specialist_eviction_decisions`,
 `recommendation_resolutions`, `derived_confidence`, an `evidence_graph`, and an
 optional `engineering_loop` snapshot for role-specific loop training and exact
 replay.
@@ -18,6 +20,8 @@ Frontier records transmitted evidence categories, latency, token counts, and
 cost only when the provider reports or configuration can calculate them.
 The original fields are mandatory in v3. Older valid v3 archives remain readable
 without `engineering_loop`; new exports always include it. Pre-Dynamic-MoA v2
+archives may also omit the later specialist routing fields; new exports include
+them without changing the v3 schema version.
 archives retain their original immutable contract and remain readable without
 the v3 fields. The explicit version prevents a current trace from downgrading
 itself by deleting mandatory fields or runtime metrics.

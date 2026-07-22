@@ -47,6 +47,13 @@ PUBLISHED_EVENTS = {
     "weekly_package_failed",
     "weekly_skill_report_completed",
     "weekly_job_failed",
+    "specialist_provider_selected",
+    "specialist_provider_completed",
+    "specialist_provider_failed",
+    "specialist_warmup_started",
+    "specialist_warmup_completed",
+    "specialist_warmup_failed",
+    "specialist_unused_warmup",
 }
 SAFE_PAYLOAD_KEYS = {
     "task_id",
@@ -86,6 +93,19 @@ SAFE_PAYLOAD_KEYS = {
     "high_value_count",
     "low_value_count",
     "job",
+    "selected_provider",
+    "specialist_role",
+    "routing_reason",
+    "residency_state",
+    "queue_state",
+    "predicted_local_completion_seconds",
+    "predicted_remote_completion_seconds",
+    "actual_completion_latency_seconds",
+    "remote_cost_usd",
+    "warmup_decision",
+    "load_generation",
+    "fallback_reason",
+    "provider_error",
 }
 PROMPT_PAYLOAD_KEYS = ("prompt",)
 REASONER_PAYLOAD_KEYS = (
@@ -120,6 +140,13 @@ EVENT_TITLES = {
     "request_finalized": "✅ Request finalized",
     "stream_failed": "❌ Stream failed",
     "provider_failure": "❌ Provider failure",
+    "specialist_provider_selected": "🔀 Specialist provider selected",
+    "specialist_provider_completed": "🔀 Specialist completed",
+    "specialist_provider_failed": "❌ Specialist provider failed",
+    "specialist_warmup_started": "🔥 Specialist warm-up started",
+    "specialist_warmup_completed": "🔥 Specialist warm-up completed",
+    "specialist_warmup_failed": "❌ Specialist warm-up failed",
+    "specialist_unused_warmup": "💤 Specialist warm-up unused",
 }
 
 DETAIL_LABELS = {

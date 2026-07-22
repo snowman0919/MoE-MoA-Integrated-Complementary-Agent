@@ -126,7 +126,7 @@ class TrainingEvent(BaseModel):
     iteration: int = 0
     role: str
     event_type: str
-    model_provider: Literal["local", "nvidia_nim", "frontier"]
+    model_provider: Literal["local", "opencode_go", "frontier"]
     model_identifier: str
     model_revision: str
     prompt_template_version: str
@@ -977,8 +977,42 @@ def candidates_from_trace(
                 }
             )
         )
+    specialist_decisions = trace.get("specialist_routing", [])
+    eviction_decisions = trace.get("specialist_eviction_decisions", [])
+    if specialist_decisions:
+        cleaned = sanitize({"routing": specialist_decisions, "eviction": eviction_decisions})
+        routing_targets = [
+            "specialist-residency-routing",
+            "local-vs-remote-routing",
+            "latency-prediction",
+        ]
+        if any(
+            isinstance(item, dict) and item.get("warmup_decision") != "not_needed"
+            for item in specialist_decisions
+        ):
+            routing_targets.append("warmup-decisions")
+        if eviction_decisions:
+            routing_targets.append("eviction-decisions")
+        for target in routing_targets:
+            candidates.append(
+                base.model_copy(
+                    update={
+                        "candidate_id": f"cand_{uuid.uuid4().hex}",
+                        "candidate_type": "routing",
+                        "role_target": "specialist",
+                        "accepted_answer": cleaned.value,
+                        "rejected_answers": [],
+                        "quality_labels": base.quality_labels | {"routing_dataset": target},
+                        "privacy_labels": privacy_labels(cleaned),
+                        "transformations": [
+                            *base.transformations,
+                            "specialist_routing_projection",
+                        ],
+                    }
+                )
+            )
     for evaluation in trace.get("evaluations", []):
-        if not isinstance(evaluation, dict) or evaluation.get("evaluator_type") != "nvidia_nim":
+        if not isinstance(evaluation, dict) or evaluation.get("evaluator_type") != "opencode_go":
             continue
         result = evaluation.get("result")
         if not isinstance(result, dict) or not result.get("verdict"):
@@ -1145,11 +1179,11 @@ class TrainingCollector:
             for invocation in trace.get("agent_invocations", []):
                 role = str(invocation.get("role", "unknown"))
                 model = trace.get("model_revisions", {}).get(role, {})
-                model_provider: Literal["local", "nvidia_nim", "frontier"] = (
+                model_provider: Literal["local", "opencode_go", "frontier"] = (
                     "frontier"
                     if role == "frontier"
-                    else "nvidia_nim"
-                    if invocation.get("provider") == "nvidia_nim"
+                    else "opencode_go"
+                    if invocation.get("provider") == "opencode_go"
                     else "local"
                 )
                 event = TrainingEvent(

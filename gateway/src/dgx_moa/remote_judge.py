@@ -143,13 +143,13 @@ class MockJudgeProvider(JudgeProvider):
         return True
 
 
-class NvidiaNimJudgeProvider(JudgeProvider):
+class OpenCodeGoJudgeProvider(JudgeProvider):
     def __init__(
         self,
         *,
         endpoint: str,
         api_key_env: str,
-        model: str = "z-ai/glm-5.2",
+        model: str = "glm-5.2",
         timeout_seconds: float = 120,
         max_retries: int = 1,
         max_calls_per_request: int = 2,

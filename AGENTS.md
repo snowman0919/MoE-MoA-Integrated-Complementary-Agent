@@ -48,9 +48,10 @@
   collection, weekly jobs, retention apply, and replay admin paths disabled
   until their documented physical gates pass. Retention is dry-run unless an
   authenticated operator explicitly sets `apply=true`.
-- Keep Runtime Knowledge and the NVIDIA NIM Remote Judge disabled until their
-  documented isolated and provider-specific physical gates pass. Never store
-  the NVIDIA API key or raw remote output in Git or training archives.
+- Keep Runtime Knowledge, OpenCode Go specialist routing, and the OpenCode Go
+  Remote Judge disabled until their documented isolated and provider-specific
+  physical gates pass. Never store the OpenCode Go key or raw remote output in
+  Git or training archives.
 - Generated Skills require isolated evaluation, an Executor-evidenced helpful
   canary, and explicit promotion approval. Never treat weekly recommendations as
   authority to promote or delete a core Skill.

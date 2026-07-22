@@ -47,6 +47,11 @@ DATASET_PATHS = (
     "datasets/routing/judge-routing.jsonl",
     "datasets/routing/skill-routing.jsonl",
     "datasets/routing/knowledge-routing.jsonl",
+    "datasets/routing/specialist-residency-routing.jsonl",
+    "datasets/routing/local-vs-remote-routing.jsonl",
+    "datasets/routing/warmup-decisions.jsonl",
+    "datasets/routing/eviction-decisions.jsonl",
+    "datasets/routing/latency-prediction.jsonl",
     "datasets/loops/state-transitions.jsonl",
     "datasets/loops/repair-trajectories.jsonl",
     "datasets/loops/termination-decisions.jsonl",
@@ -578,7 +583,18 @@ def candidate_path(candidate: TrainingCandidate) -> str:
     if candidate.candidate_type == "tool_use":
         return "datasets/tool_use/tool-calls.jsonl"
     if candidate.candidate_type == "routing":
-        return "datasets/routing/agent-routing.jsonl"
+        target = str(candidate.quality_labels.get("routing_dataset", "agent-routing"))
+        allowed = {
+            "agent-routing",
+            "specialist-residency-routing",
+            "local-vs-remote-routing",
+            "warmup-decisions",
+            "eviction-decisions",
+            "latency-prediction",
+        }
+        if target not in allowed:
+            raise ValueError("invalid routing dataset target")
+        return f"datasets/routing/{target}.jsonl"
     if candidate.candidate_type == "skill":
         return "datasets/skills/retrieval.jsonl"
     if candidate.candidate_type == "knowledge":

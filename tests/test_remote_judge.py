@@ -11,7 +11,7 @@ from dgx_moa.remote_judge import (
     JudgeProviderError,
     JudgeUnavailable,
     MockJudgeProvider,
-    NvidiaNimJudgeProvider,
+    OpenCodeGoJudgeProvider,
     RemoteJudgeVerdict,
 )
 from dgx_moa.state import SessionState, StateStore
@@ -38,7 +38,7 @@ def verdict(verdict: str = "approve") -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_nim_judge_sends_redacted_bounded_strict_package(monkeypatch) -> None:
+async def test_opencode_judge_sends_redacted_bounded_strict_package(monkeypatch) -> None:
     requests: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -51,10 +51,10 @@ async def test_nim_judge_sends_redacted_bounded_strict_package(monkeypatch) -> N
             },
         )
 
-    monkeypatch.setenv("TEST_NVIDIA_KEY", "synthetic-secret")
-    provider = NvidiaNimJudgeProvider(
-        endpoint="https://nim.invalid/v1",
-        api_key_env="TEST_NVIDIA_KEY",
+    monkeypatch.setenv("TEST_OPENCODE_KEY", "synthetic-secret")
+    provider = OpenCodeGoJudgeProvider(
+        endpoint="https://opencode.invalid/v1",
+        api_key_env="TEST_OPENCODE_KEY",
         transport=httpx.MockTransport(respond),
     )
     result = await provider.judge(
@@ -68,11 +68,11 @@ async def test_nim_judge_sends_redacted_bounded_strict_package(monkeypatch) -> N
     assert result.verdict == "approve"
     body = json.loads(requests[0].content)
     assert "tools" not in body
-    assert body["model"] == "z-ai/glm-5.2"
+    assert body["model"] == "glm-5.2"
     assert body["max_tokens"] == 1024
     assert body["seed"] == 0
     assert "one bounded required edit" in body["messages"][0]["content"]
-    assert requests[0].url == "https://nim.invalid/v1/chat/completions"
+    assert requests[0].url == "https://opencode.invalid/v1/chat/completions"
     assert body["response_format"]["json_schema"]["strict"] is True
     assert "alice@example.invalid" not in body["messages"][1]["content"]
     assert "private-value" not in body["messages"][1]["content"]
@@ -100,7 +100,7 @@ async def test_nim_judge_retries_rate_limit_and_enforces_two_calls(monkeypatch) 
         )
 
     monkeypatch.setenv("TEST_NVIDIA_KEY", "synthetic-secret")
-    provider = NvidiaNimJudgeProvider(
+    provider = OpenCodeGoJudgeProvider(
         endpoint="https://nim.invalid",
         api_key_env="TEST_NVIDIA_KEY",
         max_retries=1,
@@ -122,7 +122,7 @@ async def test_nim_judge_timeout_and_invalid_output_are_controlled(monkeypatch) 
     def timeout(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("late", request=request)
 
-    timed = NvidiaNimJudgeProvider(
+    timed = OpenCodeGoJudgeProvider(
         endpoint="https://nim.invalid",
         api_key_env="TEST_NVIDIA_KEY",
         max_retries=0,
@@ -131,7 +131,7 @@ async def test_nim_judge_timeout_and_invalid_output_are_controlled(monkeypatch) 
     with pytest.raises(JudgeUnavailable):
         await timed.judge(JudgeEvidencePackage(request_id="timeout", objective="judge"))
 
-    invalid = NvidiaNimJudgeProvider(
+    invalid = OpenCodeGoJudgeProvider(
         endpoint="https://nim.invalid",
         api_key_env="TEST_NVIDIA_KEY",
         transport=httpx.MockTransport(

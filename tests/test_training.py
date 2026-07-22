@@ -17,6 +17,7 @@ from dgx_moa.training import (
     near_duplicate,
     sanitize,
 )
+from dgx_moa.weekly import candidate_path
 from pydantic import ValidationError
 
 
@@ -138,7 +139,7 @@ def test_permitted_remote_judge_trace_produces_categorical_role_datasets() -> No
     trace = eligible_trace() | {
         "evaluations": [
             {
-                "evaluator_type": "nvidia_nim",
+                "evaluator_type": "opencode_go",
                 "evidence_references": ["test-1"],
                 "later_confirmation": "false_approval",
                 "result": {
@@ -181,6 +182,48 @@ def test_permitted_remote_judge_trace_produces_categorical_role_datasets() -> No
     assert "raw provider prose" not in serialized
     assert "raw provider instruction" not in serialized
     assert "unsupported_claim" in serialized
+
+
+def test_specialist_routing_trace_projects_to_weekly_routing_datasets() -> None:
+    trace = eligible_trace() | {
+        "specialist_routing": [
+            {
+                "specialist_role": "planner",
+                "residency_state": "LOADING",
+                "queue_state": {"local_queue_delay_seconds": 0},
+                "selected_provider": "remote",
+                "routing_reason": "local_not_ready",
+                "warmup_decision": "started",
+                "actual_completion_latency_seconds": 20.8,
+                "remote_cost_usd": 0,
+                "quality_outcome": "approved",
+                "task_outcome": "completed",
+            }
+        ],
+        "specialist_eviction_decisions": [
+            {
+                "role": "planner",
+                "residency_state": "READY",
+                "would_unload": False,
+                "reason": "minimum_residency",
+            }
+        ],
+    }
+
+    candidates = candidates_from_trace(trace, repository_policy="training_allowed")
+    paths = {
+        candidate_path(candidate)
+        for candidate in candidates
+        if candidate.candidate_type == "routing"
+    }
+
+    assert paths == {
+        "datasets/routing/specialist-residency-routing.jsonl",
+        "datasets/routing/local-vs-remote-routing.jsonl",
+        "datasets/routing/warmup-decisions.jsonl",
+        "datasets/routing/eviction-decisions.jsonl",
+        "datasets/routing/latency-prediction.jsonl",
+    }
 
 
 def test_preference_candidate_requires_observable_grounding() -> None:
@@ -558,7 +601,7 @@ def test_collector_records_exact_provider_classes(tmp_path: Path) -> None:
         "agent_invocations": [
             {"role": "executor", "status": "completed"},
             {"role": "frontier", "status": "completed"},
-            {"role": "judge", "provider": "nvidia_nim", "status": "completed"},
+            {"role": "judge", "provider": "opencode_go", "status": "completed"},
         ],
         "metrics": {"repository_training_policy": "training_allowed"},
     }
@@ -575,7 +618,7 @@ def test_collector_records_exact_provider_classes(tmp_path: Path) -> None:
     assert [objects.get(digest)["model_provider"] for digest in hashes] == [
         "local",
         "frontier",
-        "nvidia_nim",
+        "opencode_go",
     ]
 
 

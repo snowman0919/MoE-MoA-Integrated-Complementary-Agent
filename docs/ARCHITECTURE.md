@@ -3,10 +3,10 @@
 The v2 development path adds two independent bounded resources. Runtime
 Knowledge is a versioned SQLite/WAL fact registry retrieved only by the
 Executor; it grants no procedure, tool, or policy authority. The Remote Judge
-is a read-only NVIDIA NIM `z-ai/glm-5.2` provider receiving only a sanitized
+is a read-only OpenCode Go `glm-5.2` provider receiving only a sanitized
 Judge Evidence Package and returning strict structured corrections. The
 existing local Heavy Judge remains an operator-only compatibility profile while
-NIM physical validation is pending. Neither development feature changes the
+provider validation is gated. Neither development feature changes the
 Executor's sole ownership of tools, routing, corrections, final validation, or
 client-visible synthesis.
 
@@ -48,9 +48,10 @@ while judge profile is active. Health is public; inference uses
 This topology is production-enabled. Safe checked-in lifecycle control remains
 disabled with an empty unit map, while the ignored 0600 production environment
 enables reviewed adaptive control for the exact Executor, Planner, and Reviewer
-units. Cold optional roles use the typed loading/unavailable `503` contract.
-Judge stays outside that unit map and the Ollama Reasoner remains externally
-managed.
+units. Cold optional roles use the typed loading/unavailable `503` contract when
+remote specialist routing is disabled. When enabled, cold Planner and Reviewer
+calls use their pinned OpenCode Go DeepSeek provider while local warm-up runs.
+Judge stays outside that unit map and the Ollama Reasoner remains externally managed.
 
 The topology follows physical Phase 3 evidence. Exact full process stop/start
 is the selected executor unload and mandatory fallback. The retained executor

@@ -11,7 +11,7 @@ from pathlib import Path
 from dgx_moa.remote_judge import (
     JudgeCallLimitExceeded,
     JudgeEvidencePackage,
-    NvidiaNimJudgeProvider,
+    OpenCodeGoJudgeProvider,
     RemoteJudgeVerdict,
 )
 
@@ -29,19 +29,19 @@ def package(request_id: str, **values: object) -> JudgeEvidencePackage:
 
 
 async def validate(output: Path) -> None:
-    endpoint = os.getenv("NVIDIA_NIM_BASE_URL")
-    if not endpoint or not os.getenv("NVIDIA_API_KEY"):
-        raise SystemExit("NVIDIA_NIM_BASE_URL and NVIDIA_API_KEY must be set in the environment")
-    provider = NvidiaNimJudgeProvider(
+    endpoint = os.getenv("OPENCODE_GO_BASE_URL", "https://opencode.ai/zen/go")
+    if not os.getenv("OPENCODE_GO_API_KEY"):
+        raise SystemExit("OPENCODE_GO_API_KEY must be set in the environment")
+    provider = OpenCodeGoJudgeProvider(
         endpoint=endpoint,
-        api_key_env="NVIDIA_API_KEY",
-        model="z-ai/glm-5.2",
+        api_key_env="OPENCODE_GO_API_KEY",
+        model="glm-5.2",
         timeout_seconds=120,
         max_retries=1,
         max_calls_per_request=2,
     )
     if not await provider.available():
-        raise RuntimeError("NVIDIA NIM GLM-5.2 model catalog is unavailable")
+        raise RuntimeError("OpenCode Go GLM-5.2 model catalog is unavailable")
 
     results: dict[str, dict[str, object]] = {}
 
@@ -54,8 +54,8 @@ async def validate(output: Path) -> None:
                     "schema_version": "live-remote-judge-validation-v1",
                     "status": status,
                     "created_at": datetime.now(UTC).isoformat(),
-                    "provider": "nvidia_nim",
-                    "model": "z-ai/glm-5.2",
+                    "provider": "opencode_go",
+                    "model": "glm-5.2",
                     "cases": results,
                 },
                 indent=2,

@@ -24,6 +24,7 @@ from dgx_moa.lifecycle import (
 from dgx_moa.remote_judge import MockJudgeProvider, RemoteJudgeVerdict
 from dgx_moa.replay import ReplaySnapshot
 from dgx_moa.schemas import ChatRequest, ResponsesRequest
+from dgx_moa.specialists import MockPlannerProvider
 from dgx_moa.state import Phase, SessionState
 from dgx_moa.streaming import forward_sse as unclosed_forward_sse
 from dgx_moa.training import TrainingCandidate
@@ -2811,6 +2812,107 @@ def test_executor_selected_cold_planner_triggers_load_and_typed_usage(
     assert len(planner_rows) == 1
     assert planner_rows[0].load_triggered is True
     assert planner_rows[0].failure_class == "model_loading"
+    assert driver.calls.count(("start", "planner")) == 1
+
+
+def test_cold_planner_runs_remotely_while_local_warmup_starts(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {
+                role: f"dgx-moa-dev-{role}.service" for role in ("reasoner", "executor", "planner")
+            },
+            "specialist_routing": {
+                "enabled": True,
+                "provider": "opencode_go",
+                "endpoint": "https://opencode.invalid",
+            },
+        }
+    )
+    driver = FakeLifecycleDriver(
+        {"reasoner": "active", "executor": "active", "planner": "inactive"}
+    )
+    original = stub_provider.complete
+
+    async def select_planner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor" and (
+            request.get("response_format", {}).get("json_schema", {}).get("name")
+            == "orchestration_decision"
+        ):
+            stub_provider.calls.append(role)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "action": "invoke_agents",
+                                    "required_agents": ["planner"],
+                                    "optional_agents": [],
+                                    "reason": {"planner": "decomposition needed"},
+                                    "parallelizable": False,
+                                    "continue_after": "synthesize",
+                                    "confidence": 0.8,
+                                }
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    async def health_probe(role: str) -> bool:
+        return role != "planner"
+
+    stub_provider.complete = select_planner  # type: ignore[method-assign]
+    app = create_app(controlled, lifecycle_driver=driver, lifecycle_health_probe=health_probe)
+    remote = MockPlannerProvider(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps(
+                            {
+                                "plan": [{"step": "change"}],
+                                "acceptance_criteria": ["tests pass"],
+                            }
+                        ),
+                    },
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.specialists.remote["planner"] = remote
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "make the focused change"}],
+                "metadata": {"target_clear": True, "expected_files": 1},
+            },
+        )
+        for _ in range(1_000):
+            if ("start", "planner") in driver.calls:
+                break
+            time.sleep(0.001)
+        trace = app.state.store.get(response.headers["X-Session-ID"])
+
+    assert response.status_code == 200
+    assert trace is not None
+    assert len(remote.requests) == 1
+    assert trace.specialist_routing[-1]["selected_provider"] == "remote"
+    assert trace.specialist_routing[-1]["routing_reason"] == "local_not_ready"
     assert driver.calls.count(("start", "planner")) == 1
 
 

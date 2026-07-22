@@ -18,7 +18,8 @@ Updated: 2026-07-22
 | Runtime Skills Phase C foundation | yes | yes | yes | isolated governed lifecycle | no |
 | Runtime Knowledge Phase C foundation | yes | yes | yes | isolated registry/retrieval/conflict/report | no |
 | Declarative Policy Phase D foundation | yes | yes | yes | isolated redaction | no |
-| NVIDIA NIM GLM-5.2 Remote Judge | yes | yes | yes | live auth/selected cases; sustained matrix timeout | no |
+| OpenCode Go GLM-5.2 Remote Judge | yes | yes | yes | live auth/structured probe | no |
+| Remote-first Planner/Reviewer cold routing | yes | yes | yes | DeepSeek Pro/Flash structured probes | no |
 | Typed Evidence Graph Phase E foundation | yes | yes | yes | isolated replay validation | no |
 | Telegram Live Observation Phase E | yes | yes | yes | production Telegram; isolated control | Telegram yes; controls no |
 | Privacy-aware Training Collection Phase F | yes | yes | yes | isolated role/loop/preference archive | no |
@@ -36,7 +37,7 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 ## Branch and deployment
 
 - `dev` now declares package/runtime version `2.0.0`; its current post-release
-  changes are not promotable until the live NVIDIA gate passes. The operator
+  changes are not promotable until the OpenCode Go and cold-routing gates pass. The operator
   explicitly removed Discord from the release scope on 2026-07-22; Telegram is
   the selected production observation provider.
 - `main` is the reviewed production target and stable recursive control plane.

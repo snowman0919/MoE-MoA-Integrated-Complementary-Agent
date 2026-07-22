@@ -475,7 +475,7 @@ def main() -> None:
         knowledge_registry_version=str(active_knowledge.version),
         prompt_registry_version=str(active_prompt.version),
         routing_version="physical-routing-v1",
-        judge_configuration={"provider": "mock", "model": "z-ai/glm-5.2"},
+        judge_configuration={"provider": "mock", "model": "glm-5.2"},
     )
     verified = packager.verify(created["idempotency_key"])
     replayed = packager.package(
@@ -488,7 +488,7 @@ def main() -> None:
         knowledge_registry_version=str(active_knowledge.version),
         prompt_registry_version=str(active_prompt.version),
         routing_version="physical-routing-v1",
-        judge_configuration={"provider": "mock", "model": "z-ai/glm-5.2"},
+        judge_configuration={"provider": "mock", "model": "glm-5.2"},
     )
     assert replayed["idempotent_replay"] is True
     inspection = root / "candidate-inspection"

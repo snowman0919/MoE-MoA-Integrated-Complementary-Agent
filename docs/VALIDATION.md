@@ -3675,3 +3675,53 @@ sustained release gate.
 No production credential was installed, Remote Judge remains disabled, and
 `main`/production promotion remains blocked until one complete live matrix
 passes under the specified 120-second timeout and one-retry contract.
+
+## OpenCode Go specialist routing and Judge replacement — 2026-07-22
+
+The operator superseded the NVIDIA NIM design and selected OpenCode Go. The
+protected repository-root `opencode_api` file was mode 0600, contained one raw
+credential line rather than an environment assignment, remained ignored, and
+was never printed or copied into Git. A credentialed `/v1/models` request
+returned exact IDs `deepseek-v4-pro`, `deepseek-v4-flash`, and `glm-5.2`.
+
+Credentialed specialist validation initially exposed two real compatibility
+failures. OpenCode Go rejected the local vLLM strict `json_schema` request with
+HTTP 400; after adapting it to `json_object`, the first Planner output exhausted
+800 completion tokens with `finish_reason=length`. At 4096 tokens it completed
+but did not follow the Pydantic field shapes until the sanitized schema itself
+was prepended as a system constraint. These failures are retained as rejected
+evidence and are not production claims.
+
+After the bounded adapter and role-specific token floors were implemented,
+`scripts/validate-specialist-routing.py` passed both real structured calls:
+
+- Planner `deepseek-v4-pro`: valid `PlannerPlan`, 20.884 seconds, 529 prompt
+  tokens, 1540 completion tokens, 2069 total tokens.
+- Reviewer `deepseek-v4-flash`: valid `ReviewResult`, 2.496 seconds, 478 prompt
+  tokens, 120 completion tokens, 598 total tokens.
+
+The local Planner and Reviewer remain the preferred providers when real
+inference readiness and queue/cost prediction permit. The DeepSeek calls are
+only the pinned remote path for cold, loading, unhealthy, or slower local
+specialists while one local warm-up proceeds independently.
+
+The replacement OpenCode Go GLM-5.2 Judge completed the entire credentialed
+matrix in one run at
+`/tmp/dgx-moa-opencode-validation.WilZSu/remote-judge.json` (SHA-256
+`9194dd6c23197db57e74d1443a23dad977854c9aa0c3537a58dbe8f04a8d7d7a`).
+Grounded evidence and the corrected recheck were approved. Unsupported claims,
+failed-test contradictions, missing acceptance evidence, and the unsupported
+health claim were rejected with one evidence-linked finding and one bounded
+required edit. Local enforcement blocked the third call for the correction
+request. The sanitized checkpoint reports `status=passed`.
+
+The final automated gate passed with `846 passed` and the existing third-party
+Starlette warning. Ruff format/check, strict mypy across 41 source files,
+`git diff --check`, and the secret-pattern diff scan were clean. The isolated
+self-evolving-runtime validator reported `status=passed`; its real 7-Zip 23.01
+archive SHA-256 is
+`a3c1ec39adb4b0c04f6443caaafc0fcd733dcfbea262afc08e3c589ce010db93`.
+Archive inspection confirmed all five new routing paths:
+`specialist-residency-routing.jsonl`, `local-vs-remote-routing.jsonl`,
+`warmup-decisions.jsonl`, `eviction-decisions.jsonl`, and
+`latency-prediction.jsonl`.
