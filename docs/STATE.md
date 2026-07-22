@@ -7,7 +7,7 @@ Updated: 2026-07-22
 | Capability | Designed | Implemented on `dev` | Unit-tested | Physically validated | Production-enabled |
 | --- | --- | --- | --- | --- | --- |
 | `dgx-moa` Reasoner + Executor core | yes | yes | yes | production yes | yes |
-| Dynamic Planner/Reviewer routing | yes | yes | yes | Planner production; Reviewer isolated | yes |
+| Dynamic Planner/Reviewer routing | yes | yes | yes | Planner and Reviewer production | yes |
 | Codex OAuth Frontier modes/fallback | yes | yes | yes | production architecture yes | yes |
 | Heavy Judge adjudication | yes | yes | yes | isolated exclusive-profile yes | deployed, operator-only |
 | Evidence graph and per-agent trace | yes | yes | yes | production yes | yes |
@@ -18,8 +18,8 @@ Updated: 2026-07-22
 | Runtime Skills Phase C foundation | yes | yes | yes | isolated governed lifecycle | no |
 | Runtime Knowledge Phase C foundation | yes | yes | yes | isolated registry/retrieval/conflict/report | no |
 | Declarative Policy Phase D foundation | yes | yes | yes | isolated redaction | no |
-| OpenCode Go GLM-5.2 Remote Judge | yes | yes | yes | live auth/structured probe | no |
-| Remote-first Planner/Reviewer cold routing | yes | yes | yes | DeepSeek Pro/Flash structured probes | no |
+| OpenCode Go GLM-5.2 Remote Judge | yes | yes | yes | live matrix and production readiness | yes |
+| Remote-first Planner/Reviewer cold routing | yes | yes | yes | production cold/warm routing | yes |
 | Typed Evidence Graph Phase E foundation | yes | yes | yes | isolated replay validation | no |
 | Telegram Live Observation Phase E | yes | yes | yes | production Telegram; isolated control | Telegram yes; controls no |
 | Privacy-aware Training Collection Phase F | yes | yes | yes | isolated role/loop/preference archive | no |
@@ -36,10 +36,10 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 
 ## Branch and deployment
 
-- `dev` now declares package/runtime version `2.0.0`; its current post-release
-  changes are not promotable until the OpenCode Go and cold-routing gates pass. The operator
-  explicitly removed Discord from the release scope on 2026-07-22; Telegram is
-  the selected production observation provider.
+- `dev` declares package/runtime version `2.0.0`. The OpenCode Go Judge and
+  cold-routing gates passed and were promoted through reviewed PRs `#44`-`#48`.
+  The operator explicitly removed Discord from the release scope on 2026-07-22;
+  Telegram is the selected production observation provider.
 - `main` is the reviewed production target and stable recursive control plane.
 - `dev` is the integration branch; recursive experiments must use isolated
   `auto/<layer>/<proposal-id>` worktrees created from `dev`.
@@ -89,6 +89,12 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   validation. A production `dgx-moa` request emitted three observer events with
   zero Telegram errors or drops. Discord is intentionally unconfigured and is
   not a release gate; observation controls remain disabled.
+- PRs `#44`-`#48` replaced NVIDIA NIM with OpenCode Go, enabled the separate
+  GLM-5.2 Remote Judge and DeepSeek V4 Pro/Flash specialist providers, corrected
+  real readiness-probe and structured-output limits, and documented production
+  cold/warm routing. The production worktree is `main@29bd904`; Planner and
+  Reviewer remain local models, with remote execution used only by routing
+  policy while a cold local specialist warms independently.
 
 ## Runtime
 

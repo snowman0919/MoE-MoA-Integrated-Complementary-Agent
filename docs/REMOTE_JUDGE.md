@@ -44,11 +44,12 @@ single remaining Judge call. A failed correction or recheck suppresses the
 draft and returns a bounded correction state. Remote approval alone is
 evaluation evidence, not an objective fact or automatic gold-training label.
 
-Physical OpenCode Go validation and production enablement remain gated. Do not
-enable the provider until the cases in `docs/VALIDATION.md` cover valid approval,
-unsupported claims, failed-test inconsistency, missing acceptance evidence,
-edits, timeout, rate limit, invalid output, redaction, denied training policy,
-and two-call enforcement.
+Physical OpenCode Go validation and production enablement passed on 2026-07-22.
+The cases in `docs/VALIDATION.md` cover valid approval, unsupported claims,
+failed-test inconsistency, missing acceptance evidence, edits, timeout, rate
+limit, invalid output, redaction, denied training policy, and two-call
+enforcement. Production keeps the credential in its protected 0600 environment
+and exposes no Judge endpoint.
 Use `scripts/validate-remote-judge.py` with `OPENCODE_GO_API_KEY` for the
 credentialed quality cases. Mock
 transport tests remain the authority for deterministic timeout, rate-limit,

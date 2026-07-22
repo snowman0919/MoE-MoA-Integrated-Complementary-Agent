@@ -38,5 +38,7 @@ labels. Weekly packages include:
 - `datasets/routing/latency-prediction.jsonl`
 
 Use `scripts/validate-specialist-routing.py` for credentialed structured-output
-checks. Production enablement requires those live checks, the full automated
-suite, an ordinary cold-role remote-routing test, and rollback verification.
+checks. The live checks, full automated suite, ordinary cold-role remote-routing
+test, independent singleflight warm-up, subsequent-call local eligibility, and
+rollback verification passed on 2026-07-22; production routing is enabled from
+its protected environment.
