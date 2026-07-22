@@ -2542,7 +2542,7 @@ def create_app(
                             if isinstance(finding, dict)
                         )
                         recheck_needed = bool(
-                            verdict.get("recheck_required") or important_correction
+                            important_correction and verdict.get("recheck_required")
                         )
                         if recheck_needed:
                             active_stage = "judge"

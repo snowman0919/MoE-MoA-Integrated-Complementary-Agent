@@ -2720,7 +2720,7 @@ class Controller:
             for key, item in decision.items()
             if key in {"changed_paths", "diff_summary", "validation_results", "build_results"}
         }
-        return JudgeEvidencePackage(
+        package = JudgeEvidencePackage(
             request_id=state.current_request_id or state.session_id,
             objective=state.objective,
             request_constraints=list(state.acceptance_criteria),
@@ -2769,6 +2769,56 @@ class Controller:
             policy_decisions=state.policy_decisions[-8:],
             selected_skills=state.skill_selections[-8:],
             retrieved_knowledge=state.knowledge_selections[-8:],
+        )
+        if state.repository_training_policy not in {"internal_only", "training_denied"}:
+            return package
+        criteria = [
+            {
+                key: item[key]
+                for key in ("criterion_id", "required", "state", "evidence_ids")
+                if key in item
+            }
+            for item in package.acceptance_criteria
+            if isinstance(item, dict)
+        ]
+        evidence_fields = {
+            "id",
+            "status",
+            "exit_code",
+            "failure_class",
+            "tool_name",
+            "evidence_ids",
+        }
+        return package.model_copy(
+            update={
+                "objective": "[WITHHELD_BY_REPOSITORY_POLICY]",
+                "request_constraints": [],
+                "acceptance_criteria": criteria,
+                "executor_draft": "[WITHHELD_BY_REPOSITORY_POLICY]",
+                "changed_diff_summary": [],
+                "tool_evidence": [
+                    {key: value for key, value in item.items() if key in evidence_fields}
+                    for item in package.tool_evidence
+                    if isinstance(item, dict)
+                ],
+                "test_evidence": [
+                    {key: value for key, value in item.items() if key in evidence_fields}
+                    for item in package.test_evidence
+                    if isinstance(item, dict)
+                ],
+                "build_evidence": [
+                    {key: value for key, value in item.items() if key in evidence_fields}
+                    for item in package.build_evidence
+                    if isinstance(item, dict)
+                ],
+                "reviewer_findings": [],
+                "frontier_findings": [],
+                "open_failures": [],
+                "resolved_failures": [],
+                "policy_decisions": [],
+                "selected_skills": [],
+                "retrieved_knowledge": [],
+            }
         )
 
     async def remote_judge_adjudication(

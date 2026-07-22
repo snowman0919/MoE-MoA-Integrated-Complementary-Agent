@@ -3578,3 +3578,24 @@ source files. User-systemd verification, every shell script `bash -n`, and
 7-Zip 23.01 regenerated archive SHA-256 is
 `68ea79a698275c630db10616801eff0c1ffc667a4b4650c4d869f4c67e52cd0a`.
 This does not satisfy the still-missing live Discord or NVIDIA gates.
+
+## Judge recheck and repository-policy boundary — 2026-07-22
+
+The bounded correction flow now consumes its optional second Judge call only
+when the first verdict both requests a recheck and contains an Important or
+Critical finding. A Minor finding with `recheck_required=true` completed after
+the one Executor correction and targeted Reviewer validation with one Judge
+call; the Important case retained the two-call recheck. For `internal_only` and
+`training_denied` repositories, the Judge package withholds objective, draft,
+diff, specialist prose, and retrieved content while retaining only bounded
+criterion/tool/test/build status metadata.
+
+The serialized gate passed with `839 passed` and the existing third-party
+Starlette warning, 82 formatted files, clean Ruff, and strict mypy across 41
+source files. User-systemd verification, every shell script `bash -n`, and
+`git diff --check` exited zero. Trace completeness remained 10/10 and 100.0%.
+The isolated validator reported `status=passed` at
+`/tmp/dgx-moa-v2-judge-policy.CpR521/runtime/physical-validation.json`; its real
+7-Zip 23.01 archive SHA-256 is
+`cbc20c4347d01002d4fe400cd58d26a916ba074eb8ac8604db4fbb7a1dc10ca7`.
+Live NVIDIA and Discord evidence remains unavailable.

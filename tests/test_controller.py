@@ -1164,6 +1164,47 @@ async def test_remote_judge_receives_bounded_evidence_and_owns_no_tools(
     assert stub_provider.calls == []
 
 
+def test_remote_judge_withholds_repository_content_when_training_is_denied(
+    settings, stub_provider: StubProvider
+) -> None:
+    state = SessionState(
+        session_id="judge-repository-policy",
+        objective="private repository objective",
+        repository_training_policy="training_denied",
+        acceptance_criteria=["private acceptance criterion"],
+        tool_results=[
+            {
+                "tool_name": "pytest",
+                "status": "failed",
+                "exit_code": 1,
+                "stdout": "private repository output",
+            }
+        ],
+        decisions=[
+            {
+                "validation_results": [
+                    {
+                        "id": "test-1",
+                        "status": "failed",
+                        "exit_code": 1,
+                        "output": "private test output",
+                    }
+                ],
+                "diff_summary": "private diff",
+            }
+        ],
+    )
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)
+
+    package = controller.judge_evidence_package(state, "private executor draft")
+    serialized = package.model_dump_json()
+
+    assert package.objective == "[WITHHELD_BY_REPOSITORY_POLICY]"
+    assert package.executor_draft == "[WITHHELD_BY_REPOSITORY_POLICY]"
+    assert package.test_evidence == [{"id": "test-1", "status": "failed", "exit_code": 1}]
+    assert "private" not in serialized
+
+
 @pytest.mark.asyncio
 async def test_policy_can_fail_closed_on_low_risk_remote_judge_outage(
     settings, stub_provider: StubProvider

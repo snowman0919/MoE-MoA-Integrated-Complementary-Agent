@@ -16,6 +16,9 @@ acceptance state, bounded draft/diff/tool/test/build evidence, specialist
 findings, failures, policy decisions, selected Skills, retrieved Knowledge, and
 one judgment question. Email, phone, secret-pattern, entropy, credential-key,
 and authorization redaction runs before transport.
+For an `internal_only` or `training_denied` repository, objective, draft, diff,
+specialist prose, and retrieved content are withheld; only bounded criterion,
+tool, test, and build status metadata may leave the host.
 
 The response must match `judge-verdict-v1`. It contains a verdict, risk class,
 all seven criterion states, structured findings, bounded required edits, a

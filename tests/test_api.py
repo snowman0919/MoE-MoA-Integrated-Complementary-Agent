@@ -135,7 +135,21 @@ def remote_verdict(value: str = "approve") -> RemoteJudgeVerdict:
                     "completeness",
                 )
             },
-            "findings": [],
+            "findings": (
+                []
+                if value == "approve"
+                else [
+                    {
+                        "finding_id": "judge-required-edit",
+                        "severity": "important",
+                        "category": "evidence_grounding",
+                        "evidence_ids": [],
+                        "target": "unsupported claim",
+                        "description": "The claim is not supported.",
+                        "required_action": "State only the verified result.",
+                    }
+                ]
+            ),
             "required_edits": (
                 []
                 if value == "approve"
@@ -285,10 +299,32 @@ def test_selective_remote_judge_correction_is_validated_and_rechecked(
                 "metadata": {"authentication": True},
             },
         )
+        first_calls = list(provider.calls)
+        minor_verdict = remote_verdict("revise")
+        minor_verdict = minor_verdict.model_copy(
+            update={
+                "findings": [minor_verdict.findings[0].model_copy(update={"severity": "minor"})]
+            }
+        )
+        minor_remote = MockJudgeProvider(minor_verdict)
+        app.state.remote_judge = minor_remote
+        app.state.controller.remote_judge = minor_remote
+        minor_response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "judge-minor-correction",
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "verify security change"}],
+                "metadata": {"authentication": True},
+            },
+        )
 
     assert response.status_code == 200
     assert response.json()["choices"][0]["message"]["content"] == "corrected verified result"
-    assert provider.calls == ["executor", "reviewer", "executor", "reviewer"]
+    assert first_calls == ["executor", "reviewer", "executor", "reviewer"]
     assert len(remote.packages) == 2
     assert "corrected verified result" in remote.packages[-1].executor_draft
     assert remote.packages[0].reviewer_findings[-1]["output"]["status"] == "approved"
@@ -298,6 +334,8 @@ def test_selective_remote_judge_correction_is_validated_and_rechecked(
     state = app.state.store.get("judge-corrected")
     assert state is not None
     assert state.judge_status == "approve"
+    assert minor_response.status_code == 200
+    assert len(minor_remote.packages) == 1
 
 
 def test_selective_remote_judge_rejects_unbuffered_high_risk_stream(
