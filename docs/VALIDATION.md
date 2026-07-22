@@ -1,5 +1,46 @@
 # Validation
 
+## Governed data-path production deployment — 2026-07-22
+
+PR `#36` merged to `main` as `40fce082860b0884f224127a7ebafc6eae4f94d5`
+and the production worktree fast-forwarded from `dc46af0` while preserving its
+untracked state file. The controlled gateway restart exercised the selected
+exact Executor full stop/start. Gateway PID `2675698`, Executor PID `2675772`,
+and the resident target returned active; the Executor argv retained context
+`65536`, one sequence, `1700000000` KV bytes, `gpu_memory_utilization=0.50`,
+and MARLIN. The resident readiness guard passed with `68359168000` bytes
+available. Planner, Reviewer, and Judge remained inactive.
+
+Authenticated readiness and model discovery returned HTTP `200` and advertised
+all public aliases at context `65536`. A request made immediately after model
+readiness received one transient HTTP `503`; the retry twenty seconds later and
+all subsequent requests returned HTTP `200`, including exact `POSTDEPLOY_READY`.
+Post-retry journals contained no traceback, exception, OOM, stream disconnect,
+or restart loop. The gateway remained the only scoped tailnet listener at
+`100.125.239.72:9000`; the Executor remained loopback-only at `127.0.0.1:8101`.
+
+The production Responses SSE check emitted exactly one `response.completed`, no
+`response.failed`, no reasoning event, and the exact marker. Chat SSE emitted
+one `[DONE]`, the exact marker, and no reasoning content. A real Responses
+function-tool round requested exactly `exec_command({"cmd":"pwd"})`, preserved
+its call ID, accepted the observed output continuation, returned completed, and
+included the observed production path.
+
+The postdeployment harness result is
+`/tmp/dgx-moa-live-client-matrix-20260722-postdeploy-r1/summary.json`, SHA-256
+`300f7effdc77f40848401dede4c7e6313b833a7ec4f510683c8ef40346e1c628`.
+Codex CLI `0.144.6`, OpenCode `1.17.18`, and Hermes Agent `0.18.2` each exited
+zero with its exact marker. Generic and primary Reasoner paths returned valid
+HTTP `200` JSON, the isolated gateway stopped, raw client artifacts were
+removed, and the production Git fingerprint was unchanged.
+
+At the final observation point, production SQLite and the atomic CSV matched
+exactly for every nonzero aggregate: Executor 16/16 completed invocations and
+`Qwythos-v2-9B:Q4` Reasoner 9/9, with zero failures. `/metrics` exposed exactly
+32 fixed unlabelled names. Runtime inspection confirmed Loop Engineering,
+runtime Skills, declarative policy, live observation, training collection, and
+weekly jobs remain disabled; this deployment did not enable or export them.
+
 ## Governed runtime production deployment — 2026-07-22
 
 PR `#34` merged to `main` as `979a608` and the production worktree was

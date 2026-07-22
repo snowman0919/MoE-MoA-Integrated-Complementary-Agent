@@ -69,6 +69,13 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   streaming, and Responses terminal streaming passed against production. The
   new autonomous/observation/training/weekly capabilities remain deployed but
   disabled; deployment did not authorize their gates.
+- PR `#36` deployed the audited policy-persistence and role-specific loop/
+  preference data paths as `main@40fce08`. The gateway restart performed the
+  selected exact Executor stop/start and restored the unchanged Phase 3 65,536
+  baseline. Codex, OpenCode, Hermes, Responses/Chat streaming, function-tool
+  continuation, metrics, and invocation CSV checks passed. Loop Engineering,
+  Skills, policy, observation, training, and weekly-job production gates remain
+  disabled.
 
 ## Runtime
 
