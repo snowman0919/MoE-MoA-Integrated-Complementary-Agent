@@ -3662,11 +3662,16 @@ parameters.
 
 The sustained gate still failed. Multiple calls exceeded 120 seconds twice and
 correctly surfaced `JudgeTimeout`; the latest checkpoint at
-`/tmp/dgx-moa-live-nim.U0bewF/validation.json` recorded
+`/tmp/dgx-moa-live-nim.ygb2Zi/validation.json` recorded
 `approve_valid_response` before the next case timed out. Other attempts reached
 the correction or corrected-recheck assertion but did not complete the entire
 matrix in one run. The validator now writes an atomic, sanitized checkpoint
 after every completed case so provider failures cannot erase measured progress.
+After a later recovery probe returned `approve` with all criteria passing and
+386 total tokens, the full matrix was retried; it again completed the first
+approval case and then exhausted both 120-second attempts on the unsupported-
+claim case. This confirms intermittent single-call recovery does not satisfy the
+sustained release gate.
 No production credential was installed, Remote Judge remains disabled, and
 `main`/production promotion remains blocked until one complete live matrix
 passes under the specified 120-second timeout and one-retry contract.
