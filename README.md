@@ -1,4 +1,4 @@
-# DGX MoA Agent
+# DGX MoA Agent 2.0
 
 OpenAI-compatible, Executor-directed dynamic Mixture-of-Agents gateway. OpenCode
 and other clients connect to one authenticated tailnet endpoint. The primary
@@ -34,10 +34,12 @@ See `docs/HERMES_AGENT.md` for the environment-only Hermes configuration.
 The production `main` runtime implements the MoA contracts and role-aware
 request statistics. Its lifecycle policy keeps the 65,536-token
 Executor resident and keeps the external Ollama Reasoner persistently available;
-Planner and Reviewer may unload after bounded role-local idle periods. A cold
-managed local role returns retryable `503`
+Planner and Reviewer may unload after bounded role-local idle periods. With
+specialist routing disabled, a cold managed local role returns retryable `503`
 state, generation, weight progress, overall progress, and ETA fields while one
-load owns the role. An isolated user-systemd run physically passed the four-role
+load owns the role. With validated specialist routing enabled, cold Planner and
+Reviewer calls run remotely while that same singleflight local load proceeds in
+the background. An isolated user-systemd run physically passed the four-role
 control path, idle unload/reload, circuit breaker, and idempotent rollback. It
 used fake weights to avoid duplicating the active 45G production executor, so it
 does not add a new real-weight memory claim. Safe checked-in defaults remain
@@ -51,8 +53,11 @@ and fixed-resident restoration. Production enablement and later Responses
 compatibility fixes were promoted through reviewed `dev`-to-`main` PRs.
 
 `dev` also contains disabled, unit-tested bounded Loop Engineering, runtime
-Skills and canaries, declarative policy, typed Evidence Graph/replay, safe
-Discord/Telegram observation, privacy-filtered training candidates, and Seoul
+Skills and canaries, a separate Runtime Knowledge registry, OpenCode Go GLM-5.2
+Remote Judge transport, remote-first cold-start routing for local Planner and
+Reviewer specialists, declarative policy, typed Evidence Graph/replay, safe
+Telegram observation (with an optional disabled Discord compatibility transport),
+privacy-filtered training candidates, and Seoul
 weekly 7z packaging/retention workflows. These are not production capabilities
 until the physical client/provider/archive gates in `docs/VALIDATION.md` pass.
 
@@ -66,6 +71,8 @@ Authoritative references: `docs/STATE.md` for current state,
 `docs/OPERATIONS.md` for operation, `docs/VALIDATION.md` for measured evidence,
 `docs/MOA_ORCHESTRATION.md` for collaboration, `docs/FRONTIER.md` for Codex OAuth,
 `docs/TRACE_SCHEMA.md` for logging, `docs/LOOP_ENGINEERING.md` for the disabled
-loop foundation, `docs/SKILLS.md`, `docs/LIVE_OBSERVATION.md`,
+loop foundation, `docs/SKILLS.md`, `docs/KNOWLEDGE_BASE.md`,
+`docs/REMOTE_JUDGE.md`, `docs/SPECIALIST_ROUTING.md`, `docs/LIVE_OBSERVATION.md`,
 `docs/TRAINING_DATA.md`, and `docs/WEEKLY_PACKAGING.md` for the new disabled
-workflows, and `docs/RECURSIVE_IMPROVEMENT.md` for the branch workflow.
+workflows, `docs/RUNTIME_SELF_IMPROVEMENT.md` for governed Prompt/Policy/Routing
+candidates, and `docs/RECURSIVE_IMPROVEMENT.md` for the branch workflow.

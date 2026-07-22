@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import zstandard
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .state import StateStore
@@ -125,12 +126,13 @@ class TrainingEvent(BaseModel):
     iteration: int = 0
     role: str
     event_type: str
-    model_provider: str
+    model_provider: Literal["local", "opencode_go", "frontier"]
     model_identifier: str
     model_revision: str
     prompt_template_version: str
     policy_version: str
     skill_versions: list[str] = Field(default_factory=list)
+    knowledge_versions: list[str] = Field(default_factory=list)
     input_ref: str | None = None
     output_ref: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)
@@ -149,7 +151,18 @@ class TrainingCandidate(BaseModel):
 
     candidate_id: str = Field(default_factory=lambda: f"cand_{uuid.uuid4().hex}")
     candidate_type: Literal[
-        "sft", "preference", "tool_use", "routing", "review", "repair", "skill", "loop"
+        "sft",
+        "preference",
+        "tool_use",
+        "routing",
+        "review",
+        "judge",
+        "repair",
+        "skill",
+        "knowledge",
+        "policy",
+        "prompt",
+        "loop",
     ]
     source_request_ids: list[str]
     role_target: str
@@ -283,15 +296,15 @@ class ContentStore:
         if len(raw) > self.maximum_bytes:
             raise ValueError("content object exceeds size limit")
         digest = hashlib.sha256(raw).hexdigest()
-        path = self.root / "sha256" / digest[:2] / digest[2:4] / f"{digest}.json.gz"
+        path = self.root / "sha256" / digest[:2] / digest[2:4] / f"{digest}.json.zst"
         if path.exists():
             return digest
         path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=".object-", suffix=".tmp")
         os.close(descriptor)
         try:
-            with gzip.open(temporary, "wb") as stream:
-                stream.write(raw)
+            with open(temporary, "wb") as stream:
+                stream.write(zstandard.ZstdCompressor(level=3).compress(raw))
             with open(temporary, "rb") as stream:
                 os.fsync(stream.fileno())
             os.replace(temporary, path)
@@ -303,9 +316,20 @@ class ContentStore:
     def get(self, digest: str) -> Any:
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise KeyError("invalid content digest")
-        path = self.root / "sha256" / digest[:2] / digest[2:4] / f"{digest}.json.gz"
-        with gzip.open(path, "rb") as stream:
-            raw = stream.read()
+        directory = self.root / "sha256" / digest[:2] / digest[2:4]
+        path = directory / f"{digest}.json.zst"
+        if path.exists():
+            try:
+                raw = zstandard.ZstdDecompressor().decompress(
+                    path.read_bytes(), max_output_size=self.maximum_bytes
+                )
+            except zstandard.ZstdError as error:
+                raise ValueError("content object decompression failed") from error
+        else:
+            with gzip.open(directory / f"{digest}.json.gz", "rb") as stream:
+                raw = stream.read(self.maximum_bytes + 1)
+        if len(raw) > self.maximum_bytes:
+            raise ValueError("content object exceeds size limit")
         if hashlib.sha256(raw).hexdigest() != digest:
             raise ValueError("content object hash mismatch")
         return json.loads(raw)
@@ -313,8 +337,9 @@ class ContentStore:
     def delete(self, digest: str) -> None:
         if not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise KeyError("invalid content digest")
-        path = self.root / "sha256" / digest[:2] / digest[2:4] / f"{digest}.json.gz"
-        path.unlink(missing_ok=True)
+        directory = self.root / "sha256" / digest[:2] / digest[2:4]
+        (directory / f"{digest}.json.zst").unlink(missing_ok=True)
+        (directory / f"{digest}.json.gz").unlink(missing_ok=True)
 
 
 class TrainingStore:
@@ -846,6 +871,7 @@ def candidate_from_trace(
         else "quarantine"
     )
     eligible = not reasons and tier in {"gold", "silver", "negative"}
+    metrics = trace.get("metrics", {})
     return TrainingCandidate(
         candidate_type="repair" if negative else "sft",
         source_request_ids=[request_id],
@@ -857,12 +883,21 @@ def candidate_from_trace(
         or list(trace.get("failure_classification", {})),
         quality_labels={
             "task_success": successful,
+            "acceptance_criteria_coverage": metrics.get("acceptance_criteria_coverage"),
+            "test_status": metrics.get("test_status"),
+            "build_status": metrics.get("build_status"),
+            "review_severity": metrics.get("review_severity"),
+            "frontier_verdict": metrics.get("frontier_verdict"),
+            "judge_verdict": trace.get("review_outcome", {}).get("judge"),
+            "user_feedback": metrics.get("user_feedback"),
+            "tool_success_rate": metrics.get("tool_success_rate"),
             "review_status": trace.get("review_outcome", {}).get("status"),
-            "iteration_count": trace.get("metrics", {}).get("iteration_count"),
+            "repair_count": len(trace.get("failures", [])),
+            "iteration_count": metrics.get("iteration_count"),
+            "progress_score": metrics.get("progress_score"),
+            "final_confidence_state": trace.get("derived_confidence"),
             "failure_classes": sorted(trace.get("failure_classification", {})),
-            "unsupported_claim_count": int(
-                trace.get("metrics", {}).get("unsupported_claim_count", 0) or 0
-            ),
+            "unsupported_claim_count": int(metrics.get("unsupported_claim_count", 0) or 0),
         },
         privacy_labels={
             "secret_redactions": sanitized.secret_redactions,
@@ -942,6 +977,102 @@ def candidates_from_trace(
                 }
             )
         )
+    specialist_decisions = trace.get("specialist_routing", [])
+    eviction_decisions = trace.get("specialist_eviction_decisions", [])
+    if specialist_decisions:
+        cleaned = sanitize({"routing": specialist_decisions, "eviction": eviction_decisions})
+        routing_targets = [
+            "specialist-residency-routing",
+            "local-vs-remote-routing",
+            "latency-prediction",
+        ]
+        if any(
+            isinstance(item, dict) and item.get("warmup_decision") != "not_needed"
+            for item in specialist_decisions
+        ):
+            routing_targets.append("warmup-decisions")
+        if eviction_decisions:
+            routing_targets.append("eviction-decisions")
+        for target in routing_targets:
+            candidates.append(
+                base.model_copy(
+                    update={
+                        "candidate_id": f"cand_{uuid.uuid4().hex}",
+                        "candidate_type": "routing",
+                        "role_target": "specialist",
+                        "accepted_answer": cleaned.value,
+                        "rejected_answers": [],
+                        "quality_labels": base.quality_labels | {"routing_dataset": target},
+                        "privacy_labels": privacy_labels(cleaned),
+                        "transformations": [
+                            *base.transformations,
+                            "specialist_routing_projection",
+                        ],
+                    }
+                )
+            )
+    for evaluation in trace.get("evaluations", []):
+        if not isinstance(evaluation, dict) or evaluation.get("evaluator_type") != "opencode_go":
+            continue
+        result = evaluation.get("result")
+        if not isinstance(result, dict) or not result.get("verdict"):
+            continue
+        findings = result.get("findings", [])
+        edits = result.get("required_edits", [])
+        compact_result = {
+            "objective": trace.get("objective", ""),
+            "constraints": trace.get("completion_evidence", {}),
+            "evidence_package": {
+                "evidence_ids": evaluation.get("evidence_references", []),
+                "requirement_ids": evaluation.get("requirement_ids", []),
+            },
+            "candidate_answer": trace.get("completion_evidence", {}),
+            "expected_verdict": result.get("verdict"),
+            "expected_findings": [
+                {
+                    "severity": item.get("severity"),
+                    "category": item.get("category"),
+                }
+                for item in findings
+                if isinstance(item, dict)
+            ],
+            "actual_downstream_outcome": {
+                "final_status": trace.get("final_status"),
+                "review_outcome": trace.get("review_outcome", {}),
+            },
+            "deterministic_confirmation": evaluation.get("later_confirmation"),
+            "criteria": result.get("criteria", {}),
+            "required_edit_operations": [
+                item.get("operation") for item in edits if isinstance(item, dict)
+            ],
+        }
+        cleaned = sanitize(compact_result)
+        targets = ["verdicts"]
+        if findings:
+            targets.append("findings")
+        if edits:
+            targets.append("corrections")
+        if result.get("verdict") in {"escalate", "reject"}:
+            targets.append("escalations")
+        confirmation = evaluation.get("later_confirmation")
+        if confirmation in {"false_approval", "false_rejection"}:
+            targets.append(str(confirmation).replace("_", "-") + "s")
+        for target in targets:
+            candidates.append(
+                base.model_copy(
+                    update={
+                        "candidate_id": f"cand_{uuid.uuid4().hex}",
+                        "candidate_type": "judge",
+                        "role_target": "judge",
+                        "accepted_answer": cleaned.value,
+                        "rejected_answers": [],
+                        "quality_labels": base.quality_labels | {"judge_dataset": target},
+                        "privacy_labels": privacy_labels(cleaned),
+                        "license_labels": {"external_output_permitted": True},
+                        "transformations": [*base.transformations, "judge_categorical_projection"],
+                    }
+                )
+            )
     loop = trace.get("engineering_loop")
     if isinstance(loop, dict) and loop:
         cleaned = sanitize(loop)
@@ -1048,13 +1179,20 @@ class TrainingCollector:
             for invocation in trace.get("agent_invocations", []):
                 role = str(invocation.get("role", "unknown"))
                 model = trace.get("model_revisions", {}).get(role, {})
+                model_provider: Literal["local", "opencode_go", "frontier"] = (
+                    "frontier"
+                    if role == "frontier"
+                    else "opencode_go"
+                    if invocation.get("provider") == "opencode_go"
+                    else "local"
+                )
                 event = TrainingEvent(
                     request_id=request_id,
                     task_id=str(trace.get("task_id", request_id)),
                     loop_id=str(metrics.get("engineering_loop_id", "")),
                     role=role,
                     event_type="agent_output",
-                    model_provider="external" if role == "frontier" else "local",
+                    model_provider=model_provider,
                     model_identifier=str(model.get("repository", role)),
                     model_revision=str(model.get("revision", "unknown")),
                     prompt_template_version="controller-v2",

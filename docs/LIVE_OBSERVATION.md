@@ -5,13 +5,20 @@ sanitized subset of existing runtime events to a bounded in-memory queue. Queue
 insertion is non-blocking; queue saturation or provider failure affects only
 observation and never waits in the request path.
 
-Discord uses a configured webhook and optional thread ID. Telegram uses a bot
-token, chat ID, and optional message-thread ID. Events are batched and rendered
-as readable multi-line cards. The default publishes only allowlisted status
-fields. An operator may separately enable the bounded user prompt and the
-Reasoner's structured artifact (`problem_interpretation`, explicit reasoning
-summary, risks, unknowns, and recommended actions). Hidden model reasoning is
-never available to this path. Credentials, environment data, and token deltas
+The reviewed production selection uses Telegram with a bot token, chat ID, and
+optional message-thread ID. The implementation also retains an optional Discord
+webhook transport for isolated compatibility tests, but the operator explicitly
+excluded Discord from production and release gating on 2026-07-22. Events are
+batched and rendered
+as readable multi-line cards. The allowlist covers request, Reasoner, Planner,
+Executor, Knowledge, Skill, Reviewer, Frontier, Judge, tool, loop, failure,
+policy, approval, and terminal lifecycle events. Judge cards expose only the
+verdict/risk/recheck state, never finding or correction prose. An operator may
+separately enable the bounded user prompt and the
+Reasoner's structured artifact (assumptions, constraints, conclusions,
+hypotheses, evidence references, recommended actions, and a confidence
+category). Hidden model reasoning is never available to this path. Credentials,
+environment data, and token deltas
 remain excluded, and the selected content is still passed through secret
 redaction. Telegram and Discord are external processors even when the gateway
 itself is tailnet-only. Provider secrets use Pydantic `SecretStr` and must arrive
@@ -56,4 +63,4 @@ token and target live only under `/home/kotori9/.config/dgx-moa/` and the ignore
 0600 production environment; no credential or chat ID is tracked or documented.
 Production Telegram observation is enabled with controls disabled. A real core
 request produced three sent events, zero drops, and zero Telegram errors.
-Discord still has only isolated transport evidence and remains disabled.
+Discord remains unconfigured by design and is not a production release gate.

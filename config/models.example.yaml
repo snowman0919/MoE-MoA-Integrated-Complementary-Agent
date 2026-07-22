@@ -7,7 +7,7 @@ gateway:
   lifecycle_unit_map: {}
   loop_engineering:
     enabled: false
-    defaults: {iterations: 4, tool_calls: 30, reasoner_reentries: 4, planner_calls: 2, reviewer_calls: 2, frontier_calls: 2, judge_calls: 1, tokens: 250000, external_cost_usd: 10, wall_clock_seconds: 1800}
+    defaults: {iterations: 4, tool_calls: 30, reasoner_reentries: 4, planner_calls: 2, reviewer_calls: 2, frontier_calls: 2, judge_calls: 2, tokens: 250000, external_cost_usd: 10, wall_clock_seconds: 1800}
     duplicate_fingerprint_limit: 2
     no_progress_iteration_limit: 2
     local_failures_before_frontier: 2
@@ -18,6 +18,42 @@ gateway:
     root: data/skills
     retrieval_limit: 3
     max_context_characters: 6000
+  runtime_knowledge:
+    enabled: false
+    state_db: data/knowledge/knowledge.db
+    retrieval_limit: 3
+    max_context_characters: 6000
+  runtime_evolution:
+    enabled: false
+    state_db: data/evolution/evolution.db
+  remote_judge:
+    enabled: false
+    provider: disabled
+    mode: selective
+    model: glm-5.2
+    endpoint: null
+    api_key_env: OPENCODE_GO_API_KEY
+    timeout_seconds: 120
+    max_retries: 1
+    max_calls_per_request: 2
+    fail_closed_for: [production_deployment, destructive_migration, production_skill_promotion, security_sensitive_change]
+  specialist_routing:
+    enabled: false
+    provider: disabled
+    endpoint: https://opencode.ai/zen/go
+    api_key_env: OPENCODE_GO_API_KEY
+    models: {planner: deepseek-v4-pro, reviewer: deepseek-v4-flash}
+    timeout_seconds: 120
+    local_latency_seconds: {planner: 30, reviewer: 45}
+    remote_latency_seconds: {planner: 25, reviewer: 5}
+    remote_min_completion_tokens: {planner: 4096, reviewer: 2048}
+    network_latency_seconds: 0.25
+    remote_queue_latency_seconds: 0.5
+    local_preference_margin_seconds: 5
+    cost_seconds_per_usd: 60
+    remote_cost_per_million_tokens_usd: 0
+    warmup_watch_seconds: 1200
+    race_mode_enabled: false
   declarative_policy:
     enabled: false
     version: development-disabled

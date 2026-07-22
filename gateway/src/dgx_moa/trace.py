@@ -39,6 +39,8 @@ MOA_TRACE_FIELDS = frozenset(
     {
         "reasoner_contributions",
         "orchestration_decisions",
+        "specialist_routing",
+        "specialist_eviction_decisions",
         "agent_invocations",
         "agent_artifacts",
         "recommendation_resolutions",
@@ -84,6 +86,8 @@ LIST_FIELDS = {
     "agent_decisions",
     "reasoner_contributions",
     "orchestration_decisions",
+    "specialist_routing",
+    "specialist_eviction_decisions",
     "agent_invocations",
     "agent_artifacts",
     "recommendation_resolutions",
@@ -236,6 +240,8 @@ def trace_record(
         "agent_decisions": state.decisions,
         "reasoner_contributions": state.reasoner_contributions,
         "orchestration_decisions": state.orchestration_decisions,
+        "specialist_routing": state.specialist_routing,
+        "specialist_eviction_decisions": state.specialist_eviction_decisions,
         "agent_invocations": state.agent_invocations,
         "agent_artifacts": state.agent_artifacts,
         "recommendation_resolutions": state.recommendation_resolutions,
@@ -271,6 +277,10 @@ def trace_record(
             "skill_versions": [
                 f"{item.get('skill_id')}@{item.get('skill_version')}"
                 for item in state.skill_selections
+            ],
+            "knowledge_versions": [
+                f"{item.get('knowledge_id')}@{item.get('knowledge_version')}"
+                for item in state.knowledge_selections
             ],
             "engineering_loop_id": state.engineering_loop.loop_id if state.engineering_loop else "",
         },

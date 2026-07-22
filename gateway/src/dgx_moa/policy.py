@@ -18,6 +18,7 @@ class PolicyActions(BaseModel):
     limit: dict[str, int | float] = Field(default_factory=dict)
     redact: list[str] = Field(default_factory=list, max_length=64)
     request_approval: list[str] = Field(default_factory=list, max_length=32)
+    fail_closed: dict[str, bool] = Field(default_factory=dict)
 
     @field_validator("limit")
     @classmethod
@@ -39,7 +40,15 @@ class PolicyRule(BaseModel):
     def collect_action_keys(cls, value: Any) -> Any:
         if not isinstance(value, dict):
             return value
-        action_keys = {"require", "recommend", "deny", "limit", "redact", "request_approval"}
+        action_keys = {
+            "require",
+            "recommend",
+            "deny",
+            "limit",
+            "redact",
+            "request_approval",
+            "fail_closed",
+        }
         if "actions" not in value and action_keys.intersection(value):
             value = dict(value)
             value["actions"] = {key: value.pop(key) for key in tuple(value) if key in action_keys}
@@ -110,6 +119,7 @@ class PolicyDecision(BaseModel):
     limits: dict[str, int | float]
     redact: list[str]
     approvals_required: list[str]
+    fail_closed: dict[str, bool]
 
     @property
     def request_denied(self) -> bool:
@@ -194,6 +204,7 @@ class PolicyEngine:
         limits: dict[str, int | float] = {}
         redactions: list[str] = []
         approvals: list[str] = []
+        fail_closed: dict[str, bool] = {}
         for rule in matched:
             require.update(rule.actions.require)
             recommend.update(rule.actions.recommend)
@@ -203,6 +214,8 @@ class PolicyEngine:
                 limits[name] = value if current is None else min(current, value)
             redactions.extend(rule.actions.redact)
             approvals.extend(rule.actions.request_approval)
+            for name, value in rule.actions.fail_closed.items():
+                fail_closed[name] = fail_closed.get(name, False) or value
         return PolicyDecision(
             policy_version=self.policy_set.version,
             policy_hash=self.policy_set.content_hash(),
@@ -213,4 +226,5 @@ class PolicyEngine:
             limits=limits,
             redact=list(dict.fromkeys(redactions)),
             approvals_required=list(dict.fromkeys(approvals)),
+            fail_closed=fail_closed,
         )

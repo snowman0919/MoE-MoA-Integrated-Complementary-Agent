@@ -23,12 +23,15 @@ from .controller import (
     Controller,
     DuplicateFailedCall,
     FrontierRequiredUnavailable,
+    JudgeCorrectionRequired,
     JudgeRequired,
     LoopAdmissionError,
     PolicyBlocked,
     ReasonerUnavailable,
 )
+from .evolution import PromptRegistry
 from .frontier import CodexOAuthCollaboration, load_frontier_config
+from .knowledge import KnowledgeRegistry
 from .lifecycle import (
     LifecycleCoordinator,
     LifecycleDriver,
@@ -51,6 +54,7 @@ from .observation import (
 from .policy import PolicyEngine
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
+from .remote_judge import JudgeProviderError, OpenCodeGoJudgeProvider
 from .replay import ReplayEngine, ReplayRequest
 from .routing import (
     COMPATIBILITY_MODEL_ALIASES,
@@ -67,6 +71,13 @@ from .runtime_status import report as runtime_report
 from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest
 from .security import admin_dependency, auth_dependency
 from .skills import SkillRegistry
+from .specialists import (
+    LocalPlannerProvider,
+    LocalReviewerProvider,
+    RemotePlannerProvider,
+    RemoteReviewerProvider,
+    SpecialistRouter,
+)
 from .state import Phase, StateStore
 from .streaming import (
     StreamObservation,
@@ -105,6 +116,8 @@ from .weekly import (
     WeeklyRetentionRequest,
     WeeklyScheduler,
     previous_complete_week,
+    weekly_knowledge_report,
+    weekly_runtime_improvement_report,
     weekly_skill_report,
 )
 
@@ -458,13 +471,40 @@ def create_app(
         if model is None:
             return False
         try:
-            async with httpx.AsyncClient(timeout=2) as client:
+            async with httpx.AsyncClient(timeout=30) as client:
+                if role in {"planner", "reviewer"} and model.provider != "ollama":
+                    response = await client.post(
+                        f"{model.base_url.rstrip('/')}/v1/chat/completions",
+                        json={
+                            "model": model.served_name,
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": "Reply with exactly READY.",
+                                }
+                            ],
+                            "temperature": 0,
+                            "max_tokens": 8,
+                            "stream": False,
+                        },
+                    )
+                    if response.status_code != 200:
+                        return False
+                    payload = response.json()
+                    choices = payload.get("choices", [])
+                    return bool(
+                        choices
+                        and isinstance(choices[0], dict)
+                        and choices[0].get("message", {}).get("content")
+                    )
                 response = await client.get(
                     f"{model.base_url.rstrip('/')}/api/ps"
                     if model.provider == "ollama"
                     else f"{model.base_url.rstrip('/')}/v1/models"
                 )
         except httpx.HTTPError:
+            return False
+        except (TypeError, ValueError):
             return False
         return (
             ollama_model_ready(response, model)
@@ -551,19 +591,58 @@ def create_app(
             if configured.runtime_skills.enabled
             else None
         )
+        app.state.knowledge = (
+            KnowledgeRegistry(configured.runtime_knowledge.state_db)
+            if configured.runtime_knowledge.enabled
+            else None
+        )
+        app.state.prompts = (
+            PromptRegistry(configured.runtime_evolution.state_db)
+            if configured.runtime_evolution.enabled
+            else None
+        )
         app.state.policy = (
             PolicyEngine(configured.declarative_policy.policy_set())
             if configured.declarative_policy.enabled
             else None
         )
+        remote_judge = None
+        if configured.remote_judge.enabled:
+            if configured.remote_judge.provider != "opencode_go":
+                raise ValueError("only OpenCode Go is supported outside tests")
+            endpoint = os.path.expandvars(configured.remote_judge.endpoint or "")
+            if not endpoint or "$" in endpoint:
+                raise ValueError("Remote Judge endpoint environment is unresolved")
+            remote_judge = OpenCodeGoJudgeProvider(
+                endpoint=endpoint,
+                api_key_env=configured.remote_judge.api_key_env,
+                model=configured.remote_judge.model,
+                timeout_seconds=configured.remote_judge.timeout_seconds,
+                max_retries=configured.remote_judge.max_retries,
+                max_calls_per_request=configured.remote_judge.max_calls_per_request,
+            )
+        app.state.remote_judge = remote_judge
+        if remote_judge is None:
+            app.state.remote_judge_available = None
+        else:
+            try:
+                app.state.remote_judge_available = await asyncio.wait_for(
+                    remote_judge.available(),
+                    timeout=min(5, configured.remote_judge.timeout_seconds),
+                )
+            except TimeoutError:
+                app.state.remote_judge_available = False
         app.state.controller = Controller(
             configured,
             store,
             provider,
             frontier,
             app.state.usage,
-            app.state.skills,
-            app.state.policy,
+            skills=app.state.skills,
+            policy=app.state.policy,
+            knowledge=app.state.knowledge,
+            prompts=app.state.prompts,
+            remote_judge=remote_judge,
         )
         app.state.lifecycle_store = LifecycleStore(
             configured.state_db,
@@ -592,6 +671,53 @@ def create_app(
             memory_probe=lifecycle_memory_probe,
             lifecycle_policy=configured.lifecycle,
         )
+        app.state.specialists = None
+        if configured.specialist_routing.enabled:
+            if configured.specialist_routing.provider != "opencode_go":
+                raise ValueError("only OpenCode Go specialist routing is supported")
+            remote_values = {
+                "endpoint": configured.specialist_routing.endpoint,
+                "api_key_env": configured.specialist_routing.api_key_env,
+            }
+
+            async def acquire_specialist(request_id: str, role: str) -> tuple[str, ...]:
+                leases = await app.state.lifecycle.acquire_request_leases(
+                    request_id,
+                    (role,),
+                    kind="active_request",
+                    require_ready=True,
+                )
+                return tuple(lease.lease_id for lease in leases)
+
+            app.state.specialists = SpecialistRouter(
+                configured.specialist_routing,
+                local={
+                    "planner": LocalPlannerProvider(provider, configured.models["planner"]),
+                    "reviewer": LocalReviewerProvider(provider, configured.models["reviewer"]),
+                },
+                remote={
+                    "planner": RemotePlannerProvider(
+                        **remote_values,
+                        model=configured.specialist_routing.models["planner"],
+                        min_completion_tokens=configured.specialist_routing.remote_min_completion_tokens[
+                            "planner"
+                        ],
+                    ),
+                    "reviewer": RemoteReviewerProvider(
+                        **remote_values,
+                        model=configured.specialist_routing.models["reviewer"],
+                        min_completion_tokens=configured.specialist_routing.remote_min_completion_tokens[
+                            "reviewer"
+                        ],
+                    ),
+                },
+                lifecycle_store=app.state.lifecycle_store,
+                warmup=app.state.lifecycle.ensure_ready,
+                event=store.event,
+                acquire_local=acquire_specialist,
+                release_local=app.state.lifecycle_store.release_leases,
+            )
+            app.state.controller.specialists = app.state.specialists
         try:
             managed_roles = tuple(configured.lifecycle_unit_map)
             if configured.lifecycle_mode in {"observe", "fixed", "adaptive"}:
@@ -638,13 +764,68 @@ def create_app(
                     store.event("weekly-maintenance", event_type, payload)
 
                 async def run_weekly_skill_job() -> None:
-                    if app.state.skills is None:
-                        raise RuntimeError("runtime Skills are disabled")
+                    if app.state.skills is None and app.state.knowledge is None:
+                        raise RuntimeError("runtime Skills and Knowledge are disabled")
                     window = previous_complete_week(timezone=configured.weekly_jobs.timezone)
+                    report_root = (
+                        configured.weekly_jobs.package_root / "runtime-reports" / window.week
+                    )
+                    skill_report = (
+                        await asyncio.to_thread(
+                            weekly_skill_report,
+                            app.state.skills,
+                            report_root,
+                            notifier=notify_weekly,
+                        )
+                        if app.state.skills is not None
+                        else None
+                    )
+                    knowledge_report = (
+                        await asyncio.to_thread(
+                            weekly_knowledge_report,
+                            app.state.knowledge,
+                            report_root,
+                            notifier=notify_weekly,
+                        )
+                        if app.state.knowledge is not None
+                        else None
+                    )
+                    evolution_artifacts = (
+                        app.state.prompts.registry.list_artifacts()
+                        if app.state.prompts is not None
+                        else []
+                    )
+                    candidate_rows = [
+                        artifact.model_dump(mode="json")
+                        for artifact in evolution_artifacts
+                        if artifact.state == "candidate"
+                    ]
                     await asyncio.to_thread(
-                        weekly_skill_report,
-                        app.state.skills,
-                        configured.weekly_jobs.package_root / "skill-reports" / window.week,
+                        weekly_runtime_improvement_report,
+                        report_root,
+                        skill_report=skill_report,
+                        knowledge_report=knowledge_report,
+                        analyses={
+                            "prompt_regressions": [
+                                artifact.model_dump(mode="json")
+                                for artifact in evolution_artifacts
+                                if artifact.kind in {"prompt", "judge_prompt"}
+                                and artifact.state == "rejected"
+                            ],
+                            "prompt_candidates": [
+                                row
+                                for row in candidate_rows
+                                if row["kind"] in {"prompt", "judge_prompt"}
+                            ],
+                            "policy_candidates": [
+                                row for row in candidate_rows if row["kind"] == "policy"
+                            ],
+                            "routing_candidates": [
+                                row
+                                for row in candidate_rows
+                                if row["kind"] in {"routing", "failure_handling"}
+                            ],
+                        },
                         notifier=notify_weekly,
                     )
 
@@ -701,9 +882,11 @@ def create_app(
                 await app.state.weekly_scheduler.close()
             if app.state.observation is not None:
                 await app.state.observation.close()
+            if app.state.specialists is not None:
+                await app.state.specialists.close()
             await app.state.lifecycle.close()
 
-    app = FastAPI(title="DGX MoA Agent", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="DGX MoA Agent", version="2.0.0", lifespan=lifespan)
 
     @app.exception_handler(HTTPException)
     async def handle_http_exception(request: Request, error: HTTPException) -> JSONResponse:
@@ -741,6 +924,39 @@ def create_app(
         )
 
     def record_trace_safely(request: Request, state: Any, task_id: str) -> None:
+        for decision in getattr(state, "specialist_routing", []):
+            if isinstance(decision, dict):
+                decision["quality_outcome"] = (
+                    getattr(state, "review_status", None)
+                    or getattr(state, "judge_status", None)
+                    or "not_evaluated"
+                )
+                decision["task_outcome"] = getattr(state, "final_status", None) or str(
+                    getattr(state, "phase", "unknown")
+                )
+        state.specialist_eviction_decisions = []
+        for role in ("planner", "reviewer"):
+            if role not in configured.models:
+                continue
+            idle = request.app.state.lifecycle_store.latest_decision(role)
+            if idle is None:
+                continue
+            local = request.app.state.lifecycle_store.get(role)
+            state.specialist_eviction_decisions.append(
+                idle.model_dump(mode="json")
+                | {
+                    "residency_state": SpecialistRouter.public_state(local.state),
+                    "task_queue": {
+                        "active_requests": local.active_request_count,
+                        "open_streams": local.open_stream_count,
+                    },
+                    "reload_latency_seconds": local.last_load_duration_seconds,
+                    "remote_api_cost_per_million_tokens_usd": (
+                        configured.specialist_routing.remote_cost_per_million_tokens_usd
+                    ),
+                    "model_importance": "optional_specialist",
+                }
+            )
         try:
             request.app.state.traces.record(state, task_id=task_id)
         except OSError as error:
@@ -759,10 +975,16 @@ def create_app(
         model = configured.models.get(record.role)
         if decision is not None and decision.mode != configured.lifecycle_mode:
             decision = None
+        specialist_state = None
+        if configured.specialist_routing.enabled and record.role in {"planner", "reviewer"}:
+            specialist_state = SpecialistRouter.public_state(record.state)
+            if specialist_state == "READY" and record.active_request_count:
+                specialist_state = "BUSY"
         return {
             "role": record.role,
             "lifecycle_control": model.lifecycle_control if model else "unconfigured",
             "state": record.state,
+            **({"specialist_state": specialist_state} if specialist_state is not None else {}),
             "generation": record.generation,
             "ready": record.state == "ready",
             "transition_id": record.transition_id,
@@ -933,8 +1155,17 @@ def create_app(
         )
 
     @app.get("/healthz")
-    async def healthz() -> dict[str, str]:
-        return {"status": "ok"}
+    async def healthz(request: Request) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "remote_judge": (
+                "disabled"
+                if request.app.state.remote_judge is None
+                else "available"
+                if request.app.state.remote_judge_available
+                else "unavailable"
+            ),
+        }
 
     @app.get("/readyz")
     async def readyz(request: Request) -> JSONResponse:
@@ -959,6 +1190,9 @@ def create_app(
                     "status": "not_ready",
                     "profile": current,
                     "services": {role: "stopped" for role in configured.models},
+                    "remote_judge": (
+                        "disabled" if request.app.state.remote_judge is None else "unavailable"
+                    ),
                     "auth_enabled": configured.auth_enabled,
                 },
                 status_code=503,
@@ -992,6 +1226,13 @@ def create_app(
                     "status": "not_ready",
                     "profile": current,
                     "services": service_status,
+                    "remote_judge": (
+                        "disabled"
+                        if request.app.state.remote_judge is None
+                        else "available"
+                        if request.app.state.remote_judge_available
+                        else "unavailable"
+                    ),
                     "auth_enabled": configured.auth_enabled,
                 },
                 status_code=503,
@@ -1001,6 +1242,13 @@ def create_app(
                 "status": "ready",
                 "profile": current,
                 "services": service_status,
+                "remote_judge": (
+                    "disabled"
+                    if request.app.state.remote_judge is None
+                    else "available"
+                    if request.app.state.remote_judge_available
+                    else "unavailable"
+                ),
                 "auth_enabled": configured.auth_enabled,
             }
         )
@@ -1297,6 +1545,29 @@ def create_app(
                 ),
                 skill_deprecated_total=sum(item.state == "deprecated" for item in skill_rows),
             )
+        knowledge = request.app.state.knowledge
+        if knowledge is not None:
+            knowledge_rows = knowledge.list_entries()
+            knowledge_metrics = [
+                knowledge.metrics(item.knowledge_id, item.version) for item in knowledge_rows
+            ]
+            overlays.update(
+                knowledge_retrieval_total=sum(item.retrieved for item in knowledge_metrics),
+                knowledge_helpful_total=sum(item.helpful for item in knowledge_metrics),
+                knowledge_harmful_total=sum(item.harmful for item in knowledge_metrics),
+                knowledge_conflict_total=sum(item.open_conflicts for item in knowledge_metrics)
+                // 2,
+                knowledge_candidate_created_total=sum(
+                    item.state == "candidate" for item in knowledge_rows
+                ),
+                knowledge_promoted_total=sum(
+                    item.state == "active" and item.lifecycle.approval_id is not None
+                    for item in knowledge_rows
+                ),
+                knowledge_deprecated_total=sum(
+                    item.state == "deprecated" for item in knowledge_rows
+                ),
+            )
         observation_bus = request.app.state.observation
         if observation_bus is not None:
             overlays.update(
@@ -1569,6 +1840,20 @@ def create_app(
             for role in candidate_roles:
                 is_optional = role in optional
                 model = configured.models.get(role)
+                if configured.specialist_routing.enabled and role in {"planner", "reviewer"}:
+                    record = request.app.state.lifecycle_store.get(role)
+                    role_load = False
+                    if role in configured.lifecycle_unit_map and record.state != "ready":
+                        check = await request.app.state.lifecycle.ensure_ready(role)
+                        record = check.record
+                        role_load = check.load_triggered
+                    role_states[role] = "warm" if record.state == "ready" else record.state
+                    role_load_triggered[role] = role_load
+                    role_ready_at[role] = record.ready_at
+                    load_triggered = load_triggered or role_load
+                    if record.state == "ready" and is_optional:
+                        roles += (role,)
+                    continue
                 if model is None:
                     role_states[role] = "cold"
                     if is_optional:
@@ -1784,11 +2069,16 @@ def create_app(
 
         ensured_roles = list(roles)
         try:
+            initial_lease_roles = tuple(
+                role
+                for role in roles
+                if not (configured.specialist_routing.enabled and role in {"planner", "reviewer"})
+            )
             active_lease_ids = tuple(
                 lease.lease_id
                 for lease in await request.app.state.lifecycle.acquire_request_leases(
                     usage_request_id,
-                    roles,
+                    initial_lease_roles,
                     kind="active_request",
                     require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
                 )
@@ -1815,8 +2105,21 @@ def create_app(
             new_ready_at: dict[str, float | None] = {}
             not_ready: LifecycleRecord | None = None
             unmanaged: str | None = None
+            lease_roles: list[str] = []
             for role in new_roles:
                 model = configured.models.get(role)
+                if configured.specialist_routing.enabled and role in {"planner", "reviewer"}:
+                    record = request.app.state.lifecycle_store.get(role)
+                    role_load = False
+                    if role in configured.lifecycle_unit_map and record.state != "ready":
+                        check = await request.app.state.lifecycle.ensure_ready(role)
+                        record = check.record
+                        role_load = check.load_triggered
+                        load_triggered = load_triggered or role_load
+                    new_states[role] = "warm" if record.state == "ready" else record.state
+                    new_loads[role] = role_load
+                    new_ready_at[role] = record.ready_at
+                    continue
                 if model is None:
                     unmanaged = unmanaged or role
                     new_states[role] = "cold"
@@ -1855,6 +2158,7 @@ def create_app(
                 )
                 new_loads[role] = role_load
                 new_ready_at[role] = record.ready_at
+                lease_roles.append(role)
             tracked_roles.extend(role for role in new_roles if role not in tracked_roles)
             ensured_roles.extend(new_roles)
             request.app.state.usage.add_required_roles(usage_request_id, new_roles)
@@ -1879,7 +2183,7 @@ def create_app(
                 raise LifecycleNotReadyError(not_ready)
             leases = await request.app.state.lifecycle.acquire_request_leases(
                 usage_request_id,
-                new_roles,
+                lease_roles,
                 kind="active_request",
                 require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
             )
@@ -1926,6 +2230,25 @@ def create_app(
             state.roles_required = list(roles)
             state.review_fail_closed = review_fails_closed(request_class)
             request.app.state.controller.select_route(state, raw["metadata"])
+            stream_judge_reasons = (
+                request.app.state.controller.remote_judge_invocation_reasons(state, raw["metadata"])
+                if body.stream
+                else []
+            )
+            if stream_judge_reasons:
+                request.app.state.store.event(
+                    state_session_id,
+                    "remote_judge_non_stream_required",
+                    {"reasons": stream_judge_reasons},
+                )
+                finalize_request("judge", "failed", current_state=state)
+                return error_response(
+                    status.HTTP_409_CONFLICT,
+                    "selective Remote Judge validation requires a non-streaming request",
+                    "judge_non_stream_required",
+                    "retry_without_streaming",
+                    headers={"X-Session-ID": state_session_id},
+                )
             if body.metadata.get("no_progress"):
                 request.app.state.controller.note_no_progress(state)
             active_stage = "planner" if "planner" in roles else "request"
@@ -1950,6 +2273,11 @@ def create_app(
             active_stage = "executor_first_byte" if body.stream else "executor_total"
             executor_started = time.monotonic()
             state.timings_ms["upstream_start"] = elapsed_ms(accepted)
+            request.app.state.store.event(
+                state_session_id,
+                "executor_started",
+                {"role": "executor", "phase": state.phase},
+            )
             if body.stream:
                 stream_lease_ids = tuple(
                     lease.lease_id
@@ -2197,10 +2525,19 @@ def create_app(
             finish_reason = response.get("choices", [{}])[0].get("finish_reason")
             state.finish_reasons = [str(finish_reason)] if finish_reason else []
             state.truncated = finish_reason == "length"
+            judge_reasons = request.app.state.controller.remote_judge_invocation_reasons(
+                state, body.metadata, response
+            )
+            if judge_reasons and "reviewer" not in state.roles_required:
+                await ensure_dynamic_roles(("reviewer",))
+                state.roles_required.append("reviewer")
             if (
                 "reviewer" in state.roles_required
                 and state.review_status != "approved"
-                and request.app.state.controller.has_review_evidence(state, body.metadata)
+                and (
+                    bool(judge_reasons)
+                    or request.app.state.controller.has_review_evidence(state, body.metadata)
+                )
             ):
                 review_observation = request.app.state.controller.review_observation(
                     state, response, body.metadata
@@ -2253,6 +2590,135 @@ def create_app(
                     stage_status["reviewer"] = "completed"
                     if not state.truncated:
                         request.app.state.controller.apply_metadata(state, body.metadata)
+            judge_reasons = list(
+                dict.fromkeys(
+                    [
+                        *judge_reasons,
+                        *request.app.state.controller.remote_judge_invocation_reasons(
+                            state, body.metadata, response
+                        ),
+                    ]
+                )
+            )
+            if judge_reasons and not state.truncated:
+                request.app.state.store.event(
+                    state_session_id,
+                    "remote_judge_selected",
+                    {"reasons": judge_reasons},
+                )
+                active_stage = "judge"
+                observation = request.app.state.controller.review_observation(
+                    state, response, body.metadata
+                )
+                verdict = await request.app.state.controller.judge(state, observation)
+                stage_status["judge"] = "completed"
+                if verdict.get("verdict") != "approve":
+                    correction_verdict = str(verdict.get("verdict", "revise"))
+                    if correction_verdict in {
+                        "approve_with_edits",
+                        "revise",
+                        "retry_with_evidence",
+                    }:
+                        correction_request = dict(prepared)
+                        correction_request["stream"] = False
+                        correction_request["messages"] = [
+                            *prepared.get("messages", []),
+                            assistant_message,
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Apply only the bounded Remote Judge corrections below. "
+                                    "Preserve verified content, do not claim unobserved tests or "
+                                    "tool results, and return a complete corrected final answer.\n"
+                                    + json.dumps(
+                                        {
+                                            "findings": verdict.get("findings", []),
+                                            "required_edits": verdict.get("required_edits", []),
+                                        },
+                                        ensure_ascii=False,
+                                        sort_keys=True,
+                                    )
+                                ),
+                            },
+                        ]
+                        request.app.state.store.event(
+                            state_session_id,
+                            "judge_correction_started",
+                            {"verdict": correction_verdict},
+                        )
+                        active_stage = "executor_total"
+                        correction_started = time.monotonic()
+                        response = await request.app.state.provider.complete(
+                            "executor",
+                            configured.models["executor"],
+                            correction_request,
+                            timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                            stage="judge_correction",
+                        )
+                        token_usage.update(reported_usage(response.get("usage")))
+                        request.app.state.controller.record_invocation(
+                            state,
+                            "executor",
+                            response,
+                            correction_started,
+                            mode="judge_correction",
+                        )
+                        validate_assistant_response(response)
+                        assistant_message = response.get("choices", [{}])[0].get("message", {})
+                        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+                        state.finish_reasons = [str(finish_reason)] if finish_reason else []
+                        state.truncated = finish_reason == "length"
+                        if finish_reason == "length" or assistant_message.get("tool_calls"):
+                            raise JudgeCorrectionRequired(correction_verdict)
+                        request.app.state.controller.record_evidence(
+                            state,
+                            "final_synthesis",
+                            "executor",
+                            {
+                                "finish_reason": finish_reason,
+                                "has_tool_calls": False,
+                                "correction_applied": True,
+                            },
+                            generated_from=state.last_decision_id,
+                        )
+                        active_stage = "reviewer"
+                        corrected_observation = request.app.state.controller.review_observation(
+                            state, response, body.metadata
+                        )
+                        targeted_review = await request.app.state.controller.review(
+                            state, corrected_observation
+                        )
+                        stage_status["reviewer"] = "completed"
+                        if targeted_review.get("status") != "approved":
+                            raise JudgeCorrectionRequired(correction_verdict)
+                        important_correction = any(
+                            finding.get("severity") in {"important", "critical"}
+                            for finding in verdict.get("findings", [])
+                            if isinstance(finding, dict)
+                        )
+                        recheck_needed = bool(
+                            important_correction and verdict.get("recheck_required")
+                        )
+                        if recheck_needed:
+                            active_stage = "judge"
+                            verdict = await request.app.state.controller.judge(
+                                state, corrected_observation
+                            )
+                            stage_status["judge"] = "completed"
+                            if verdict.get("verdict") != "approve":
+                                raise JudgeCorrectionRequired(
+                                    str(verdict.get("verdict", correction_verdict))
+                                )
+                        request.app.state.store.event(
+                            state_session_id,
+                            "judge_correction_completed",
+                            {
+                                "targeted_validation": "approved",
+                                "rechecked": recheck_needed,
+                            },
+                        )
+                    else:
+                        raise JudgeCorrectionRequired(correction_verdict)
             state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
             first_byte_at = time.time()
             request.app.state.store.event(
@@ -2338,6 +2804,31 @@ def create_app(
                     "X-Session-ID": error.session_id,
                     "X-DGX-MOA-Required-Profile": "judge",
                 },
+            )
+        except JudgeCorrectionRequired as error:
+            finalize_request("judge", "failed", downstream_started=True)
+            return error_response(
+                status.HTTP_409_CONFLICT,
+                str(error),
+                "judge_correction_required",
+                error.verdict,
+                headers={"X-Session-ID": state_session_id},
+            )
+        except JudgeProviderError as error:
+            if state is not None:
+                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
+            finalize_request(
+                "judge",
+                "failed",
+                downstream_started=True,
+                retryable_failure_class="backend_error",
+            )
+            return error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                str(error),
+                "judge_unavailable",
+                "remote_judge_provider_unavailable",
+                headers={"Retry-After": "30", "X-Session-ID": state_session_id},
             )
         except ReasonerUnavailable as error:
             if state is not None:
@@ -2500,7 +2991,10 @@ def create_app(
     @app.post("/v1/judge/adjudications/{session_id}", dependencies=[Depends(auth)])
     async def adjudicate(session_id: str, request: Request) -> Response:
         profile = request.app.state.profiles.current()
-        if profile.get("active_profile") != "judge" or profile.get("status") != "ready":
+        remote = request.app.state.remote_judge is not None
+        if not remote and (
+            profile.get("active_profile") != "judge" or profile.get("status") != "ready"
+        ):
             return error_response(
                 status.HTTP_409_CONFLICT,
                 "Heavy Judge profile is not ready",
@@ -2526,7 +3020,7 @@ def create_app(
         state.current_request_id = request_id
         leases = await request.app.state.lifecycle.acquire_request_leases(
             request_id,
-            ("judge",),
+            () if remote else ("judge",),
             kind="active_request",
             require_ready=False,
         )
@@ -2558,7 +3052,7 @@ def create_app(
                 "session_id": session_id,
                 "status": state.judge_status,
                 "verdict": verdict,
-                "resume_profile": "resident",
+                "resume_profile": None if remote else "resident",
             }
         )
 

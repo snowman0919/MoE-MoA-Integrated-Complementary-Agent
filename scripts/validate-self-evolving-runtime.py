@@ -9,6 +9,24 @@ import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from dgx_moa.evolution import (
+    EvolutionArtifact,
+    EvolutionCandidateGenerator,
+    EvolutionEvaluation,
+    EvolutionRegistry,
+    EvolutionSignal,
+)
+from dgx_moa.knowledge import (
+    KnowledgeConfidence,
+    KnowledgeContent,
+    KnowledgeEvidence,
+    KnowledgeLifecycle,
+    KnowledgeProvenance,
+    KnowledgeQuery,
+    KnowledgeRegistry,
+    KnowledgeValidation,
+    RuntimeKnowledge,
+)
 from dgx_moa.loop_engineering import (
     begin_iteration,
     completion_ready,
@@ -19,6 +37,7 @@ from dgx_moa.loop_engineering import (
     terminate,
 )
 from dgx_moa.policy import redact_fields
+from dgx_moa.remote_judge import JudgeEvidencePackage, MockJudgeProvider, RemoteJudgeVerdict
 from dgx_moa.replay import ReplayEngine, load_snapshot, save_snapshot, snapshot_from_trace
 from dgx_moa.skills import SkillCandidateEvaluation, SkillPattern, SkillRegistry
 from dgx_moa.state import StateStore
@@ -32,7 +51,15 @@ from dgx_moa.training import (
     candidates_from_trace,
     sanitize,
 )
-from dgx_moa.weekly import ArchiveRegistry, WeeklyPackager, previous_complete_week, sha256
+from dgx_moa.weekly import (
+    ArchiveRegistry,
+    WeeklyPackager,
+    previous_complete_week,
+    sha256,
+    weekly_knowledge_report,
+    weekly_runtime_improvement_report,
+    weekly_skill_report,
+)
 
 
 def candidate(candidate_id: str = "cand_physical") -> TrainingCandidate:
@@ -241,6 +268,181 @@ def main() -> None:
     )
     assert promoted.state == rolled_back.state == "active"
 
+    knowledge = KnowledgeRegistry(root / "knowledge/knowledge.db")
+    knowledge.put(
+        RuntimeKnowledge.model_validate(
+            {
+                "knowledge_id": "knowledge.synthetic.bounded-validation",
+                "version": 1,
+                "title": "Synthetic bounded validation",
+                "state": "candidate",
+                "category": "successful_repair_pattern",
+                "domains": ["validation"],
+                "content": KnowledgeContent(summary="Use deterministic evidence."),
+                "evidence": KnowledgeEvidence(source_task_ids=["synthetic-physical-request"]),
+                "provenance": KnowledgeProvenance(
+                    source_type="generated", created_by="physical-validator"
+                ),
+                "confidence": KnowledgeConfidence(**{"class": "medium", "basis": "observed"}),
+                "lifecycle": KnowledgeLifecycle(),
+            }
+        )
+    )
+    validated_knowledge = knowledge.validate_candidate(
+        "knowledge.synthetic.bounded-validation",
+        1,
+        KnowledgeValidation(
+            source_verified=True,
+            duplicate_checked=True,
+            contradiction_checked=True,
+            repository_scope_checked=True,
+            privacy_checked=True,
+            license_checked=True,
+            historical_replay=True,
+            reviewer_approved=True,
+            evidence_ids=["source", "replay", "reviewer"],
+        ),
+    )
+    active_knowledge = knowledge.promote(
+        validated_knowledge.knowledge_id,
+        validated_knowledge.version,
+        approval_id="physical-knowledge-approval",
+        created_by="physical-operator",
+    )
+    assert knowledge.search(KnowledgeQuery(text="deterministic evidence"))[0].knowledge.version == (
+        active_knowledge.version
+    )
+    knowledge.record_outcome(active_knowledge.knowledge_id, active_knowledge.version, "helpful")
+    assert knowledge.integrity_check()
+    runtime_report_root = root / "runtime-reports"
+    skill_report = weekly_skill_report(skills, runtime_report_root)
+    knowledge_report = weekly_knowledge_report(knowledge, runtime_report_root)
+    runtime_report = weekly_runtime_improvement_report(
+        runtime_report_root,
+        skill_report=skill_report,
+        knowledge_report=knowledge_report,
+    )
+    assert runtime_report["automatic_actions_taken"] == []
+    assert (runtime_report_root / "weekly-runtime-improvement-report.json").is_file()
+
+    evolution = EvolutionRegistry(root / "evolution/evolution.db")
+    generated_evolution = EvolutionCandidateGenerator(evolution).generate_many(
+        [
+            EvolutionSignal(
+                signal_type="repeated_unsafe_action",
+                candidate_kind="policy",
+                scope="destructive",
+                occurrences=2,
+                evidence_ids=["unsafe-1", "unsafe-2"],
+                proposed_payload={
+                    "when": {"destructive": True},
+                    "require": {"approval": True},
+                },
+            ),
+            EvolutionSignal(
+                signal_type="latency_cost",
+                candidate_kind="routing",
+                scope="planner",
+                occurrences=3,
+                evidence_ids=["latency-1"],
+                proposed_payload={"rules": [{"when": "simple", "avoid": "planner"}]},
+            ),
+        ],
+        created_by="physical-generator",
+    )
+    assert {item.kind for item in generated_evolution} == {"policy", "routing"}
+    assert all(item.state == "candidate" for item in generated_evolution)
+    evolution.put(
+        EvolutionArtifact(
+            artifact_id="prompt.executor",
+            kind="prompt",
+            version=1,
+            state="candidate",
+            payload={"role": "executor", "template": "Use deterministic evidence."},
+            source_evidence_ids=["synthetic-failure"],
+            created_by="physical-generator",
+        )
+    )
+    evaluated_prompt = evolution.evaluate(
+        "prompt.executor",
+        1,
+        EvolutionEvaluation(
+            schema_valid=True,
+            historical_replay=True,
+            regression_thresholds_passed=True,
+            reviewer_approved=True,
+            evidence_ids=["schema", "replay", "regression", "reviewer"],
+        ),
+        created_by="physical-evaluator",
+    )
+    prompt_canary = evolution.start_canary(
+        evaluated_prompt.artifact_id,
+        evaluated_prompt.version,
+        rollback_target="builtin.executor",
+        approval_id="physical-canary-approval",
+        created_by="physical-operator",
+    )
+    evolution.record_canary(
+        prompt_canary.artifact_id,
+        prompt_canary.version,
+        outcome="helpful",
+        evidence_ids=["executor-canary"],
+    )
+    active_prompt = evolution.promote(
+        prompt_canary.artifact_id,
+        prompt_canary.version,
+        approval_id="physical-prompt-approval",
+        created_by="physical-operator",
+    )
+    assert (
+        evolution.rollback(
+            active_prompt.artifact_id,
+            active_prompt.version,
+            1,
+            approval_id="physical-prompt-rollback",
+            created_by="physical-operator",
+        ).state
+        == "active"
+    )
+
+    remote_judge = MockJudgeProvider(
+        RemoteJudgeVerdict.model_validate(
+            {
+                "verdict": "approve",
+                "risk": "low",
+                "criteria": {
+                    key: "pass"
+                    for key in (
+                        "instruction_following",
+                        "evidence_grounding",
+                        "logical_consistency",
+                        "tool_consistency",
+                        "test_consistency",
+                        "safety",
+                        "completeness",
+                    )
+                },
+                "findings": [],
+                "required_edits": [],
+                "recheck_required": False,
+                "confidence_class": "high",
+            }
+        )
+    )
+    assert (
+        asyncio.run(
+            remote_judge.judge(
+                JudgeEvidencePackage(
+                    request_id="synthetic-physical-request",
+                    objective="Review synthetic@example.invalid authorization: Bearer secret",
+                    test_evidence=[{"id": "synthetic-test-exit-0", "status": "passed"}],
+                )
+            )
+        ).verdict
+        == "approve"
+    )
+    assert "synthetic@example.invalid" not in remote_judge.packages[0].objective
+
     operational = StateStore(root / "capacity/operational.db")
     guarded = TrainingStore(
         root / "capacity/training.db",
@@ -270,6 +472,10 @@ def main() -> None:
         policy_version="physical-policy-v1",
         skill_registry_version="physical-skills-v1",
         model_configuration={"executor": {"revision": "synthetic"}},
+        knowledge_registry_version=str(active_knowledge.version),
+        prompt_registry_version=str(active_prompt.version),
+        routing_version="physical-routing-v1",
+        judge_configuration={"provider": "mock", "model": "glm-5.2"},
     )
     verified = packager.verify(created["idempotency_key"])
     replayed = packager.package(
@@ -279,6 +485,10 @@ def main() -> None:
         policy_version="physical-policy-v1",
         skill_registry_version="physical-skills-v1",
         model_configuration={"executor": {"revision": "synthetic"}},
+        knowledge_registry_version=str(active_knowledge.version),
+        prompt_registry_version=str(active_prompt.version),
+        routing_version="physical-routing-v1",
+        judge_configuration={"provider": "mock", "model": "glm-5.2"},
     )
     assert replayed["idempotent_replay"] is True
     inspection = root / "candidate-inspection"
@@ -359,6 +569,11 @@ def main() -> None:
         "evidence_graph_validated": True,
         "bounded_loop_termination": True,
         "skill_evaluation_canary_promotion_rollback": True,
+        "knowledge_validation_promotion_retrieval": True,
+        "skill_knowledge_runtime_reports": True,
+        "prompt_replay_canary_promotion_rollback": True,
+        "policy_routing_candidate_generation": True,
+        "remote_judge_package_redaction": True,
         "capacity_guard_isolated": True,
         "privacy_redactions": {
             "secret": privacy.secret_redactions,

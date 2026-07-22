@@ -11,6 +11,7 @@ EvidenceNodeType = Literal[
     "reasoner_conclusion",
     "executor_decision",
     "planner_plan",
+    "knowledge_entry",
     "skill_selection",
     "skill_output",
     "tool_call",
@@ -20,6 +21,7 @@ EvidenceNodeType = Literal[
     "reviewer_finding",
     "frontier_finding",
     "judge_verdict",
+    "judge_finding",
     "acceptance_criterion",
     "failure",
     "policy_decision",
@@ -37,6 +39,7 @@ EvidenceRelationship = Literal[
     "resolved_by",
     "selected_because",
     "rejected_because",
+    "corrected_by",
 ]
 TrustClass = Literal[
     "user_provided_constraint",
@@ -44,6 +47,8 @@ TrustClass = Literal[
     "tool_observed_fact",
     "test_confirmed_fact",
     "review_finding",
+    "frontier_finding",
+    "judge_finding",
     "policy_decision",
     "unverified_assumption",
 ]
@@ -51,6 +56,8 @@ TRUST_RANK: dict[TrustClass, int] = {
     "unverified_assumption": 0,
     "model_assertion": 1,
     "review_finding": 2,
+    "frontier_finding": 2,
+    "judge_finding": 2,
     "user_provided_constraint": 3,
     "policy_decision": 4,
     "tool_observed_fact": 5,
@@ -88,6 +95,7 @@ KIND_NODE_MAP: dict[str, EvidenceNodeType] = {
     "orchestration_decision": "executor_decision",
     "skill_selection": "skill_selection",
     "skill_output": "skill_output",
+    "knowledge_entry": "knowledge_entry",
     "tool_call": "tool_call",
     "tool_result": "tool_result",
     "file_change": "file_change",
@@ -122,7 +130,11 @@ def classify_evidence(kind: str, source: str) -> tuple[EvidenceNodeType, TrustCl
         trust = "tool_observed_fact"
     elif kind == "policy_decision":
         trust = "policy_decision"
-    elif kind in {"reviewer_finding", "frontier_finding", "judge_verdict"}:
+    elif kind == "frontier_finding":
+        trust = "frontier_finding"
+    elif kind in {"judge_finding", "judge_verdict"}:
+        trust = "judge_finding"
+    elif kind == "reviewer_finding":
         trust = "review_finding"
     elif kind in {"user_objective", "user_feedback"} or source == "user":
         trust = "user_provided_constraint"

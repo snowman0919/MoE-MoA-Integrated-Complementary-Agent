@@ -12,7 +12,7 @@ from typing import Any, cast
 import httpx
 
 from .config import load_settings
-from .schemas import JudgeVerdict
+from .schemas import JudgeVerdict, PlannerPlan, ReviewResult
 
 CONTEXT_CANDIDATES = {
     "executor": [16384, 24576, 32768, 40960, 49152, 65536, 81920, 98304, 131072],
@@ -124,12 +124,7 @@ def request_body(role: str, context: int, near_limit: bool = False) -> dict[str,
             "json_schema": {
                 "name": "plan",
                 "strict": True,
-                "schema": {
-                    "type": "object",
-                    "properties": {"plan": {"type": "array", "items": {"type": "string"}}},
-                    "required": ["plan"],
-                    "additionalProperties": False,
-                },
+                "schema": PlannerPlan.model_json_schema(),
             },
         }
     elif role == "reviewer":
@@ -139,15 +134,7 @@ def request_body(role: str, context: int, near_limit: bool = False) -> dict[str,
             "json_schema": {
                 "name": "review",
                 "strict": True,
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "status": {"type": "string", "enum": ["approved", "rejected"]},
-                        "findings": {"type": "array", "items": {"type": "string"}},
-                    },
-                    "required": ["status", "findings"],
-                    "additionalProperties": False,
-                },
+                "schema": ReviewResult.model_json_schema(),
             },
         }
     elif role == "judge":

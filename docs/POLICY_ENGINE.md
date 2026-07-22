@@ -5,14 +5,16 @@ It accepts versioned rules with `any`/`all`, dotted equality, changed-path glob,
 and numeric `gte` conditions. It deliberately does not evaluate Python, shell,
 templates, or arbitrary expressions.
 
-Matched rules aggregate `require`, `recommend`, `deny`, `limit`, `redact`, and
-`request_approval` actions. Limits choose the most restrictive matched value.
+Matched rules aggregate `require`, `recommend`, `deny`, `limit`, `redact`,
+`request_approval`, and per-role `fail_closed` actions. Limits choose the most
+restrictive matched value; any matching true fail-closed action wins.
 Every decision records policy version, content hash, matched rule IDs and the
 aggregated actions as a `policy_decision` evidence node.
 
 The Controller enforces request denial, missing approval, bounded loop limits,
 Planner/Reviewer/Judge role requirements, Frontier escalation metadata, and
-globbed per-tool denial before client-visible execution. Denial and missing
+globbed per-tool denial before client-visible execution. Policy-selected
+Reviewer and Remote Judge failures fail closed. Denial and missing
 approval persist `POLICY_BLOCKED` and `PERMISSION_REQUIRED` respectively.
 Configured dotted-field redaction is applied before Evidence Graph, decision,
 raw tool-result, normalized tool-execution, orchestration, Reasoner, Planner,

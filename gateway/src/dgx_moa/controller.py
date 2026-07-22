@@ -16,6 +16,7 @@ import httpx
 from .compression import compress_messages, compress_text
 from .config import Settings
 from .evidence import EvidenceEdge, EvidenceNode, classify_evidence
+from .evolution import PromptRegistry
 from .frontier import (
     CodexOAuthCollaboration,
     FrontierCollaborationResult,
@@ -26,6 +27,7 @@ from .frontier import (
     frontier_eligible,
     select_frontier_profile,
 )
+from .knowledge import KnowledgeQuery, KnowledgeRegistry
 from .loop_engineering import (
     LOOP_TYPES,
     PROGRESS_EVIDENCE_KINDS,
@@ -49,10 +51,25 @@ from .loop_engineering import (
 )
 from .policy import PolicyEngine, redact_fields
 from .providers import ModelProvider, StageTimeout, parse_json_content
+from .remote_judge import (
+    JudgeEvidencePackage,
+    JudgeProvider,
+    JudgeProviderError,
+    JudgeRateLimited,
+    JudgeTimeout,
+    RemoteJudgeVerdict,
+)
 from .routing import ChangeRisk, heavy_eligible, needs_planner, select_route
-from .schemas import JudgeVerdict, OrchestrationDecision, ReasonerContribution, ReviewResult
+from .schemas import (
+    JudgeVerdict,
+    OrchestrationDecision,
+    PlannerPlan,
+    ReasonerContribution,
+    ReviewResult,
+)
 from .security import redact
 from .skills import SkillQuery, SkillRegistry
+from .specialists import SpecialistRouter
 from .state import Phase, SessionState, StateStore, now
 from .trace import training_default, validate_provenance
 from .usage import UsageStore
@@ -75,6 +92,12 @@ class JudgeRequired(RuntimeError):
     def __init__(self, session_id: str):
         self.session_id = session_id
         super().__init__("Heavy Judge adjudication required")
+
+
+class JudgeCorrectionRequired(RuntimeError):
+    def __init__(self, verdict: str):
+        self.verdict = verdict
+        super().__init__("Remote Judge requires an Executor correction turn")
 
 
 class LoopAdmissionError(RuntimeError):
@@ -169,6 +192,9 @@ class Controller:
         usage: UsageStore | None = None,
         skills: SkillRegistry | None = None,
         policy: PolicyEngine | None = None,
+        knowledge: KnowledgeRegistry | None = None,
+        prompts: PromptRegistry | None = None,
+        remote_judge: JudgeProvider | None = None,
     ):
         self.settings = settings
         self.store = store
@@ -177,8 +203,46 @@ class Controller:
         self.usage = usage
         self.skills = skills
         self.policy = policy
+        self.knowledge = knowledge
+        self.prompts = prompts
+        self.remote_judge = remote_judge
+        self.specialists: SpecialistRouter | None = None
         self.lifecycle_store: Any | None = None
         self._review_lock = asyncio.Lock()
+
+    async def complete_specialist(
+        self,
+        state: SessionState,
+        role: Literal["planner", "reviewer"],
+        request: dict[str, Any],
+        *,
+        mandatory: bool,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if self.specialists is None:
+            response = await self.provider.complete(
+                role,
+                self.settings.models[role],
+                request,
+                timeout_seconds=getattr(self.settings.limits, f"{role}_timeout_seconds"),
+                stage=role,
+            )
+            return response, {
+                "specialist_role": role,
+                "selected_provider": "local",
+                "routing_reason": "specialist_router_disabled",
+            }
+        response, decision = await self.specialists.complete(
+            role,
+            request,
+            request_id=state.session_id,
+            revision=self.settings.models[role].revision,
+            timeout_seconds=getattr(self.settings.limits, f"{role}_timeout_seconds"),
+            local_only=role in state.specialist_local_only_roles,
+            mandatory=mandatory,
+        )
+        state.specialist_routing.append(cast(dict[str, Any], self.safe_payload(state, decision)))
+        state.specialist_routing = state.specialist_routing[-self.settings.limits.max_steps :]
+        return response, decision
 
     @staticmethod
     def _sync_loop_criteria(state: SessionState) -> None:
@@ -384,6 +448,7 @@ class Controller:
         started: float,
         *,
         mode: str = "default",
+        provider: str | None = None,
     ) -> None:
         raw_usage = response.get("usage")
         usage = cast(dict[str, Any], raw_usage) if isinstance(raw_usage, dict) else {}
@@ -397,6 +462,7 @@ class Controller:
                 "completion_tokens": usage.get("completion_tokens"),
                 "total_tokens": usage.get("total_tokens"),
                 "status": "completed",
+                **({"provider": provider} if provider else {}),
             },
         )
 
@@ -421,6 +487,10 @@ class Controller:
         model = (
             self.frontier.config.model
             if role == "frontier" and self.frontier is not None
+            else self.settings.remote_judge.model
+            if role == "judge" and invocation.get("provider") == "opencode_go"
+            else self.settings.specialist_routing.models[cast(Literal["planner", "reviewer"], role)]
+            if role in {"planner", "reviewer"} and invocation.get("provider") == "remote"
             else self.settings.models[role].served_name
         )
         try:
@@ -711,6 +781,11 @@ class Controller:
             [str(item) for item in denied_tools] if isinstance(denied_tools, list) else []
         )
         state.policy_redact_fields = decision.redact
+        state.policy_fail_closed_roles = [
+            role for role, enabled in decision.fail_closed.items() if enabled
+        ]
+        if "reviewer" in state.policy_fail_closed_roles:
+            state.review_fail_closed = True
         if decision.require.get("frontier"):
             metadata["frontier_required"] = True
             state.route = "escalation"
@@ -1207,8 +1282,12 @@ class Controller:
                 "verified_facts": facts,
                 "recent_tool_results": state.tool_results[-4:],
                 "failure_state": state.failure_families,
+                "judge_corrections": state.judge_verdict,
                 "activated_skills": state.skill_selections[
                     -self.settings.runtime_skills.retrieval_limit :
+                ],
+                "retrieved_knowledge": state.knowledge_selections[
+                    -self.settings.runtime_knowledge.retrieval_limit :
                 ],
                 "observation": observation,
             }
@@ -1320,6 +1399,76 @@ class Controller:
             {"evidence_id": evidence_id, "count": len(selections)},
         )
 
+    def select_executor_knowledge(self, state: SessionState, metadata: dict[str, Any]) -> None:
+        if self.knowledge is None or not self.settings.runtime_knowledge.enabled:
+            return
+        try:
+            matches = self.knowledge.search(
+                KnowledgeQuery(
+                    text=" ".join((state.objective, " ".join(state.acceptance_criteria))),
+                    domains=[
+                        str(value)
+                        for value in (metadata.get("language"), metadata.get("framework"))
+                        if value
+                    ],
+                    repository=state.repository.get("workspace_identifier"),
+                ),
+                limit=self.settings.runtime_knowledge.retrieval_limit,
+            )
+        except (OSError, sqlite3.Error, ValueError) as error:
+            state.knowledge_selections = []
+            state.observability_degraded = True
+            state.observability_status = "degraded"
+            self.store.event(
+                state.session_id,
+                "knowledge_retrieval_failed",
+                {"failure_class": type(error).__name__},
+            )
+            return
+        selections: list[dict[str, Any]] = []
+        remaining = self.settings.runtime_knowledge.max_context_characters
+        for match in matches:
+            selection = {
+                "knowledge_id": match.knowledge.knowledge_id,
+                "knowledge_version": match.knowledge.version,
+                "selection_reason": ",".join(match.reasons),
+                "selection_score": round(match.score / (match.score + 10), 4),
+                "summary": match.knowledge.content.summary,
+                "conditions": match.knowledge.content.conditions,
+                "recommended_actions": match.knowledge.content.recommended_actions,
+                "contradiction_ids": match.contradiction_ids,
+            }
+            encoded = json.dumps(selection, ensure_ascii=False)
+            if len(encoded) <= remaining:
+                remaining -= len(encoded)
+                selections.append(selection)
+        state.knowledge_selections = selections
+        if state.engineering_loop is not None:
+            state.engineering_loop.retrieved_knowledge = [
+                f"{item['knowledge_id']}@{item['knowledge_version']}" for item in selections
+            ]
+        evidence_id = self.record_evidence(
+            state,
+            "knowledge_entry",
+            "executor",
+            {
+                "selected": [
+                    {
+                        "knowledge_id": item["knowledge_id"],
+                        "knowledge_version": item["knowledge_version"],
+                        "selection_reason": item["selection_reason"],
+                        "contradiction_ids": item["contradiction_ids"],
+                    }
+                    for item in selections
+                ]
+            },
+        )
+        self.store.event(
+            state.session_id,
+            "knowledge_retrieved",
+            {"evidence_id": evidence_id, "count": len(selections)},
+        )
+
     def prompt_sandwich(
         self,
         role: str,
@@ -1329,10 +1478,8 @@ class Controller:
     ) -> str:
         schema = {
             "reasoner": json.dumps(ReasonerContribution.model_json_schema(), separators=(",", ":")),
-            "planner": '{"plan":[{"step":"..."}],"acceptance_criteria":["..."]}',
-            "reviewer": (
-                '{"status":"approved","findings":[]} or {"status":"rejected","findings":["..."]}'
-            ),
+            "planner": json.dumps(PlannerPlan.model_json_schema(), separators=(",", ":")),
+            "reviewer": json.dumps(ReviewResult.model_json_schema(), separators=(",", ":")),
             "judge": json.dumps(JudgeVerdict.model_json_schema(), separators=(",", ":")),
         }.get(role, "OpenAI assistant message or tool calls")
         objective = (
@@ -1350,9 +1497,11 @@ class Controller:
                 "calls in prose or Markdown fences."
             )
         )
+        registered_policy = self.prompts.active_template(role) if self.prompts else None
         return "\n\n".join(
             (
-                f"IMMUTABLE ROLE POLICY\n{role} policy applies; read-only unless executor.",
+                "IMMUTABLE ROLE POLICY\n"
+                + (registered_policy or f"{role} policy applies; read-only unless executor."),
                 f"EXACT OUTPUT SCHEMA\n{schema}",
                 "ROLE CONTEXT\n"
                 + json.dumps(
@@ -1387,10 +1536,14 @@ class Controller:
         tests_failed = isinstance(validation, list) and any(
             isinstance(item, dict) and item.get("passed") is False for item in validation
         )
-        if tests_failed or active_failures(state) or reasoner.confidence < 0.5:
+        if tests_failed or active_failures(state) or reasoner.confidence_category == "low":
             return "low"
         executor_confidence = decision.confidence if decision else 1.0
-        if reasoner.confidence >= 0.8 and executor_confidence >= 0.8 and not reasoner.unknowns:
+        if (
+            reasoner.confidence_category == "high"
+            and executor_confidence >= 0.8
+            and not reasoner.hypotheses
+        ):
             return "high"
         return "medium"
 
@@ -1423,7 +1576,7 @@ class Controller:
             architecture
             or code_review
             or state.request_class == "high_risk_task"
-            or reasoner.confidence < 0.6
+            or reasoner.confidence_category == "low"
             or any(item.needed and item.role == "frontier" for item in reasoner.additional_agents)
             or len(active_failures(state)) >= 2
         )
@@ -1624,6 +1777,23 @@ class Controller:
         ensure_roles: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
         body = request.copy()
+        metadata = dict(request.get("metadata", {}))
+        local_only = metadata.get("specialist_local_only", [])
+        state.specialist_local_only_roles = (
+            [
+                cast(Literal["planner", "reviewer"], role)
+                for role in local_only
+                if role in {"planner", "reviewer"}
+            ]
+            if isinstance(local_only, list)
+            else []
+        )
+        if self.specialists is not None:
+            self.specialists.prewarm(
+                metadata,
+                state.session_id,
+                {role: self.settings.models[role].revision for role in ("planner", "reviewer")},
+            )
         roles = tuple(dict.fromkeys((*roles, *state.roles_required)))
         if state.control_state != "running":
             raise PolicyBlocked(f"request control state is {state.control_state}")
@@ -1684,6 +1854,7 @@ class Controller:
             decision_id = self._record_decision(
                 "reasoner", state, {"type": "structured_reasoning_request"}, state.objective
             )
+            self.store.event(state.session_id, "reasoner_started", {"role": "reasoner"})
             reasoner_started = time.monotonic()
             try:
                 for attempt in range(2):
@@ -1757,16 +1928,17 @@ class Controller:
                 "reasoner_completed",
                 {
                     "decision_id": decision_id,
-                    "confidence": contribution.confidence,
+                    "confidence_category": contribution.confidence_category,
                     "recommended_agents": [
                         item.role for item in contribution.additional_agents if item.needed
                     ],
                     **(
                         {
-                            "problem_interpretation": contribution.problem_interpretation,
-                            "reasoning_summary": contribution.reasoning,
-                            "risks": contribution.risks,
-                            "unknowns": contribution.unknowns,
+                            "assumptions": contribution.assumptions,
+                            "constraints": contribution.constraints,
+                            "conclusions": contribution.conclusions,
+                            "hypotheses": contribution.hypotheses,
+                            "evidence_references": contribution.evidence_references,
                             "recommended_actions": contribution.recommended_actions,
                         }
                         if self.settings.live_observation.include_reasoner_artifact
@@ -1810,7 +1982,7 @@ class Controller:
                 evidence = {
                     "objective": state.objective,
                     "constraints": state.acceptance_criteria,
-                    "reasoner_risks": reasoner_contribution.risks,
+                    "reasoner_hypotheses": reasoner_contribution.hypotheses,
                     "reasoner_recommendations": reasoner_contribution.recommended_actions,
                     "relevant_evidence": {
                         "changed_paths": request.get("metadata", {}).get("changed_paths", []),
@@ -1918,38 +2090,29 @@ class Controller:
                     "type": "json_schema",
                     "json_schema": {
                         "name": "plan",
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "plan": {"type": "array", "items": {"type": "object"}},
-                                "acceptance_criteria": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                            },
-                            "required": ["plan", "acceptance_criteria"],
-                            "additionalProperties": False,
-                        },
+                        "strict": True,
+                        "schema": PlannerPlan.model_json_schema(),
                     },
                 },
             }
             self._record_decision(
                 "planner", state, {"type": "plan_request"}, "New or invalidated task"
             )
+            self.store.event(state.session_id, "planner_invoked", {"role": "planner"})
             planner_started = time.monotonic()
             planner: dict[str, Any] | None = None
+            planner_routing: dict[str, Any] = {}
             parsed: dict[str, Any] = {}
             try:
                 self.admit_loop_action(state, "planner_calls")
-                planner = await self.provider.complete(
+                planner, planner_routing = await self.complete_specialist(
+                    state,
                     "planner",
-                    self.settings.models["planner"],
                     planner_request,
-                    timeout_seconds=self.settings.limits.planner_timeout_seconds,
-                    stage="planner",
+                    mandatory=state.request_class == "high_risk_task",
                 )
                 try:
-                    parsed = parse_json_content(planner)
+                    parsed = PlannerPlan.model_validate(parse_json_content(planner)).model_dump()
                 except ValueError:
                     self.store.event(
                         state.session_id,
@@ -1957,14 +2120,13 @@ class Controller:
                         {"reason": "planner_structured_output_invalid"},
                     )
                     self.admit_loop_action(state, "planner_calls")
-                    planner = await self.provider.complete(
+                    planner, planner_routing = await self.complete_specialist(
+                        state,
                         "planner",
-                        self.settings.models["planner"],
                         planner_request,
-                        timeout_seconds=self.settings.limits.planner_timeout_seconds,
-                        stage="planner",
+                        mandatory=state.request_class == "high_risk_task",
                     )
-                    parsed = parse_json_content(planner)
+                    parsed = PlannerPlan.model_validate(parse_json_content(planner)).model_dump()
             except (httpx.HTTPError, StageTimeout, ValueError) as error:
                 planner_error = error
                 self.record_provider_failure(state, "planner", error)
@@ -1987,10 +2149,29 @@ class Controller:
             finally:
                 state.timings_ms["planner"] = round((time.monotonic() - planner_started) * 1000, 3)
             if planner is not None and planner_error is None:
-                self.record_invocation(state, "planner", planner, planner_started)
-                safe_planner = cast(dict[str, Any], self.safe_payload(state, parsed))
-                state.plan = safe_planner.get("plan", [])
+                self.record_invocation(
+                    state,
+                    "planner",
+                    planner,
+                    planner_started,
+                    provider=str(planner_routing.get("selected_provider", "local")),
+                )
+                policy_planner = {
+                    key: value for key, value in parsed.items() if key != "ordered_steps"
+                }
+                policy_planner["plan"] = parsed.get("ordered_steps", [])
+                safe_planner = cast(dict[str, Any], self.safe_payload(state, policy_planner))
+                safe_planner["ordered_steps"] = safe_planner.pop("plan", [])
+                state.plan = safe_planner.get("ordered_steps", [])
                 state.acceptance_criteria = safe_planner.get("acceptance_criteria", [])
+                state.agent_artifacts.append(
+                    {
+                        "role": "planner",
+                        "provider": planner_routing.get("selected_provider", "local"),
+                        "output": safe_planner,
+                    }
+                )
+                state.agent_artifacts = state.agent_artifacts[-self.settings.limits.max_steps :]
                 self._sync_loop_criteria(state)
                 self.store.event(state.session_id, "plan_created", {"steps": len(state.plan)})
                 self.record_evidence(
@@ -2017,10 +2198,7 @@ class Controller:
                 state.observability_degraded = True
                 state.observability_status = "degraded"
             else:
-                reviewer_artifact = {"role": "reviewer", "output": pre_review_result}
-                safe_reviewer = cast(dict[str, Any], self.safe_payload(state, reviewer_artifact))
-                state.agent_artifacts.append(safe_reviewer)
-                state.agent_artifacts = state.agent_artifacts[-self.settings.limits.max_steps :]
+                safe_reviewer = state.agent_artifacts[-1]
                 collaboration_context += "\nLocal Reviewer contribution:\n" + json.dumps(
                     safe_reviewer["output"], ensure_ascii=False
                 )
@@ -2180,11 +2358,17 @@ class Controller:
                         self.store.event(
                             state.session_id,
                             "judge_adjudication_required",
-                            {"profile": "judge", "resume_profile": "resident"},
+                            {
+                                "provider": (
+                                    "remote" if self.remote_judge is not None else "local_profile"
+                                )
+                            },
                         )
                         self.store.save(state)
-                        raise JudgeRequired(state.session_id)
-                    collaboration_context += "\nHeavy Judge verdict:\n" + json.dumps(
+                        if self.remote_judge is None:
+                            raise JudgeRequired(state.session_id)
+                        await self.judge(state, state.pending_judge_evidence)
+                    collaboration_context += "\nJudge verdict:\n" + json.dumps(
                         redact(state.judge_verdict), ensure_ascii=False
                     )
         if frontier_degraded:
@@ -2198,6 +2382,7 @@ class Controller:
         state.phase = Phase.EXECUTING
         state.final_status = None
         state.step_count += 1
+        self.select_executor_knowledge(state, dict(request.get("metadata", {})))
         self.select_executor_skills(state, dict(request.get("metadata", {})))
         self._record_decision(
             "executor", state, {"type": "next_step_request"}, "Proceed from verified state"
@@ -2253,6 +2438,48 @@ class Controller:
             if isinstance(finding, str) and finding.lower().startswith(("critical:", "important:")):
                 return True
         return False
+
+    def remote_judge_invocation_reasons(
+        self,
+        state: SessionState,
+        metadata: dict[str, Any],
+        response: dict[str, Any] | None = None,
+    ) -> list[str]:
+        """Return bounded, deterministic selective-Judge triggers."""
+        if self.remote_judge is None:
+            return []
+        if state.judge_status in {"approve", "reject", "escalate"}:
+            return []
+        if response is not None:
+            message = (response.get("choices") or [{}])[0].get("message", {})
+            if message.get("tool_calls"):
+                return []
+        trigger_fields = {
+            "authentication": "security_or_authentication_change",
+            "cryptography": "security_or_authentication_change",
+            "security_sensitive_change": "security_or_authentication_change",
+            "database_schema": "database_schema_or_migration",
+            "destructive_migration": "database_schema_or_migration",
+            "concurrency": "concurrency_or_state_machine_change",
+            "state_machine": "concurrency_or_state_machine_change",
+            "destructive_action": "destructive_action",
+            "production_deployment": "production_deployment_approval",
+            "production_skill_promotion": "production_skill_promotion",
+            "prompt_promotion": "runtime_candidate_promotion",
+            "policy_promotion": "runtime_candidate_promotion",
+            "routing_promotion": "runtime_candidate_promotion",
+            "weekly_gold_candidate": "weekly_gold_candidate",
+            "tests_claim_inconsistent": "test_result_claim_inconsistency",
+            "unresolved_disagreement": "reviewer_frontier_disagreement",
+        }
+        reasons = [reason for field, reason in trigger_fields.items() if metadata.get(field)]
+        if state.request_class == "high_risk_task" or metadata.get("heavy_review"):
+            reasons.append("high_or_critical_risk")
+        if state.review_status.startswith("rejected"):
+            reasons.append("unresolved_reviewer_finding")
+        if any(count >= 2 for count in state.failure_families.values()):
+            reasons.append("repeated_failure_fingerprint")
+        return list(dict.fromkeys(reasons))
 
     def review_observation(
         self, state: SessionState, response: dict[str, Any], metadata: dict[str, Any]
@@ -2336,6 +2563,7 @@ class Controller:
             "reviewer", state, {"type": "review_request"}, observation
         )
         reviewer_started = time.monotonic()
+        reviewer_routing: dict[str, Any] = {}
         async with self._review_lock:
             owned_guard = False
             guard_transition_id: str | None = None
@@ -2355,14 +2583,19 @@ class Controller:
                     owned_guard = True
             try:
                 self.admit_loop_action(state, "reviewer_calls")
-                response = await self.provider.complete(
+                response, reviewer_routing = await self.complete_specialist(
+                    state,
                     "reviewer",
-                    self.settings.models["reviewer"],
                     request,
-                    timeout_seconds=self.settings.limits.reviewer_timeout_seconds,
-                    stage="reviewer",
+                    mandatory=state.request_class == "high_risk_task",
                 )
-                self.record_invocation(state, "reviewer", response, reviewer_started)
+                self.record_invocation(
+                    state,
+                    "reviewer",
+                    response,
+                    reviewer_started,
+                    provider=str(reviewer_routing.get("selected_provider", "local")),
+                )
                 try:
                     result = ReviewResult.model_validate(parse_json_content(response)).model_dump()
                 except ValueError:
@@ -2390,8 +2623,9 @@ class Controller:
                                 "Review the bounded evidence below and return one minimal valid "
                                 "review JSON object only. The previous "
                                 "bounded response was invalid or truncated. Use exactly status "
-                                "approved or rejected and findings as a JSON array of concise "
-                                'strings. Example: {"status":"approved","findings":[]}. '
+                                "approved or rejected and structured findings matching the "
+                                "required schema. Example: "
+                                '{"status":"approved","findings":[]}. '
                                 "Reject when the evidence shows defects. No prose; fewer than 300 "
                                 f"tokens.\nBounded evidence:\n{retry_evidence}"
                             ),
@@ -2400,12 +2634,11 @@ class Controller:
                     retry_request["max_tokens"] = min(self.settings.limits.reviewer_tokens, 1024)
                     retry_started = time.monotonic()
                     self.admit_loop_action(state, "reviewer_calls")
-                    response = await self.provider.complete(
+                    response, reviewer_routing = await self.complete_specialist(
+                        state,
                         "reviewer",
-                        self.settings.models["reviewer"],
                         retry_request,
-                        timeout_seconds=self.settings.limits.reviewer_timeout_seconds,
-                        stage="reviewer_retry",
+                        mandatory=state.request_class == "high_risk_task",
                     )
                     self.record_invocation(
                         state,
@@ -2413,6 +2646,7 @@ class Controller:
                         response,
                         retry_started,
                         mode="review_retry",
+                        provider=str(reviewer_routing.get("selected_provider", "local")),
                     )
                     result = ReviewResult.model_validate(parse_json_content(response)).model_dump()
             finally:
@@ -2431,6 +2665,14 @@ class Controller:
         safe_result = cast(dict[str, Any], self.safe_payload(state, result))
         state.review_status = result.get("status", "rejected")
         state.phase = Phase.CORRECTION if state.review_status != "approved" else Phase.EXECUTING
+        state.agent_artifacts.append(
+            {
+                "role": "reviewer",
+                "provider": reviewer_routing.get("selected_provider", "local"),
+                "output": safe_result,
+            }
+        )
+        state.agent_artifacts = state.agent_artifacts[-self.settings.limits.max_steps :]
         self.store.save(state)
         self.store.event(state.session_id, "review_completed", safe_result)
         state.evaluations.append(
@@ -2456,9 +2698,11 @@ class Controller:
             generated_from=decision_id,
         )
         self.store.save(state)
-        return result
+        return safe_result
 
     async def judge(self, state: SessionState, observation: str) -> dict[str, Any]:
+        if self.remote_judge is not None:
+            return await self.remote_judge_adjudication(state, observation)
         state.phase = Phase.HEAVY_REVIEW
         safe_observation = cast(
             dict[str, Any], self.safe_payload(state, {"observation": observation})
@@ -2547,4 +2791,238 @@ class Controller:
             generated_from=decision_id,
         )
         self.store.save(state)
-        return result
+        return safe_result
+
+    def judge_evidence_package(self, state: SessionState, observation: str) -> JudgeEvidencePackage:
+        metadata = {
+            key: item
+            for decision in state.decisions[-8:]
+            for key, item in decision.items()
+            if key in {"changed_paths", "diff_summary", "validation_results", "build_results"}
+        }
+        package = JudgeEvidencePackage(
+            request_id=state.current_request_id or state.session_id,
+            objective=state.objective,
+            request_constraints=list(state.acceptance_criteria),
+            risk_class=cast(
+                Literal["low", "medium", "high", "critical"],
+                self._loop_risk(
+                    {
+                        "heavy_review": state.request_class == "high_risk_task",
+                        "deployment_security": any(
+                            "deployment" in item.lower() for item in state.acceptance_criteria
+                        ),
+                    }
+                ),
+            ),
+            acceptance_criteria=(
+                [
+                    item.model_dump(mode="json")
+                    for item in state.engineering_loop.acceptance_criteria
+                ]
+                if state.engineering_loop is not None
+                else list(state.acceptance_criteria)
+            ),
+            executor_draft=observation,
+            changed_diff_summary=list(metadata.get("diff_summary", []))
+            if isinstance(metadata.get("diff_summary"), list)
+            else [metadata["diff_summary"]]
+            if metadata.get("diff_summary")
+            else [],
+            tool_evidence=state.tool_results[-8:],
+            test_evidence=list(metadata.get("validation_results", []))
+            if isinstance(metadata.get("validation_results"), list)
+            else [],
+            build_evidence=list(metadata.get("build_results", []))
+            if isinstance(metadata.get("build_results"), list)
+            else [],
+            reviewer_findings=[
+                item for item in state.agent_artifacts[-8:] if item.get("role") == "reviewer"
+            ],
+            frontier_findings=[
+                item for item in state.agent_artifacts[-8:] if item.get("role") == "frontier"
+            ],
+            open_failures=active_failures(state)[-8:],
+            resolved_failures=[
+                item for item in state.failures[-8:] if item.get("resolution_status") == "resolved"
+            ],
+            policy_decisions=state.policy_decisions[-8:],
+            selected_skills=state.skill_selections[-8:],
+            retrieved_knowledge=state.knowledge_selections[-8:],
+        )
+        if state.repository_training_policy not in {"internal_only", "training_denied"}:
+            return package
+        criteria = [
+            {
+                key: item[key]
+                for key in ("criterion_id", "required", "state", "evidence_ids")
+                if key in item
+            }
+            for item in package.acceptance_criteria
+            if isinstance(item, dict)
+        ]
+        evidence_fields = {
+            "id",
+            "status",
+            "exit_code",
+            "failure_class",
+            "tool_name",
+            "evidence_ids",
+        }
+        return package.model_copy(
+            update={
+                "objective": "[WITHHELD_BY_REPOSITORY_POLICY]",
+                "request_constraints": [],
+                "acceptance_criteria": criteria,
+                "executor_draft": "[WITHHELD_BY_REPOSITORY_POLICY]",
+                "changed_diff_summary": [],
+                "tool_evidence": [
+                    {key: value for key, value in item.items() if key in evidence_fields}
+                    for item in package.tool_evidence
+                    if isinstance(item, dict)
+                ],
+                "test_evidence": [
+                    {key: value for key, value in item.items() if key in evidence_fields}
+                    for item in package.test_evidence
+                    if isinstance(item, dict)
+                ],
+                "build_evidence": [
+                    {key: value for key, value in item.items() if key in evidence_fields}
+                    for item in package.build_evidence
+                    if isinstance(item, dict)
+                ],
+                "reviewer_findings": [],
+                "frontier_findings": [],
+                "open_failures": [],
+                "resolved_failures": [],
+                "policy_decisions": [],
+                "selected_skills": [],
+                "retrieved_knowledge": [],
+            }
+        )
+
+    async def remote_judge_adjudication(
+        self, state: SessionState, observation: str
+    ) -> dict[str, Any]:
+        assert self.remote_judge is not None
+        state.phase = Phase.HEAVY_REVIEW
+        package = self.judge_evidence_package(state, observation)
+        self.store.event(
+            state.session_id,
+            "judge_requested",
+            {
+                "provider": "opencode_go",
+                "model": self.settings.remote_judge.model,
+                "evidence_categories": [
+                    key
+                    for key, value in package.model_dump(mode="json").items()
+                    if value and key not in {"objective", "executor_draft"}
+                ],
+            },
+        )
+        decision_id = self._record_decision(
+            "judge", state, {"type": "remote_judge_request"}, package.specific_judgment_question
+        )
+        self.admit_loop_action(state, "judge_calls")
+        started = time.monotonic()
+        try:
+            verdict: RemoteJudgeVerdict = await self.remote_judge.judge(package)
+        except JudgeProviderError as error:
+            failure_class = (
+                "PROVIDER_TIMEOUT"
+                if isinstance(error, JudgeTimeout)
+                else "RATE_LIMITED"
+                if isinstance(error, JudgeRateLimited)
+                else "JUDGE_UNAVAILABLE"
+            )
+            self.store.event(
+                state.session_id,
+                "judge_provider_failed",
+                {"failure_class": failure_class, "fallback": "local_reviewer"},
+            )
+            if package.risk_class in {"high", "critical"} or (
+                "judge" in state.policy_fail_closed_roles
+            ):
+                self.terminate_loop(state, "PROVIDER_UNAVAILABLE")
+                raise
+            fallback = await self.review(state, observation)
+            approved = fallback.get("status") == "approved"
+            verdict = RemoteJudgeVerdict.model_validate(
+                {
+                    "verdict": "approve" if approved else "revise",
+                    "risk": package.risk_class,
+                    "criteria": {
+                        key: "unknown"
+                        for key in (
+                            "instruction_following",
+                            "evidence_grounding",
+                            "logical_consistency",
+                            "tool_consistency",
+                            "test_consistency",
+                            "safety",
+                            "completeness",
+                        )
+                    },
+                    "findings": [],
+                    "required_edits": [],
+                    "recheck_required": not approved,
+                    "confidence_class": "low",
+                }
+            )
+        result = verdict.model_dump(mode="json")
+        safe_result = cast(dict[str, Any], self.safe_payload(state, result))
+        state.judge_status = verdict.verdict
+        state.judge_verdict = safe_result
+        state.pending_judge_evidence = ""
+        if verdict.verdict == "approve" and (
+            state.engineering_loop is None or completion_ready(state)
+        ):
+            state.phase = Phase.COMPLETED
+            state.final_status = "completed"
+            self.terminate_loop(state, "SUCCESS")
+        elif verdict.verdict in {"reject", "escalate"}:
+            state.phase = Phase.BLOCKED
+            state.final_status = "blocked"
+            self.terminate_loop(state, "JUDGE_REJECTED")
+        else:
+            state.phase = Phase.CORRECTION
+        latency_seconds = time.monotonic() - started
+        judge_usage = await self.remote_judge.usage(package.request_id)
+        self.record_observed_invocation(
+            state,
+            {
+                "role": "judge",
+                "provider": "opencode_go",
+                "model": self.settings.remote_judge.model,
+                "latency_ms": latency_seconds * 1000,
+                **judge_usage,
+                "status": "completed",
+            },
+        )
+        self.store.event(
+            state.session_id,
+            "judge_completed",
+            safe_result
+            | {
+                "latency_seconds": latency_seconds,
+                "total_tokens": judge_usage.get("total_tokens", 0),
+            },
+        )
+        state.evaluations.append(
+            {
+                "evaluation_id": str(uuid.uuid4()),
+                "target_type": "decision",
+                "target_id": decision_id,
+                "evaluator_type": "opencode_go",
+                "evaluator_model": self.settings.remote_judge.model,
+                "evaluator_revision": "remote",
+                "result": safe_result,
+                "evidence_references": [],
+                "requirement_ids": [],
+                "created_at": now(),
+            }
+        )
+        state.evaluations = state.evaluations[-self.settings.limits.max_steps :]
+        self.record_evidence(state, "judge_verdict", "judge", result, generated_from=decision_id)
+        self.store.save(state)
+        return safe_result

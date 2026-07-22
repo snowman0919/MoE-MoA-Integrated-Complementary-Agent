@@ -3320,3 +3320,408 @@ both services reported exit status zero and zero restarts. Model endpoints
 remained loopback-only and the authenticated gateway remained the only tailnet
 listener. Production-disabled Loop Engineering, Skills, policy, training,
 weekly, replay-admin, and automatic-promotion gates were not enabled.
+
+## Remote Judge and Runtime Knowledge foundations — 2026-07-22
+
+The corrected v2 completion audit found that the earlier release did not
+implement the specified NVIDIA NIM GLM-5.2 Remote Judge or a separate Runtime
+Knowledge registry. The new development foundation adds both behind disabled
+checked-in defaults.
+
+Mock-transport Remote Judge tests passed strict evidence-package redaction,
+OpenAI-compatible NIM request construction, `z-ai/glm-5.2` selection, strict
+seven-criterion verdict parsing, read-only/no-tools behavior, timeout and
+invalid-output classification, rate-limit retry, and the two-call request
+budget. A Controller test proved the remote provider receives bounded tool
+evidence without invoking the local model provider or Heavy Judge profile.
+
+Runtime Knowledge tests passed immutable SQLite/WAL versions, missing lookup,
+bounded active-latest retrieval, validation and explicit promotion, retrieval
+evidence, conflict retention, approved supersession, rollback ancestry, and
+database integrity. Trace and replay snapshots now retain Knowledge versions;
+replay also retains prompt versions, routing configuration, provider-output
+references, and all named comparison modes.
+
+The serialized verification passed:
+
+- `uv run pytest -q`: `813 passed`, with the existing third-party Starlette
+  TestClient deprecation warning.
+- `uv run ruff format --check .`: 79 files formatted.
+- `uv run ruff check .`: all checks passed.
+- `uv run mypy`: no issues in 40 source files.
+- `systemd-analyze --user verify systemd/*`, every shell script `bash -n`, and
+  `git diff --check`: clean.
+
+This is implementation and unit/mock evidence only. No NVIDIA credential was
+present or required, no live NIM/GLM-5.2 request occurred, no production
+Knowledge database was created, and neither feature is production-enabled.
+
+## Governed evolution and complete weekly tree — 2026-07-22
+
+The complete serialized development verification passed after this slice:
+
+- `uv run pytest -q`: `821 passed`, with the existing third-party Starlette
+  TestClient deprecation warning.
+- `uv run ruff format --check .`: 81 files formatted.
+- `uv run ruff check .`: all checks passed.
+- `uv run mypy`: no issues in 41 source files.
+- `systemd-analyze --user verify systemd/*`, every shell script `bash -n`, and
+  `git diff --check`: clean.
+- `scripts/audit-trace-completeness.sh data/traces`: 10/10 sessions complete,
+  zero incomplete or legacy sessions, and 100.0% mandatory-field completeness.
+
+The development registry physically exercised Prompt candidate creation,
+schema/replay/regression/Reviewer evaluation, approved canary, Executor-evidenced
+helpful outcome, explicit promotion, and versioned rollback. High-impact unit
+coverage rejects evaluation without Judge approval. The controller preserves its
+schema, untrusted-data, safety, and authority layers around any active registered
+role Prompt.
+
+The weekly package tree now creates the specified Judge, preference, MCP,
+Routing, Knowledge, Prompt, Policy, negative, index, quarantine, snapshot, and
+report paths. Judge, Knowledge, Prompt, and Policy candidates route to separate
+datasets rather than falling into generic Executor SFT output. Manifest identity
+now includes Skill, Knowledge, Prompt, Policy, and Routing versions plus Judge
+configuration.
+
+`/tmp/dgx-moa-v2-foundations-L23Ogd/runtime/physical-validation.json` reports
+`status=passed` using real 7-Zip 23.01. It includes bounded loops, exact replay,
+Skill and Knowledge validation/promotion/retrieval, Prompt replay/canary/
+promotion/rollback, sanitized mock Remote Judge evidence, complete role/loop
+packaging, archive verification, idempotent replay, revocation/regeneration,
+capacity isolation, and expected corruption/archive-creation failures. The
+regenerated archive SHA-256 is
+`6f0eb3500cced7b32dd85da7004ffa958fbf1a5c6ec2cd8162204895fefde2e2`.
+
+This remains synthetic isolated evidence. It is not a live NVIDIA NIM call, a
+real weekly production window, or authorization for automatic promotion,
+training collection, retention apply, scheduler installation, or production
+enablement.
+
+## Selective Remote Judge delivery gate — 2026-07-22
+
+The development controller now deterministically selects the Remote Judge for
+the specified high-risk, security, schema/migration, concurrency/state-machine,
+destructive, deployment, promotion, weekly-gold, disagreement, repeated-failure,
+and test/claim inconsistency conditions. A mocked end-to-end gateway request
+proved that the local Reviewer runs before the Judge, `approve` permits the
+Executor draft, and `revise` suppresses that draft with a bounded HTTP 409
+correction state. A separate streaming case proved that high-risk content is
+rejected before upstream generation and must be retried non-streaming. Tool-call
+turns are excluded from final-draft judgment. The default loop budget now
+matches the two-call initial/recheck contract.
+
+The serialized verification passed:
+
+- `uv run pytest -q`: `826 passed`, with the existing third-party Starlette
+  TestClient deprecation warning.
+- `uv run ruff format --check .`: 81 files formatted.
+- `uv run ruff check .`: all checks passed.
+- `uv run mypy`: no issues in 41 source files.
+- systemd unit verification, every shell script `bash -n`, and
+  `git diff --check`: clean.
+- trace completeness: 10/10 sessions, zero incomplete or legacy sessions, and
+  100.0% mandatory-field completeness.
+
+This is mocked provider evidence. It does not satisfy the live NVIDIA NIM
+physical matrix or authorize production Remote Judge enablement.
+
+## Weekly Knowledge and Runtime Improvement reports — 2026-07-22
+
+The isolated validator created versioned Runtime Knowledge, retrieved it,
+recorded a helpful outcome and real last-retrieval timestamp, then generated
+Skill, Knowledge, and aggregate Runtime Improvement JSON/Markdown reports. The
+aggregate contains every required report section, leaves unavailable measured
+inputs empty, and records zero automatic actions. Unit coverage separately
+classifies a harmful active entry as a deprecation candidate requiring human
+approval and verifies the additive SQLite metrics-schema migration.
+
+`/tmp/dgx-moa-v2-maintenance-WzvpXt/runtime/physical-validation.json` reports
+`status=passed` with `skill_knowledge_runtime_reports=true` using real 7-Zip
+23.01. The regenerated archive SHA-256 is
+`59d4ad30d4ab19994e8158262aa1930b77622c893f1d28e3121f9214b7cc2efc`.
+This is isolated synthetic evidence, not a complete production weekly window or
+authorization to enable the scheduler.
+
+The complete serialized verification passed with `828 passed` and the existing
+third-party Starlette warning, 81 files formatted, clean Ruff, strict mypy clean
+across 41 source files, clean systemd/shell/diff checks, and 10/10 complete
+traces with 100.0% mandatory-field completeness.
+
+## Evidence-driven evolution candidate generation — 2026-07-22
+
+The development generator requires at least two occurrences and explicit source
+evidence, rejects signal/kind mismatches, sanitizes secrets and personal data,
+and idempotently creates Prompt, Policy, Routing, or failure-handling candidates.
+It never advances beyond `candidate`; generated Policy artifacts are always
+high impact and therefore retain the Reviewer/Judge/canary/approval gates.
+
+`/tmp/dgx-moa-v2-candidates-yXECD5/runtime/physical-validation.json` reports
+`status=passed` and `policy_routing_candidate_generation=true`. The isolated run
+generated both candidate kinds and proved they remained unpromoted while the
+rest of the bounded runtime validator and real 7-Zip archive checks passed. The
+regenerated archive SHA-256 is
+`5d5c2c837225b0222afb8f34d028e52701baa56922bdf9b2de191d04e255c23f`.
+
+The complete serialized verification passed with `830 passed`, the existing
+third-party Starlette warning, 81 files formatted, clean Ruff and strict mypy
+across 41 source files, clean systemd/shell/diff checks, and 10/10 complete
+traces with 100.0% mandatory-field completeness.
+
+## Knowledge and Judge metric wiring — 2026-07-22
+
+The fixed label-free metrics endpoint now overlays measured Knowledge retrieval,
+helpful/harmful outcomes, open conflicts, candidates, promotions, and
+deprecations from the separate registry. Remote Judge completion events carry
+only measured latency and token counts from the bounded provider ledger; later
+confirmed false-approval/false-rejection and approval-timeout events increment
+their fixed counters. Unit and endpoint tests cover each path without request,
+prompt, path, or raw-failure labels.
+
+The serialized gate passed with `832 passed`, the existing Starlette warning,
+81 formatted files, clean Ruff and strict mypy across 41 source files, clean
+systemd/shell/diff checks, and 10/10 complete traces with 100.0% mandatory-field
+completeness. This is unit/mock evidence; no live NIM token accounting occurred.
+
+## NVIDIA endpoint contract review — 2026-07-22
+
+The current official NVIDIA GLM-5.2 reference identifies model
+`z-ai/glm-5.2` and the OpenAI-compatible endpoint
+`https://integrate.api.nvidia.com/v1/chat/completions`; the model reference also
+lists structured output support. The provider now normalizes both a service-root
+configuration and NVIDIA's documented `/v1` base URL to exactly one `/v1`.
+Focused transport, Ruff, and strict mypy checks passed. This documentation and
+mock transport check is not a credentialed live-provider validation.
+
+The post-validator serialized gate passed with `832 passed`, the existing
+Starlette warning, 82 formatted files, clean Ruff and strict mypy across 41
+source files, clean systemd/shell/diff checks, and 10/10 complete traces with
+100.0% mandatory-field completeness. External NIM and Discord gates remain
+unmet, so this is not release approval.
+
+## Structured role-artifact boundary — 2026-07-22
+
+Reasoner persistence now excludes hidden reasoning and accepts only bounded
+assumptions, constraints, conclusions, hypotheses, evidence references,
+recommended actions, additional-agent recommendations, and a categorical
+confidence. Planner responses now use a strict scope/dependency/risk/validation/
+rollback/acceptance artifact, and Reviewer findings use the required structured
+severity, evidence, location, impact, and correction fields. Legacy Reasoner
+input is migrated without retaining its reasoning field; policy redaction of the
+public `plan` field remains effective across the internal ordered-step schema.
+
+The serialized gate passed with `833 passed` and the existing third-party
+Starlette warning, 82 formatted files, clean Ruff, and strict mypy across 41
+source files. User-systemd verification, every shell script `bash -n`, and
+`git diff --check` exited zero. The checked-in trace audit reported 10/10
+complete sessions, zero incomplete or legacy sessions, and 100.0% mandatory
+field completeness.
+
+The isolated self-evolving-runtime validator reported `status=passed` at
+`/tmp/dgx-moa-v2-role-schema.PsSdu5/runtime/physical-validation.json` using real
+7-Zip 23.01. The regenerated archive SHA-256 is
+`8590690031b3c3b721ff6ac91b1672ae731888112fd00fb734d45f7f0cfd04ca`.
+This remains isolated synthetic evidence; it is not a live NVIDIA NIM call, a
+real Discord notification, a production weekly window, or release approval.
+
+## MoA Runtime 2.0 local gap closure — 2026-07-22
+
+The development package, FastAPI metadata, and persisted gateway default now
+identify version `2.0.0`. Selective Remote Judge correction now stays within the
+same request: one bounded Executor correction, targeted local Reviewer
+validation, and at most one recheck. A deterministic revise-then-approve case
+delivered only the corrected draft; a repeated revise case suppressed delivery
+after exactly two Judge calls. Reviewer artifacts are present in both initial
+and recheck evidence packages.
+
+The declarative Policy schema now includes per-role `fail_closed`; a low-risk
+Remote Judge outage with a Judge fail-closed policy did not use the Reviewer
+fallback. High-impact generated Skills require Judge validation rather than a
+Frontier substitute. New training objects are real Zstandard frames at the
+specified `.json.zst` content-addressed path, with bounded legacy gzip reads.
+Permitted NVIDIA evaluation traces produce categorical role-specific Judge
+datasets, including only explicitly later-confirmed false approvals or false
+rejections and no verbatim finding/correction prose.
+
+The serialized gate passed with `837 passed` and the existing third-party
+Starlette warning, 82 formatted files, clean Ruff, and strict mypy across 41
+source files. User-systemd verification, every shell script `bash -n`, and
+`git diff --check` exited zero. The checked-in trace audit reported 10/10
+complete sessions, zero incomplete or legacy sessions, and 100.0% mandatory
+field completeness.
+
+The isolated self-evolving-runtime validator reported `status=passed` at
+`/tmp/dgx-moa-v2-gap-closure.3JuQPn/runtime/physical-validation.json` using real
+7-Zip 23.01. The regenerated archive SHA-256 is
+`747720b74f06f00976f1fad3d3f99e912a20fe5d7f7564191713a5b3672af90b`.
+Protected production configuration inspection exposed no values and found
+Telegram configured, Discord unconfigured, and no NVIDIA endpoint/key variable.
+Therefore the live NVIDIA matrix and real Discord delivery gate remain unmet;
+this section is not release approval.
+
+## Observation and training-schema coverage — 2026-07-22
+
+The existing observation bus now publishes the previously dropped safe
+Knowledge, Judge, tool-completion, failure, policy-block, and approval events.
+Reasoner, Planner, and Executor starts are emitted by their real call paths.
+The Judge projection retains verdict, risk, and recheck state while dropping
+correction prose. Training events now enforce exactly `local`, `frontier`, or
+`nvidia_nim`; required quality labels remain null when evidence is unavailable.
+
+The serialized gate passed with `838 passed` and the existing third-party
+Starlette warning, 82 formatted files, clean Ruff, and strict mypy across 41
+source files. User-systemd verification, every shell script `bash -n`, and
+`git diff --check` exited zero. The trace audit remained 10/10 complete with
+100.0% mandatory-field completeness. The isolated validator reported
+`status=passed` at
+`/tmp/dgx-moa-v2-observation.cW1CDi/runtime/physical-validation.json`; its real
+7-Zip 23.01 regenerated archive SHA-256 is
+`68ea79a698275c630db10616801eff0c1ffc667a4b4650c4d869f4c67e52cd0a`.
+This does not satisfy the still-missing live Discord or NVIDIA gates.
+
+## Judge recheck and repository-policy boundary — 2026-07-22
+
+The bounded correction flow now consumes its optional second Judge call only
+when the first verdict both requests a recheck and contains an Important or
+Critical finding. A Minor finding with `recheck_required=true` completed after
+the one Executor correction and targeted Reviewer validation with one Judge
+call; the Important case retained the two-call recheck. For `internal_only` and
+`training_denied` repositories, the Judge package withholds objective, draft,
+diff, specialist prose, and retrieved content while retaining only bounded
+criterion/tool/test/build status metadata.
+
+The serialized gate passed with `839 passed` and the existing third-party
+Starlette warning, 82 formatted files, clean Ruff, and strict mypy across 41
+source files. User-systemd verification, every shell script `bash -n`, and
+`git diff --check` exited zero. Trace completeness remained 10/10 and 100.0%.
+The isolated validator reported `status=passed` at
+`/tmp/dgx-moa-v2-judge-policy.CpR521/runtime/physical-validation.json`; its real
+7-Zip 23.01 archive SHA-256 is
+`cbc20c4347d01002d4fe400cd58d26a916ba074eb8ac8604db4fbb7a1dc10ca7`.
+Live NVIDIA evidence remains unavailable. Discord was subsequently removed from
+the production release scope by explicit operator direction; the already
+validated production Telegram path is the sole selected observation provider.
+
+## Production observation scope and live NIM credential check — 2026-07-22
+
+The operator explicitly discarded the Discord webhook requirement. Production
+observation therefore remains Telegram-only with controls disabled; Discord is
+unconfigured and is not a release gate. This changes scope, not evidence: the
+existing isolated Discord transport tests remain compatibility coverage, while
+the measured production Telegram identity, target, safe-send, and core-request
+evidence remains authoritative.
+
+A protected 0600 local `nim_api` credential was supplied for the live NVIDIA
+matrix. An initial operator-side runner incorrectly passed the complete
+`NVIDIA_API_KEY=...` assignment as the bearer value and received HTTP 401. The
+file was then parsed as an environment assignment; its value matched NVIDIA's
+documented `nvapi-...` contract, model-catalog authentication succeeded, and
+real GLM-5.2 verdicts were returned. No credential value was printed, copied to
+Git, or installed in production.
+
+The first full run stopped at the bounded-correction fixture because GLM-5.2
+returned `reject` with one required edit and `recheck_required=true` for an
+unsupported production-health claim. The fixture incorrectly allowed only
+`approve_with_edits` or `revise`, even though the required strict schema and
+specification also allow a correction-bearing `reject`. A focused repeat
+confirmed high-confidence rejection, failed grounding/completeness, passing
+test consistency, three findings, one required edit, and 709 total tokens. The
+validator expectation was corrected to accept the bounded non-approval verdict
+family only when required edits are present. This is partial live-provider
+evidence until the corrected full matrix passes.
+
+All credential-independent gates were rerun after the observation-scope change:
+
+- `uv run pytest -q`: `839 passed`, with the existing third-party Starlette
+  deprecation warning.
+- Ruff format/check and strict mypy: clean across 82 formatted files and 41
+  source files.
+- User-systemd verification, every shell script `bash -n`, and
+  `git diff --check`: clean.
+- Trace completeness: 10/10 sessions, zero incomplete or legacy sessions, and
+  100.0% mandatory-field completeness.
+- The isolated self-evolving-runtime validator reported `status=passed` at
+  `/tmp/dgx-moa-v2-final.2WwWd4/runtime/physical-validation.json` using real
+  7-Zip 23.01. Its regenerated archive SHA-256 is
+  `dd9b96960a165b86e4197dbf1fd44b028592b5da85d68506d686456cb9efcd0d`.
+
+These results isolate the remaining promotion blocker to completion of the
+corrected live Judge matrix.
+
+Subsequent live runs authenticated consistently and produced the expected
+individual outcomes across attempts: grounded evidence was approved; an
+unsupported production claim, a failed test reported as success, and a missing
+acceptance criterion were not approved; the unsupported health claim produced a
+bounded correction; and the minimal corrected draft was approved with all seven
+criteria passing, zero findings, zero edits, and 268 total tokens. The provider
+prompt was tightened to require evidence-linked findings and bounded edits for
+non-approval, forbid hidden reasoning/prose outside the schema, and limit
+rechecks to Important/Critical corrections. Requests now set `max_tokens=1024`
+and best-effort deterministic `seed=0`; focused mock/unit coverage verifies both
+parameters.
+
+The sustained gate still failed. Multiple calls exceeded 120 seconds twice and
+correctly surfaced `JudgeTimeout`; the latest checkpoint at
+`/tmp/dgx-moa-live-nim.ygb2Zi/validation.json` recorded
+`approve_valid_response` before the next case timed out. Other attempts reached
+the correction or corrected-recheck assertion but did not complete the entire
+matrix in one run. The validator now writes an atomic, sanitized checkpoint
+after every completed case so provider failures cannot erase measured progress.
+After a later recovery probe returned `approve` with all criteria passing and
+386 total tokens, the full matrix was retried; it again completed the first
+approval case and then exhausted both 120-second attempts on the unsupported-
+claim case. This confirms intermittent single-call recovery does not satisfy the
+sustained release gate.
+No production credential was installed, Remote Judge remains disabled, and
+`main`/production promotion remains blocked until one complete live matrix
+passes under the specified 120-second timeout and one-retry contract.
+
+## OpenCode Go specialist routing and Judge replacement — 2026-07-22
+
+The operator superseded the NVIDIA NIM design and selected OpenCode Go. The
+protected repository-root `opencode_api` file was mode 0600, contained one raw
+credential line rather than an environment assignment, remained ignored, and
+was never printed or copied into Git. A credentialed `/v1/models` request
+returned exact IDs `deepseek-v4-pro`, `deepseek-v4-flash`, and `glm-5.2`.
+
+Credentialed specialist validation initially exposed two real compatibility
+failures. OpenCode Go rejected the local vLLM strict `json_schema` request with
+HTTP 400; after adapting it to `json_object`, the first Planner output exhausted
+800 completion tokens with `finish_reason=length`. At 4096 tokens it completed
+but did not follow the Pydantic field shapes until the sanitized schema itself
+was prepended as a system constraint. These failures are retained as rejected
+evidence and are not production claims.
+
+After the bounded adapter and role-specific token floors were implemented,
+`scripts/validate-specialist-routing.py` passed both real structured calls:
+
+- Planner `deepseek-v4-pro`: valid `PlannerPlan`, 20.884 seconds, 529 prompt
+  tokens, 1540 completion tokens, 2069 total tokens.
+- Reviewer `deepseek-v4-flash`: valid `ReviewResult`, 2.496 seconds, 478 prompt
+  tokens, 120 completion tokens, 598 total tokens.
+
+The local Planner and Reviewer remain the preferred providers when real
+inference readiness and queue/cost prediction permit. The DeepSeek calls are
+only the pinned remote path for cold, loading, unhealthy, or slower local
+specialists while one local warm-up proceeds independently.
+
+The replacement OpenCode Go GLM-5.2 Judge completed the entire credentialed
+matrix in one run at
+`/tmp/dgx-moa-opencode-validation.WilZSu/remote-judge.json` (SHA-256
+`9194dd6c23197db57e74d1443a23dad977854c9aa0c3537a58dbe8f04a8d7d7a`).
+Grounded evidence and the corrected recheck were approved. Unsupported claims,
+failed-test contradictions, missing acceptance evidence, and the unsupported
+health claim were rejected with one evidence-linked finding and one bounded
+required edit. Local enforcement blocked the third call for the correction
+request. The sanitized checkpoint reports `status=passed`.
+
+The final automated gate passed with `846 passed` and the existing third-party
+Starlette warning. Ruff format/check, strict mypy across 41 source files,
+`git diff --check`, and the secret-pattern diff scan were clean. The isolated
+self-evolving-runtime validator reported `status=passed`; its real 7-Zip 23.01
+archive SHA-256 is
+`a3c1ec39adb4b0c04f6443caaafc0fcd733dcfbea262afc08e3c589ce010db93`.
+Archive inspection confirmed all five new routing paths:
+`specialist-residency-routing.jsonl`, `local-vs-remote-routing.jsonl`,
+`warmup-decisions.jsonl`, `eviction-decisions.jsonl`, and
+`latency-prediction.jsonl`.

@@ -45,6 +45,8 @@
     "orchestration_decisions": {"type": "array", "items": {"type": "object"}},
     "agent_invocations": {"type": "array", "items": {"type": "object"}},
     "agent_artifacts": {"type": "array", "items": {"type": "object"}},
+    "specialist_routing": {"type": "array", "items": {"type": "object"}},
+    "specialist_eviction_decisions": {"type": "array", "items": {"type": "object"}},
     "recommendation_resolutions": {"type": "array", "items": {"type": "object"}},
     "evidence_graph": {
       "type": "object",

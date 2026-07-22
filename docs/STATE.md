@@ -16,12 +16,16 @@ Updated: 2026-07-22
 | Runtime model invocation-rate CSV | yes | yes | yes | production live clients | yes |
 | Bounded Loop Engineering Phase A + action-boundary B | yes | yes | yes | isolated success/no-progress/duplicate | no |
 | Runtime Skills Phase C foundation | yes | yes | yes | isolated governed lifecycle | no |
+| Runtime Knowledge Phase C foundation | yes | yes | yes | isolated registry/retrieval/conflict/report | no |
 | Declarative Policy Phase D foundation | yes | yes | yes | isolated redaction | no |
+| OpenCode Go GLM-5.2 Remote Judge | yes | yes | yes | live auth/structured probe | no |
+| Remote-first Planner/Reviewer cold routing | yes | yes | yes | DeepSeek Pro/Flash structured probes | no |
 | Typed Evidence Graph Phase E foundation | yes | yes | yes | isolated replay validation | no |
-| Discord/Telegram Live Observation Phase E | yes | yes | yes | production Telegram; isolated Discord/control | Telegram yes; controls no |
+| Telegram Live Observation Phase E | yes | yes | yes | production Telegram; isolated control | Telegram yes; controls no |
 | Privacy-aware Training Collection Phase F | yes | yes | yes | isolated role/loop/preference archive | no |
-| Weekly Skill/Data Packaging Phase G | yes | yes | yes | isolated real 7z + wall-clock scheduler; platform pending | no |
+| Weekly Skill/Knowledge/Data Packaging Phase G | yes | yes | yes | isolated reports, real 7z + wall-clock scheduler; platform pending | no |
 | Execution Replay Phase H foundation | yes | yes | yes | isolated exact loop replay | no |
+| Prompt/Policy/Routing evolution registry | yes | yes | yes | isolated replay/canary/promotion/rollback | no |
 | Fixed label-free Goal metrics endpoint | yes | yes | yes | production yes | yes |
 
 This table is the current authority. Later sections preserve historical Phase
@@ -32,6 +36,10 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 
 ## Branch and deployment
 
+- `dev` now declares package/runtime version `2.0.0`; its current post-release
+  changes are not promotable until the OpenCode Go and cold-routing gates pass. The operator
+  explicitly removed Discord from the release scope on 2026-07-22; Telegram is
+  the selected production observation provider.
 - `main` is the reviewed production target and stable recursive control plane.
 - `dev` is the integration branch; recursive experiments must use isolated
   `auto/<layer>/<proposal-id>` worktrees created from `dev`.
@@ -79,8 +87,8 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 - Telegram observation was subsequently enabled through the protected production
   environment after a real Bot API identity, target, safe-payload, and send
   validation. A production `dgx-moa` request emitted three observer events with
-  zero Telegram errors or drops. Discord and observation controls remain
-  disabled.
+  zero Telegram errors or drops. Discord is intentionally unconfigured and is
+  not a release gate; observation controls remain disabled.
 
 ## Runtime
 

@@ -17,6 +17,7 @@ from dgx_moa.training import (
     near_duplicate,
     sanitize,
 )
+from dgx_moa.weekly import candidate_path
 from pydantic import ValidationError
 
 
@@ -93,6 +94,20 @@ def test_evidence_grounded_success_becomes_role_specific_gold_candidate() -> Non
     assert candidate.quality_tier == "gold"
     assert candidate.training_eligible is True
     assert candidate.evidence_summary == ["evidence-1"]
+    assert {
+        "acceptance_criteria_coverage",
+        "test_status",
+        "build_status",
+        "review_severity",
+        "frontier_verdict",
+        "judge_verdict",
+        "user_feedback",
+        "tool_success_rate",
+        "repair_count",
+        "iteration_count",
+        "progress_score",
+        "final_confidence_state",
+    }.issubset(candidate.quality_labels)
 
 
 def test_trace_material_produces_separate_role_routing_tool_and_skill_candidates() -> None:
@@ -117,6 +132,97 @@ def test_trace_material_produces_separate_role_routing_tool_and_skill_candidates
         ("executor", "routing"),
         ("executor", "tool_use"),
         ("executor", "skill"),
+    }
+
+
+def test_permitted_remote_judge_trace_produces_categorical_role_datasets() -> None:
+    trace = eligible_trace() | {
+        "evaluations": [
+            {
+                "evaluator_type": "opencode_go",
+                "evidence_references": ["test-1"],
+                "later_confirmation": "false_approval",
+                "result": {
+                    "verdict": "approve",
+                    "criteria": {"test_consistency": "pass"},
+                    "findings": [
+                        {
+                            "severity": "important",
+                            "category": "unsupported_claim",
+                            "description": "raw provider prose must not be copied",
+                        }
+                    ],
+                    "required_edits": [
+                        {
+                            "operation": "replace",
+                            "target": "raw target",
+                            "instruction": "raw provider instruction",
+                        }
+                    ],
+                },
+            }
+        ]
+    }
+
+    candidates = candidates_from_trace(
+        trace,
+        repository_policy="training_allowed",
+        external_output_permitted=True,
+    )
+    judge = [item for item in candidates if item.candidate_type == "judge"]
+
+    assert {item.quality_labels["judge_dataset"] for item in judge} == {
+        "verdicts",
+        "findings",
+        "corrections",
+        "false-approvals",
+    }
+    assert all(item.role_target == "judge" and item.training_eligible for item in judge)
+    serialized = str([item.accepted_answer for item in judge])
+    assert "raw provider prose" not in serialized
+    assert "raw provider instruction" not in serialized
+    assert "unsupported_claim" in serialized
+
+
+def test_specialist_routing_trace_projects_to_weekly_routing_datasets() -> None:
+    trace = eligible_trace() | {
+        "specialist_routing": [
+            {
+                "specialist_role": "planner",
+                "residency_state": "LOADING",
+                "queue_state": {"local_queue_delay_seconds": 0},
+                "selected_provider": "remote",
+                "routing_reason": "local_not_ready",
+                "warmup_decision": "started",
+                "actual_completion_latency_seconds": 20.8,
+                "remote_cost_usd": 0,
+                "quality_outcome": "approved",
+                "task_outcome": "completed",
+            }
+        ],
+        "specialist_eviction_decisions": [
+            {
+                "role": "planner",
+                "residency_state": "READY",
+                "would_unload": False,
+                "reason": "minimum_residency",
+            }
+        ],
+    }
+
+    candidates = candidates_from_trace(trace, repository_policy="training_allowed")
+    paths = {
+        candidate_path(candidate)
+        for candidate in candidates
+        if candidate.candidate_type == "routing"
+    }
+
+    assert paths == {
+        "datasets/routing/specialist-residency-routing.jsonl",
+        "datasets/routing/local-vs-remote-routing.jsonl",
+        "datasets/routing/warmup-decisions.jsonl",
+        "datasets/routing/eviction-decisions.jsonl",
+        "datasets/routing/latency-prediction.jsonl",
     }
 
 
@@ -253,7 +359,7 @@ def test_training_store_integrity_and_atomic_backup_detect_content_corruption(
         assert database.execute("PRAGMA integrity_check").fetchone() == ("ok",)
 
     digest = objects.put(candidate.model_dump(mode="json"))
-    object_path = tmp_path / "objects/sha256" / digest[:2] / digest[2:4] / f"{digest}.json.gz"
+    object_path = tmp_path / "objects/sha256" / digest[:2] / digest[2:4] / f"{digest}.json.zst"
     object_path.write_bytes(b"synthetic corruption")
     with pytest.raises(ValueError, match="content integrity"):
         store.verify_integrity()
@@ -480,6 +586,40 @@ def test_collector_creates_separate_events_and_candidate_without_raw_duplication
         "license_exclusions": 0,
     }
     assert len(training.packageable_candidates()) == 1
+
+
+def test_collector_records_exact_provider_classes(tmp_path: Path) -> None:
+    operational = StateStore(tmp_path / "operational.db")
+    objects = ContentStore(tmp_path / "objects")
+    training = TrainingStore(tmp_path / "training.db", objects, minimum_free_bytes=0)
+    collector = TrainingCollector(training, operational, external_output_permitted=True)
+    trace = eligible_trace() | {
+        "model_revisions": {
+            role: {"repository": f"test/{role}", "revision": "abc"}
+            for role in ("executor", "frontier", "judge")
+        },
+        "agent_invocations": [
+            {"role": "executor", "status": "completed"},
+            {"role": "frontier", "status": "completed"},
+            {"role": "judge", "provider": "opencode_go", "status": "completed"},
+        ],
+        "metrics": {"repository_training_policy": "training_allowed"},
+    }
+
+    collector.collect(trace)
+
+    with sqlite3.connect(tmp_path / "training.db") as database:
+        hashes = [
+            row[0]
+            for row in database.execute(
+                "SELECT payload_hash FROM training_events ORDER BY rowid"
+            ).fetchall()
+        ]
+    assert [objects.get(digest)["model_provider"] for digest in hashes] == [
+        "local",
+        "frontier",
+        "opencode_go",
+    ]
 
 
 def test_training_capacity_failure_does_not_escape_to_request_runtime(tmp_path: Path) -> None:

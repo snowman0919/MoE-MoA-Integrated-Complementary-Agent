@@ -83,6 +83,20 @@ def test_public_event_allowlists_fields_and_drops_unpublished_content() -> None:
     assert "archive_path" not in weekly.details
     assert public_event("request-1", "token_delta", {"text": "secret"}, "now") is None
 
+    judge = public_event(
+        "request-1",
+        "judge_completed",
+        {
+            "verdict": "revise",
+            "risk": "high",
+            "recheck_required": True,
+            "required_edits": ["private correction prose"],
+        },
+        "2026-07-22T00:00:00Z",
+    )
+    assert judge is not None
+    assert judge.details == {"verdict": "revise", "risk": "high", "recheck_required": True}
+
 
 def test_render_events_uses_readable_multiline_cards() -> None:
     rendered = render_events(
@@ -92,10 +106,9 @@ def test_render_events_uses_readable_multiline_cards() -> None:
                 request_id="request-1",
                 created_at="2026-07-22T00:00:00Z",
                 details={
-                    "confidence": 0.8,
-                    "problem_interpretation": "Inspect the runtime",
-                    "reasoning_summary": ["Read evidence", "Validate behavior"],
-                    "risks": ["Provider outage"],
+                    "confidence_category": "high",
+                    "conclusions": ["Inspect the runtime", "Validate behavior"],
+                    "hypotheses": ["Provider outage"],
                 },
             )
         ]
@@ -104,12 +117,11 @@ def test_render_events_uses_readable_multiline_cards() -> None:
     assert rendered == (
         "🧠 Reasoner completed\n"
         "Request: request-1\n"
-        "Confidence: 0.8\n"
-        "Interpretation: Inspect the runtime\n"
-        "Reasoning summary:\n"
-        "  • Read evidence\n"
+        "Confidence: high\n"
+        "Conclusions:\n"
+        "  • Inspect the runtime\n"
         "  • Validate behavior\n"
-        "Risks:\n"
+        "Hypotheses:\n"
         "  • Provider outage"
     )
 

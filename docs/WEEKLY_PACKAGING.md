@@ -1,10 +1,14 @@
 # Weekly Maintenance and Packaging
 
 The disabled Phase G foundation computes the previous complete Monday-Sunday
-window in a configured timezone (default `Asia/Seoul`). Skill maintenance writes
-JSON and Markdown reports with usage, value classification, regressions,
-duplicates and approval-required recommendations; it performs no automatic
-deletion or core deprecation.
+window in a configured timezone (default `Asia/Seoul`). Skill and Knowledge
+maintenance writes JSON and Markdown reports with usage, value classification,
+regressions or harmful selections, conflicts, staleness, duplicates, and
+approval-required recommendations. The aggregate Runtime Improvement report has
+all required Skill, Knowledge, Prompt, Policy, Routing, Judge, specialist, loop,
+tool/MCP, dataset, promotion, deprecation, automatic-action, and human-decision
+sections. Missing measured inputs remain empty; they are never synthesized. The
+jobs perform no automatic deletion, promotion, or core deprecation.
 
 The packager builds the prescribed role-specific dataset tree, reports,
 snapshots, manifest, indices, metadata-only quarantine and SHA-256 checksums in a
@@ -39,10 +43,16 @@ repair-preference datasets, verified the SHA-256 sidecar, exercised idempotent
 rerun and explicit revocation/regeneration, and detected deliberate corruption
 and archiver failure. It used synthetic data only; no production data was
 exported.
+The extended maintenance validation at
+`/tmp/dgx-moa-v2-maintenance-WzvpXt/runtime/physical-validation.json` also
+generated Skill, Knowledge, and aggregate Runtime Improvement reports and
+retained zero automatic actions. Its regenerated archive SHA-256 was
+`59d4ad30d4ab19994e8158262aa1930b77622c893f1d28e3121f9214b7cc2efc`.
 No timer was installed because systemd topology changes require separate human
 approval. Instead, enabling weekly jobs starts a bounded in-process scheduler:
-Skill reports Sunday 03:00 and previous-complete-week packaging Monday 02:00 in
-the configured timezone. Reports contain real role/type/language/quality/privacy/
+Skill, Knowledge, and aggregate Runtime Improvement reports Sunday 03:00, then
+previous-complete-week packaging Monday 02:00 in the configured timezone.
+Reports contain real role/type/language/quality/privacy/
 dedup/Skill/routing/failure aggregates and request/candidate indices. Completion
 publishes only package ID, counts, relative storage identifier, checksum, and
 verification status through the observation bus. Checked-in weekly jobs remain

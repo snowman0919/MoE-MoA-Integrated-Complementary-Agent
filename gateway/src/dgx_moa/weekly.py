@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .knowledge import KnowledgeMetrics, KnowledgeRegistry, RuntimeKnowledge
 from .skills import RuntimeSkill, SkillMetrics, SkillRegistry
 from .training import TrainingCandidate, assess_candidate, near_duplicate, sanitize
 
@@ -26,15 +27,31 @@ DATASET_PATHS = (
     "datasets/sft/reasoner.jsonl",
     "datasets/sft/planner.jsonl",
     "datasets/sft/reviewer.jsonl",
+    "datasets/judge/verdicts.jsonl",
+    "datasets/judge/findings.jsonl",
+    "datasets/judge/corrections.jsonl",
+    "datasets/judge/escalations.jsonl",
+    "datasets/judge/false-approvals.jsonl",
+    "datasets/judge/false-rejections.jsonl",
     "datasets/preference/executor-preferences.jsonl",
     "datasets/preference/review-preferences.jsonl",
+    "datasets/preference/judge-preferences.jsonl",
     "datasets/preference/repair-preferences.jsonl",
     "datasets/tool_use/tool-selection.jsonl",
     "datasets/tool_use/tool-calls.jsonl",
     "datasets/tool_use/tool-result-interpretation.jsonl",
+    "datasets/tool_use/mcp-tool-use.jsonl",
+    "datasets/tool_use/mcp-recovery.jsonl",
     "datasets/routing/agent-routing.jsonl",
     "datasets/routing/frontier-routing.jsonl",
+    "datasets/routing/judge-routing.jsonl",
     "datasets/routing/skill-routing.jsonl",
+    "datasets/routing/knowledge-routing.jsonl",
+    "datasets/routing/specialist-residency-routing.jsonl",
+    "datasets/routing/local-vs-remote-routing.jsonl",
+    "datasets/routing/warmup-decisions.jsonl",
+    "datasets/routing/eviction-decisions.jsonl",
+    "datasets/routing/latency-prediction.jsonl",
     "datasets/loops/state-transitions.jsonl",
     "datasets/loops/repair-trajectories.jsonl",
     "datasets/loops/termination-decisions.jsonl",
@@ -42,10 +59,21 @@ DATASET_PATHS = (
     "datasets/skills/usefulness.jsonl",
     "datasets/skills/generation-candidates.jsonl",
     "datasets/skills/revision-candidates.jsonl",
+    "datasets/knowledge/retrieval.jsonl",
+    "datasets/knowledge/generation-candidates.jsonl",
+    "datasets/knowledge/contradiction-resolution.jsonl",
+    "datasets/knowledge/usefulness.jsonl",
+    "datasets/prompts/prompt-candidates.jsonl",
+    "datasets/prompts/prompt-comparisons.jsonl",
+    "datasets/prompts/prompt-failures.jsonl",
+    "datasets/policies/policy-decisions.jsonl",
+    "datasets/policies/policy-candidates.jsonl",
+    "datasets/policies/policy-comparisons.jsonl",
     "datasets/negatives/invalid-structured-output.jsonl",
     "datasets/negatives/failed-tools.jsonl",
     "datasets/negatives/duplicate-repairs.jsonl",
     "datasets/negatives/unsupported-claims.jsonl",
+    "datasets/negatives/incorrect-judge-verdicts.jsonl",
     "indices/request-index.jsonl",
     "indices/candidate-index.jsonl",
     "indices/object-index.jsonl",
@@ -56,7 +84,11 @@ REPORTS = (
     "privacy-report.json",
     "dedup-report.json",
     "skill-usage.json",
+    "knowledge-usage.json",
+    "prompt-analysis.json",
+    "policy-analysis.json",
     "routing-analysis.json",
+    "judge-analysis.json",
     "failure-analysis.json",
 )
 
@@ -292,6 +324,193 @@ def weekly_skill_report(
     return report
 
 
+def classify_knowledge(entry: RuntimeKnowledge, metrics: KnowledgeMetrics) -> str:
+    if metrics.retrieved == 0:
+        return "unused"
+    if metrics.harmful > metrics.helpful:
+        return "deprecation_candidate" if entry.state == "active" else "low_value"
+    helpful_rate = metrics.helpful / metrics.retrieved
+    if metrics.retrieved >= 5 and helpful_rate >= 0.8 and metrics.open_conflicts == 0:
+        return "high_value"
+    if helpful_rate >= 0.6 and metrics.open_conflicts == 0:
+        return "useful"
+    return "uncertain"
+
+
+def knowledge_overlap(left: RuntimeKnowledge, right: RuntimeKnowledge) -> float:
+    left_tokens = set(f"{left.title} {left.content.summary}".lower().split())
+    right_tokens = set(f"{right.title} {right.content.summary}".lower().split())
+    union = left_tokens | right_tokens
+    return len(left_tokens & right_tokens) / len(union) if union else 0.0
+
+
+def weekly_knowledge_report(
+    registry: KnowledgeRegistry,
+    output: str | Path,
+    *,
+    notifier: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    entries = registry.list_entries()
+    rows: list[dict[str, Any]] = []
+    for entry in entries:
+        metrics = registry.metrics(entry.knowledge_id, entry.version)
+        classification = classify_knowledge(entry, metrics)
+        classifications = [classification]
+        if metrics.open_conflicts:
+            classifications.extend(("update_candidate", "conflict_candidate"))
+        if entry.evidence.last_verified_at is None:
+            classifications.append("stale_candidate")
+        rows.append(
+            {
+                "knowledge_id": entry.knowledge_id,
+                "version": entry.version,
+                "state": entry.state,
+                "category": entry.category,
+                "classification": classification,
+                "classifications": classifications,
+                "metrics": metrics.model_dump(mode="json"),
+                "last_verified_at": entry.evidence.last_verified_at,
+            }
+        )
+    duplicate_groups = [
+        [f"{left.knowledge_id}@{left.version}", f"{right.knowledge_id}@{right.version}"]
+        for index, left in enumerate(entries)
+        for right in entries[index + 1 :]
+        if knowledge_overlap(left, right) >= 0.8
+    ]
+    duplicate_ids = {identity for group in duplicate_groups for identity in group}
+    for row in rows:
+        identity = f"{row['knowledge_id']}@{row['version']}"
+        if identity in duplicate_ids:
+            row["classifications"].extend(("duplicate_candidate", "merge_candidate"))
+    report = {
+        "schema_version": "weekly-knowledge-report-v1",
+        "created_at": datetime.now(UTC).isoformat(),
+        "knowledge": rows,
+        "highest_value": [row for row in rows if row["classification"] == "high_value"],
+        "lowest_value": [
+            row for row in rows if row["classification"] in {"low_value", "deprecation_candidate"}
+        ],
+        "unused": [row for row in rows if row["classification"] == "unused"],
+        "stale": [row for row in rows if "stale_candidate" in row["classifications"]],
+        "conflicted": [row for row in rows if "conflict_candidate" in row["classifications"]],
+        "duplicate_groups": duplicate_groups,
+        "recommended_actions": [
+            {
+                "knowledge_id": row["knowledge_id"],
+                "action": (
+                    "review_conflict"
+                    if "conflict_candidate" in row["classifications"]
+                    else "review_deprecation"
+                ),
+                "requires_approval": True,
+            }
+            for row in rows
+            if row["classification"] == "deprecation_candidate"
+            or "conflict_candidate" in row["classifications"]
+        ],
+        "automatically_performed": [],
+    }
+    destination = Path(output)
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / "weekly-knowledge-report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n"
+    )
+    lines = [
+        "# Weekly Knowledge report",
+        "",
+        f"Entries: {len(rows)}",
+        "",
+        "| Knowledge | Class | Retrievals | Conflicts |",
+        "| --- | --- | ---: | ---: |",
+    ]
+    lines.extend(
+        f"| {row['knowledge_id']}@{row['version']} | {row['classification']} | "
+        f"{row['metrics']['retrieved']} | {row['metrics']['open_conflicts']} |"
+        for row in rows
+    )
+    (destination / "weekly-knowledge-report.md").write_text("\n".join(lines) + "\n")
+    if notifier is not None:
+        notifier(
+            "weekly_knowledge_report_completed",
+            {
+                "knowledge_count": len(rows),
+                "high_value_count": len(report["highest_value"]),
+                "low_value_count": len(report["lowest_value"]),
+                "conflict_count": len(report["conflicted"]),
+            },
+        )
+    return report
+
+
+def weekly_runtime_improvement_report(
+    output: str | Path,
+    *,
+    skill_report: dict[str, Any] | None = None,
+    knowledge_report: dict[str, Any] | None = None,
+    analyses: dict[str, Any] | None = None,
+    notifier: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    extra = analyses or {}
+    report = {
+        "schema_version": "weekly-runtime-improvement-report-v1",
+        "created_at": datetime.now(UTC).isoformat(),
+        "top_performing_skills": (skill_report or {}).get("highest_value", []),
+        "low_value_skills": (skill_report or {}).get("lowest_value", []),
+        "useful_knowledge": (knowledge_report or {}).get("highest_value", []),
+        "stale_knowledge": (knowledge_report or {}).get("stale", []),
+        "prompt_regressions": extra.get("prompt_regressions", []),
+        "prompt_candidates": extra.get("prompt_candidates", []),
+        "policy_candidates": extra.get("policy_candidates", []),
+        "routing_candidates": extra.get("routing_candidates", []),
+        "judge_false_approvals": extra.get("judge_false_approvals", []),
+        "judge_false_rejections": extra.get("judge_false_rejections", []),
+        "frontier_contribution": extra.get("frontier_contribution", {}),
+        "reviewer_contribution": extra.get("reviewer_contribution", {}),
+        "loop_efficiency": extra.get("loop_efficiency", {}),
+        "tool_failure_patterns": extra.get("tool_failure_patterns", []),
+        "mcp_failure_patterns": extra.get("mcp_failure_patterns", []),
+        "training_dataset_statistics": extra.get("training_dataset_statistics", {}),
+        "recommended_promotions": extra.get("recommended_promotions", []),
+        "recommended_deprecations": [
+            *(skill_report or {}).get("recommended_actions", []),
+            *(knowledge_report or {}).get("recommended_actions", []),
+            *extra.get("recommended_deprecations", []),
+        ],
+        "automatic_actions_taken": [],
+        "human_decisions_required": [
+            *(skill_report or {}).get("recommended_actions", []),
+            *(knowledge_report or {}).get("recommended_actions", []),
+            *extra.get("human_decisions_required", []),
+        ],
+    }
+    destination = Path(output)
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / "weekly-runtime-improvement-report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n"
+    )
+    summary = [
+        "# Weekly Runtime Improvement report",
+        "",
+        f"Top Skills: {len(report['top_performing_skills'])}",
+        f"Low-value Skills: {len(report['low_value_skills'])}",
+        f"Useful Knowledge: {len(report['useful_knowledge'])}",
+        f"Stale Knowledge: {len(report['stale_knowledge'])}",
+        f"Human decisions required: {len(report['human_decisions_required'])}",
+        "Automatic actions taken: 0",
+    ]
+    (destination / "weekly-runtime-improvement-report.md").write_text("\n".join(summary) + "\n")
+    if notifier is not None:
+        notifier(
+            "weekly_runtime_improvement_report_completed",
+            {
+                "human_decision_count": len(report["human_decisions_required"]),
+                "automatic_action_count": 0,
+            },
+        )
+    return report
+
+
 @dataclass(frozen=True)
 class WeeklyWindow:
     timezone: str
@@ -364,9 +583,39 @@ def candidate_path(candidate: TrainingCandidate) -> str:
     if candidate.candidate_type == "tool_use":
         return "datasets/tool_use/tool-calls.jsonl"
     if candidate.candidate_type == "routing":
-        return "datasets/routing/agent-routing.jsonl"
+        target = str(candidate.quality_labels.get("routing_dataset", "agent-routing"))
+        allowed = {
+            "agent-routing",
+            "specialist-residency-routing",
+            "local-vs-remote-routing",
+            "warmup-decisions",
+            "eviction-decisions",
+            "latency-prediction",
+        }
+        if target not in allowed:
+            raise ValueError("invalid routing dataset target")
+        return f"datasets/routing/{target}.jsonl"
     if candidate.candidate_type == "skill":
         return "datasets/skills/retrieval.jsonl"
+    if candidate.candidate_type == "knowledge":
+        return "datasets/knowledge/retrieval.jsonl"
+    if candidate.candidate_type == "prompt":
+        return "datasets/prompts/prompt-candidates.jsonl"
+    if candidate.candidate_type == "policy":
+        return "datasets/policies/policy-candidates.jsonl"
+    if candidate.candidate_type == "judge":
+        judge_dataset = str(candidate.quality_labels.get("judge_dataset", "verdicts"))
+        allowed = {
+            "verdicts",
+            "findings",
+            "corrections",
+            "escalations",
+            "false-approvals",
+            "false-rejections",
+        }
+        if judge_dataset not in allowed:
+            raise ValueError("invalid Judge dataset target")
+        return f"datasets/judge/{judge_dataset}.jsonl"
     return f"datasets/sft/{candidate.role_target}.jsonl"
 
 
@@ -651,6 +900,10 @@ class WeeklyPackager:
         policy_version: str,
         skill_registry_version: str,
         model_configuration: dict[str, Any],
+        knowledge_registry_version: str = "none",
+        prompt_registry_version: str = "none",
+        routing_version: str = "none",
+        judge_configuration: dict[str, Any] | None = None,
         encrypted: bool = False,
         regenerate: bool = False,
     ) -> dict[str, Any]:
@@ -673,7 +926,8 @@ class WeeklyPackager:
         ).hexdigest()
         key = hashlib.sha256(
             f"{window.utc_start.isoformat()}|{window.utc_end.isoformat()}|1.0|"
-            f"{policy_version}|{source_snapshot}".encode()
+            f"{policy_version}|{skill_registry_version}|{knowledge_registry_version}|"
+            f"{prompt_registry_version}|{routing_version}|{source_snapshot}".encode()
         ).hexdigest()
         package_id = f"moa-finetune-{window.week}"
         existing = self.registry.get(key)
@@ -713,6 +967,10 @@ class WeeklyPackager:
                 skill_registry_version,
                 model_configuration,
                 deduplication_counts,
+                knowledge_registry_version,
+                prompt_registry_version,
+                routing_version,
+                judge_configuration,
             )
             subprocess.run(
                 [
@@ -866,6 +1124,10 @@ class WeeklyPackager:
             policy_version=str(manifest["policy_version"]),
             skill_registry_version=str(manifest["skill_registry_version"]),
             model_configuration=dict(manifest["model_configuration"]),
+            knowledge_registry_version=str(manifest.get("knowledge_registry_version", "none")),
+            prompt_registry_version=str(manifest.get("prompt_registry_version", "none")),
+            routing_version=str(manifest.get("routing_version", "none")),
+            judge_configuration=dict(manifest.get("judge_configuration", {})),
             regenerate=True,
         )
         self.registry.resolve_revocation(idempotency_key)
@@ -936,6 +1198,10 @@ class WeeklyPackager:
         skill_registry_version: str,
         model_configuration: dict[str, Any],
         deduplication_counts: dict[str, int] | None = None,
+        knowledge_registry_version: str = "none",
+        prompt_registry_version: str = "none",
+        routing_version: str = "none",
+        judge_configuration: dict[str, Any] | None = None,
     ) -> None:
         directory.mkdir(parents=True)
         for relative in DATASET_PATHS:
@@ -997,7 +1263,11 @@ class WeeklyPackager:
             "production_commit": production_commit,
             "policy_version": policy_version,
             "skill_registry_version": skill_registry_version,
+            "knowledge_registry_version": knowledge_registry_version,
+            "prompt_registry_version": prompt_registry_version,
+            "routing_version": routing_version,
             "model_configuration": model_configuration,
+            "judge_configuration": judge_configuration or {},
             "dataset_counts": dict(counts),
             "quality_tier_counts": dict(tiers),
             "privacy_exclusions": {},
@@ -1028,6 +1298,9 @@ class WeeklyPackager:
             "SCHEMA_VERSIONS.json": {"package": "1.0", "candidate": "current"},
             "POLICY_SNAPSHOT.yaml": {"version": policy_version},
             "SKILL_SNAPSHOT.json": {"version": skill_registry_version},
+            "KNOWLEDGE_SNAPSHOT.json": {"version": knowledge_registry_version},
+            "PROMPT_SNAPSHOT.json": {"version": prompt_registry_version},
+            "ROUTING_SNAPSHOT.json": {"version": routing_version},
             "MODEL_SNAPSHOT.json": model_configuration,
         }
         for name, value in snapshots.items():
@@ -1083,7 +1356,11 @@ class WeeklyPackager:
             "privacy-report.json": privacy_report,
             "dedup-report.json": deduplication_counts or {},
             "skill-usage.json": {"candidate_count": candidate_types.get("skill", 0)},
+            "knowledge-usage.json": {"candidate_count": candidate_types.get("knowledge", 0)},
+            "prompt-analysis.json": {"candidate_count": candidate_types.get("prompt", 0)},
+            "policy-analysis.json": {"candidate_count": candidate_types.get("policy", 0)},
             "routing-analysis.json": {"candidate_count": candidate_types.get("routing", 0)},
+            "judge-analysis.json": {"candidate_count": candidate_types.get("judge", 0)},
             "failure-analysis.json": {"negative_examples": tiers.get("negative", 0)},
         }
         for report in REPORTS:

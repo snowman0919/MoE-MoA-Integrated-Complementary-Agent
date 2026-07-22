@@ -108,7 +108,7 @@ production-authorized. An isolated development gateway may enable it with a
 complete JSON policy:
 
 ```bash
-DGX_MOA_LOOP_ENGINEERING='{"enabled":true,"defaults":{"iterations":4,"tool_calls":30,"reasoner_reentries":4,"planner_calls":2,"reviewer_calls":2,"frontier_calls":2,"judge_calls":1,"tokens":250000,"external_cost_usd":10,"wall_clock_seconds":1800},"duplicate_fingerprint_limit":2,"no_progress_iteration_limit":2,"local_failures_before_frontier":2,"request_class_overrides":{},"risk_level_overrides":{}}'
+DGX_MOA_LOOP_ENGINEERING='{"enabled":true,"defaults":{"iterations":4,"tool_calls":30,"reasoner_reentries":4,"planner_calls":2,"reviewer_calls":2,"frontier_calls":2,"judge_calls":2,"tokens":250000,"external_cost_usd":10,"wall_clock_seconds":1800},"duplicate_fingerprint_limit":2,"no_progress_iteration_limit":2,"local_failures_before_frontier":2,"request_class_overrides":{},"risk_level_overrides":{}}'
 ```
 
 Use an isolated state database, run directory, loopback port, and development
@@ -130,6 +130,37 @@ Do not point experiments at a production registry. Promotion and rollback are
 new-version operations and require evidence plus explicit approval. Set
 `require_signature` at the pack import boundary when unsigned packs must be
 rejected. See `docs/SKILLS.md` and `docs/SKILL_GOVERNANCE.md`.
+
+## Isolated Runtime Knowledge development
+
+The checked-in Knowledge registry is disabled. Use a development-owned SQLite
+path and never point an experiment at production state:
+
+```bash
+DGX_MOA_RUNTIME_KNOWLEDGE='{"enabled":true,"state_db":"/tmp/dgx-moa-knowledge.db","retrieval_limit":3,"max_context_characters":6000}'
+```
+
+Promotion, conflict resolution, lifecycle changes, and rollback require a new
+immutable version and explicit approval. See `docs/KNOWLEDGE_BASE.md`.
+
+## Isolated OpenCode Go specialist and Remote Judge development
+
+Remote Judge defaults are disabled and require no credential. Keep the endpoint
+and `OPENCODE_GO_API_KEY` outside Git, use only bounded sanitized synthetic
+evidence, and do not enable production until the physical matrix passes. See
+`docs/REMOTE_JUDGE.md` and `docs/SPECIALIST_ROUTING.md`.
+
+## Isolated runtime evolution development
+
+Prompt, Policy, Routing, failure-handling, and Judge-prompt candidates remain
+disabled. Use only a development-owned registry:
+
+```bash
+DGX_MOA_RUNTIME_EVOLUTION='{"enabled":true,"state_db":"/tmp/dgx-moa-evolution.db"}'
+```
+
+No candidate can bypass replay, regression, Reviewer, applicable Judge, canary,
+approval, and rollback-target gates. See `docs/RUNTIME_SELF_IMPROVEMENT.md`.
 
 ## Isolated declarative policy development
 

@@ -1,5 +1,12 @@
 # Dynamic MoA orchestration
 
+When enabled after physical gates, the Executor retrieves bounded active
+Runtime Knowledge before Skills and records both selection reasons. A required
+Remote Judge receives only sanitized evidence after concrete specialist/tool
+evidence exists. It cannot call tools or replace the final response; the
+Executor applies any required edits and owns targeted revalidation. Remote
+calls are capped at an initial judgment plus one recheck.
+
 ## Authority and profiles
 
 `dgx-moa` is the primary Reasoner + Executor profile. `dgx-moa-fast` is the
@@ -15,17 +22,27 @@ routing decision, native tool calls, recommendation resolution, and final output
 
 ## Bounded artifacts
 
-The Reasoner returns problem interpretation, constraints, concise reasoning
-conclusions, risks, unknowns, recommended actions, additional-agent
-recommendations, and self-reported confidence. Confidence is only a routing
-feature. Derived confidence also considers validation, failures, unsupported
-assumptions, review findings, retries, and disagreement.
+The Reasoner returns only assumptions, constraints, conclusions, hypotheses,
+evidence references, recommended actions, additional-agent recommendations, and
+a low/medium/high confidence category. Hidden reasoning is neither requested nor
+persisted. The category is only a routing feature. Derived confidence also
+considers validation, failures, unsupported assumptions, review findings,
+retries, and disagreement.
 
 The Executor decision names required and optional agents, per-agent reasons,
 parallelizability, continuation, and confidence. Deterministic safety policy may
 add agents but cannot silently remove a hard-required review. Architecture and
 design normally add Planner + Frontier; code review normally adds Reviewer +
 Frontier; unresolved high-risk disagreement may add Heavy Judge.
+
+Each Reviewer finding is structured with an ID, severity, category, evidence
+references, affected location, impact, required correction, and optional
+recommendation. Empty findings are valid only for an approved review.
+
+Planner output is a strict artifact containing scope, assumptions,
+dependency-ordered typed steps, cross-step dependencies, risks, validation and
+rollback plans, and evidence-backed acceptance criteria. The complete artifact
+is retained; the Executor consumes its bounded ordered steps.
 
 Each request has at most the configured step budget. Contributions are one-shot
 structured artifacts, not an unbounded agent conversation. Meaningful new tool,

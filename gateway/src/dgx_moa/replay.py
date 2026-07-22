@@ -18,7 +18,11 @@ ReplayMode = Literal[
     "audit",
     "regression",
     "skill_evaluation",
+    "knowledge_validation",
+    "prompt_comparison",
+    "policy_comparison",
     "routing_policy_comparison",
+    "judge_candidate_validation",
     "training_candidate_validation",
 ]
 
@@ -32,8 +36,12 @@ class ReplaySnapshot(BaseModel):
     task_state: dict[str, Any]
     evidence_snapshot: dict[str, list[dict[str, Any]]]
     skill_versions: list[str]
+    knowledge_versions: list[str] = Field(default_factory=list)
+    prompt_versions: dict[str, str] = Field(default_factory=dict)
     policy_version: str
     policy_hash: str | None = None
+    routing_configuration: dict[str, Any] = Field(default_factory=dict)
+    provider_output_references: dict[str, list[str]] = Field(default_factory=dict)
     model_role_configuration: dict[str, dict[str, Any]]
     invoked_roles: list[str]
     mocked_provider_outputs: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
@@ -105,8 +113,12 @@ def snapshot_from_trace(
         },
         evidence_snapshot=trace.get("evidence_graph", {"nodes": [], "edges": []}),
         skill_versions=list(metrics.get("skill_versions", [])),
+        knowledge_versions=list(metrics.get("knowledge_versions", [])),
+        prompt_versions=dict(metrics.get("prompt_versions", {})),
         policy_version=str(metrics.get("policy_version", "none")),
         policy_hash=metrics.get("policy_hash"),
+        routing_configuration=dict(trace.get("selected_route", {})),
+        provider_output_references=dict(metrics.get("provider_output_references", {})),
         model_role_configuration=trace.get("model_revisions", {}),
         invoked_roles=roles,
         mocked_provider_outputs=mocked_provider_outputs or {},

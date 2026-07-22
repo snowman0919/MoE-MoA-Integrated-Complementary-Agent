@@ -25,6 +25,7 @@ def policy_set() -> PolicySet:
                     },
                     "require": {"reviewer": True, "frontier": True},
                     "redact": ["tool.credentials"],
+                    "fail_closed": {"reviewer": True, "judge": True},
                 },
                 {
                     "id": "duplicate-failure",
@@ -62,6 +63,7 @@ def test_policy_engine_traces_versioned_aggregated_decision() -> None:
     assert decision.require == {"reviewer": True, "frontier": True}
     assert decision.limits["tool_calls"] == 10
     assert decision.approvals_required == ["operator"]
+    assert decision.fail_closed == {"reviewer": True, "judge": True}
     assert len(decision.policy_hash) == 64
 
 
@@ -147,6 +149,8 @@ def test_controller_applies_policy_roles_limits_and_trace(tmp_path) -> None:  # 
     assert state.route == "escalation"
     assert state.engineering_loop is not None
     assert state.policy_decisions[-1]["policy_version"] == policies.version
+    assert state.policy_fail_closed_roles == ["reviewer", "judge"]
+    assert state.review_fail_closed is True
     assert any(node["kind"] == "policy_decision" for node in state.evidence_nodes)
 
 
@@ -259,7 +263,7 @@ async def test_policy_redacts_specialist_state_event_and_evaluation_boundaries(
         runtime_mode="orchestrated",
         request_class="standard_task",
         policy_redact_fields=[
-            "problem_interpretation",
+            "conclusions",
             "reason",
             "plan",
             "acceptance_criteria",
@@ -286,7 +290,7 @@ async def test_policy_redacts_specialist_state_event_and_evaluation_boundaries(
     )
     await controller.judge(state, "synthetic private observation")
 
-    assert state.reasoner_contributions[-1]["problem_interpretation"] == ("[REDACTED_BY_POLICY]")
+    assert state.reasoner_contributions[-1]["conclusions"] == []
     assert state.orchestration_decisions[-1]["reason"] == {}
     assert state.plan == []
     assert state.acceptance_criteria == []

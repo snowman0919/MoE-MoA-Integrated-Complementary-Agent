@@ -190,7 +190,7 @@ def default_loop_budgets() -> dict[str, int | float]:
         "planner_calls": 2,
         "reviewer_calls": 2,
         "frontier_calls": 2,
-        "judge_calls": 1,
+        "judge_calls": 2,
         "tokens": 250_000,
         "external_cost_usd": 10,
         "wall_clock_seconds": 1_800,
@@ -252,6 +252,110 @@ class RuntimeSkillsPolicy(BaseModel):
     root: Path = Path("data/skills")
     retrieval_limit: int = Field(default=3, ge=1, le=10)
     max_context_characters: int = Field(default=6_000, ge=256, le=32_000)
+
+
+class RuntimeKnowledgePolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    state_db: Path = Path("data/knowledge/knowledge.db")
+    retrieval_limit: int = Field(default=3, ge=1, le=10)
+    max_context_characters: int = Field(default=6_000, ge=256, le=32_000)
+
+
+class RuntimeEvolutionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    state_db: Path = Path("data/evolution/evolution.db")
+
+
+class RemoteJudgeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    provider: Literal["disabled", "opencode_go", "mock"] = "disabled"
+    mode: Literal["selective"] = "selective"
+    model: str = "glm-5.2"
+    endpoint: str | None = None
+    api_key_env: str = "OPENCODE_GO_API_KEY"
+    timeout_seconds: float = Field(default=120, gt=0, le=600)
+    max_retries: int = Field(default=1, ge=0, le=3)
+    max_calls_per_request: int = Field(default=2, ge=1, le=2)
+    fail_closed_for: list[str] = Field(
+        default_factory=lambda: [
+            "production_deployment",
+            "destructive_migration",
+            "production_skill_promotion",
+            "security_sensitive_change",
+        ]
+    )
+
+    @model_validator(mode="after")
+    def validate_provider(self) -> RemoteJudgeConfig:
+        if self.enabled and self.provider == "disabled":
+            raise ValueError("enabled Remote Judge requires a provider")
+        if self.enabled and self.provider == "opencode_go" and not self.endpoint:
+            raise ValueError("OpenCode Go Remote Judge requires an endpoint")
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", self.api_key_env):
+            raise ValueError("Remote Judge credential must be an environment variable name")
+        return self
+
+
+class SpecialistRoutingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    provider: Literal["disabled", "opencode_go", "mock"] = "disabled"
+    endpoint: str = "https://opencode.ai/zen/go"
+    api_key_env: str = "OPENCODE_GO_API_KEY"
+    models: dict[str, str] = Field(
+        default_factory=lambda: {
+            "planner": "deepseek-v4-pro",
+            "reviewer": "deepseek-v4-flash",
+        }
+    )
+    timeout_seconds: float = Field(default=120, gt=0, le=600)
+    local_latency_seconds: dict[str, float] = Field(
+        default_factory=lambda: {"planner": 30.0, "reviewer": 45.0}
+    )
+    remote_latency_seconds: dict[str, float] = Field(
+        default_factory=lambda: {"planner": 25.0, "reviewer": 5.0}
+    )
+    remote_min_completion_tokens: dict[str, int] = Field(
+        default_factory=lambda: {"planner": 4_096, "reviewer": 2_048}
+    )
+    network_latency_seconds: float = Field(default=0.25, ge=0, allow_inf_nan=False)
+    remote_queue_latency_seconds: float = Field(default=0.5, ge=0, allow_inf_nan=False)
+    local_preference_margin_seconds: float = Field(default=5.0, ge=0, allow_inf_nan=False)
+    cost_seconds_per_usd: float = Field(default=60.0, ge=0, allow_inf_nan=False)
+    remote_cost_per_million_tokens_usd: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    warmup_watch_seconds: float = Field(default=1_200, gt=0, le=7_200)
+    race_mode_enabled: bool = False
+
+    @model_validator(mode="after")
+    def validate_specialists(self) -> SpecialistRoutingConfig:
+        if self.enabled and self.provider == "disabled":
+            raise ValueError("enabled specialist routing requires a remote provider")
+        if self.enabled and not self.endpoint:
+            raise ValueError("enabled specialist routing requires an endpoint")
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", self.api_key_env):
+            raise ValueError("specialist credential must be an environment variable name")
+        if self.race_mode_enabled:
+            raise ValueError("specialist race mode is not supported by the default policy")
+        required_roles = {"planner", "reviewer"}
+        if set(self.models) != required_roles:
+            raise ValueError("specialist models must define planner and reviewer")
+        if set(self.local_latency_seconds) != required_roles:
+            raise ValueError("local latency estimates must define planner and reviewer")
+        if set(self.remote_latency_seconds) != required_roles:
+            raise ValueError("remote latency estimates must define planner and reviewer")
+        if set(self.remote_min_completion_tokens) != required_roles or any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 1
+            for value in self.remote_min_completion_tokens.values()
+        ):
+            raise ValueError("remote token floors must define positive planner and reviewer values")
+        return self
 
 
 class DeclarativePolicyConfig(BaseModel):
@@ -402,6 +506,10 @@ class Settings(BaseModel):
     lifecycle: LifecyclePolicy = Field(default_factory=LifecyclePolicy)
     loop_engineering: LoopEngineeringPolicy = Field(default_factory=LoopEngineeringPolicy)
     runtime_skills: RuntimeSkillsPolicy = Field(default_factory=RuntimeSkillsPolicy)
+    runtime_knowledge: RuntimeKnowledgePolicy = Field(default_factory=RuntimeKnowledgePolicy)
+    runtime_evolution: RuntimeEvolutionConfig = Field(default_factory=RuntimeEvolutionConfig)
+    remote_judge: RemoteJudgeConfig = Field(default_factory=RemoteJudgeConfig)
+    specialist_routing: SpecialistRoutingConfig = Field(default_factory=SpecialistRoutingConfig)
     declarative_policy: DeclarativePolicyConfig = Field(default_factory=DeclarativePolicyConfig)
     live_observation: LiveObservationConfig = Field(default_factory=LiveObservationConfig)
     training_data: TrainingDataConfig = Field(default_factory=TrainingDataConfig)
@@ -464,6 +572,10 @@ class Settings(BaseModel):
             )
         if self.training_data.enabled and self.training_data.state_db == self.state_db:
             raise ValueError("training state database must be separate from gateway state")
+        if self.specialist_routing.enabled:
+            missing = {"planner", "reviewer"} - set(self.models)
+            if missing:
+                raise ValueError(f"specialist routing requires local model: {sorted(missing)[0]}")
         return self
 
 
@@ -545,6 +657,32 @@ def load_settings(path: str | Path | None = None) -> Settings:
         with suppress(json.JSONDecodeError):
             runtime_skills = json.loads(runtime_skills)
     gateway["runtime_skills"] = runtime_skills
+    runtime_knowledge: Any = os.getenv(
+        "DGX_MOA_RUNTIME_KNOWLEDGE", gateway.get("runtime_knowledge", {})
+    )
+    if isinstance(runtime_knowledge, str):
+        with suppress(json.JSONDecodeError):
+            runtime_knowledge = json.loads(runtime_knowledge)
+    gateway["runtime_knowledge"] = runtime_knowledge
+    runtime_evolution: Any = os.getenv(
+        "DGX_MOA_RUNTIME_EVOLUTION", gateway.get("runtime_evolution", {})
+    )
+    if isinstance(runtime_evolution, str):
+        with suppress(json.JSONDecodeError):
+            runtime_evolution = json.loads(runtime_evolution)
+    gateway["runtime_evolution"] = runtime_evolution
+    remote_judge: Any = os.getenv("DGX_MOA_REMOTE_JUDGE", gateway.get("remote_judge", {}))
+    if isinstance(remote_judge, str):
+        with suppress(json.JSONDecodeError):
+            remote_judge = json.loads(remote_judge)
+    gateway["remote_judge"] = remote_judge
+    specialist_routing: Any = os.getenv(
+        "DGX_MOA_SPECIALIST_ROUTING", gateway.get("specialist_routing", {})
+    )
+    if isinstance(specialist_routing, str):
+        with suppress(json.JSONDecodeError):
+            specialist_routing = json.loads(specialist_routing)
+    gateway["specialist_routing"] = specialist_routing
     declarative_policy: Any = os.getenv(
         "DGX_MOA_DECLARATIVE_POLICY", gateway.get("declarative_policy", {})
     )
