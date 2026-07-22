@@ -18,6 +18,11 @@ repository is configured `training_allowed`. Request/user opt-out, repository
 model output prevent training eligibility. Excluded content is replaced with
 metadata rather than copied into the training store.
 
+Production clients that may contribute data must send `X-Workspace-ID` and
+`X-Workspace-Path`; the stable ID must exactly match a configured repository
+policy. Never classify the fallback `external-api` identity as
+`training_allowed`, because it can contain requests for unrelated repositories.
+
 Eligible traces create distinct Executor, Reasoner, Planner, Reviewer, routing,
 tool-use, Skill, and engineering-loop candidates only when the corresponding
 trace material exists. Successful and failed trajectories receive evidence-based

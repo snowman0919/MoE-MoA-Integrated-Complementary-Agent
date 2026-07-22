@@ -58,6 +58,13 @@ clients do not need them. The executor output budget defaults to 4,096 tokens;
 `max_tokens` may raise it to at most 16,384. The public executor context remains
 65,536 tokens.
 
+Training eligibility is the exception: clients must send a stable
+`X-Workspace-ID` plus `X-Workspace-Path`, and the operator must map that exact
+ID to `training_allowed` in `gateway.training_data.repository_policies`.
+Requests without those headers remain the shared `external-api` identity and
+fail closed as `unknown`. `X-Repository-Branch`, `X-Repository-Commit`, and
+`X-Dirty-State` add reproducibility metadata but do not grant eligibility.
+
 ```bash
 curl -fsS -H "Authorization: Bearer ${DGX_MOA_API_KEY}" \
   -H 'Content-Type: application/json' \
