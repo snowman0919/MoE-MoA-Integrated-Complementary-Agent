@@ -15,9 +15,13 @@ snapshots, manifest, indices, metadata-only quarantine and SHA-256 checksums in 
 same-filesystem staging directory. It rechecks eligibility and privacy, removes
 exact and normalized near duplicates, invokes `7zz` then `7z`, verifies with
 `7z t`, fsyncs, atomically renames the archive, writes a checksum sidecar and
-updates a WAL archive registry. Window/schema/policy/source content form the
-idempotency key. Failed verification removes temporary archives and records a
-sanitized failure class without deleting source candidates.
+updates a WAL archive registry. Window/schema/policy/source content and exact
+model/Judge configuration form the idempotency key. Production jobs derive
+SHA-256 fingerprints from Skill, Knowledge, Prompt, Policy, and specialist
+routing state rather than writing placeholder versions. A configurable
+free-space reserve is checked before staging; low storage records a sanitized
+failure and leaves serving state untouched. Failed verification removes
+temporary archives without deleting source candidates.
 
 Completed packages can be reverified against both the recorded SHA-256 and
 `7z t`. Revocation writes an archive-registry tombstone and changes the package
@@ -56,7 +60,9 @@ Reports contain real role/type/language/quality/privacy/
 dedup/Skill/routing/failure aggregates and request/candidate indices. Completion
 publishes only package ID, counts, relative storage identifier, checksum, and
 verification status through the observation bus. Checked-in weekly jobs remain
-disabled. An isolated real-clock check scheduled both jobs for the next
+disabled. The production filesystem currently has less than the configured
+10 GB reserve, so enabling the scheduler remains blocked. An isolated real-clock
+check scheduled both jobs for the next
 `Asia/Seoul` minute: package fired at `2026-07-22T09:09:00.005371+09:00` and
 Skill maintenance at `2026-07-22T09:09:00.291290+09:00`. The first validation
 attempt used the non-IANA OS abbreviation `KST` and timed out; the authoritative

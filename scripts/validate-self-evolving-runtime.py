@@ -452,6 +452,25 @@ def main() -> None:
     collector = TrainingCollector(guarded, operational)
     collector.collect(trace())
     assert collector.metrics["failures"] == 1
+    guarded_weekly = WeeklyPackager(
+        root / "capacity-weekly/packages",
+        ArchiveRegistry(root / "capacity-weekly/registry.db"),
+        seven_zip=seven_zip,
+        minimum_free_bytes=10**30,
+    )
+    try:
+        guarded_weekly.package(
+            [],
+            window=closed_window,
+            production_commit="capacity-validation",
+            policy_version="physical-policy-v1",
+            skill_registry_version="physical-skills-v1",
+            model_configuration={},
+        )
+    except OSError:
+        pass
+    else:
+        raise AssertionError("weekly capacity guard did not reject low storage")
 
     notifications: list[tuple[str, dict[str, object]]] = []
     registry = ArchiveRegistry(root / "archive-registry/weekly.db")
@@ -575,6 +594,7 @@ def main() -> None:
         "policy_routing_candidate_generation": True,
         "remote_judge_package_redaction": True,
         "capacity_guard_isolated": True,
+        "weekly_capacity_guard_isolated": True,
         "privacy_redactions": {
             "secret": privacy.secret_redactions,
             "pii": privacy.pii_redactions,

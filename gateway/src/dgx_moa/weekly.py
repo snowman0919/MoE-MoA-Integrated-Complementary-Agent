@@ -9,7 +9,7 @@ import sqlite3
 import subprocess
 import tempfile
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -560,6 +560,71 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def snapshot_version(identifiers: Iterable[str]) -> str:
+    payload = "\n".join(sorted(identifiers)).encode()
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
+def weekly_candidate_analysis(candidates: list[TrainingCandidate]) -> dict[str, Any]:
+    roles = Counter(candidate.role_target for candidate in candidates)
+    types = Counter(candidate.candidate_type for candidate in candidates)
+    tiers = Counter(candidate.quality_tier for candidate in candidates)
+    failures = Counter(
+        failure
+        for candidate in candidates
+        for failure in candidate.quality_labels.get("failure_classes", [])
+    )
+    iterations = [
+        value
+        for candidate in candidates
+        if isinstance((value := candidate.quality_labels.get("iteration_count")), (int, float))
+    ]
+    return {
+        "judge_false_approvals": [
+            candidate.candidate_id
+            for candidate in candidates
+            if candidate.candidate_type == "judge"
+            and candidate.quality_labels.get("judge_dataset") == "false-approvals"
+        ],
+        "judge_false_rejections": [
+            candidate.candidate_id
+            for candidate in candidates
+            if candidate.candidate_type == "judge"
+            and candidate.quality_labels.get("judge_dataset") == "false-rejections"
+        ],
+        "frontier_contribution": {
+            "evaluated_candidates": sum(
+                candidate.quality_labels.get("frontier_verdict") is not None
+                for candidate in candidates
+            )
+        },
+        "reviewer_contribution": {
+            "evaluated_candidates": sum(
+                candidate.quality_labels.get("review_status") is not None
+                for candidate in candidates
+            )
+        },
+        "loop_efficiency": {
+            "candidate_count": types["loop"],
+            "average_iterations": sum(iterations) / len(iterations) if iterations else None,
+        },
+        "tool_failure_patterns": [
+            {"failure_class": name, "count": count} for name, count in failures.most_common()
+        ],
+        "mcp_failure_patterns": [
+            {"failure_class": name, "count": count}
+            for name, count in failures.most_common()
+            if name.startswith("MCP_") or name == "UNSUPPORTED_TOOL"
+        ],
+        "training_dataset_statistics": {
+            "candidate_count": len(candidates),
+            "candidate_types": dict(types),
+            "quality_tiers": dict(tiers),
+            "roles": dict(roles),
+        },
+    }
+
+
 def candidate_path(candidate: TrainingCandidate) -> str:
     if candidate.quality_tier == "negative":
         failure_classes = set(candidate.quality_labels.get("failure_classes", []))
@@ -868,11 +933,13 @@ class WeeklyPackager:
         *,
         seven_zip: str | None = None,
         notifier: Callable[[str, dict[str, Any]], None] | None = None,
+        minimum_free_bytes: int = 0,
     ):
         self.root = Path(root)
         self.registry = registry
         self.seven_zip = seven_zip or shutil.which("7zz") or shutil.which("7z")
         self.notifier = notifier
+        self.minimum_free_bytes = minimum_free_bytes
         self.metrics = {
             "packages_created": 0,
             "package_failures": 0,
@@ -924,10 +991,21 @@ class WeeklyPackager:
                 separators=(",", ":"),
             ).encode()
         ).hexdigest()
+        configuration_snapshot = hashlib.sha256(
+            json.dumps(
+                {
+                    "models": model_configuration,
+                    "judge": judge_configuration or {},
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
         key = hashlib.sha256(
             f"{window.utc_start.isoformat()}|{window.utc_end.isoformat()}|1.0|"
             f"{policy_version}|{skill_registry_version}|{knowledge_registry_version}|"
-            f"{prompt_registry_version}|{routing_version}|{source_snapshot}".encode()
+            f"{prompt_registry_version}|{routing_version}|{configuration_snapshot}|"
+            f"{source_snapshot}".encode()
         ).hexdigest()
         package_id = f"moa-finetune-{window.week}"
         existing = self.registry.get(key)
@@ -940,6 +1018,14 @@ class WeeklyPackager:
         year, week = window.week.split("-W")
         final_dir = self.root / year / f"W{week}"
         final_dir.mkdir(parents=True, exist_ok=True)
+        if shutil.disk_usage(final_dir).free < self.minimum_free_bytes:
+            self.registry.set(key, package_id, "failed", error_class="OSError")
+            self.metrics["package_failures"] += 1
+            self._notify(
+                "weekly_package_failed",
+                {"package_id": package_id, "failure_class": "OSError"},
+            )
+            raise OSError("weekly package storage is below the minimum free-space reserve")
 
         def stamp(value: datetime) -> str:
             return value.strftime("%Y%m%dT%H%M%SZ")
@@ -1295,7 +1381,12 @@ class WeeklyPackager:
             f"# {manifest['package_id']}\n\nSanitized role-specific training candidates.\n"
         )
         snapshots = {
-            "SCHEMA_VERSIONS.json": {"package": "1.0", "candidate": "current"},
+            "SCHEMA_VERSIONS.json": {
+                "package": "1.0",
+                "training_event": "1.0",
+                "training_candidate": "1.0",
+                "trace": "agent-trace-v3",
+            },
             "POLICY_SNAPSHOT.yaml": {"version": policy_version},
             "SKILL_SNAPSHOT.json": {"version": skill_registry_version},
             "KNOWLEDGE_SNAPSHOT.json": {"version": knowledge_registry_version},

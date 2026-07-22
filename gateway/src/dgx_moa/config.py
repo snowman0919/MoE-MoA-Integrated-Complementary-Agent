@@ -443,6 +443,7 @@ class WeeklyJobsConfig(BaseModel):
     package_schedule: str = "0 2 * * 1"
     package_root: Path = Path("data/weekly-packages")
     archive_registry: Path = Path("data/archive-registry/weekly.db")
+    minimum_free_bytes: int = Field(default=10_000_000_000, ge=0)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
 
     @field_validator("timezone")

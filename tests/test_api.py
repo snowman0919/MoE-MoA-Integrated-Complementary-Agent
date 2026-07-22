@@ -4556,6 +4556,7 @@ def test_weekly_package_admin_api_verifies_revokes_and_regenerates(
                 "enabled": True,
                 "package_root": settings.state_db.parent / "weekly",
                 "archive_registry": settings.state_db.parent / "weekly-registry.db",
+                "minimum_free_bytes": 0,
             },
         }
     )
