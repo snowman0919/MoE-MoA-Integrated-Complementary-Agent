@@ -15,9 +15,9 @@ Updated: 2026-07-22
 | Codex Responses text/function/custom tool loop | yes | yes | yes | production yes | yes |
 | Runtime model invocation-rate CSV | yes | yes | yes | production live clients | yes |
 | Bounded Loop Engineering Phase A + action-boundary B | yes | yes | yes | live production success/correction | yes |
-| Runtime Skills Phase C foundation | yes | yes | yes | isolated governed lifecycle | no |
-| Runtime Knowledge Phase C foundation | yes | yes | yes | isolated registry/retrieval/conflict/report | no |
-| Declarative Policy Phase D foundation | yes | yes | yes | isolated redaction | no |
+| Runtime Skills Phase C foundation | yes | yes | yes | live selection; production empty registry | yes |
+| Runtime Knowledge Phase C foundation | yes | yes | yes | live retrieval; production integrity | yes |
+| Declarative Policy Phase D foundation | yes | yes | yes | production approval fail-closed | yes |
 | OpenCode Go GLM-5.2 Remote Judge | yes | yes | yes | live matrix and production readiness | yes |
 | Remote-first Planner/Reviewer cold routing | yes | yes | yes | production cold/warm routing | yes |
 | Typed Evidence Graph Phase E foundation | yes | yes | yes | isolated replay validation | no |
@@ -100,6 +100,11 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   production environment; the remaining Skills, Knowledge, evolution, policy,
   training, weekly, replay-admin, retention-apply, and observation-control gates
   remain disabled.
+- Runtime Skills, Runtime Knowledge, and declarative Policy were enabled after a
+  live shadow request selected an approved Skill and Knowledge entry and applied
+  a matched budget rule. Production starts with empty governed registries and a
+  single `production-v1` rule requiring explicit approval for requests marked
+  destructive; no candidate was automatically promoted.
 
 ## Runtime
 
@@ -133,16 +138,16 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   run exercised success, no-progress, and duplicate-failure termination. Live
   production subsequently exercised evidence-backed success and correction
   without weakening the Reviewer gate.
-- Deployed source also contains a disabled runtime Skill registry with
+- Deployed source also contains a production-enabled runtime Skill registry with
   immutable versions, bounded active-only retrieval, Executor-only activation,
   structured recurring-pattern drafts, isolated multi-gate candidate evaluation,
   Executor-evidenced canaries, governed versioned lifecycle changes, separate
   metrics, evidence-gated promotion/rollback, and verified pack hashes. An
   isolated physical run exercised draft generation, every evaluation gate, an
-  Executor-evidenced helpful canary, explicit promotion, and rollback. No
-  production registry or canary was created.
-- A disabled declarative policy engine records versioned, hashed decisions and
-  enforces request denial, approval requirements, role requirements, loop
+  Executor-evidenced helpful canary, explicit promotion, and rollback. The
+  production registry is empty; no production Skill or canary was created.
+- A production-enabled declarative policy engine records versioned, hashed
+  decisions and enforces request denial, approval requirements, role requirements, loop
   limits, and per-tool deny globs. Policy field redaction covers evidence,
   decisions, tool results, normalized executions, and persisted Reasoner,
   Planner, Reviewer, Frontier, and Judge artifacts while preserving container

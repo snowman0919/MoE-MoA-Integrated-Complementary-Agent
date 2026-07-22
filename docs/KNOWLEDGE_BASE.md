@@ -22,5 +22,6 @@ entries remain stored and visible until an approved superseding entry resolves
 the conflict; they are never silently overwritten.
 
 Checked-in `gateway.runtime_knowledge.enabled` is `false`. Isolated validation
-may set `DGX_MOA_RUNTIME_KNOWLEDGE` to a separate database. No production
-Knowledge registry, promotion, or retrieval has been physically validated.
+may set `DGX_MOA_RUNTIME_KNOWLEDGE` to a separate database. The protected
+production environment enables an empty registry whose SQLite integrity and
+bounded empty retrieval passed; no production Knowledge entry was promoted.
