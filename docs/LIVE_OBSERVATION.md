@@ -9,8 +9,10 @@ The reviewed production selection uses Telegram with a bot token, chat ID, and
 optional message-thread ID. The implementation also retains an optional Discord
 webhook transport for isolated compatibility tests, but the operator explicitly
 excluded Discord from production and release gating on 2026-07-22. Events are
-batched and rendered
-as readable multi-line cards. The allowlist covers request, Reasoner, Planner,
+batched and rendered as readable multi-line cards. Telegram cards use a fixed
+Korean title/label/value mapping implemented in normal Python; no LLM performs
+translation or logging synthesis. Model-generated content is not language-
+rewritten. The allowlist covers request, Reasoner, Planner,
 Executor, Knowledge, Skill, Reviewer, Frontier, Judge, tool, loop, failure,
 policy, approval, and terminal lifecycle events. Judge cards expose only the
 verdict/risk/recheck state, never finding or correction prose. An operator may
@@ -61,6 +63,10 @@ The real Telegram bot `@kodex9_AI_observer_bot` then authenticated, discovered
 one user-initiated private target, and accepted a safe validation event. Its
 token and target live only under `/home/kotori9/.config/dgx-moa/` and the ignored
 0600 production environment; no credential or chat ID is tracked or documented.
-Production Telegram observation is enabled with controls disabled. A real core
-request produced three sent events, zero drops, and zero Telegram errors.
+Production Telegram observation is enabled with controls disabled. Cards expose
+the selected role, provider, model, routing reason, residency state, timing,
+token, warm-up, failure, and terminal fields when the originating event has
+them. Prompt and Reasoner artifact forwarding remain disabled in the reviewed
+production override. A real core request produced three sent events, zero drops,
+and zero Telegram errors.
 Discord remains unconfigured by design and is not a production release gate.

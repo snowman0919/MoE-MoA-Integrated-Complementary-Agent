@@ -370,28 +370,14 @@ class SpecialistRouter:
             + self.config.remote_queue_latency_seconds
             + self.config.remote_latency_seconds[role]
         )
-        estimated_remote_tokens = max(
-            int(request.get("max_tokens", 0) or 0),
-            self.config.remote_min_completion_tokens[role],
-        )
-        estimated_remote_cost = (
-            float(estimated_remote_tokens)
-            * self.config.remote_cost_per_million_tokens_usd
-            / 1_000_000
-        )
-        margin = (
-            self.config.local_preference_margin_seconds
-            + estimated_remote_cost * self.config.cost_seconds_per_usd
-        )
         local_ready = local_state in {"READY", "BUSY"}
-        use_local = local_ready and predicted_local <= predicted_remote + margin
+        use_local = local_ready
         if local_only:
             if not local_ready:
                 self._schedule_warmup(role, revision, request_id, "local_only_cold_miss")
                 raise SpecialistUnavailable(f"required local {role} is not ready")
             use_local = True
         lease_ids: tuple[str, ...] = ()
-        local_lease_failed = False
         if use_local and self.acquire_local is not None:
             try:
                 lease_ids = await self.acquire_local(request_id, role)
@@ -399,21 +385,22 @@ class SpecialistRouter:
                 if local_only:
                     raise SpecialistUnavailable(f"required local {role} lost readiness") from error
                 use_local = False
-                local_lease_failed = True
         provider_name = "local" if use_local else "remote"
+        provider = self.local[role] if use_local else self.remote[role]
+        provider_model = getattr(provider, "model", role)
+        if isinstance(provider_model, ModelConfig):
+            provider_model = provider_model.served_name
         warmup_status = "not_needed"
         if not use_local and not local_ready:
             warmup_status = self._schedule_warmup(role, revision, request_id, "cold_miss")
         reason = (
             "local_only_policy"
             if local_only
-            else "local_within_cost_margin"
+            else "local_ready"
             if use_local
             else "local_not_ready"
             if not local_ready
             else "local_readiness_race"
-            if local_lease_failed
-            else "remote_predicted_faster"
         )
         decision: dict[str, Any] = {
             "specialist_role": role,
@@ -422,6 +409,7 @@ class SpecialistRouter:
             "predicted_local_completion_seconds": predicted_local,
             "predicted_remote_completion_seconds": predicted_remote,
             "selected_provider": provider_name,
+            "model": provider_model,
             "routing_reason": reason,
             "warmup_decision": warmup_status,
             "load_generation": record.generation if record is not None else 0,
@@ -430,7 +418,6 @@ class SpecialistRouter:
         }
         self._record(request_id, "specialist_provider_selected", decision)
         started = time.monotonic()
-        provider = self.local[role] if use_local else self.remote[role]
         provider_timeout = (
             timeout_seconds if use_local else min(timeout_seconds, self.config.timeout_seconds)
         )

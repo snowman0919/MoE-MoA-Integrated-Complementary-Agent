@@ -1380,7 +1380,30 @@ def test_executor_prompt_does_not_force_json(settings, stub_provider: StubProvid
     )
     assert "Return one JSON object only" not in prompt
     assert "Use native OpenAI tool calls" in prompt
+    assert "Be concise by default" in prompt
     assert "output formatting in the current objective exactly" in prompt
+
+
+@pytest.mark.asyncio
+async def test_specialist_lease_uses_current_request_id(settings, stub_provider) -> None:  # type: ignore[no-untyped-def]
+    captured: list[str] = []
+
+    class Specialists:
+        async def complete(self, role, request, **kwargs):  # type: ignore[no-untyped-def]
+            del role, request
+            captured.append(kwargs["request_id"])
+            return {}, {"selected_provider": "local"}
+
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)
+    controller.specialists = Specialists()  # type: ignore[assignment]
+    state = SessionState(
+        session_id="hermes-readable-session",
+        current_request_id="b3d9ea1c-941f-49c6-9d83-bdeada19ef48",
+    )
+
+    await controller.complete_specialist(state, "planner", {}, mandatory=True)
+
+    assert captured == ["b3d9ea1c-941f-49c6-9d83-bdeada19ef48"]
 
 
 def test_review_requires_external_evidence(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

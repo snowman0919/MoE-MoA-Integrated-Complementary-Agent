@@ -65,11 +65,15 @@ SAFE_PAYLOAD_KEYS = {
     "reason",
     "status",
     "role",
+    "provider",
+    "model",
+    "profile",
     "mode",
     "parallel",
     "latency_ms",
     "prompt_tokens",
     "completion_tokens",
+    "total_tokens",
     "cost_usd",
     "count",
     "steps",
@@ -101,6 +105,7 @@ SAFE_PAYLOAD_KEYS = {
     "predicted_local_completion_seconds",
     "predicted_remote_completion_seconds",
     "actual_completion_latency_seconds",
+    "latency_seconds",
     "remote_cost_usd",
     "warmup_decision",
     "load_generation",
@@ -166,6 +171,140 @@ DETAIL_LABELS = {
     "hypotheses": "Hypotheses",
     "evidence_references": "Evidence references",
     "recommended_actions": "Recommended actions",
+}
+
+TELEGRAM_EVENT_TITLES = {
+    "request_received": "📥 요청 접수",
+    "reasoner_started": "🧠 Reasoner 분석 시작",
+    "reasoner_completed": "🧠 Reasoner 분석 완료",
+    "executor_started": "⚙️ Executor 실행 시작",
+    "tool_call_requested": "🛠️ 도구 실행 요청",
+    "tool_result_received": "🛠️ 도구 실행 완료",
+    "executor_skills_selected": "🧩 Runtime Skill 선택",
+    "knowledge_retrieved": "📚 Runtime Knowledge 조회",
+    "planner_invoked": "🗺️ Planner 호출",
+    "plan_created": "🗺️ 계획 생성 완료",
+    "review_started": "🔎 Reviewer 검토 시작",
+    "review_completed": "🔎 Reviewer 검토 완료",
+    "frontier_collaboration_started": "🌐 Frontier 협업 시작",
+    "frontier_collaboration_completed": "🌐 Frontier 협업 완료",
+    "judge_requested": "⚖️ Judge 판정 요청",
+    "judge_completed": "⚖️ Judge 판정 완료",
+    "failure_classified": "⚠️ 오류 분류",
+    "policy_tool_blocked": "⛔ 정책에 따른 도구 차단",
+    "task_blocked": "⛔ 작업 차단",
+    "frontier_candidate_awaiting_approval": "⏳ Frontier 후보 승인 대기",
+    "engineering_loop_iteration_started": "🔄 엔지니어링 반복 시작",
+    "engineering_loop_iteration_completed": "🔄 엔지니어링 반복 완료",
+    "engineering_loop_terminated": "🏁 엔지니어링 반복 종료",
+    "policy_evaluated": "🛡️ 정책 평가",
+    "task_completed": "✅ 작업 완료",
+    "request_finalized": "✅ 요청 처리 종료",
+    "stream_failed": "❌ 스트림 실패",
+    "provider_failure": "❌ Provider 실패",
+    "weekly_package_completed": "📦 주간 패키지 생성 완료",
+    "weekly_package_failed": "❌ 주간 패키지 생성 실패",
+    "weekly_skill_report_completed": "📊 주간 Skill 보고서 완료",
+    "weekly_job_failed": "❌ 주간 작업 실패",
+    "specialist_provider_selected": "🔀 Specialist 실행 경로 선택",
+    "specialist_provider_completed": "🔀 Specialist 처리 완료",
+    "specialist_provider_failed": "❌ Specialist 처리 실패",
+    "specialist_warmup_started": "🔥 로컬 Specialist 준비 시작",
+    "specialist_warmup_completed": "🔥 로컬 Specialist 준비 완료",
+    "specialist_warmup_failed": "❌ 로컬 Specialist 준비 실패",
+    "specialist_unused_warmup": "💤 준비된 Specialist 미사용",
+}
+
+TELEGRAM_DETAIL_LABELS = {
+    "task_id": "작업 ID",
+    "phase": "단계",
+    "step": "세부 단계",
+    "iteration": "반복",
+    "loop_id": "Loop ID",
+    "loop_type": "Loop 유형",
+    "reason": "사유",
+    "status": "상태",
+    "role": "역할",
+    "provider": "Provider",
+    "model": "모델",
+    "profile": "프로필",
+    "mode": "모드",
+    "parallel": "병렬 실행",
+    "latency_ms": "지연 시간(ms)",
+    "latency_seconds": "지연 시간(초)",
+    "prompt_tokens": "입력 토큰",
+    "completion_tokens": "출력 토큰",
+    "total_tokens": "전체 토큰",
+    "cost_usd": "비용(USD)",
+    "count": "개수",
+    "steps": "단계 수",
+    "budget": "예산",
+    "remaining": "남은 예산",
+    "verdict": "판정",
+    "risk": "위험도",
+    "recheck_required": "재검토 필요",
+    "confidence": "신뢰도",
+    "confidence_category": "신뢰도 등급",
+    "matched_rules": "적용 정책",
+    "missing_approvals": "누락 승인",
+    "termination_reason": "종료 사유",
+    "failure_class": "오류 유형",
+    "selected_provider": "선택 경로",
+    "specialist_role": "Specialist 역할",
+    "routing_reason": "라우팅 사유",
+    "residency_state": "로컬 상태",
+    "queue_state": "대기열",
+    "predicted_local_completion_seconds": "예상 로컬 완료(초)",
+    "predicted_remote_completion_seconds": "예상 원격 완료(초)",
+    "actual_completion_latency_seconds": "실제 완료(초)",
+    "remote_cost_usd": "원격 비용(USD)",
+    "warmup_decision": "Warm-up 상태",
+    "load_generation": "Load 세대",
+    "fallback_reason": "Fallback 사유",
+    "provider_error": "Provider 오류",
+    "prompt": "요청 내용",
+    "assumptions": "가정",
+    "constraints": "제약",
+    "conclusions": "결론",
+    "hypotheses": "가설",
+    "evidence_references": "근거",
+    "recommended_actions": "권장 작업",
+}
+
+TELEGRAM_VALUES = {
+    "local": "로컬",
+    "remote": "원격(OpenCode Go)",
+    "opencode_go": "OpenCode Go",
+    "codex_oauth": "Codex OAuth",
+    "planner": "Planner",
+    "reviewer": "Reviewer",
+    "reasoner": "Reasoner",
+    "executor": "Executor",
+    "judge": "Judge",
+    "frontier": "Frontier",
+    "local_ready": "로컬 모델 준비 완료",
+    "local_not_ready": "로컬 모델 미준비",
+    "local_readiness_race": "로컬 준비 상태 변경",
+    "remote_predicted_faster": "원격 완료 시간이 더 빠름",
+    "cold_miss": "로컬 cold miss",
+    "started": "시작됨",
+    "reused": "기존 작업 재사용",
+    "not_needed": "불필요",
+    "completed": "완료",
+    "failed": "실패",
+    "approved": "승인",
+    "rejected": "거부",
+    "ready": "준비 완료",
+    "stopped": "중지",
+    "READY": "준비 완료",
+    "BUSY": "처리 중",
+    "UNLOADED": "미적재",
+    "LOAD_REQUESTED": "적재 요청됨",
+    "LOADING": "적재 중",
+    "DEGRADED": "성능 저하",
+    "FAILED": "실패",
+    "COOLDOWN": "대기",
+    "EVICTING": "해제 중",
 }
 
 
@@ -278,6 +417,36 @@ def render_events(events: Sequence[ObservationEvent], max_characters: int = 4_00
     return rendered[: max_characters - 16].rstrip() + "\n… (truncated)"
 
 
+def render_telegram_events(events: Sequence[ObservationEvent], max_characters: int = 4_000) -> str:
+    def localized(value: Any) -> Any:
+        if isinstance(value, str):
+            return TELEGRAM_VALUES.get(value, value)
+        if isinstance(value, bool):
+            return "예" if value else "아니요"
+        if isinstance(value, list):
+            return [localized(item) for item in value]
+        if isinstance(value, dict):
+            return {
+                TELEGRAM_DETAIL_LABELS.get(str(key), str(key)): localized(item)
+                for key, item in value.items()
+            }
+        return value
+
+    blocks = ["🤖 MoA 처리 과정"]
+    for event in events:
+        lines = [TELEGRAM_EVENT_TITLES.get(event.event_type, event.event_type)]
+        lines.append(f"요청: {event.request_id}")
+        lines.append(f"시각: {event.created_at}")
+        for key, value in event.details.items():
+            label = TELEGRAM_DETAIL_LABELS.get(key, key)
+            lines.extend(_render_detail(label, localized(value)))
+        blocks.append("\n".join(lines))
+    rendered = "\n\n──────────\n\n".join(blocks)
+    if len(rendered) <= max_characters:
+        return rendered
+    return rendered[: max_characters - 20].rstrip() + "\n… (길이 제한으로 생략)"
+
+
 class DiscordProvider:
     name = "discord"
 
@@ -322,7 +491,10 @@ class TelegramProvider:
         self.transport = transport
 
     async def send(self, events: Sequence[ObservationEvent]) -> None:
-        payload: dict[str, Any] = {"chat_id": self.chat_id, "text": render_events(events)}
+        payload: dict[str, Any] = {
+            "chat_id": self.chat_id,
+            "text": render_telegram_events(events),
+        }
         if self.message_thread_id is not None:
             payload["message_thread_id"] = self.message_thread_id
         async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:

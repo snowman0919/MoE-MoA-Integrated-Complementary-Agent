@@ -1,6 +1,6 @@
 # State
 
-Updated: 2026-07-22
+Updated: 2026-07-23
 
 ## Dynamic MoA production status
 
@@ -19,11 +19,11 @@ Updated: 2026-07-22
 | Runtime Knowledge Phase C foundation | yes | yes | yes | live retrieval; production integrity | yes |
 | Declarative Policy Phase D foundation | yes | yes | yes | production approval fail-closed | yes |
 | OpenCode Go GLM-5.2 Remote Judge | yes | yes | yes | live matrix and production readiness | yes |
-| Remote-first Planner/Reviewer cold routing | yes | yes | yes | production cold/warm routing | yes |
+| Local-first Planner/Reviewer cold fallback | yes | yes | yes | live OpenCode Go + production local/cold routing | yes |
 | Typed Evidence Graph Phase E foundation | yes | yes | yes | production graph and isolated replay | yes |
-| Telegram Live Observation Phase E | yes | yes | yes | production Telegram; isolated control | Telegram yes; controls no |
-| Privacy-aware Training Collection Phase F | yes | yes | yes | isolated role/loop/preference archive | no |
-| Weekly Skill/Knowledge/Data Packaging Phase G | yes | yes | yes | isolated reports, real 7z + wall-clock scheduler; platform pending | no |
+| Telegram Live Observation Phase E | yes | yes | yes | Korean deterministic cards; production Telegram | Telegram yes; controls no |
+| Privacy-aware Training Collection Phase F | yes | yes | yes | production eligible candidate + integrity | yes |
+| Weekly Skill/Knowledge/Data Packaging Phase G | yes | yes | yes | real 7z + wall-clock scheduler | yes |
 | Execution Replay Phase H foundation | yes | yes | yes | production exact mock replay and fail-closed boundary | yes, operator-only |
 | Prompt/Policy/Routing evolution registry | yes | yes | yes | production empty-registry integrity; isolated lifecycle | yes, empty registry |
 | Fixed label-free Goal metrics endpoint | yes | yes | yes | production yes | yes |

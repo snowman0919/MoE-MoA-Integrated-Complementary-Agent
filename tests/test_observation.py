@@ -16,6 +16,7 @@ from dgx_moa.observation import (
     TelegramProvider,
     public_event,
     render_events,
+    render_telegram_events,
 )
 from dgx_moa.state import StateStore
 
@@ -113,7 +114,6 @@ def test_render_events_uses_readable_multiline_cards() -> None:
             )
         ]
     )
-
     assert rendered == (
         "🧠 Reasoner completed\n"
         "Request: request-1\n"
@@ -124,6 +124,42 @@ def test_render_events_uses_readable_multiline_cards() -> None:
         "Hypotheses:\n"
         "  • Provider outage"
     )
+
+
+def test_telegram_render_is_korean_deterministic_and_reports_model_route() -> None:
+    rendered = render_telegram_events(
+        [
+            ObservationEvent(
+                event_type="specialist_provider_selected",
+                request_id="request-1",
+                created_at="2026-07-23T00:00:00Z",
+                details={
+                    "specialist_role": "reviewer",
+                    "selected_provider": "remote",
+                    "model": "deepseek-v4-flash",
+                    "routing_reason": "local_not_ready",
+                    "residency_state": "LOADING",
+                    "predicted_local_completion_seconds": 45.0,
+                    "predicted_remote_completion_seconds": 5.75,
+                },
+            )
+        ]
+    )
+
+    assert rendered == (
+        "🤖 MoA 처리 과정\n\n──────────\n\n"
+        "🔀 Specialist 실행 경로 선택\n"
+        "요청: request-1\n"
+        "시각: 2026-07-23T00:00:00Z\n"
+        "Specialist 역할: Reviewer\n"
+        "선택 경로: 원격(OpenCode Go)\n"
+        "모델: deepseek-v4-flash\n"
+        "라우팅 사유: 로컬 모델 미준비\n"
+        "로컬 상태: 적재 중\n"
+        "예상 로컬 완료(초): 45.0\n"
+        "예상 원격 완료(초): 5.75"
+    )
+    assert "prompt" not in rendered.lower()
 
 
 @pytest.mark.asyncio

@@ -94,8 +94,11 @@ async def test_ready_local_is_selected_by_queue_and_cost_prediction() -> None:
         acquired.append((request_id, role))
         return ("lease",)
 
+    routing = config()
+    routing.local_latency_seconds = {"planner": 100.0, "reviewer": 100.0}
+    routing.remote_latency_seconds = {"planner": 1.0, "reviewer": 1.0}
     router = SpecialistRouter(
-        config(),
+        routing,
         local={"planner": local, "reviewer": MockReviewerProvider({})},
         remote={"planner": remote, "reviewer": MockReviewerProvider({})},
         lifecycle_store=Records(planner=record("ready")),
@@ -108,7 +111,7 @@ async def test_ready_local_is_selected_by_queue_and_cost_prediction() -> None:
 
     assert response == {"provider": "local"}
     assert decision["selected_provider"] == "local"
-    assert decision["routing_reason"] == "local_within_cost_margin"
+    assert decision["routing_reason"] == "local_ready"
     assert acquired == [("one", "planner")]
     assert released == [("lease",)]
     assert not remote.requests

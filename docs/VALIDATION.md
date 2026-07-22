@@ -4016,3 +4016,41 @@ scheduler is enabled, with first production Skill maintenance scheduled for
 2026-07-26 03:00 and packaging for 2026-07-27 02:00. No scheduled package,
 retention apply, archive export, or model training was triggered during this
 enablement.
+
+## Local-first specialists and deterministic Korean Telegram cards — 2026-07-23
+
+The Hermes observability benchmark exposed two distinct remote-selection paths.
+READY Planner selection initially chose local, but `complete_specialist()` sent
+the human-readable session ID into the UUID-backed lifecycle lease instead of
+the current request UUID. Lease acquisition failed and the router recorded
+`local_readiness_race` before dispatching OpenCode Go. READY Reviewer calls were
+sent remotely because the fixed 45/5-second local/remote estimates preferred
+remote. The three sessions still used the local Reasoner three times and local
+Executor five times, but all four Planner/Reviewer calls were remote; mandatory
+Frontier failure then caused Hermes to switch the client-visible final response
+to its Codex fallback.
+
+The correction passes `SessionState.current_request_id` to lifecycle leases and
+selects every inference-probed READY or BUSY local specialist. OpenCode Go is
+now the pinned fallback only while the selected local role is not ready, or if
+readiness changes during lease acquisition. Provider switching after dispatch
+remains prohibited. Runtime Knowledge and the separate GLM-5.2 Judge remain
+enabled. Executor prompting now requests concise output by default without
+forcing a language and still expands when the objective explicitly asks for
+detail.
+
+Telegram rendering is deterministic Python formatting, not an LLM call. It uses
+Korean process titles, labels, known state/provider/routing translations, and
+includes model/provider provenance, residency, predictions, actual latency,
+tokens, warm-up, failure, and terminal information from the existing safe
+allowlist. It does not translate model-generated content. Discord rendering
+remains unchanged. The production override disables prompt and Reasoner artifact
+forwarding so process telemetry stays compact and payload-free.
+
+Current credentialed, synthetic-only OpenCode Go checks returned schema-valid
+Planner `deepseek-v4-pro` in 13.653 seconds with 1,496 total tokens and Reviewer
+`deepseek-v4-flash` in 2.170 seconds with 546 total tokens. A bounded GLM-5.2
+Judge case returned `approve` in 3.667 seconds with 451 total tokens. Focused
+specialist/observation/controller tests passed `71 passed`; the full suite
+passed `857 passed` with the existing third-party Starlette warning. Ruff
+format/check, strict mypy over 41 source files, and `git diff --check` were clean.
