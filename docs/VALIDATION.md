@@ -3736,3 +3736,12 @@ with `finish_reason=length` and null content. The same probe at 256 tokens ended
 with `finish_reason=stop` and content `READY` in 6.2 seconds. The readiness token
 limit was raised to the physically successful value before final production
 acceptance.
+
+After readiness recovery, the next synthetic architecture request correctly
+selected local Planner twice but both 1500-token calls returned no structured
+content, so the gateway failed closed with HTTP 502. A direct local
+`PlannerPlan` inference at 4096 tokens then completed in 37.070 seconds with
+`finish_reason=stop`, a schema-valid result, 46 prompt tokens, 1438 completion
+tokens, and 1484 total tokens. The local Planner completion ceiling was raised
+to the physically validated 4096-token bound before repeating the warm-route
+production smoke.
