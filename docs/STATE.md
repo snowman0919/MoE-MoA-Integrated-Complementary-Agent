@@ -110,6 +110,12 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   and an empty Evolution registry as `main@cbcb011`; Training and Weekly remain
   disabled. Exact mock replay passed deterministically, live comparative replay
   remained fail-closed, and no evolution artifact was promoted.
+- On 2026-07-23, explicit operator approval enabled Training Collection and the
+  bounded in-process Weekly scheduler in the protected production override.
+  Only stable workspace ID `moa-production` is `training_allowed`; the shared
+  `external-api` identity remains unknown, external-provider output remains
+  ineligible, and retention apply/export remain disabled. The first eligible
+  production probe created one candidate after the storage reserve was restored.
 
 ## Runtime
 

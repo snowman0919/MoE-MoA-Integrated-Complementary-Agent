@@ -188,22 +188,27 @@ gateway unit, wait for resident restoration, and verify observer metrics stop
 changing. Never print the effective JSON because it contains the bot token and
 chat ID.
 
-## Isolated training collection development
+## Training collection
 
-Keep `gateway.training_data.enabled: false` in production. Isolated validation
-must use a training database different from `gateway.state_db`, a separate
-object root, synthetic content, an explicit `training_allowed` repository map,
-and a conservative free-space floor. Collection failure emits only a sanitized
-failure class and cannot fail the request. See `docs/TRAINING_DATA.md` and
-`docs/PRIVACY_AND_RETENTION.md`.
+Checked-in `gateway.training_data.enabled` remains `false`. The reviewed
+production override enables collection with only `moa-production` mapped to
+`training_allowed`; clients must send that ID and the production workspace path.
+The training database remains separate from `gateway.state_db`, with a separate
+object root and 10 GB free-space floor. `external-api` and external-provider
+output remain ineligible. Roll back by removing `DGX_MOA_TRAINING_DATA`,
+restarting the fixed gateway unit, and verifying the training counters stop.
+Collection failure is sanitized and cannot fail inference. See
+`docs/TRAINING_DATA.md` and `docs/PRIVACY_AND_RETENTION.md`.
 
-## Isolated weekly packaging development
+## Weekly packaging
 
-Checked-in weekly jobs are disabled. Skill reporting defaults to Sunday 03:00
-and packaging to Monday 02:00 in `Asia/Seoul`, but no scheduler is installed.
-Packaging requires a real `7zz` or `7z`, adequate free space, a complete prior
-week, and only eligible/tombstone-free candidates. Do not install a timer or
-publish archives without the separate systemd/export approval. See
+Checked-in weekly jobs remain disabled. The reviewed production override enables
+the bounded in-process scheduler: Skill reporting Sunday 03:00 and packaging
+Monday 02:00 in `Asia/Seoul`. No timer is installed. Packaging requires a real
+`7zz` or `7z`, the 10 GB reserve, a complete prior week, and only eligible,
+tombstone-free candidates. Retention apply and archive export remain separately
+approval-gated. Roll back by removing `DGX_MOA_WEEKLY_JOBS`, restarting the
+fixed gateway unit, and verifying no scheduler jobs remain. See
 `docs/WEEKLY_PACKAGING.md`.
 
 ## Isolated execution replay
@@ -417,17 +422,17 @@ Production deployment is a fast-forward/pull of reviewed `main` into
 `/home/kotori9/dgx-moa-agent`, followed by proportional checks. `dev` may be
 deployed there only as an explicitly identified validation runtime; its traces
 must use `runtime_channel=dev` and must never be labeled production.
-## Development runtime metrics
+## Runtime metrics
 
-The development gateway exposes the Goal-specific fixed metric set at
+The gateway exposes the Goal-specific fixed metric set at
 authenticated `GET /metrics`. Metrics are label-free: request IDs, user IDs,
 repository paths, prompts, and failure text are never accepted or retained by
 the collector. Loop counters are fed by the append-only event boundary; Skill,
-observer, and training counters are overlaid from their bounded stores. Disabled
-or not-yet-run weekly operations report zero. This endpoint has unit evidence
-only and is not yet enabled in production.
+observer, and training counters are overlaid from their bounded stores.
+Not-yet-run weekly operations report zero. The authenticated production endpoint
+has physical Training counter evidence.
 
-## Disabled weekly and training administration
+## Weekly and training administration
 
 When both the existing admin boundary and feature gates are enabled, candidate
 inspection/state transitions and request/repository/user exclusions live under
@@ -435,4 +440,6 @@ inspection/state transitions and request/repository/user exclusions live under
 Weekly package verify/revoke/regenerate/retention lives under
 `/v1/admin/weekly-packages/*`; exact/audit replay is `/v1/admin/replay`. Package
 jobs use the configured Seoul schedules and emit only allowlisted summaries.
-These routes are `404` under checked-in defaults and have no production evidence.
+These routes remain `404` under checked-in defaults. The reviewed production
+feature gates are enabled; retention stays dry-run unless `apply=true`, and
+export is not authorized.

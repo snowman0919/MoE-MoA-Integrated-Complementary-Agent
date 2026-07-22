@@ -3974,3 +3974,45 @@ The first deployment-boundary request returned retryable HTTP 503. After
 returned HTTP 200 with exact `REDACTION_READY`. Its persisted trace contained
 two numeric `remote_api_cost_per_million_tokens_usd` values (`0.0`, `0.0`), no
 Authorization or API-key marker, and no missing trace fields.
+
+## Hermes authentication repair and production Training/Weekly enablement — 2026-07-23
+
+The 2026-07-22 16:49 `HTTP 401: User not found` was traced to Hermes' stale
+direct OpenRouter fallback after Codex OAuth returned 429; it was not an
+OpenCode Go runtime response. The invalid OpenRouter credential and fallback
+were removed, Hermes compression was pinned to `custom:dgx-moa-agent` with
+`dgx-moa-fast`, and the gateway restarted with zero restarts. A physical
+compression request returned exact `HERMES_COMPRESSION_OK`; no later Hermes
+journal entry matched `401`, `User not found`, OpenRouter, or authentication
+failure. A cold-Reviewer production request returned HTTP 200 and exact
+`HERMES_RUNTIME_OK` remotely in 4.5815 seconds while local warm-up generation 17
+continued independently. The local Reviewer subsequently passed `/v1/models`
+and a real inference probe before normal idle eviction.
+
+After explicit operator approval, `pip cache purge` removed 4,582 files and
+14,882.0 MB. Measured root free space increased from about 1.33 GB to
+16,222,420,992 bytes, above both configured 10 GB reserves. The protected
+production override enabled Training Collection and Weekly jobs, mapped only
+`moa-production` to `training_allowed`, and kept `external_output_permitted`
+false. Hermes now supplies stable `X-Workspace-ID: moa-production` and the
+production workspace path; `external-api` remains unknown.
+
+The gateway restart performed the selected exact Executor stop/start. The
+unchanged baseline loaded its 44.30 GiB checkpoint with context 65,536, one
+sequence, 1,700,000,000 KV bytes, 0.5 GPU utilization, and MARLIN. Both
+`/v1/models` and an actual inference probe returning exact `EXECUTOR_READY`
+passed; `/readyz` then reported Executor and Reasoner ready with cold optional
+specialists and Remote Judge available.
+
+Authenticated activation request `training-weekly-activation-20260723` returned
+HTTP 200 with exact `TRAINING_WEEKLY_READY`. Its v3 trace recorded workspace
+`moa-production`, policy `training_allowed`, and explicit eligibility. The
+collector physically wrote one event, one candidate, one request link, two
+Zstandard content-addressed objects, and SQLite WAL state; `integrity_check`
+returned `ok`. The intentionally minimal probe's candidate was rejected by the
+quality gate and the trace honestly remained `degraded`; it was not promoted.
+Metrics reported one created and one excluded candidate. The in-process Seoul
+scheduler is enabled, with first production Skill maintenance scheduled for
+2026-07-26 03:00 and packaging for 2026-07-27 02:00. No scheduled package,
+retention apply, archive export, or model training was triggered during this
+enablement.
