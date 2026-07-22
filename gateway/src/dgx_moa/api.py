@@ -2545,29 +2545,32 @@ def create_app(
                 active_stage = "reviewer"
                 try:
                     async with request.app.state.reviewer_evaluation_lock:
-                        reviewer = request.app.state.lifecycle_store.get("reviewer")
-                        if reviewer.evaluation_guard:
-                            raise ValueError("reviewer evaluation guard is already active")
-                        guard_transition_id = reviewer.transition_id
-                        request.app.state.lifecycle_store.set_guard(
-                            "reviewer",
-                            "evaluation_guard",
-                            True,
-                            expected_transition_id=guard_transition_id,
-                        )
+                        guard_transition_id = None
+                        if request.app.state.specialists is None:
+                            reviewer = request.app.state.lifecycle_store.get("reviewer")
+                            if reviewer.evaluation_guard:
+                                raise ValueError("reviewer evaluation guard is already active")
+                            guard_transition_id = reviewer.transition_id
+                            request.app.state.lifecycle_store.set_guard(
+                                "reviewer",
+                                "evaluation_guard",
+                                True,
+                                expected_transition_id=guard_transition_id,
+                            )
                         try:
                             await request.app.state.controller.review(
                                 state,
                                 review_observation,
-                                guard_already_owned=True,
+                                guard_already_owned=guard_transition_id is not None,
                             )
                         finally:
-                            request.app.state.lifecycle_store.set_guard(
-                                "reviewer",
-                                "evaluation_guard",
-                                False,
-                                expected_transition_id=guard_transition_id,
-                            )
+                            if guard_transition_id is not None:
+                                request.app.state.lifecycle_store.set_guard(
+                                    "reviewer",
+                                    "evaluation_guard",
+                                    False,
+                                    expected_transition_id=guard_transition_id,
+                                )
                 except (httpx.HTTPError, StageTimeout, ValueError) as error:
                     state.review_status = "failed"
                     stage_status["reviewer"] = (
