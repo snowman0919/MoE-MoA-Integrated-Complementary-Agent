@@ -393,13 +393,16 @@ def trace_missing(trace: dict[str, Any]) -> list[str]:
         "model_revisions",
         "context_configuration",
         "selected_route",
-        "agent_decisions",
         "final_status",
         "training_eligibility",
         "observability_status",
     ):
         if not trace.get(field) or trace.get(field) == "unknown":
             missing.append(field)
+    if (version == "agent-trace-v2" or trace.get("agent_invocations")) and not trace.get(
+        "agent_decisions"
+    ):
+        missing.append("agent_decisions")
     route = trace.get("selected_route", {})
     if not route.get("route"):
         missing.append("selected_route.route")

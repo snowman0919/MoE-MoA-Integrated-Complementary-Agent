@@ -223,6 +223,22 @@ def test_incomplete_and_legacy_traces_are_not_promoted(tmp_path) -> None:  # typ
     assert dataset["count"] == 0 and dataset["legacy_excluded"] == 1
 
 
+def test_blocked_v3_trace_needs_no_model_decision(settings) -> None:  # type: ignore[no-untyped-def]
+    state = complete_state()
+    state.final_status = "blocked"
+    state.decisions = []
+    trace = trace_record(
+        state,
+        events=[
+            {"event_type": event_type}
+            for event_type in ("session_started", "route_selected", "session_ended")
+        ],
+        models=settings.models,
+    )
+
+    assert trace_missing(trace) == []
+
+
 def test_audit_prefers_v2_over_duplicate_legacy_session(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]
     traces = tmp_path / "traces"
     traces.mkdir()
