@@ -108,7 +108,7 @@ production-authorized. An isolated development gateway may enable it with a
 complete JSON policy:
 
 ```bash
-DGX_MOA_LOOP_ENGINEERING='{"enabled":true,"defaults":{"iterations":4,"tool_calls":30,"reasoner_reentries":4,"planner_calls":2,"reviewer_calls":2,"frontier_calls":2,"judge_calls":1,"tokens":250000,"external_cost_usd":10,"wall_clock_seconds":1800},"duplicate_fingerprint_limit":2,"no_progress_iteration_limit":2,"local_failures_before_frontier":2,"request_class_overrides":{},"risk_level_overrides":{}}'
+DGX_MOA_LOOP_ENGINEERING='{"enabled":true,"defaults":{"iterations":4,"tool_calls":30,"reasoner_reentries":4,"planner_calls":2,"reviewer_calls":2,"frontier_calls":2,"judge_calls":2,"tokens":250000,"external_cost_usd":10,"wall_clock_seconds":1800},"duplicate_fingerprint_limit":2,"no_progress_iteration_limit":2,"local_failures_before_frontier":2,"request_class_overrides":{},"risk_level_overrides":{}}'
 ```
 
 Use an isolated state database, run directory, loopback port, and development

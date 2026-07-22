@@ -23,6 +23,7 @@ from .controller import (
     Controller,
     DuplicateFailedCall,
     FrontierRequiredUnavailable,
+    JudgeCorrectionRequired,
     JudgeRequired,
     LoopAdmissionError,
     PolicyBlocked,
@@ -53,7 +54,7 @@ from .observation import (
 from .policy import PolicyEngine
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
-from .remote_judge import NvidiaNimJudgeProvider
+from .remote_judge import JudgeProviderError, NvidiaNimJudgeProvider
 from .replay import ReplayEngine, ReplayRequest
 from .routing import (
     COMPATIBILITY_MODEL_ALIASES,
@@ -585,6 +586,16 @@ def create_app(
                 max_calls_per_request=configured.remote_judge.max_calls_per_request,
             )
         app.state.remote_judge = remote_judge
+        if remote_judge is None:
+            app.state.remote_judge_available = None
+        else:
+            try:
+                app.state.remote_judge_available = await asyncio.wait_for(
+                    remote_judge.available(),
+                    timeout=min(5, configured.remote_judge.timeout_seconds),
+                )
+            except TimeoutError:
+                app.state.remote_judge_available = False
         app.state.controller = Controller(
             configured,
             store,
@@ -965,8 +976,17 @@ def create_app(
         )
 
     @app.get("/healthz")
-    async def healthz() -> dict[str, str]:
-        return {"status": "ok"}
+    async def healthz(request: Request) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "remote_judge": (
+                "disabled"
+                if request.app.state.remote_judge is None
+                else "available"
+                if request.app.state.remote_judge_available
+                else "unavailable"
+            ),
+        }
 
     @app.get("/readyz")
     async def readyz(request: Request) -> JSONResponse:
@@ -991,6 +1011,9 @@ def create_app(
                     "status": "not_ready",
                     "profile": current,
                     "services": {role: "stopped" for role in configured.models},
+                    "remote_judge": (
+                        "disabled" if request.app.state.remote_judge is None else "unavailable"
+                    ),
                     "auth_enabled": configured.auth_enabled,
                 },
                 status_code=503,
@@ -1024,6 +1047,13 @@ def create_app(
                     "status": "not_ready",
                     "profile": current,
                     "services": service_status,
+                    "remote_judge": (
+                        "disabled"
+                        if request.app.state.remote_judge is None
+                        else "available"
+                        if request.app.state.remote_judge_available
+                        else "unavailable"
+                    ),
                     "auth_enabled": configured.auth_enabled,
                 },
                 status_code=503,
@@ -1033,6 +1063,13 @@ def create_app(
                 "status": "ready",
                 "profile": current,
                 "services": service_status,
+                "remote_judge": (
+                    "disabled"
+                    if request.app.state.remote_judge is None
+                    else "available"
+                    if request.app.state.remote_judge_available
+                    else "unavailable"
+                ),
                 "auth_enabled": configured.auth_enabled,
             }
         )
@@ -1958,6 +1995,25 @@ def create_app(
             state.roles_required = list(roles)
             state.review_fail_closed = review_fails_closed(request_class)
             request.app.state.controller.select_route(state, raw["metadata"])
+            stream_judge_reasons = (
+                request.app.state.controller.remote_judge_invocation_reasons(state, raw["metadata"])
+                if body.stream
+                else []
+            )
+            if stream_judge_reasons:
+                request.app.state.store.event(
+                    state_session_id,
+                    "remote_judge_non_stream_required",
+                    {"reasons": stream_judge_reasons},
+                )
+                finalize_request("judge", "failed", current_state=state)
+                return error_response(
+                    status.HTTP_409_CONFLICT,
+                    "selective Remote Judge validation requires a non-streaming request",
+                    "judge_non_stream_required",
+                    "retry_without_streaming",
+                    headers={"X-Session-ID": state_session_id},
+                )
             if body.metadata.get("no_progress"):
                 request.app.state.controller.note_no_progress(state)
             active_stage = "planner" if "planner" in roles else "request"
@@ -2229,10 +2285,19 @@ def create_app(
             finish_reason = response.get("choices", [{}])[0].get("finish_reason")
             state.finish_reasons = [str(finish_reason)] if finish_reason else []
             state.truncated = finish_reason == "length"
+            judge_reasons = request.app.state.controller.remote_judge_invocation_reasons(
+                state, body.metadata, response
+            )
+            if judge_reasons and "reviewer" not in state.roles_required:
+                await ensure_dynamic_roles(("reviewer",))
+                state.roles_required.append("reviewer")
             if (
                 "reviewer" in state.roles_required
                 and state.review_status != "approved"
-                and request.app.state.controller.has_review_evidence(state, body.metadata)
+                and (
+                    bool(judge_reasons)
+                    or request.app.state.controller.has_review_evidence(state, body.metadata)
+                )
             ):
                 review_observation = request.app.state.controller.review_observation(
                     state, response, body.metadata
@@ -2285,6 +2350,30 @@ def create_app(
                     stage_status["reviewer"] = "completed"
                     if not state.truncated:
                         request.app.state.controller.apply_metadata(state, body.metadata)
+            judge_reasons = list(
+                dict.fromkeys(
+                    [
+                        *judge_reasons,
+                        *request.app.state.controller.remote_judge_invocation_reasons(
+                            state, body.metadata, response
+                        ),
+                    ]
+                )
+            )
+            if judge_reasons and not state.truncated:
+                request.app.state.store.event(
+                    state_session_id,
+                    "remote_judge_selected",
+                    {"reasons": judge_reasons},
+                )
+                active_stage = "judge"
+                observation = request.app.state.controller.review_observation(
+                    state, response, body.metadata
+                )
+                verdict = await request.app.state.controller.judge(state, observation)
+                stage_status["judge"] = "completed"
+                if verdict.get("verdict") != "approve":
+                    raise JudgeCorrectionRequired(str(verdict.get("verdict", "revise")))
             state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
             first_byte_at = time.time()
             request.app.state.store.event(
@@ -2370,6 +2459,31 @@ def create_app(
                     "X-Session-ID": error.session_id,
                     "X-DGX-MOA-Required-Profile": "judge",
                 },
+            )
+        except JudgeCorrectionRequired as error:
+            finalize_request("judge", "failed", downstream_started=True)
+            return error_response(
+                status.HTTP_409_CONFLICT,
+                str(error),
+                "judge_correction_required",
+                error.verdict,
+                headers={"X-Session-ID": state_session_id},
+            )
+        except JudgeProviderError as error:
+            if state is not None:
+                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
+            finalize_request(
+                "judge",
+                "failed",
+                downstream_started=True,
+                retryable_failure_class="backend_error",
+            )
+            return error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                str(error),
+                "judge_unavailable",
+                "remote_judge_provider_unavailable",
+                headers={"Retry-After": "30", "X-Session-ID": state_session_id},
             )
         except ReasonerUnavailable as error:
             if state is not None:

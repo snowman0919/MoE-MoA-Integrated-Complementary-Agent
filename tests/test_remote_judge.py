@@ -4,14 +4,17 @@ import json
 
 import httpx
 import pytest
+from dgx_moa.controller import Controller
 from dgx_moa.remote_judge import (
     JudgeCallLimitExceeded,
     JudgeEvidencePackage,
     JudgeProviderError,
     JudgeUnavailable,
+    MockJudgeProvider,
     NvidiaNimJudgeProvider,
     RemoteJudgeVerdict,
 )
+from dgx_moa.state import SessionState, StateStore
 
 
 def verdict(verdict: str = "approve") -> dict[str, object]:
@@ -134,3 +137,52 @@ def test_remote_verdict_requires_every_criterion() -> None:
     del payload["criteria"]["safety"]  # type: ignore[index]
     with pytest.raises(ValueError):
         RemoteJudgeVerdict.model_validate(payload)
+
+
+def test_selective_judge_policy_covers_risk_and_skips_tool_turns(settings, stub_provider) -> None:
+    remote = MockJudgeProvider(RemoteJudgeVerdict.model_validate(verdict()))
+    controller = Controller(
+        settings,
+        StateStore(settings.state_db),
+        stub_provider,
+        remote_judge=remote,
+    )
+    state = SessionState(session_id="selective", failure_families={"same-failure": 2})
+    reasons = controller.remote_judge_invocation_reasons(
+        state,
+        {
+            "authentication": True,
+            "database_schema": True,
+            "production_deployment": True,
+            "tests_claim_inconsistent": True,
+        },
+        {"choices": [{"message": {"role": "assistant", "content": "done"}}]},
+    )
+
+    assert reasons == [
+        "security_or_authentication_change",
+        "database_schema_or_migration",
+        "production_deployment_approval",
+        "test_result_claim_inconsistency",
+        "repeated_failure_fingerprint",
+    ]
+    assert (
+        controller.remote_judge_invocation_reasons(
+            state,
+            {"authentication": True},
+            {"choices": [{"message": {"tool_calls": [{"id": "call-1"}]}}]},
+        )
+        == []
+    )
+
+
+def test_executor_context_includes_bounded_judge_corrections(settings, stub_provider) -> None:
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)
+    state = SessionState(
+        session_id="correction",
+        judge_verdict={"verdict": "revise", "required_edits": [{"target": "claim"}]},
+    )
+
+    context = controller.role_context("executor", state, "apply corrections")
+
+    assert context["judge_corrections"] == state.judge_verdict

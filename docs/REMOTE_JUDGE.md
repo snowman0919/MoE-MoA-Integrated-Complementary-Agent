@@ -22,10 +22,22 @@ all seven criterion states, structured findings, bounded required edits, a
 recheck flag, and a confidence class. It contains no tools. Each request ID is
 limited to two calls: one initial judgment and one recheck.
 
+Selective routing is deterministic. High/critical risk, authentication or
+security changes, database schema or destructive migrations, concurrency or
+state-machine changes, destructive actions, production deployment approval,
+production Skill/Prompt/Policy/Routing promotion, weekly gold candidates,
+test/claim inconsistency, Reviewer/Frontier disagreement, rejected review, and
+repeated failure fingerprints trigger the gate. Tool-call turns are never sent
+as final drafts. A high-risk streaming request returns a bounded non-streaming
+retry requirement before any model output can escape.
+
 Timeout, rate-limit, and provider failures fall back once to the local Reviewer
 for low/medium risk. High/critical risk fails closed. No Executor/Judge rewrite
-loop is created. Remote approval alone is evaluation evidence, not an objective
-fact or automatic gold-training label.
+loop is created. Approval permits final delivery. Any other verdict suppresses
+the draft, persists structured correction instructions, and returns a bounded
+correction state; the next Executor turn receives those instructions. Remote
+approval alone is evaluation evidence, not an objective fact or automatic
+gold-training label.
 
 Physical NVIDIA NIM validation and production enablement remain pending. Do not
 enable the provider until the cases in `docs/VALIDATION.md` cover valid approval,

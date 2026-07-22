@@ -21,6 +21,7 @@ from dgx_moa.lifecycle import (
     calculate_idle_policy,
     continuation_correlation,
 )
+from dgx_moa.remote_judge import MockJudgeProvider, RemoteJudgeVerdict
 from dgx_moa.replay import ReplaySnapshot
 from dgx_moa.schemas import ChatRequest, ResponsesRequest
 from dgx_moa.state import Phase, SessionState
@@ -108,6 +109,41 @@ def assert_no_request_leases(app) -> None:  # type: ignore[no-untyped-def]
     assert rows == (0,)
 
 
+def remote_verdict(value: str = "approve") -> RemoteJudgeVerdict:
+    return RemoteJudgeVerdict.model_validate(
+        {
+            "verdict": value,
+            "risk": "high",
+            "criteria": {
+                key: "pass"
+                for key in (
+                    "instruction_following",
+                    "evidence_grounding",
+                    "logical_consistency",
+                    "tool_consistency",
+                    "test_consistency",
+                    "safety",
+                    "completeness",
+                )
+            },
+            "findings": [],
+            "required_edits": (
+                []
+                if value == "approve"
+                else [
+                    {
+                        "operation": "replace",
+                        "target": "unsupported claim",
+                        "instruction": "state the verified result only",
+                    }
+                ]
+            ),
+            "recheck_required": value != "approve",
+            "confidence_class": "high",
+        }
+    )
+
+
 def block_profile_control(monkeypatch: pytest.MonkeyPatch) -> None:
     def reject_control(*args, **kwargs):  # type: ignore[no-untyped-def]
         raise AssertionError("profile control escaped an admin route test")
@@ -133,6 +169,91 @@ def test_systemd_lifecycle_driver_uses_model_load_timeout(
         pass
 
     assert captured == {"unit_map": {}, "timeout_seconds": 123.0}
+
+
+@pytest.mark.parametrize(("judge_value", "expected_status"), (("approve", 200), ("revise", 409)))
+def test_selective_remote_judge_gates_final_delivery(
+    settings: Settings,
+    judge_value: str,
+    expected_status: int,
+) -> None:
+    class FinalProvider(StubProvider):
+        async def complete(self, role, model, request, **options):  # type: ignore[no-untyped-def]
+            if role != "executor":
+                return await super().complete(role, model, request, **options)
+            self.calls.append(role)
+            self.requests.append(request)
+            self.call_options.append(options)
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "verified result"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+
+    app = create_app(settings)
+    provider = FinalProvider()
+    remote = MockJudgeProvider(remote_verdict(judge_value))
+    with TestClient(app) as client:
+        app.state.provider = provider
+        app.state.controller.provider = provider
+        app.state.remote_judge = remote
+        app.state.remote_judge_available = True
+        app.state.controller.remote_judge = remote
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": f"judge-{judge_value}",
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "verify security change"}],
+                "metadata": {"authentication": True},
+            },
+        )
+
+    assert response.status_code == expected_status
+    assert provider.calls == ["executor", "reviewer"]
+    assert len(remote.packages) == 1
+    state = app.state.store.get(f"judge-{judge_value}")
+    assert state is not None
+    assert state.judge_status == judge_value
+    if judge_value == "approve":
+        assert response.json()["choices"][0]["message"]["content"] == "verified result"
+    else:
+        assert response.json()["error"]["type"] == "judge_correction_required"
+        assert state.phase == Phase.CORRECTION
+
+
+def test_selective_remote_judge_rejects_unbuffered_high_risk_stream(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    app = create_app(settings)
+    remote = MockJudgeProvider(remote_verdict())
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.remote_judge = remote
+        app.state.remote_judge_available = True
+        app.state.controller.remote_judge = remote
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "stream": True,
+                "messages": [{"role": "user", "content": "deploy"}],
+                "metadata": {"production_deployment": True},
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["type"] == "judge_non_stream_required"
+    assert stub_provider.calls == []
+    assert remote.packages == []
 
 
 async def direct_chat(app, session_id: str, *, stream: bool = False):  # type: ignore[no-untyped-def]
@@ -4303,6 +4424,7 @@ def test_profile_aware_readiness(settings, stub_provider: StubProvider, monkeypa
                 "reasoner": "ready",
                 "judge": "stopped",
             },
+            "remote_judge": "disabled",
             "auth_enabled": True,
         }
         app.state.profiles.transition("judge")

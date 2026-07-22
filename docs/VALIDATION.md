@@ -3397,3 +3397,31 @@ This remains synthetic isolated evidence. It is not a live NVIDIA NIM call, a
 real weekly production window, or authorization for automatic promotion,
 training collection, retention apply, scheduler installation, or production
 enablement.
+
+## Selective Remote Judge delivery gate — 2026-07-22
+
+The development controller now deterministically selects the Remote Judge for
+the specified high-risk, security, schema/migration, concurrency/state-machine,
+destructive, deployment, promotion, weekly-gold, disagreement, repeated-failure,
+and test/claim inconsistency conditions. A mocked end-to-end gateway request
+proved that the local Reviewer runs before the Judge, `approve` permits the
+Executor draft, and `revise` suppresses that draft with a bounded HTTP 409
+correction state. A separate streaming case proved that high-risk content is
+rejected before upstream generation and must be retried non-streaming. Tool-call
+turns are excluded from final-draft judgment. The default loop budget now
+matches the two-call initial/recheck contract.
+
+The serialized verification passed:
+
+- `uv run pytest -q`: `826 passed`, with the existing third-party Starlette
+  TestClient deprecation warning.
+- `uv run ruff format --check .`: 81 files formatted.
+- `uv run ruff check .`: all checks passed.
+- `uv run mypy`: no issues in 41 source files.
+- systemd unit verification, every shell script `bash -n`, and
+  `git diff --check`: clean.
+- trace completeness: 10/10 sessions, zero incomplete or legacy sessions, and
+  100.0% mandatory-field completeness.
+
+This is mocked provider evidence. It does not satisfy the live NVIDIA NIM
+physical matrix or authorize production Remote Judge enablement.

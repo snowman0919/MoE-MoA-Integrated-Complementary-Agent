@@ -12,7 +12,9 @@ OpenAI-compatible `/v1/models` and `/v1/chat/completions` routes. NVIDIA details
 do not enter the controller.
 
 Startup construction rejects unresolved endpoint variables. Availability is a
-credentialed model-catalog probe. A successful health probe does not prove
+credentialed, five-second-bounded model-catalog probe. `/healthz` and `/readyz`
+report `disabled`, `available`, or `unavailable` without exposing credentials.
+A successful health probe does not prove
 judgment quality; the full physical matrix in `docs/REMOTE_JUDGE.md` is the
 enablement gate.
 

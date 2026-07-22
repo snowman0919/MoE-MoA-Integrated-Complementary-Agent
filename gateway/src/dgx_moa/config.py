@@ -190,7 +190,7 @@ def default_loop_budgets() -> dict[str, int | float]:
         "planner_calls": 2,
         "reviewer_calls": 2,
         "frontier_calls": 2,
-        "judge_calls": 1,
+        "judge_calls": 2,
         "tokens": 250_000,
         "external_cost_usd": 10,
         "wall_clock_seconds": 1_800,
