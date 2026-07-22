@@ -18,6 +18,7 @@ from typing import Any, Literal, cast
 import zstandard
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .security import is_sensitive_key
 from .state import StateStore
 
 RepositoryTrainingPolicy = Literal[
@@ -76,7 +77,7 @@ def sanitize(value: Any) -> SanitizationResult:
         if isinstance(item, dict):
             cleaned = {}
             for key, content in item.items():
-                if re.search(r"(?i)authorization|cookie|token|secret|password|api.?key", key):
+                if is_sensitive_key(key):
                     cleaned[key] = "[REDACTED]"
                     secrets_found += 1
                 else:

@@ -3947,3 +3947,16 @@ suite passed `853 passed`; Ruff, strict mypy over 41 source files, shell syntax,
 systemd verification, and diff checks were clean. Production Training and
 Weekly jobs remain disabled because only 1.3 GB is free against the 10 GB
 reserve; no production data was collected or packaged.
+
+## Routing cost redaction regression — 2026-07-22
+
+The production trace audit found that the generic dictionary-key redactor
+treated the `tokens` segment in
+`remote_api_cost_per_million_tokens_usd` as a credential and replaced the
+measured cost with `[REDACTED]`. The shared key classifier now redacts exact
+credential names and credential-name suffixes, including camel-case forms,
+while retaining cost, token-count, and redaction-count measurements. Synthetic
+API key, Authorization, cookie, access-token, and client-secret regressions
+remain redacted in both trace and training sanitization paths. The full suite
+passed `855 passed`; Ruff formatting/check, strict mypy over 41 source files,
+and diff checks were clean.

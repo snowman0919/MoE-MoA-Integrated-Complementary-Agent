@@ -16,6 +16,22 @@ SECRET_PATTERNS = (
 )
 
 
+def is_sensitive_key(key: str) -> bool:
+    normalized = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", key).lower().replace("-", "_")
+    credential_names = (
+        "authorization",
+        "cookie",
+        "token",
+        "secret",
+        "password",
+        "api_key",
+        "api_keys",
+    )
+    return normalized in credential_names or normalized.endswith(
+        tuple(f"_{name}" for name in credential_names)
+    )
+
+
 def redact(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -24,7 +40,7 @@ def redact(value: Any) -> Any:
                 if isinstance(item, str) and item in {"[REDACTED]", "[REDACTED_BY_POLICY]"}
                 else "[REDACTED]"
             )
-            if re.search(r"(?i)authorization|cookie|token|secret|password|api.?key", key)
+            if is_sensitive_key(key)
             else redact(item)
             for key, item in value.items()
         }

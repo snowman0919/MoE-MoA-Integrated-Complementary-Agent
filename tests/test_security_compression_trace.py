@@ -37,6 +37,24 @@ def test_redaction_covers_http_credential_keys() -> None:
     ) == {"authorization": "[REDACTED]", "Cookie": "[REDACTED]"}
 
 
+def test_redaction_preserves_token_and_cost_measurements() -> None:
+    assert redact(
+        {
+            "remote_api_cost_per_million_tokens_usd": 1.25,
+            "input_tokens": 42,
+            "secret_redactions": 0,
+            "access_token": "synthetic-secret",
+            "clientSecret": "synthetic-secret",
+        }
+    ) == {
+        "remote_api_cost_per_million_tokens_usd": 1.25,
+        "input_tokens": 42,
+        "secret_redactions": 0,
+        "access_token": "[REDACTED]",
+        "clientSecret": "[REDACTED]",
+    }
+
+
 def test_trace_schema_and_secret_redaction(tmp_path) -> None:  # type: ignore[no-untyped-def]
     path = tmp_path / "trace.jsonl"
     export_trace(path, {"objective": "x", "tool_observation": "Authorization: Bearer secret"})

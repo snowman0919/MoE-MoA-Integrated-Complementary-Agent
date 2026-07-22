@@ -66,6 +66,23 @@ def test_sanitizer_handles_synthetic_secrets_entropy_email_and_phone() -> None:
     assert result.pii_redactions == 2
 
 
+def test_sanitizer_preserves_routing_cost_measurements() -> None:
+    result = sanitize(
+        {
+            "remote_api_cost_per_million_tokens_usd": 1.25,
+            "input_tokens": 42,
+            "access_token": "synthetic-secret",
+        }
+    )
+
+    assert result.value == {
+        "remote_api_cost_per_million_tokens_usd": 1.25,
+        "input_tokens": 42,
+        "access_token": "[REDACTED]",
+    }
+    assert result.secret_redactions == 1
+
+
 def test_unknown_repository_optout_and_external_license_fail_closed() -> None:
     trace = eligible_trace()
     trace["agent_invocations"] = [{"role": "frontier"}]
