@@ -3498,3 +3498,28 @@ Starlette warning, 82 formatted files, clean Ruff and strict mypy across 41
 source files, clean systemd/shell/diff checks, and 10/10 complete traces with
 100.0% mandatory-field completeness. External NIM and Discord gates remain
 unmet, so this is not release approval.
+
+## Structured role-artifact boundary — 2026-07-22
+
+Reasoner persistence now excludes hidden reasoning and accepts only bounded
+assumptions, constraints, conclusions, hypotheses, evidence references,
+recommended actions, additional-agent recommendations, and a categorical
+confidence. Planner responses now use a strict scope/dependency/risk/validation/
+rollback/acceptance artifact, and Reviewer findings use the required structured
+severity, evidence, location, impact, and correction fields. Legacy Reasoner
+input is migrated without retaining its reasoning field; policy redaction of the
+public `plan` field remains effective across the internal ordered-step schema.
+
+The serialized gate passed with `833 passed` and the existing third-party
+Starlette warning, 82 formatted files, clean Ruff, and strict mypy across 41
+source files. User-systemd verification, every shell script `bash -n`, and
+`git diff --check` exited zero. The checked-in trace audit reported 10/10
+complete sessions, zero incomplete or legacy sessions, and 100.0% mandatory
+field completeness.
+
+The isolated self-evolving-runtime validator reported `status=passed` at
+`/tmp/dgx-moa-v2-role-schema.PsSdu5/runtime/physical-validation.json` using real
+7-Zip 23.01. The regenerated archive SHA-256 is
+`8590690031b3c3b721ff6ac91b1672ae731888112fd00fb734d45f7f0cfd04ca`.
+This remains isolated synthetic evidence; it is not a live NVIDIA NIM call, a
+real Discord notification, a production weekly window, or release approval.

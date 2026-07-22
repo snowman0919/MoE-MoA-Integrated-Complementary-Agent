@@ -92,10 +92,9 @@ def test_render_events_uses_readable_multiline_cards() -> None:
                 request_id="request-1",
                 created_at="2026-07-22T00:00:00Z",
                 details={
-                    "confidence": 0.8,
-                    "problem_interpretation": "Inspect the runtime",
-                    "reasoning_summary": ["Read evidence", "Validate behavior"],
-                    "risks": ["Provider outage"],
+                    "confidence_category": "high",
+                    "conclusions": ["Inspect the runtime", "Validate behavior"],
+                    "hypotheses": ["Provider outage"],
                 },
             )
         ]
@@ -104,12 +103,11 @@ def test_render_events_uses_readable_multiline_cards() -> None:
     assert rendered == (
         "🧠 Reasoner completed\n"
         "Request: request-1\n"
-        "Confidence: 0.8\n"
-        "Interpretation: Inspect the runtime\n"
-        "Reasoning summary:\n"
-        "  • Read evidence\n"
+        "Confidence: high\n"
+        "Conclusions:\n"
+        "  • Inspect the runtime\n"
         "  • Validate behavior\n"
-        "Risks:\n"
+        "Hypotheses:\n"
         "  • Provider outage"
     )
 

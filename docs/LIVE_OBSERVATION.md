@@ -9,9 +9,10 @@ Discord uses a configured webhook and optional thread ID. Telegram uses a bot
 token, chat ID, and optional message-thread ID. Events are batched and rendered
 as readable multi-line cards. The default publishes only allowlisted status
 fields. An operator may separately enable the bounded user prompt and the
-Reasoner's structured artifact (`problem_interpretation`, explicit reasoning
-summary, risks, unknowns, and recommended actions). Hidden model reasoning is
-never available to this path. Credentials, environment data, and token deltas
+Reasoner's structured artifact (assumptions, constraints, conclusions,
+hypotheses, evidence references, recommended actions, and a confidence
+category). Hidden model reasoning is never available to this path. Credentials,
+environment data, and token deltas
 remain excluded, and the selected content is still passed through secret
 redaction. Telegram and Discord are external processors even when the gateway
 itself is tailnet-only. Provider secrets use Pydantic `SecretStr` and must arrive

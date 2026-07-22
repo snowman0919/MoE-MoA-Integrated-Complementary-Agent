@@ -259,7 +259,7 @@ async def test_policy_redacts_specialist_state_event_and_evaluation_boundaries(
         runtime_mode="orchestrated",
         request_class="standard_task",
         policy_redact_fields=[
-            "problem_interpretation",
+            "conclusions",
             "reason",
             "plan",
             "acceptance_criteria",
@@ -286,7 +286,7 @@ async def test_policy_redacts_specialist_state_event_and_evaluation_boundaries(
     )
     await controller.judge(state, "synthetic private observation")
 
-    assert state.reasoner_contributions[-1]["problem_interpretation"] == ("[REDACTED_BY_POLICY]")
+    assert state.reasoner_contributions[-1]["conclusions"] == []
     assert state.orchestration_decisions[-1]["reason"] == {}
     assert state.plan == []
     assert state.acceptance_criteria == []

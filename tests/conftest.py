@@ -64,14 +64,14 @@ class StubProvider:
         elif role == "reasoner":
             content = json.dumps(
                 {
-                    "problem_interpretation": "Complete the requested task.",
+                    "assumptions": [],
                     "constraints": ["Use verified evidence."],
-                    "reasoning": ["Take one bounded next step."],
-                    "risks": [],
-                    "unknowns": [],
+                    "conclusions": ["Complete the requested task."],
+                    "hypotheses": [],
+                    "evidence_references": [],
                     "recommended_actions": ["Proceed with the Executor."],
                     "additional_agents": [],
-                    "confidence": 0.9,
+                    "confidence_category": "high",
                 }
             )
         elif role == "judge":

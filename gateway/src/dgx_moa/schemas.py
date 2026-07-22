@@ -108,14 +108,34 @@ class AdditionalAgentRecommendation(BaseModel):
 class ReasonerContribution(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    problem_interpretation: str
+    assumptions: list[str]
     constraints: list[str]
-    reasoning: list[str]
-    risks: list[str]
-    unknowns: list[str]
+    conclusions: list[str]
+    hypotheses: list[str]
+    evidence_references: list[str]
     recommended_actions: list[str]
     additional_agents: list[AdditionalAgentRecommendation]
-    confidence: float = Field(ge=0, le=1)
+    confidence_category: Literal["low", "medium", "high"]
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_reasoning(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "confidence_category" in value:
+            return value
+        legacy = dict(value)
+        confidence = legacy.pop("confidence", 0.5)
+        interpretation = legacy.pop("problem_interpretation", "")
+        legacy.pop("reasoning", None)
+        risks = legacy.pop("risks", [])
+        unknowns = legacy.pop("unknowns", [])
+        legacy.setdefault("assumptions", [])
+        legacy.setdefault("conclusions", [interpretation] if interpretation else [])
+        legacy.setdefault("hypotheses", [*risks, *unknowns])
+        legacy.setdefault("evidence_references", [])
+        legacy["confidence_category"] = (
+            "high" if float(confidence) >= 0.8 else "low" if float(confidence) < 0.5 else "medium"
+        )
+        return legacy
 
 
 class OrchestrationDecision(BaseModel):
@@ -130,11 +150,73 @@ class OrchestrationDecision(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class PlannerStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    step_id: str = Field(min_length=1, max_length=128)
+    action: str = Field(min_length=1, max_length=2_000)
+    dependencies: list[str]
+    expected_evidence: list[str]
+
+
+class PlannerPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: list[str]
+    assumptions: list[str]
+    ordered_steps: list[PlannerStep]
+    dependencies: list[str]
+    risks: list[str]
+    validation_plan: list[str]
+    rollback_plan: list[str]
+    acceptance_criteria: list[str]
+
+    @model_validator(mode="before")
+    @classmethod
+    def convert_legacy_plan(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "ordered_steps" in value or "plan" not in value:
+            return value
+        legacy = dict(value)
+        steps = legacy.pop("plan")
+        legacy["ordered_steps"] = [
+            {
+                "step_id": f"step-{index}",
+                "action": str(item.get("step", item)) if isinstance(item, dict) else str(item),
+                "dependencies": [],
+                "expected_evidence": [],
+            }
+            for index, item in enumerate(steps, 1)
+        ]
+        for field in (
+            "scope",
+            "assumptions",
+            "dependencies",
+            "risks",
+            "validation_plan",
+            "rollback_plan",
+        ):
+            legacy.setdefault(field, [])
+        return legacy
+
+
+class ReviewFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    finding_id: str = Field(min_length=1, max_length=128)
+    severity: Literal["info", "minor", "important", "critical"]
+    category: str = Field(min_length=1, max_length=128)
+    evidence_references: list[str]
+    affected_location: str = Field(min_length=1, max_length=512)
+    impact: str = Field(min_length=1, max_length=2_000)
+    required_correction: str = Field(min_length=1, max_length=2_000)
+    optional_recommendation: str | None = Field(default=None, max_length=2_000)
+
+
 class ReviewResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: Literal["approved", "rejected"]
-    findings: list[str]
+    findings: list[ReviewFinding]
 
 
 class ProfileResponse(BaseModel):

@@ -60,7 +60,13 @@ from .remote_judge import (
     RemoteJudgeVerdict,
 )
 from .routing import ChangeRisk, heavy_eligible, needs_planner, select_route
-from .schemas import JudgeVerdict, OrchestrationDecision, ReasonerContribution, ReviewResult
+from .schemas import (
+    JudgeVerdict,
+    OrchestrationDecision,
+    PlannerPlan,
+    ReasonerContribution,
+    ReviewResult,
+)
 from .security import redact
 from .skills import SkillQuery, SkillRegistry
 from .state import Phase, SessionState, StateStore, now
@@ -1427,10 +1433,8 @@ class Controller:
     ) -> str:
         schema = {
             "reasoner": json.dumps(ReasonerContribution.model_json_schema(), separators=(",", ":")),
-            "planner": '{"plan":[{"step":"..."}],"acceptance_criteria":["..."]}',
-            "reviewer": (
-                '{"status":"approved","findings":[]} or {"status":"rejected","findings":["..."]}'
-            ),
+            "planner": json.dumps(PlannerPlan.model_json_schema(), separators=(",", ":")),
+            "reviewer": json.dumps(ReviewResult.model_json_schema(), separators=(",", ":")),
             "judge": json.dumps(JudgeVerdict.model_json_schema(), separators=(",", ":")),
         }.get(role, "OpenAI assistant message or tool calls")
         objective = (
@@ -1487,10 +1491,14 @@ class Controller:
         tests_failed = isinstance(validation, list) and any(
             isinstance(item, dict) and item.get("passed") is False for item in validation
         )
-        if tests_failed or active_failures(state) or reasoner.confidence < 0.5:
+        if tests_failed or active_failures(state) or reasoner.confidence_category == "low":
             return "low"
         executor_confidence = decision.confidence if decision else 1.0
-        if reasoner.confidence >= 0.8 and executor_confidence >= 0.8 and not reasoner.unknowns:
+        if (
+            reasoner.confidence_category == "high"
+            and executor_confidence >= 0.8
+            and not reasoner.hypotheses
+        ):
             return "high"
         return "medium"
 
@@ -1523,7 +1531,7 @@ class Controller:
             architecture
             or code_review
             or state.request_class == "high_risk_task"
-            or reasoner.confidence < 0.6
+            or reasoner.confidence_category == "low"
             or any(item.needed and item.role == "frontier" for item in reasoner.additional_agents)
             or len(active_failures(state)) >= 2
         )
@@ -1857,16 +1865,17 @@ class Controller:
                 "reasoner_completed",
                 {
                     "decision_id": decision_id,
-                    "confidence": contribution.confidence,
+                    "confidence_category": contribution.confidence_category,
                     "recommended_agents": [
                         item.role for item in contribution.additional_agents if item.needed
                     ],
                     **(
                         {
-                            "problem_interpretation": contribution.problem_interpretation,
-                            "reasoning_summary": contribution.reasoning,
-                            "risks": contribution.risks,
-                            "unknowns": contribution.unknowns,
+                            "assumptions": contribution.assumptions,
+                            "constraints": contribution.constraints,
+                            "conclusions": contribution.conclusions,
+                            "hypotheses": contribution.hypotheses,
+                            "evidence_references": contribution.evidence_references,
                             "recommended_actions": contribution.recommended_actions,
                         }
                         if self.settings.live_observation.include_reasoner_artifact
@@ -1910,7 +1919,7 @@ class Controller:
                 evidence = {
                     "objective": state.objective,
                     "constraints": state.acceptance_criteria,
-                    "reasoner_risks": reasoner_contribution.risks,
+                    "reasoner_hypotheses": reasoner_contribution.hypotheses,
                     "reasoner_recommendations": reasoner_contribution.recommended_actions,
                     "relevant_evidence": {
                         "changed_paths": request.get("metadata", {}).get("changed_paths", []),
@@ -2018,18 +2027,8 @@ class Controller:
                     "type": "json_schema",
                     "json_schema": {
                         "name": "plan",
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "plan": {"type": "array", "items": {"type": "object"}},
-                                "acceptance_criteria": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                            },
-                            "required": ["plan", "acceptance_criteria"],
-                            "additionalProperties": False,
-                        },
+                        "strict": True,
+                        "schema": PlannerPlan.model_json_schema(),
                     },
                 },
             }
@@ -2049,7 +2048,7 @@ class Controller:
                     stage="planner",
                 )
                 try:
-                    parsed = parse_json_content(planner)
+                    parsed = PlannerPlan.model_validate(parse_json_content(planner)).model_dump()
                 except ValueError:
                     self.store.event(
                         state.session_id,
@@ -2064,7 +2063,7 @@ class Controller:
                         timeout_seconds=self.settings.limits.planner_timeout_seconds,
                         stage="planner",
                     )
-                    parsed = parse_json_content(planner)
+                    parsed = PlannerPlan.model_validate(parse_json_content(planner)).model_dump()
             except (httpx.HTTPError, StageTimeout, ValueError) as error:
                 planner_error = error
                 self.record_provider_failure(state, "planner", error)
@@ -2088,9 +2087,16 @@ class Controller:
                 state.timings_ms["planner"] = round((time.monotonic() - planner_started) * 1000, 3)
             if planner is not None and planner_error is None:
                 self.record_invocation(state, "planner", planner, planner_started)
-                safe_planner = cast(dict[str, Any], self.safe_payload(state, parsed))
-                state.plan = safe_planner.get("plan", [])
+                policy_planner = {
+                    key: value for key, value in parsed.items() if key != "ordered_steps"
+                }
+                policy_planner["plan"] = parsed.get("ordered_steps", [])
+                safe_planner = cast(dict[str, Any], self.safe_payload(state, policy_planner))
+                safe_planner["ordered_steps"] = safe_planner.pop("plan", [])
+                state.plan = safe_planner.get("ordered_steps", [])
                 state.acceptance_criteria = safe_planner.get("acceptance_criteria", [])
+                state.agent_artifacts.append({"role": "planner", "output": safe_planner})
+                state.agent_artifacts = state.agent_artifacts[-self.settings.limits.max_steps :]
                 self._sync_loop_criteria(state)
                 self.store.event(state.session_id, "plan_created", {"steps": len(state.plan)})
                 self.record_evidence(
@@ -2539,8 +2545,9 @@ class Controller:
                                 "Review the bounded evidence below and return one minimal valid "
                                 "review JSON object only. The previous "
                                 "bounded response was invalid or truncated. Use exactly status "
-                                "approved or rejected and findings as a JSON array of concise "
-                                'strings. Example: {"status":"approved","findings":[]}. '
+                                "approved or rejected and structured findings matching the "
+                                "required schema. Example: "
+                                '{"status":"approved","findings":[]}. '
                                 "Reject when the evidence shows defects. No prose; fewer than 300 "
                                 f"tokens.\nBounded evidence:\n{retry_evidence}"
                             ),

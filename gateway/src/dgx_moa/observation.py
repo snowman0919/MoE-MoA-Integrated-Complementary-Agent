@@ -55,6 +55,7 @@ SAFE_PAYLOAD_KEYS = {
     "count",
     "steps",
     "confidence",
+    "confidence_category",
     "matched_rules",
     "missing_approvals",
     "termination_reason",
@@ -71,10 +72,11 @@ SAFE_PAYLOAD_KEYS = {
 }
 PROMPT_PAYLOAD_KEYS = ("prompt",)
 REASONER_PAYLOAD_KEYS = (
-    "problem_interpretation",
-    "reasoning_summary",
-    "risks",
-    "unknowns",
+    "assumptions",
+    "constraints",
+    "conclusions",
+    "hypotheses",
+    "evidence_references",
     "recommended_actions",
 )
 
@@ -102,11 +104,13 @@ DETAIL_LABELS = {
     "mode": "Mode",
     "latency_ms": "Latency (ms)",
     "confidence": "Confidence",
+    "confidence_category": "Confidence",
     "prompt": "Prompt",
-    "problem_interpretation": "Interpretation",
-    "reasoning_summary": "Reasoning summary",
-    "risks": "Risks",
-    "unknowns": "Unknowns",
+    "assumptions": "Assumptions",
+    "constraints": "Constraints",
+    "conclusions": "Conclusions",
+    "hypotheses": "Hypotheses",
+    "evidence_references": "Evidence references",
     "recommended_actions": "Recommended actions",
 }
 
