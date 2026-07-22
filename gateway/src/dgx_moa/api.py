@@ -2588,8 +2588,8 @@ def create_app(
                         raise ValueError(f"review failed: {error}") from error
                 else:
                     stage_status["reviewer"] = "completed"
-                    if not state.truncated:
-                        request.app.state.controller.apply_metadata(state, body.metadata)
+            if not state.truncated:
+                request.app.state.controller.apply_metadata(state, body.metadata)
             judge_reasons = list(
                 dict.fromkeys(
                     [
