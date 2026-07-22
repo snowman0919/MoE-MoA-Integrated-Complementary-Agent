@@ -18,9 +18,9 @@ Updated: 2026-07-22
 | Runtime Skills Phase C foundation | yes | yes | yes | isolated governed lifecycle | no |
 | Declarative Policy Phase D foundation | yes | yes | yes | isolated redaction | no |
 | Typed Evidence Graph Phase E foundation | yes | yes | yes | isolated replay validation | no |
-| Discord/Telegram Live Observation Phase E | yes | yes | yes | unit only | no |
+| Discord/Telegram Live Observation Phase E | yes | yes | yes | isolated loopback transport/control; platform pending | no |
 | Privacy-aware Training Collection Phase F | yes | yes | yes | isolated role/loop/preference archive | no |
-| Weekly Skill/Data Packaging Phase G | yes | yes | yes | isolated real 7z; scheduler/provider pending | no |
+| Weekly Skill/Data Packaging Phase G | yes | yes | yes | isolated real 7z + wall-clock scheduler; platform pending | no |
 | Execution Replay Phase H foundation | yes | yes | yes | isolated exact loop replay | no |
 | Fixed label-free Goal metrics endpoint | yes | yes | yes | production yes | yes |
 

@@ -46,5 +46,9 @@ the configured timezone. Reports contain real role/type/language/quality/privacy
 dedup/Skill/routing/failure aggregates and request/candidate indices. Completion
 publishes only package ID, counts, relative storage identifier, checksum, and
 verification status through the observation bus. Checked-in weekly jobs remain
-disabled and no wall-clock scheduled run or real Discord/Telegram notification
-has occurred.
+disabled. An isolated real-clock check scheduled both jobs for the next
+`Asia/Seoul` minute: package fired at `2026-07-22T09:09:00.005371+09:00` and
+Skill maintenance at `2026-07-22T09:09:00.291290+09:00`. The first validation
+attempt used the non-IANA OS abbreviation `KST` and timed out; the authoritative
+rerun used the configured IANA key `Asia/Seoul`. No production scheduled run or
+real Discord/Telegram notification has occurred.

@@ -36,6 +36,10 @@ gateway:
       role_permissions: {}
 ```
 
-The runtime has not sent a physical Discord or Telegram message. Provider rate
-limits, outage duration, real thread lifecycle, and real platform identities
-remain physical-validation requirements.
+An isolated 2026-07-22 physical check sent Discord- and Telegram-shaped requests
+through a real loopback HTTP server, including thread targets, safe payload
+projection, HTTP 429, connection outage, and non-blocking failure isolation.
+Separate checks passed allowlist denial, scoped nonce, expiration, audit, and
+idempotent replay. The runtime has not sent a message to an actual Discord or
+Telegram platform account; real thread lifecycle and platform identities remain
+the external physical-validation gate.
