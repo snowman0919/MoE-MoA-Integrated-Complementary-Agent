@@ -24,8 +24,8 @@ Updated: 2026-07-22
 | Telegram Live Observation Phase E | yes | yes | yes | production Telegram; isolated control | Telegram yes; controls no |
 | Privacy-aware Training Collection Phase F | yes | yes | yes | isolated role/loop/preference archive | no |
 | Weekly Skill/Knowledge/Data Packaging Phase G | yes | yes | yes | isolated reports, real 7z + wall-clock scheduler; platform pending | no |
-| Execution Replay Phase H foundation | yes | yes | yes | isolated exact loop replay | no |
-| Prompt/Policy/Routing evolution registry | yes | yes | yes | isolated replay/canary/promotion/rollback | no |
+| Execution Replay Phase H foundation | yes | yes | yes | production exact mock replay and fail-closed boundary | yes, operator-only |
+| Prompt/Policy/Routing evolution registry | yes | yes | yes | production empty-registry integrity; isolated lifecycle | yes, empty registry |
 | Fixed label-free Goal metrics endpoint | yes | yes | yes | production yes | yes |
 
 This table is the current authority. Later sections preserve historical Phase
@@ -105,6 +105,11 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   a matched budget rule. Production starts with empty governed registries and a
   single `production-v1` rule requiring explicit approval for requests marked
   destructive; no candidate was automatically promoted.
+- PR `#54` records the exact active Prompt artifact/version in session and trace
+  metrics for replay. Production enabled the authenticated operator Replay API
+  and an empty Evolution registry as `main@cbcb011`; Training and Weekly remain
+  disabled. Exact mock replay passed deterministically, live comparative replay
+  remained fail-closed, and no evolution artifact was promoted.
 
 ## Runtime
 

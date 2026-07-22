@@ -3885,3 +3885,36 @@ termination `PERMISSION_REQUIRED`. The evidence recorded matched rule
 `destructive-operation-approval` and required approval
 `destructive-operation`. No Skill, Knowledge, Prompt, or Policy candidate was
 automatically promoted.
+
+## Production Evolution and exact Replay gate — 2026-07-22
+
+PR `#54` added active Prompt provenance to `SessionState` and trace metrics as
+`artifact_id@version`, so Replay snapshots retain the exact Prompt selected for
+each role. Focused evolution/trace/replay tests passed `28 passed`; the full
+suite passed `850 passed` with clean Ruff formatting/check, strict mypy over 42
+source files, systemd verification, shell syntax checks, 10/10 complete traces,
+and 100.0% mandatory trace fields.
+
+The reviewed change was merged and deployed as `main@cbcb011`. The protected
+production environment enabled only the authenticated admin API and an empty
+Evolution registry. Training Collection and Weekly Packaging remained disabled.
+SQLite `integrity_check` returned `ok`, with zero evolution artifacts and zero
+canaries; no Prompt, Policy, or Routing candidate was promoted.
+
+An operator-authenticated production exact regression replay used a bounded
+Executor snapshot containing `prompt.executor@1`. It returned exact mocks,
+`deterministic_claim=true`, no nondeterminism sources, and snapshot SHA-256
+`f52007548ab34989bbeb3b7d301735226cae06a7a8357b8e6112028c07054924`. A
+non-exact routing-policy comparison returned HTTP 409 because the admin API has
+no internal live-provider callback. Training and Weekly admin probes each
+returned HTTP 404 with their disabled-feature errors.
+
+The deployment restart used the selected exact Executor full stop/start. Its
+unchanged baseline loaded 10/10 shards with context 65,536, one sequence,
+1,700,000,000 KV bytes, 0.5 GPU utilization, and MARLIN, then passed the real
+`/v1/models` readiness probe. Resident restoration subsequently loaded the
+Reviewer through its own four-shard readiness sequence and real readiness
+probe. A final authenticated `dgx-moa-fast` inference returned exact
+`DEPLOY_READY`. `/readyz` reported the resident profile ready with Executor,
+Reviewer, and Reasoner ready, Planner intentionally stopped, and the separate
+Remote Judge available.
