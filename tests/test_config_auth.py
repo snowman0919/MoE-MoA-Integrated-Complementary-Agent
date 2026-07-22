@@ -146,6 +146,23 @@ def test_runtime_knowledge_is_separate_bounded_and_disabled_by_default(
     assert Settings(auth_enabled=False).runtime_knowledge.enabled is False
 
 
+def test_runtime_evolution_registry_is_disabled_and_separate_by_default(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text("gateway: {}\nmodels: {}\n")
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
+    monkeypatch.setenv(
+        "DGX_MOA_RUNTIME_EVOLUTION",
+        f'{{"enabled":true,"state_db":"{tmp_path / "evolution.db"}"}}',
+    )
+
+    settings = load_settings(config)
+
+    assert settings.runtime_evolution.enabled is True
+    assert Settings(auth_enabled=False).runtime_evolution.enabled is False
+
+
 def test_declarative_policy_environment_is_strict_and_disabled_by_default(
     monkeypatch, tmp_path: Path
 ) -> None:

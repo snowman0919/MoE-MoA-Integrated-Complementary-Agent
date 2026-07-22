@@ -44,6 +44,9 @@ gateway:
     state_db: data/knowledge/knowledge.db
     retrieval_limit: 3
     max_context_characters: 6000
+  runtime_evolution:
+    enabled: false
+    state_db: data/evolution/evolution.db
   remote_judge:
     enabled: false
     provider: disabled

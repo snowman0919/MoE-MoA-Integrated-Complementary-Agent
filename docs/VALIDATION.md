@@ -3355,3 +3355,45 @@ The serialized verification passed:
 This is implementation and unit/mock evidence only. No NVIDIA credential was
 present or required, no live NIM/GLM-5.2 request occurred, no production
 Knowledge database was created, and neither feature is production-enabled.
+
+## Governed evolution and complete weekly tree — 2026-07-22
+
+The complete serialized development verification passed after this slice:
+
+- `uv run pytest -q`: `821 passed`, with the existing third-party Starlette
+  TestClient deprecation warning.
+- `uv run ruff format --check .`: 81 files formatted.
+- `uv run ruff check .`: all checks passed.
+- `uv run mypy`: no issues in 41 source files.
+- `systemd-analyze --user verify systemd/*`, every shell script `bash -n`, and
+  `git diff --check`: clean.
+- `scripts/audit-trace-completeness.sh data/traces`: 10/10 sessions complete,
+  zero incomplete or legacy sessions, and 100.0% mandatory-field completeness.
+
+The development registry physically exercised Prompt candidate creation,
+schema/replay/regression/Reviewer evaluation, approved canary, Executor-evidenced
+helpful outcome, explicit promotion, and versioned rollback. High-impact unit
+coverage rejects evaluation without Judge approval. The controller preserves its
+schema, untrusted-data, safety, and authority layers around any active registered
+role Prompt.
+
+The weekly package tree now creates the specified Judge, preference, MCP,
+Routing, Knowledge, Prompt, Policy, negative, index, quarantine, snapshot, and
+report paths. Judge, Knowledge, Prompt, and Policy candidates route to separate
+datasets rather than falling into generic Executor SFT output. Manifest identity
+now includes Skill, Knowledge, Prompt, Policy, and Routing versions plus Judge
+configuration.
+
+`/tmp/dgx-moa-v2-foundations-L23Ogd/runtime/physical-validation.json` reports
+`status=passed` using real 7-Zip 23.01. It includes bounded loops, exact replay,
+Skill and Knowledge validation/promotion/retrieval, Prompt replay/canary/
+promotion/rollback, sanitized mock Remote Judge evidence, complete role/loop
+packaging, archive verification, idempotent replay, revocation/regeneration,
+capacity isolation, and expected corruption/archive-creation failures. The
+regenerated archive SHA-256 is
+`6f0eb3500cced7b32dd85da7004ffa958fbf1a5c6ec2cd8162204895fefde2e2`.
+
+This remains synthetic isolated evidence. It is not a live NVIDIA NIM call, a
+real weekly production window, or authorization for automatic promotion,
+training collection, retention apply, scheduler installation, or production
+enablement.

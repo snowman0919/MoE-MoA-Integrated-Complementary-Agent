@@ -26,15 +26,26 @@ DATASET_PATHS = (
     "datasets/sft/reasoner.jsonl",
     "datasets/sft/planner.jsonl",
     "datasets/sft/reviewer.jsonl",
+    "datasets/judge/verdicts.jsonl",
+    "datasets/judge/findings.jsonl",
+    "datasets/judge/corrections.jsonl",
+    "datasets/judge/escalations.jsonl",
+    "datasets/judge/false-approvals.jsonl",
+    "datasets/judge/false-rejections.jsonl",
     "datasets/preference/executor-preferences.jsonl",
     "datasets/preference/review-preferences.jsonl",
+    "datasets/preference/judge-preferences.jsonl",
     "datasets/preference/repair-preferences.jsonl",
     "datasets/tool_use/tool-selection.jsonl",
     "datasets/tool_use/tool-calls.jsonl",
     "datasets/tool_use/tool-result-interpretation.jsonl",
+    "datasets/tool_use/mcp-tool-use.jsonl",
+    "datasets/tool_use/mcp-recovery.jsonl",
     "datasets/routing/agent-routing.jsonl",
     "datasets/routing/frontier-routing.jsonl",
+    "datasets/routing/judge-routing.jsonl",
     "datasets/routing/skill-routing.jsonl",
+    "datasets/routing/knowledge-routing.jsonl",
     "datasets/loops/state-transitions.jsonl",
     "datasets/loops/repair-trajectories.jsonl",
     "datasets/loops/termination-decisions.jsonl",
@@ -42,10 +53,21 @@ DATASET_PATHS = (
     "datasets/skills/usefulness.jsonl",
     "datasets/skills/generation-candidates.jsonl",
     "datasets/skills/revision-candidates.jsonl",
+    "datasets/knowledge/retrieval.jsonl",
+    "datasets/knowledge/generation-candidates.jsonl",
+    "datasets/knowledge/contradiction-resolution.jsonl",
+    "datasets/knowledge/usefulness.jsonl",
+    "datasets/prompts/prompt-candidates.jsonl",
+    "datasets/prompts/prompt-comparisons.jsonl",
+    "datasets/prompts/prompt-failures.jsonl",
+    "datasets/policies/policy-decisions.jsonl",
+    "datasets/policies/policy-candidates.jsonl",
+    "datasets/policies/policy-comparisons.jsonl",
     "datasets/negatives/invalid-structured-output.jsonl",
     "datasets/negatives/failed-tools.jsonl",
     "datasets/negatives/duplicate-repairs.jsonl",
     "datasets/negatives/unsupported-claims.jsonl",
+    "datasets/negatives/incorrect-judge-verdicts.jsonl",
     "indices/request-index.jsonl",
     "indices/candidate-index.jsonl",
     "indices/object-index.jsonl",
@@ -56,7 +78,11 @@ REPORTS = (
     "privacy-report.json",
     "dedup-report.json",
     "skill-usage.json",
+    "knowledge-usage.json",
+    "prompt-analysis.json",
+    "policy-analysis.json",
     "routing-analysis.json",
+    "judge-analysis.json",
     "failure-analysis.json",
 )
 
@@ -367,6 +393,25 @@ def candidate_path(candidate: TrainingCandidate) -> str:
         return "datasets/routing/agent-routing.jsonl"
     if candidate.candidate_type == "skill":
         return "datasets/skills/retrieval.jsonl"
+    if candidate.candidate_type == "knowledge":
+        return "datasets/knowledge/retrieval.jsonl"
+    if candidate.candidate_type == "prompt":
+        return "datasets/prompts/prompt-candidates.jsonl"
+    if candidate.candidate_type == "policy":
+        return "datasets/policies/policy-candidates.jsonl"
+    if candidate.candidate_type == "judge":
+        judge_dataset = str(candidate.quality_labels.get("judge_dataset", "verdicts"))
+        allowed = {
+            "verdicts",
+            "findings",
+            "corrections",
+            "escalations",
+            "false-approvals",
+            "false-rejections",
+        }
+        if judge_dataset not in allowed:
+            raise ValueError("invalid Judge dataset target")
+        return f"datasets/judge/{judge_dataset}.jsonl"
     return f"datasets/sft/{candidate.role_target}.jsonl"
 
 
@@ -651,6 +696,10 @@ class WeeklyPackager:
         policy_version: str,
         skill_registry_version: str,
         model_configuration: dict[str, Any],
+        knowledge_registry_version: str = "none",
+        prompt_registry_version: str = "none",
+        routing_version: str = "none",
+        judge_configuration: dict[str, Any] | None = None,
         encrypted: bool = False,
         regenerate: bool = False,
     ) -> dict[str, Any]:
@@ -673,7 +722,8 @@ class WeeklyPackager:
         ).hexdigest()
         key = hashlib.sha256(
             f"{window.utc_start.isoformat()}|{window.utc_end.isoformat()}|1.0|"
-            f"{policy_version}|{source_snapshot}".encode()
+            f"{policy_version}|{skill_registry_version}|{knowledge_registry_version}|"
+            f"{prompt_registry_version}|{routing_version}|{source_snapshot}".encode()
         ).hexdigest()
         package_id = f"moa-finetune-{window.week}"
         existing = self.registry.get(key)
@@ -713,6 +763,10 @@ class WeeklyPackager:
                 skill_registry_version,
                 model_configuration,
                 deduplication_counts,
+                knowledge_registry_version,
+                prompt_registry_version,
+                routing_version,
+                judge_configuration,
             )
             subprocess.run(
                 [
@@ -866,6 +920,10 @@ class WeeklyPackager:
             policy_version=str(manifest["policy_version"]),
             skill_registry_version=str(manifest["skill_registry_version"]),
             model_configuration=dict(manifest["model_configuration"]),
+            knowledge_registry_version=str(manifest.get("knowledge_registry_version", "none")),
+            prompt_registry_version=str(manifest.get("prompt_registry_version", "none")),
+            routing_version=str(manifest.get("routing_version", "none")),
+            judge_configuration=dict(manifest.get("judge_configuration", {})),
             regenerate=True,
         )
         self.registry.resolve_revocation(idempotency_key)
@@ -936,6 +994,10 @@ class WeeklyPackager:
         skill_registry_version: str,
         model_configuration: dict[str, Any],
         deduplication_counts: dict[str, int] | None = None,
+        knowledge_registry_version: str = "none",
+        prompt_registry_version: str = "none",
+        routing_version: str = "none",
+        judge_configuration: dict[str, Any] | None = None,
     ) -> None:
         directory.mkdir(parents=True)
         for relative in DATASET_PATHS:
@@ -997,7 +1059,11 @@ class WeeklyPackager:
             "production_commit": production_commit,
             "policy_version": policy_version,
             "skill_registry_version": skill_registry_version,
+            "knowledge_registry_version": knowledge_registry_version,
+            "prompt_registry_version": prompt_registry_version,
+            "routing_version": routing_version,
             "model_configuration": model_configuration,
+            "judge_configuration": judge_configuration or {},
             "dataset_counts": dict(counts),
             "quality_tier_counts": dict(tiers),
             "privacy_exclusions": {},
@@ -1028,6 +1094,9 @@ class WeeklyPackager:
             "SCHEMA_VERSIONS.json": {"package": "1.0", "candidate": "current"},
             "POLICY_SNAPSHOT.yaml": {"version": policy_version},
             "SKILL_SNAPSHOT.json": {"version": skill_registry_version},
+            "KNOWLEDGE_SNAPSHOT.json": {"version": knowledge_registry_version},
+            "PROMPT_SNAPSHOT.json": {"version": prompt_registry_version},
+            "ROUTING_SNAPSHOT.json": {"version": routing_version},
             "MODEL_SNAPSHOT.json": model_configuration,
         }
         for name, value in snapshots.items():
@@ -1083,7 +1152,11 @@ class WeeklyPackager:
             "privacy-report.json": privacy_report,
             "dedup-report.json": deduplication_counts or {},
             "skill-usage.json": {"candidate_count": candidate_types.get("skill", 0)},
+            "knowledge-usage.json": {"candidate_count": candidate_types.get("knowledge", 0)},
+            "prompt-analysis.json": {"candidate_count": candidate_types.get("prompt", 0)},
+            "policy-analysis.json": {"candidate_count": candidate_types.get("policy", 0)},
             "routing-analysis.json": {"candidate_count": candidate_types.get("routing", 0)},
+            "judge-analysis.json": {"candidate_count": candidate_types.get("judge", 0)},
             "failure-analysis.json": {"negative_examples": tiers.get("negative", 0)},
         }
         for report in REPORTS:

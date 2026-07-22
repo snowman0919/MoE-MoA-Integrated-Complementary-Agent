@@ -150,7 +150,18 @@ class TrainingCandidate(BaseModel):
 
     candidate_id: str = Field(default_factory=lambda: f"cand_{uuid.uuid4().hex}")
     candidate_type: Literal[
-        "sft", "preference", "tool_use", "routing", "review", "repair", "skill", "loop"
+        "sft",
+        "preference",
+        "tool_use",
+        "routing",
+        "review",
+        "judge",
+        "repair",
+        "skill",
+        "knowledge",
+        "policy",
+        "prompt",
+        "loop",
     ]
     source_request_ids: list[str]
     role_target: str

@@ -70,4 +70,5 @@ Authoritative references: `docs/STATE.md` for current state,
 loop foundation, `docs/SKILLS.md`, `docs/KNOWLEDGE_BASE.md`,
 `docs/REMOTE_JUDGE.md`, `docs/NVIDIA_NIM.md`, `docs/LIVE_OBSERVATION.md`,
 `docs/TRAINING_DATA.md`, and `docs/WEEKLY_PACKAGING.md` for the new disabled
-workflows, and `docs/RECURSIVE_IMPROVEMENT.md` for the branch workflow.
+workflows, `docs/RUNTIME_SELF_IMPROVEMENT.md` for governed Prompt/Policy/Routing
+candidates, and `docs/RECURSIVE_IMPROVEMENT.md` for the branch workflow.

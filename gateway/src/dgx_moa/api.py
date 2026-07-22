@@ -28,6 +28,7 @@ from .controller import (
     PolicyBlocked,
     ReasonerUnavailable,
 )
+from .evolution import PromptRegistry
 from .frontier import CodexOAuthCollaboration, load_frontier_config
 from .knowledge import KnowledgeRegistry
 from .lifecycle import (
@@ -558,6 +559,11 @@ def create_app(
             if configured.runtime_knowledge.enabled
             else None
         )
+        app.state.prompts = (
+            PromptRegistry(configured.runtime_evolution.state_db)
+            if configured.runtime_evolution.enabled
+            else None
+        )
         app.state.policy = (
             PolicyEngine(configured.declarative_policy.policy_set())
             if configured.declarative_policy.enabled
@@ -588,6 +594,7 @@ def create_app(
             skills=app.state.skills,
             policy=app.state.policy,
             knowledge=app.state.knowledge,
+            prompts=app.state.prompts,
             remote_judge=remote_judge,
         )
         app.state.lifecycle_store = LifecycleStore(

@@ -24,6 +24,7 @@ Updated: 2026-07-22
 | Privacy-aware Training Collection Phase F | yes | yes | yes | isolated role/loop/preference archive | no |
 | Weekly Skill/Data Packaging Phase G | yes | yes | yes | isolated real 7z + wall-clock scheduler; platform pending | no |
 | Execution Replay Phase H foundation | yes | yes | yes | isolated exact loop replay | no |
+| Prompt/Policy/Routing evolution registry | yes | yes | yes | isolated replay/canary/promotion/rollback | no |
 | Fixed label-free Goal metrics endpoint | yes | yes | yes | production yes | yes |
 
 This table is the current authority. Later sections preserve historical Phase

@@ -263,6 +263,13 @@ class RuntimeKnowledgePolicy(BaseModel):
     max_context_characters: int = Field(default=6_000, ge=256, le=32_000)
 
 
+class RuntimeEvolutionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    state_db: Path = Path("data/evolution/evolution.db")
+
+
 class RemoteJudgeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -444,6 +451,7 @@ class Settings(BaseModel):
     loop_engineering: LoopEngineeringPolicy = Field(default_factory=LoopEngineeringPolicy)
     runtime_skills: RuntimeSkillsPolicy = Field(default_factory=RuntimeSkillsPolicy)
     runtime_knowledge: RuntimeKnowledgePolicy = Field(default_factory=RuntimeKnowledgePolicy)
+    runtime_evolution: RuntimeEvolutionConfig = Field(default_factory=RuntimeEvolutionConfig)
     remote_judge: RemoteJudgeConfig = Field(default_factory=RemoteJudgeConfig)
     declarative_policy: DeclarativePolicyConfig = Field(default_factory=DeclarativePolicyConfig)
     live_observation: LiveObservationConfig = Field(default_factory=LiveObservationConfig)
@@ -595,6 +603,13 @@ def load_settings(path: str | Path | None = None) -> Settings:
         with suppress(json.JSONDecodeError):
             runtime_knowledge = json.loads(runtime_knowledge)
     gateway["runtime_knowledge"] = runtime_knowledge
+    runtime_evolution: Any = os.getenv(
+        "DGX_MOA_RUNTIME_EVOLUTION", gateway.get("runtime_evolution", {})
+    )
+    if isinstance(runtime_evolution, str):
+        with suppress(json.JSONDecodeError):
+            runtime_evolution = json.loads(runtime_evolution)
+    gateway["runtime_evolution"] = runtime_evolution
     remote_judge: Any = os.getenv("DGX_MOA_REMOTE_JUDGE", gateway.get("remote_judge", {}))
     if isinstance(remote_judge, str):
         with suppress(json.JSONDecodeError):

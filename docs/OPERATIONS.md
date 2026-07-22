@@ -150,6 +150,18 @@ and `NVIDIA_API_KEY` outside Git, use only bounded sanitized synthetic evidence,
 and do not enable production until the physical matrix passes. See
 `docs/REMOTE_JUDGE.md` and `docs/NVIDIA_NIM.md`.
 
+## Isolated runtime evolution development
+
+Prompt, Policy, Routing, failure-handling, and Judge-prompt candidates remain
+disabled. Use only a development-owned registry:
+
+```bash
+DGX_MOA_RUNTIME_EVOLUTION='{"enabled":true,"state_db":"/tmp/dgx-moa-evolution.db"}'
+```
+
+No candidate can bypass replay, regression, Reviewer, applicable Judge, canary,
+approval, and rollback-target gates. See `docs/RUNTIME_SELF_IMPROVEMENT.md`.
+
 ## Isolated declarative policy development
 
 The checked-in `gateway.declarative_policy.enabled` value is `false`. Use only

@@ -16,6 +16,7 @@ import httpx
 from .compression import compress_messages, compress_text
 from .config import Settings
 from .evidence import EvidenceEdge, EvidenceNode, classify_evidence
+from .evolution import PromptRegistry
 from .frontier import (
     CodexOAuthCollaboration,
     FrontierCollaborationResult,
@@ -179,6 +180,7 @@ class Controller:
         skills: SkillRegistry | None = None,
         policy: PolicyEngine | None = None,
         knowledge: KnowledgeRegistry | None = None,
+        prompts: PromptRegistry | None = None,
         remote_judge: JudgeProvider | None = None,
     ):
         self.settings = settings
@@ -189,6 +191,7 @@ class Controller:
         self.skills = skills
         self.policy = policy
         self.knowledge = knowledge
+        self.prompts = prompts
         self.remote_judge = remote_judge
         self.lifecycle_store: Any | None = None
         self._review_lock = asyncio.Lock()
@@ -1436,9 +1439,11 @@ class Controller:
                 "calls in prose or Markdown fences."
             )
         )
+        registered_policy = self.prompts.active_template(role) if self.prompts else None
         return "\n\n".join(
             (
-                f"IMMUTABLE ROLE POLICY\n{role} policy applies; read-only unless executor.",
+                "IMMUTABLE ROLE POLICY\n"
+                + (registered_policy or f"{role} policy applies; read-only unless executor."),
                 f"EXACT OUTPUT SCHEMA\n{schema}",
                 "ROLE CONTEXT\n"
                 + json.dumps(

@@ -149,7 +149,38 @@ def test_package_tree_contains_manifest_reports_checksums_and_role_data(tmp_path
     assert "candidate_id" in (directory / "indices/candidate-index.jsonl").read_text()
     assert "request-1" in (directory / "indices/request-index.jsonl").read_text()
     assert json.loads((directory / "reports/data-quality.json").read_text())["candidate_count"] == 1
+    for name in (
+        "PROMPT_SNAPSHOT.json",
+        "KNOWLEDGE_SNAPSHOT.json",
+        "ROUTING_SNAPSHOT.json",
+        "reports/knowledge-usage.json",
+        "reports/prompt-analysis.json",
+        "reports/policy-analysis.json",
+        "reports/judge-analysis.json",
+        "datasets/judge/false-approvals.jsonl",
+        "datasets/knowledge/contradiction-resolution.jsonl",
+        "datasets/prompts/prompt-comparisons.jsonl",
+        "datasets/policies/policy-comparisons.jsonl",
+    ):
+        assert (directory / name).is_file()
     assert "MANIFEST.json" in (directory / "CHECKSUMS.sha256").read_text()
+
+
+@pytest.mark.parametrize(
+    ("candidate_type", "expected"),
+    [
+        ("judge", "datasets/judge/verdicts.jsonl"),
+        ("knowledge", "datasets/knowledge/retrieval.jsonl"),
+        ("prompt", "datasets/prompts/prompt-candidates.jsonl"),
+        ("policy", "datasets/policies/policy-candidates.jsonl"),
+    ],
+)
+def test_governance_candidates_route_to_separate_datasets(
+    candidate_type: str, expected: str
+) -> None:
+    routed = candidate().model_copy(update={"candidate_type": candidate_type})
+
+    assert candidate_path(routed) == expected
 
 
 def test_verified_archive_publication_is_atomic_and_idempotent(tmp_path: Path) -> None:
