@@ -176,7 +176,7 @@ gateway:
     max_retained_observations: 12
     max_error_lines: 40
     max_diff_summary_lines: 100
-    planner_tokens: 1500
+    planner_tokens: 4096
     reasoner_tokens: 1500
     executor_tokens: 4096
     executor_max_tokens: 16384
