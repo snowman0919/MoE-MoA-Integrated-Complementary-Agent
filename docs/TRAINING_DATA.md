@@ -8,6 +8,10 @@ renamed at `objects/sha256/ab/cd/<hash>.json.zst`. Legacy gzip objects remain
 readable for migration. A free-space guard rejects training writes without
 failing inference.
 
+Raw training events use the fixed provider classes `local`, `frontier`, and
+`nvidia_nim`. Required quality-label fields remain explicitly null when the
+trace contains no trustworthy measurement; the collector does not infer them.
+
 Eligibility fails closed unless the trace is explicitly eligible and its
 repository is configured `training_allowed`. Request/user opt-out, repository
 `internal_only`/`training_denied`/unknown, tombstones, or unapproved external

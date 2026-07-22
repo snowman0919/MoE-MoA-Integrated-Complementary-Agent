@@ -2118,6 +2118,11 @@ def create_app(
             active_stage = "executor_first_byte" if body.stream else "executor_total"
             executor_started = time.monotonic()
             state.timings_ms["upstream_start"] = elapsed_ms(accepted)
+            request.app.state.store.event(
+                state_session_id,
+                "executor_started",
+                {"role": "executor", "phase": state.phase},
+            )
             if body.stream:
                 stream_lease_ids = tuple(
                     lease.lease_id

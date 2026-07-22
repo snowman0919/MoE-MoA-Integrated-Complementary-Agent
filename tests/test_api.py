@@ -3372,15 +3372,22 @@ def test_orchestrated_mode_uses_policy_roles(settings, stub_provider: StubProvid
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(
             "/v1/chat/completions",
-            headers={"Authorization": "Bearer test-secret"},
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "role-start-events",
+            },
             json={
                 "model": "dgx-moa-orchestrated",
                 "messages": [{"role": "user", "content": "change four files"}],
                 "metadata": {"expected_files": 4},
             },
         )
+        event_types = {
+            event["event_type"] for event in client.app.state.store.events("role-start-events")
+        }
     assert response.status_code == 200
     assert stub_provider.calls == ["reasoner", "executor", "planner", "executor"]
+    assert {"reasoner_started", "planner_invoked", "executor_started"}.issubset(event_types)
 
 
 def test_security_architecture_without_implementation_evidence_skips_reviewer(

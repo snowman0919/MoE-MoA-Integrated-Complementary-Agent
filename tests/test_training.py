@@ -93,6 +93,20 @@ def test_evidence_grounded_success_becomes_role_specific_gold_candidate() -> Non
     assert candidate.quality_tier == "gold"
     assert candidate.training_eligible is True
     assert candidate.evidence_summary == ["evidence-1"]
+    assert {
+        "acceptance_criteria_coverage",
+        "test_status",
+        "build_status",
+        "review_severity",
+        "frontier_verdict",
+        "judge_verdict",
+        "user_feedback",
+        "tool_success_rate",
+        "repair_count",
+        "iteration_count",
+        "progress_score",
+        "final_confidence_state",
+    }.issubset(candidate.quality_labels)
 
 
 def test_trace_material_produces_separate_role_routing_tool_and_skill_candidates() -> None:
@@ -529,6 +543,40 @@ def test_collector_creates_separate_events_and_candidate_without_raw_duplication
         "license_exclusions": 0,
     }
     assert len(training.packageable_candidates()) == 1
+
+
+def test_collector_records_exact_provider_classes(tmp_path: Path) -> None:
+    operational = StateStore(tmp_path / "operational.db")
+    objects = ContentStore(tmp_path / "objects")
+    training = TrainingStore(tmp_path / "training.db", objects, minimum_free_bytes=0)
+    collector = TrainingCollector(training, operational, external_output_permitted=True)
+    trace = eligible_trace() | {
+        "model_revisions": {
+            role: {"repository": f"test/{role}", "revision": "abc"}
+            for role in ("executor", "frontier", "judge")
+        },
+        "agent_invocations": [
+            {"role": "executor", "status": "completed"},
+            {"role": "frontier", "status": "completed"},
+            {"role": "judge", "provider": "nvidia_nim", "status": "completed"},
+        ],
+        "metrics": {"repository_training_policy": "training_allowed"},
+    }
+
+    collector.collect(trace)
+
+    with sqlite3.connect(tmp_path / "training.db") as database:
+        hashes = [
+            row[0]
+            for row in database.execute(
+                "SELECT payload_hash FROM training_events ORDER BY rowid"
+            ).fetchall()
+        ]
+    assert [objects.get(digest)["model_provider"] for digest in hashes] == [
+        "local",
+        "frontier",
+        "nvidia_nim",
+    ]
 
 
 def test_training_capacity_failure_does_not_escape_to_request_runtime(tmp_path: Path) -> None:

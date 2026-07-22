@@ -7,8 +7,11 @@ observation and never waits in the request path.
 
 Discord uses a configured webhook and optional thread ID. Telegram uses a bot
 token, chat ID, and optional message-thread ID. Events are batched and rendered
-as readable multi-line cards. The default publishes only allowlisted status
-fields. An operator may separately enable the bounded user prompt and the
+as readable multi-line cards. The allowlist covers request, Reasoner, Planner,
+Executor, Knowledge, Skill, Reviewer, Frontier, Judge, tool, loop, failure,
+policy, approval, and terminal lifecycle events. Judge cards expose only the
+verdict/risk/recheck state, never finding or correction prose. An operator may
+separately enable the bounded user prompt and the
 Reasoner's structured artifact (assumptions, constraints, conclusions,
 hypotheses, evidence references, recommended actions, and a confidence
 category). Hidden model reasoning is never available to this path. Credentials,

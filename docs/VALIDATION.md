@@ -3558,3 +3558,23 @@ Protected production configuration inspection exposed no values and found
 Telegram configured, Discord unconfigured, and no NVIDIA endpoint/key variable.
 Therefore the live NVIDIA matrix and real Discord delivery gate remain unmet;
 this section is not release approval.
+
+## Observation and training-schema coverage — 2026-07-22
+
+The existing observation bus now publishes the previously dropped safe
+Knowledge, Judge, tool-completion, failure, policy-block, and approval events.
+Reasoner, Planner, and Executor starts are emitted by their real call paths.
+The Judge projection retains verdict, risk, and recheck state while dropping
+correction prose. Training events now enforce exactly `local`, `frontier`, or
+`nvidia_nim`; required quality labels remain null when evidence is unavailable.
+
+The serialized gate passed with `838 passed` and the existing third-party
+Starlette warning, 82 formatted files, clean Ruff, and strict mypy across 41
+source files. User-systemd verification, every shell script `bash -n`, and
+`git diff --check` exited zero. The trace audit remained 10/10 complete with
+100.0% mandatory-field completeness. The isolated validator reported
+`status=passed` at
+`/tmp/dgx-moa-v2-observation.cW1CDi/runtime/physical-validation.json`; its real
+7-Zip 23.01 regenerated archive SHA-256 is
+`68ea79a698275c630db10616801eff0c1ffc667a4b4650c4d869f4c67e52cd0a`.
+This does not satisfy the still-missing live Discord or NVIDIA gates.

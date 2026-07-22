@@ -1797,6 +1797,7 @@ class Controller:
             decision_id = self._record_decision(
                 "reasoner", state, {"type": "structured_reasoning_request"}, state.objective
             )
+            self.store.event(state.session_id, "reasoner_started", {"role": "reasoner"})
             reasoner_started = time.monotonic()
             try:
                 for attempt in range(2):
@@ -2040,6 +2041,7 @@ class Controller:
             self._record_decision(
                 "planner", state, {"type": "plan_request"}, "New or invalidated task"
             )
+            self.store.event(state.session_id, "planner_invoked", {"role": "planner"})
             planner_started = time.monotonic()
             planner: dict[str, Any] | None = None
             parsed: dict[str, Any] = {}

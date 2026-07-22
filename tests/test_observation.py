@@ -83,6 +83,20 @@ def test_public_event_allowlists_fields_and_drops_unpublished_content() -> None:
     assert "archive_path" not in weekly.details
     assert public_event("request-1", "token_delta", {"text": "secret"}, "now") is None
 
+    judge = public_event(
+        "request-1",
+        "judge_completed",
+        {
+            "verdict": "revise",
+            "risk": "high",
+            "recheck_required": True,
+            "required_edits": ["private correction prose"],
+        },
+        "2026-07-22T00:00:00Z",
+    )
+    assert judge is not None
+    assert judge.details == {"verdict": "revise", "risk": "high", "recheck_required": True}
+
 
 def test_render_events_uses_readable_multiline_cards() -> None:
     rendered = render_events(

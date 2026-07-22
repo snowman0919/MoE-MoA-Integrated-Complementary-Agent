@@ -126,7 +126,7 @@ class TrainingEvent(BaseModel):
     iteration: int = 0
     role: str
     event_type: str
-    model_provider: str
+    model_provider: Literal["local", "nvidia_nim", "frontier"]
     model_identifier: str
     model_revision: str
     prompt_template_version: str
@@ -871,6 +871,7 @@ def candidate_from_trace(
         else "quarantine"
     )
     eligible = not reasons and tier in {"gold", "silver", "negative"}
+    metrics = trace.get("metrics", {})
     return TrainingCandidate(
         candidate_type="repair" if negative else "sft",
         source_request_ids=[request_id],
@@ -882,12 +883,21 @@ def candidate_from_trace(
         or list(trace.get("failure_classification", {})),
         quality_labels={
             "task_success": successful,
+            "acceptance_criteria_coverage": metrics.get("acceptance_criteria_coverage"),
+            "test_status": metrics.get("test_status"),
+            "build_status": metrics.get("build_status"),
+            "review_severity": metrics.get("review_severity"),
+            "frontier_verdict": metrics.get("frontier_verdict"),
+            "judge_verdict": trace.get("review_outcome", {}).get("judge"),
+            "user_feedback": metrics.get("user_feedback"),
+            "tool_success_rate": metrics.get("tool_success_rate"),
             "review_status": trace.get("review_outcome", {}).get("status"),
-            "iteration_count": trace.get("metrics", {}).get("iteration_count"),
+            "repair_count": len(trace.get("failures", [])),
+            "iteration_count": metrics.get("iteration_count"),
+            "progress_score": metrics.get("progress_score"),
+            "final_confidence_state": trace.get("derived_confidence"),
             "failure_classes": sorted(trace.get("failure_classification", {})),
-            "unsupported_claim_count": int(
-                trace.get("metrics", {}).get("unsupported_claim_count", 0) or 0
-            ),
+            "unsupported_claim_count": int(metrics.get("unsupported_claim_count", 0) or 0),
         },
         privacy_labels={
             "secret_redactions": sanitized.secret_redactions,
@@ -1135,13 +1145,20 @@ class TrainingCollector:
             for invocation in trace.get("agent_invocations", []):
                 role = str(invocation.get("role", "unknown"))
                 model = trace.get("model_revisions", {}).get(role, {})
+                model_provider: Literal["local", "nvidia_nim", "frontier"] = (
+                    "frontier"
+                    if role == "frontier"
+                    else "nvidia_nim"
+                    if invocation.get("provider") == "nvidia_nim"
+                    else "local"
+                )
                 event = TrainingEvent(
                     request_id=request_id,
                     task_id=str(trace.get("task_id", request_id)),
                     loop_id=str(metrics.get("engineering_loop_id", "")),
                     role=role,
                     event_type="agent_output",
-                    model_provider="external" if role == "frontier" else "local",
+                    model_provider=model_provider,
                     model_identifier=str(model.get("repository", role)),
                     model_revision=str(model.get("revision", "unknown")),
                     prompt_template_version="controller-v2",
