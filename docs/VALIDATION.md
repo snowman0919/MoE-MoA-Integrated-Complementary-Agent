@@ -4054,3 +4054,30 @@ Judge case returned `approve` in 3.667 seconds with 451 total tokens. Focused
 specialist/observation/controller tests passed `71 passed`; the full suite
 passed `857 passed` with the existing third-party Starlette warning. Ruff
 format/check, strict mypy over 41 source files, and `git diff --check` were clean.
+
+Production `main@acc55d8` retained the protected Executor baseline and passed
+`/v1/models` plus an actual inference returning exact `EXECUTOR_READY`.
+The first deployment-boundary request returned HTTP 503 while lifecycle
+reconciliation overlapped a systemd activation. The stable retry returned HTTP
+200 with exact `COLD_FALLBACK_OK`: its Reviewer event pinned OpenCode Go
+`deepseek-v4-flash`, reason `local_not_ready`, residency `LOADING`, and load
+generation 19 while the local service continued loading independently. After
+the Reviewer loaded 18.09 GiB and a real inference returned exact
+`REVIEWER_READY`, a second evidence-bearing review returned HTTP 200 with exact
+`LOCAL_REVIEW_OK`; its provider event pinned `dgx-moa-reviewer`, reason
+`local_ready`, residency `READY`, and generation 20. Runtime counters then
+reported one local call, one remote call, one cold miss, and zero Telegram
+errors. Hermes has no configured fallback providers, so it can no longer
+replace a runtime result with Codex after a gateway failure.
+
+The same deployment exposed a lifecycle control false negative: blocking
+`systemctl start` exceeded the driver's short command timeout while the healthy
+Reviewer continued loading, recording `start_command_failed` and
+`specialist_warmup_failed`. The driver now submits exact systemd starts with
+`--no-block`, recognizes `activating` as an expected transitional state, and
+continues polling until the inference health probe succeeds. Exact blocking
+service stop remains unchanged. Regression coverage verifies the exact argv,
+systemd activating-state parsing, and transition from activating through a
+successful inference probe to READY. The full suite passed `859 passed` with
+the existing third-party Starlette warning; Ruff and strict mypy over 41 source
+files were clean.

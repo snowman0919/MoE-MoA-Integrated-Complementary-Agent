@@ -1853,7 +1853,13 @@ def test_systemd_driver_uses_only_exact_argument_vectors(
             "--property=SubState",
             "--value",
         ],
-        ["systemctl", "--user", "start", "dgx-moa-dev-executor.service"],
+        [
+            "systemctl",
+            "--user",
+            "start",
+            "--no-block",
+            "dgx-moa-dev-executor.service",
+        ],
         ["systemctl", "--user", "stop", "dgx-moa-dev-executor.service"],
         [
             "journalctl",
@@ -1883,6 +1889,20 @@ def test_systemd_driver_uses_only_exact_argument_vectors(
         for _, kwargs in calls
     )
     assert all("shell" not in kwargs for _, kwargs in calls)
+
+
+def test_systemd_driver_reports_activating_unit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = lifecycle()
+
+    def fake_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0, stdout="activating\nstart\n", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    driver = module.SystemdLifecycleDriver({"reviewer": "dgx-moa-reviewer.service"})
+
+    assert driver.status("reviewer") == "activating"
 
 
 def test_systemd_driver_uses_global_cursor_for_never_started_unit(
@@ -2550,6 +2570,60 @@ async def test_inactive_or_failed_service_gets_a_typed_failure(
         ("start", "executor"),
         ("status", "executor"),
     ]
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_activating_service_is_polled_until_inference_ready(tmp_path: Path) -> None:
+    module = lifecycle()
+
+    class ActivatingDriver(module.FakeLifecycleDriver):
+        status_calls = 0
+
+        def start(self, role: str) -> None:
+            self._require_role(role)
+            self.calls.append(("start", role))
+            self._statuses[role] = "activating"
+
+        def status(self, role: str) -> module.DriverStatus:
+            status = super().status(role)
+            self.status_calls += 1
+            if self.status_calls > 1:
+                self._statuses[role] = "active"
+                return "active"
+            return status
+
+    store = module.LifecycleStore(tmp_path / "activating.db", ("reviewer",))
+    driver = ActivatingDriver({"reviewer": "inactive"}, progress={"reviewer": ("loading weights",)})
+    probes = 0
+
+    async def health_probe(role: str) -> bool:
+        nonlocal probes
+        assert role == "reviewer"
+        probes += 1
+        return probes == 2
+
+    async def sleeper(seconds: float) -> None:
+        assert seconds == 0.25
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=health_probe,
+        timeout_seconds=10.0,
+        poll_seconds=0.25,
+        clock=lambda: 100.0,
+        sleeper=sleeper,
+    )
+
+    check = await coordinator.ensure_ready("reviewer")
+    await coordinator._tasks["reviewer"]
+
+    assert check.load_triggered is True
+    assert store.get("reviewer").state == "ready"
+    assert probes == 2
+    assert driver.calls.count(("start", "reviewer")) == 1
+    assert driver.calls.count(("status", "reviewer")) == 2
     await coordinator.close()
 
 
