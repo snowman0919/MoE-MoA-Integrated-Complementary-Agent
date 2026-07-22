@@ -223,6 +223,8 @@ class SpecialistRouter:
         record = self._record_for_role(role)
         if self.warmup is None or record is None:
             return "unavailable"
+        if record.state == "ready":
+            return "not_needed"
         key = (role, revision, self.runtime_id)
         existing = self._warmups.get(key)
         if existing is not None and not existing.done():

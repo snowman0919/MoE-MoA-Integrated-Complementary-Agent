@@ -3745,3 +3745,11 @@ content, so the gateway failed closed with HTTP 502. A direct local
 tokens, and 1484 total tokens. The local Planner completion ceiling was raised
 to the physically validated 4096-token bound before repeating the warm-route
 production smoke.
+
+The repeated production smoke then completed HTTP 200 through local Planner.
+Routing recorded `READY`, `local_within_cost_margin`, predicted local/remote
+completion of 30.0/25.75 seconds, actual local completion of 47.078 seconds,
+and warm-up benefit. The post-restart metrics also exposed that predictive
+prewarming a role already in `READY` was incorrectly counted as a reused
+started/completed warm-up. The scheduler was corrected to return `not_needed`
+without creating a task or event for an already-ready specialist.
