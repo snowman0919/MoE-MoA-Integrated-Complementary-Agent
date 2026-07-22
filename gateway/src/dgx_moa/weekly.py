@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .knowledge import KnowledgeMetrics, KnowledgeRegistry, RuntimeKnowledge
 from .skills import RuntimeSkill, SkillMetrics, SkillRegistry
 from .training import TrainingCandidate, assess_candidate, near_duplicate, sanitize
 
@@ -313,6 +314,193 @@ def weekly_skill_report(
                 "skill_count": len(rows),
                 "high_value_count": len(report["highest_value"]),
                 "low_value_count": len(report["lowest_value"]),
+            },
+        )
+    return report
+
+
+def classify_knowledge(entry: RuntimeKnowledge, metrics: KnowledgeMetrics) -> str:
+    if metrics.retrieved == 0:
+        return "unused"
+    if metrics.harmful > metrics.helpful:
+        return "deprecation_candidate" if entry.state == "active" else "low_value"
+    helpful_rate = metrics.helpful / metrics.retrieved
+    if metrics.retrieved >= 5 and helpful_rate >= 0.8 and metrics.open_conflicts == 0:
+        return "high_value"
+    if helpful_rate >= 0.6 and metrics.open_conflicts == 0:
+        return "useful"
+    return "uncertain"
+
+
+def knowledge_overlap(left: RuntimeKnowledge, right: RuntimeKnowledge) -> float:
+    left_tokens = set(f"{left.title} {left.content.summary}".lower().split())
+    right_tokens = set(f"{right.title} {right.content.summary}".lower().split())
+    union = left_tokens | right_tokens
+    return len(left_tokens & right_tokens) / len(union) if union else 0.0
+
+
+def weekly_knowledge_report(
+    registry: KnowledgeRegistry,
+    output: str | Path,
+    *,
+    notifier: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    entries = registry.list_entries()
+    rows: list[dict[str, Any]] = []
+    for entry in entries:
+        metrics = registry.metrics(entry.knowledge_id, entry.version)
+        classification = classify_knowledge(entry, metrics)
+        classifications = [classification]
+        if metrics.open_conflicts:
+            classifications.extend(("update_candidate", "conflict_candidate"))
+        if entry.evidence.last_verified_at is None:
+            classifications.append("stale_candidate")
+        rows.append(
+            {
+                "knowledge_id": entry.knowledge_id,
+                "version": entry.version,
+                "state": entry.state,
+                "category": entry.category,
+                "classification": classification,
+                "classifications": classifications,
+                "metrics": metrics.model_dump(mode="json"),
+                "last_verified_at": entry.evidence.last_verified_at,
+            }
+        )
+    duplicate_groups = [
+        [f"{left.knowledge_id}@{left.version}", f"{right.knowledge_id}@{right.version}"]
+        for index, left in enumerate(entries)
+        for right in entries[index + 1 :]
+        if knowledge_overlap(left, right) >= 0.8
+    ]
+    duplicate_ids = {identity for group in duplicate_groups for identity in group}
+    for row in rows:
+        identity = f"{row['knowledge_id']}@{row['version']}"
+        if identity in duplicate_ids:
+            row["classifications"].extend(("duplicate_candidate", "merge_candidate"))
+    report = {
+        "schema_version": "weekly-knowledge-report-v1",
+        "created_at": datetime.now(UTC).isoformat(),
+        "knowledge": rows,
+        "highest_value": [row for row in rows if row["classification"] == "high_value"],
+        "lowest_value": [
+            row for row in rows if row["classification"] in {"low_value", "deprecation_candidate"}
+        ],
+        "unused": [row for row in rows if row["classification"] == "unused"],
+        "stale": [row for row in rows if "stale_candidate" in row["classifications"]],
+        "conflicted": [row for row in rows if "conflict_candidate" in row["classifications"]],
+        "duplicate_groups": duplicate_groups,
+        "recommended_actions": [
+            {
+                "knowledge_id": row["knowledge_id"],
+                "action": (
+                    "review_conflict"
+                    if "conflict_candidate" in row["classifications"]
+                    else "review_deprecation"
+                ),
+                "requires_approval": True,
+            }
+            for row in rows
+            if row["classification"] == "deprecation_candidate"
+            or "conflict_candidate" in row["classifications"]
+        ],
+        "automatically_performed": [],
+    }
+    destination = Path(output)
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / "weekly-knowledge-report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n"
+    )
+    lines = [
+        "# Weekly Knowledge report",
+        "",
+        f"Entries: {len(rows)}",
+        "",
+        "| Knowledge | Class | Retrievals | Conflicts |",
+        "| --- | --- | ---: | ---: |",
+    ]
+    lines.extend(
+        f"| {row['knowledge_id']}@{row['version']} | {row['classification']} | "
+        f"{row['metrics']['retrieved']} | {row['metrics']['open_conflicts']} |"
+        for row in rows
+    )
+    (destination / "weekly-knowledge-report.md").write_text("\n".join(lines) + "\n")
+    if notifier is not None:
+        notifier(
+            "weekly_knowledge_report_completed",
+            {
+                "knowledge_count": len(rows),
+                "high_value_count": len(report["highest_value"]),
+                "low_value_count": len(report["lowest_value"]),
+                "conflict_count": len(report["conflicted"]),
+            },
+        )
+    return report
+
+
+def weekly_runtime_improvement_report(
+    output: str | Path,
+    *,
+    skill_report: dict[str, Any] | None = None,
+    knowledge_report: dict[str, Any] | None = None,
+    analyses: dict[str, Any] | None = None,
+    notifier: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    extra = analyses or {}
+    report = {
+        "schema_version": "weekly-runtime-improvement-report-v1",
+        "created_at": datetime.now(UTC).isoformat(),
+        "top_performing_skills": (skill_report or {}).get("highest_value", []),
+        "low_value_skills": (skill_report or {}).get("lowest_value", []),
+        "useful_knowledge": (knowledge_report or {}).get("highest_value", []),
+        "stale_knowledge": (knowledge_report or {}).get("stale", []),
+        "prompt_regressions": extra.get("prompt_regressions", []),
+        "prompt_candidates": extra.get("prompt_candidates", []),
+        "policy_candidates": extra.get("policy_candidates", []),
+        "routing_candidates": extra.get("routing_candidates", []),
+        "judge_false_approvals": extra.get("judge_false_approvals", []),
+        "judge_false_rejections": extra.get("judge_false_rejections", []),
+        "frontier_contribution": extra.get("frontier_contribution", {}),
+        "reviewer_contribution": extra.get("reviewer_contribution", {}),
+        "loop_efficiency": extra.get("loop_efficiency", {}),
+        "tool_failure_patterns": extra.get("tool_failure_patterns", []),
+        "mcp_failure_patterns": extra.get("mcp_failure_patterns", []),
+        "training_dataset_statistics": extra.get("training_dataset_statistics", {}),
+        "recommended_promotions": extra.get("recommended_promotions", []),
+        "recommended_deprecations": [
+            *(skill_report or {}).get("recommended_actions", []),
+            *(knowledge_report or {}).get("recommended_actions", []),
+            *extra.get("recommended_deprecations", []),
+        ],
+        "automatic_actions_taken": [],
+        "human_decisions_required": [
+            *(skill_report or {}).get("recommended_actions", []),
+            *(knowledge_report or {}).get("recommended_actions", []),
+            *extra.get("human_decisions_required", []),
+        ],
+    }
+    destination = Path(output)
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / "weekly-runtime-improvement-report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n"
+    )
+    summary = [
+        "# Weekly Runtime Improvement report",
+        "",
+        f"Top Skills: {len(report['top_performing_skills'])}",
+        f"Low-value Skills: {len(report['low_value_skills'])}",
+        f"Useful Knowledge: {len(report['useful_knowledge'])}",
+        f"Stale Knowledge: {len(report['stale_knowledge'])}",
+        f"Human decisions required: {len(report['human_decisions_required'])}",
+        "Automatic actions taken: 0",
+    ]
+    (destination / "weekly-runtime-improvement-report.md").write_text("\n".join(summary) + "\n")
+    if notifier is not None:
+        notifier(
+            "weekly_runtime_improvement_report_completed",
+            {
+                "human_decision_count": len(report["human_decisions_required"]),
+                "automatic_action_count": 0,
             },
         )
     return report

@@ -109,6 +109,8 @@ from .weekly import (
     WeeklyRetentionRequest,
     WeeklyScheduler,
     previous_complete_week,
+    weekly_knowledge_report,
+    weekly_runtime_improvement_report,
     weekly_skill_report,
 )
 
@@ -681,13 +683,37 @@ def create_app(
                     store.event("weekly-maintenance", event_type, payload)
 
                 async def run_weekly_skill_job() -> None:
-                    if app.state.skills is None:
-                        raise RuntimeError("runtime Skills are disabled")
+                    if app.state.skills is None and app.state.knowledge is None:
+                        raise RuntimeError("runtime Skills and Knowledge are disabled")
                     window = previous_complete_week(timezone=configured.weekly_jobs.timezone)
+                    report_root = (
+                        configured.weekly_jobs.package_root / "runtime-reports" / window.week
+                    )
+                    skill_report = (
+                        await asyncio.to_thread(
+                            weekly_skill_report,
+                            app.state.skills,
+                            report_root,
+                            notifier=notify_weekly,
+                        )
+                        if app.state.skills is not None
+                        else None
+                    )
+                    knowledge_report = (
+                        await asyncio.to_thread(
+                            weekly_knowledge_report,
+                            app.state.knowledge,
+                            report_root,
+                            notifier=notify_weekly,
+                        )
+                        if app.state.knowledge is not None
+                        else None
+                    )
                     await asyncio.to_thread(
-                        weekly_skill_report,
-                        app.state.skills,
-                        configured.weekly_jobs.package_root / "skill-reports" / window.week,
+                        weekly_runtime_improvement_report,
+                        report_root,
+                        skill_report=skill_report,
+                        knowledge_report=knowledge_report,
                         notifier=notify_weekly,
                     )
 

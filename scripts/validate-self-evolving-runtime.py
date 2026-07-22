@@ -45,7 +45,15 @@ from dgx_moa.training import (
     candidates_from_trace,
     sanitize,
 )
-from dgx_moa.weekly import ArchiveRegistry, WeeklyPackager, previous_complete_week, sha256
+from dgx_moa.weekly import (
+    ArchiveRegistry,
+    WeeklyPackager,
+    previous_complete_week,
+    sha256,
+    weekly_knowledge_report,
+    weekly_runtime_improvement_report,
+    weekly_skill_report,
+)
 
 
 def candidate(candidate_id: str = "cand_physical") -> TrainingCandidate:
@@ -298,7 +306,18 @@ def main() -> None:
     assert knowledge.search(KnowledgeQuery(text="deterministic evidence"))[0].knowledge.version == (
         active_knowledge.version
     )
+    knowledge.record_outcome(active_knowledge.knowledge_id, active_knowledge.version, "helpful")
     assert knowledge.integrity_check()
+    runtime_report_root = root / "runtime-reports"
+    skill_report = weekly_skill_report(skills, runtime_report_root)
+    knowledge_report = weekly_knowledge_report(knowledge, runtime_report_root)
+    runtime_report = weekly_runtime_improvement_report(
+        runtime_report_root,
+        skill_report=skill_report,
+        knowledge_report=knowledge_report,
+    )
+    assert runtime_report["automatic_actions_taken"] == []
+    assert (runtime_report_root / "weekly-runtime-improvement-report.json").is_file()
 
     evolution = EvolutionRegistry(root / "evolution/evolution.db")
     evolution.put(
@@ -519,6 +538,7 @@ def main() -> None:
         "bounded_loop_termination": True,
         "skill_evaluation_canary_promotion_rollback": True,
         "knowledge_validation_promotion_retrieval": True,
+        "skill_knowledge_runtime_reports": True,
         "prompt_replay_canary_promotion_rollback": True,
         "remote_judge_package_redaction": True,
         "capacity_guard_isolated": True,

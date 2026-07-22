@@ -16,13 +16,13 @@ Updated: 2026-07-22
 | Runtime model invocation-rate CSV | yes | yes | yes | production live clients | yes |
 | Bounded Loop Engineering Phase A + action-boundary B | yes | yes | yes | isolated success/no-progress/duplicate | no |
 | Runtime Skills Phase C foundation | yes | yes | yes | isolated governed lifecycle | no |
-| Runtime Knowledge Phase C foundation | yes | yes | yes | unit-only registry/retrieval/conflict | no |
+| Runtime Knowledge Phase C foundation | yes | yes | yes | isolated registry/retrieval/conflict/report | no |
 | Declarative Policy Phase D foundation | yes | yes | yes | isolated redaction | no |
 | NVIDIA NIM GLM-5.2 Remote Judge | yes | yes | yes | mocked transport only | no |
 | Typed Evidence Graph Phase E foundation | yes | yes | yes | isolated replay validation | no |
 | Discord/Telegram Live Observation Phase E | yes | yes | yes | production Telegram; isolated Discord/control | Telegram yes; controls no |
 | Privacy-aware Training Collection Phase F | yes | yes | yes | isolated role/loop/preference archive | no |
-| Weekly Skill/Data Packaging Phase G | yes | yes | yes | isolated real 7z + wall-clock scheduler; platform pending | no |
+| Weekly Skill/Knowledge/Data Packaging Phase G | yes | yes | yes | isolated reports, real 7z + wall-clock scheduler; platform pending | no |
 | Execution Replay Phase H foundation | yes | yes | yes | isolated exact loop replay | no |
 | Prompt/Policy/Routing evolution registry | yes | yes | yes | isolated replay/canary/promotion/rollback | no |
 | Fixed label-free Goal metrics endpoint | yes | yes | yes | production yes | yes |

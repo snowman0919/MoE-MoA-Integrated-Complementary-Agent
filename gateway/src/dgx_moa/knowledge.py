@@ -152,6 +152,14 @@ class KnowledgeMatch(BaseModel):
     contradiction_ids: list[str] = Field(default_factory=list)
 
 
+class KnowledgeMetrics(BaseModel):
+    retrieved: int = 0
+    helpful: int = 0
+    harmful: int = 0
+    last_retrieved_at: str | None = None
+    open_conflicts: int = 0
+
+
 class KnowledgeRegistry:
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -171,10 +179,16 @@ class KnowledgeRegistry:
                 "knowledge_id TEXT NOT NULL, version INTEGER NOT NULL, "
                 "retrieved INTEGER NOT NULL DEFAULT 0, "
                 "helpful INTEGER NOT NULL DEFAULT 0, harmful INTEGER NOT NULL DEFAULT 0, "
+                "last_retrieved_at TEXT, "
                 "PRIMARY KEY(knowledge_id, version), "
                 "FOREIGN KEY(knowledge_id, version) "
                 "REFERENCES knowledge_entries(knowledge_id, version));"
             )
+            columns = {
+                str(row[1]) for row in database.execute("PRAGMA table_info(knowledge_metrics)")
+            }
+            if "last_retrieved_at" not in columns:
+                database.execute("ALTER TABLE knowledge_metrics ADD COLUMN last_retrieved_at TEXT")
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30)
@@ -377,11 +391,29 @@ class KnowledgeRegistry:
         with self._connect() as database:
             for match in selected:
                 database.execute(
-                    "UPDATE knowledge_metrics SET retrieved = retrieved + 1 "
+                    "UPDATE knowledge_metrics SET retrieved = retrieved + 1, "
+                    "last_retrieved_at = ? "
                     "WHERE knowledge_id = ? AND version = ?",
-                    (match.knowledge.knowledge_id, match.knowledge.version),
+                    (now(), match.knowledge.knowledge_id, match.knowledge.version),
                 )
         return selected
+
+    def metrics(self, knowledge_id: str, version: int) -> KnowledgeMetrics:
+        with self._connect() as database:
+            row = database.execute(
+                "SELECT retrieved, helpful, harmful, last_retrieved_at "
+                "FROM knowledge_metrics WHERE knowledge_id = ? AND version = ?",
+                (knowledge_id, version),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Knowledge metrics not found: {knowledge_id}@{version}")
+        return KnowledgeMetrics(
+            retrieved=int(row[0]),
+            helpful=int(row[1]),
+            harmful=int(row[2]),
+            last_retrieved_at=row[3],
+            open_conflicts=len(self._conflicts(knowledge_id, version)),
+        )
 
     def record_outcome(
         self, knowledge_id: str, version: int, outcome: Literal["helpful", "harmful"]

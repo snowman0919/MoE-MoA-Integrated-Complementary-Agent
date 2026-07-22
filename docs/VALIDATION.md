@@ -3425,3 +3425,25 @@ The serialized verification passed:
 
 This is mocked provider evidence. It does not satisfy the live NVIDIA NIM
 physical matrix or authorize production Remote Judge enablement.
+
+## Weekly Knowledge and Runtime Improvement reports — 2026-07-22
+
+The isolated validator created versioned Runtime Knowledge, retrieved it,
+recorded a helpful outcome and real last-retrieval timestamp, then generated
+Skill, Knowledge, and aggregate Runtime Improvement JSON/Markdown reports. The
+aggregate contains every required report section, leaves unavailable measured
+inputs empty, and records zero automatic actions. Unit coverage separately
+classifies a harmful active entry as a deprecation candidate requiring human
+approval and verifies the additive SQLite metrics-schema migration.
+
+`/tmp/dgx-moa-v2-maintenance-WzvpXt/runtime/physical-validation.json` reports
+`status=passed` with `skill_knowledge_runtime_reports=true` using real 7-Zip
+23.01. The regenerated archive SHA-256 is
+`59d4ad30d4ab19994e8158262aa1930b77622c893f1d28e3121f9214b7cc2efc`.
+This is isolated synthetic evidence, not a complete production weekly window or
+authorization to enable the scheduler.
+
+The complete serialized verification passed with `828 passed` and the existing
+third-party Starlette warning, 81 files formatted, clean Ruff, strict mypy clean
+across 41 source files, clean systemd/shell/diff checks, and 10/10 complete
+traces with 100.0% mandatory-field completeness.

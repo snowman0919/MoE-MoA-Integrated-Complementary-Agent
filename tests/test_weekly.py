@@ -6,6 +6,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from dgx_moa.knowledge import (
+    KnowledgeConfidence,
+    KnowledgeContent,
+    KnowledgeEvidence,
+    KnowledgeProvenance,
+    KnowledgeQuery,
+    KnowledgeRegistry,
+    RuntimeKnowledge,
+)
 from dgx_moa.skills import RuntimeSkill, SkillProvenance, SkillRegistry, SkillValidation
 from dgx_moa.training import TrainingCandidate
 from dgx_moa.weekly import (
@@ -16,6 +25,8 @@ from dgx_moa.weekly import (
     prepare_candidates,
     previous_complete_week,
     sha256,
+    weekly_knowledge_report,
+    weekly_runtime_improvement_report,
     weekly_skill_report,
 )
 
@@ -371,6 +382,39 @@ def test_weekly_skill_report_recommends_without_automatic_deletion(tmp_path: Pat
     assert (tmp_path / "report/weekly-skill-report.md").is_file()
     assert notifications[0][0] == "weekly_skill_report_completed"
     assert notifications[0][1]["skill_count"] == 2
+
+
+def test_weekly_knowledge_and_runtime_reports_require_human_decisions(tmp_path: Path) -> None:
+    registry = KnowledgeRegistry(tmp_path / "knowledge.db")
+    entry = RuntimeKnowledge(
+        knowledge_id="knowledge.runtime.failure",
+        version=1,
+        title="Repeated failure handling",
+        state="active",
+        category="failure_pattern",
+        domains=["runtime"],
+        content=KnowledgeContent(summary="Repeated failures require a changed strategy."),
+        evidence=KnowledgeEvidence(source_task_ids=["task-1"]),
+        provenance=KnowledgeProvenance(source_type="human", created_by="tester"),
+        confidence=KnowledgeConfidence(**{"class": "medium", "basis": "reviewed"}),
+        validation_evidence=["review-1"],
+    )
+    registry.put(entry)
+    registry.search(KnowledgeQuery(text="repeated failure runtime"))
+    registry.record_outcome(entry.knowledge_id, entry.version, "harmful")
+    knowledge_report = weekly_knowledge_report(registry, tmp_path / "reports")
+    runtime_report = weekly_runtime_improvement_report(
+        tmp_path / "reports", knowledge_report=knowledge_report
+    )
+
+    assert knowledge_report["lowest_value"][0]["knowledge_id"] == entry.knowledge_id
+    assert knowledge_report["stale"][0]["knowledge_id"] == entry.knowledge_id
+    assert knowledge_report["recommended_actions"][0]["requires_approval"] is True
+    assert knowledge_report["automatically_performed"] == []
+    assert runtime_report["automatic_actions_taken"] == []
+    assert runtime_report["human_decisions_required"][0]["knowledge_id"] == entry.knowledge_id
+    assert (tmp_path / "reports/weekly-knowledge-report.json").is_file()
+    assert (tmp_path / "reports/weekly-runtime-improvement-report.json").is_file()
 
 
 def test_weekly_candidate_gate_rejects_sensitive_or_ineligible_and_deduplicates() -> None:

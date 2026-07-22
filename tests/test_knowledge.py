@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -57,6 +58,21 @@ def validation() -> KnowledgeValidation:
         reviewer_approved=True,
         evidence_ids=["review-1"],
     )
+
+
+def test_knowledge_metrics_schema_migrates_last_retrieval_timestamp(tmp_path: Path) -> None:
+    path = tmp_path / "legacy-knowledge.db"
+    with sqlite3.connect(path) as database:
+        database.execute(
+            "CREATE TABLE knowledge_metrics (knowledge_id TEXT, version INTEGER, "
+            "retrieved INTEGER, helpful INTEGER, harmful INTEGER)"
+        )
+
+    KnowledgeRegistry(path)
+
+    with sqlite3.connect(path) as database:
+        columns = {row[1] for row in database.execute("PRAGMA table_info(knowledge_metrics)")}
+    assert "last_retrieved_at" in columns
 
 
 def test_knowledge_is_immutable_searchable_versioned_and_reversible(tmp_path: Path) -> None:
