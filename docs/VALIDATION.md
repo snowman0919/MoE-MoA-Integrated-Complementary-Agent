@@ -4081,3 +4081,16 @@ systemd activating-state parsing, and transition from activating through a
 successful inference probe to READY. The full suite passed `859 passed` with
 the existing third-party Starlette warning; Ruff and strict mypy over 41 source
 files were clean.
+
+After deploying the lifecycle correction as `main@bb625e3`, the production
+generation-21 cold review returned HTTP 200 with exact `ASYNC_COLD_OK` through
+`deepseek-v4-flash` while Reviewer remained `LOADING`. The same singleflight
+generation stayed active for 152.110 seconds, completed only after the service
+readiness inference succeeded, and emitted `specialist_warmup_completed`
+without a start-command or warm-up failure. The next review returned HTTP 200
+with exact `ASYNC_LOCAL_OK` through `dgx-moa-reviewer`, reason `local_ready`,
+state `READY`, generation 21. Restart-scoped metrics measured local 1, remote 1,
+cold miss 1, warm-up started 1, completed 1, failed 0. Live observation sent 32
+events with zero drops and zero Telegram errors. Gateway, Executor, Reviewer,
+and Hermes were active; `/readyz` reported Executor, Reviewer, and Reasoner
+ready with Remote Judge available.
