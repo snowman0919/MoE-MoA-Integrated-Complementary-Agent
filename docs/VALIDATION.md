@@ -3960,3 +3960,17 @@ API key, Authorization, cookie, access-token, and client-secret regressions
 remain redacted in both trace and training sanitization paths. The full suite
 passed `855 passed`; Ruff formatting/check, strict mypy over 41 source files,
 and diff checks were clean.
+
+PR `#58` deployed the fix as `main@fe46d5c`. Gateway, Executor, and the
+partially loading Reviewer were fully stopped before resident restoration; the
+Reviewer stop timeout was cleared without changing its dynamic cold-residency
+policy. The protected Executor retained context 65,536, one sequence,
+1,700,000,000 KV bytes, 0.5 GPU utilization, and MARLIN, loaded 10/10 shards,
+and passed the real `/v1/models` readiness probe. Gateway, Executor, and the
+resident target were active while Planner and Reviewer remained cold.
+
+The first deployment-boundary request returned retryable HTTP 503. After
+`/readyz` reported Executor ready, the authenticated `dgx-moa-fast` retry
+returned HTTP 200 with exact `REDACTION_READY`. Its persisted trace contained
+two numeric `remote_api_cost_per_million_tokens_usd` values (`0.0`, `0.0`), no
+Authorization or API-key marker, and no missing trace fields.
