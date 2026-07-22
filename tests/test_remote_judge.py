@@ -45,7 +45,10 @@ async def test_nim_judge_sends_redacted_bounded_strict_package(monkeypatch) -> N
         requests.append(request)
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"content": json.dumps(verdict())}}]},
+            json={
+                "choices": [{"message": {"content": json.dumps(verdict())}}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20},
+            },
         )
 
     monkeypatch.setenv("TEST_NVIDIA_KEY", "synthetic-secret")
@@ -70,6 +73,11 @@ async def test_nim_judge_sends_redacted_bounded_strict_package(monkeypatch) -> N
     assert "alice@example.invalid" not in body["messages"][1]["content"]
     assert "private-value" not in body["messages"][1]["content"]
     assert requests[0].headers["authorization"] == "Bearer synthetic-secret"
+    assert await provider.usage("req-1") == {
+        "prompt_tokens": 12,
+        "completion_tokens": 8,
+        "total_tokens": 20,
+    }
 
 
 @pytest.mark.asyncio

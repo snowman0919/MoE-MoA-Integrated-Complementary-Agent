@@ -116,6 +116,10 @@ class JudgeProvider(ABC):
     async def available(self) -> bool:
         raise NotImplementedError
 
+    async def usage(self, request_id: str) -> dict[str, int]:
+        del request_id
+        return {}
+
 
 class DisabledJudgeProvider(JudgeProvider):
     async def judge(self, package: JudgeEvidencePackage) -> RemoteJudgeVerdict:
@@ -159,6 +163,7 @@ class NvidiaNimJudgeProvider(JudgeProvider):
         self.max_calls_per_request = max_calls_per_request
         self.transport = transport
         self._calls: OrderedDict[str, int] = OrderedDict()
+        self._usage: OrderedDict[str, dict[str, int]] = OrderedDict()
         self._call_lock = asyncio.Lock()
 
     def _headers(self) -> dict[str, str]:
@@ -233,7 +238,19 @@ class NvidiaNimJudgeProvider(JudgeProvider):
                     response.raise_for_status()
                     payload = response.json()
                 content = payload["choices"][0]["message"]["content"]
-                return RemoteJudgeVerdict.model_validate_json(content)
+                verdict = RemoteJudgeVerdict.model_validate_json(content)
+                raw_usage = payload.get("usage", {})
+                usage = {
+                    key: int(raw_usage[key])
+                    for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                    if isinstance(raw_usage.get(key), int)
+                }
+                async with self._call_lock:
+                    self._usage[package.request_id] = usage
+                    self._usage.move_to_end(package.request_id)
+                    while len(self._usage) > 10_000:
+                        self._usage.popitem(last=False)
+                return verdict
             except httpx.TimeoutException as error:
                 if attempt == self.max_retries:
                     raise JudgeTimeout("Remote Judge timed out") from error
@@ -247,3 +264,7 @@ class NvidiaNimJudgeProvider(JudgeProvider):
                     "Remote Judge returned invalid structured output"
                 ) from error
         raise AssertionError("unreachable")
+
+    async def usage(self, request_id: str) -> dict[str, int]:
+        async with self._call_lock:
+            return dict(self._usage.get(request_id, {}))

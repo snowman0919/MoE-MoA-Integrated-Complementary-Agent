@@ -102,6 +102,8 @@ class RuntimeMetrics:
                 self.increment("judge_revision_total")
             elif verdict in {"reject", "blocked", "escalate"}:
                 self.increment("judge_reject_total")
+            self.increment("judge_latency_seconds", float(payload.get("latency_seconds", 0)))
+            self.increment("judge_tokens_total", int(payload.get("total_tokens", 0)))
         elif event_type == "judge_provider_failed":
             failure = payload.get("failure_class")
             if failure == "PROVIDER_TIMEOUT":
@@ -110,6 +112,12 @@ class RuntimeMetrics:
                 self.increment("judge_rate_limit_total")
             else:
                 self.increment("judge_provider_error_total")
+        elif event_type == "judge_false_approval_confirmed":
+            self.increment("judge_false_approval_total")
+        elif event_type == "judge_false_rejection_confirmed":
+            self.increment("judge_false_rejection_total")
+        elif event_type == "approval_timeout":
+            self.increment("approval_timeouts_total")
 
     def snapshot(self, overlays: dict[str, int | float] | None = None) -> dict[str, int | float]:
         values = {name: self._values[name] for name in METRIC_NAMES}

@@ -4024,6 +4024,48 @@ def test_metrics_require_auth_and_expose_only_fixed_label_free_values(
     assert "SENSITIVE_METRICS" not in authorized.text
 
 
+def test_metrics_overlay_runtime_knowledge_registry(
+    settings: Settings, stub_provider: StubProvider, tmp_path: Path
+) -> None:
+    from dgx_moa.knowledge import KnowledgeQuery, RuntimeKnowledge
+
+    enabled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "runtime_knowledge": {
+                "enabled": True,
+                "state_db": tmp_path / "knowledge.db",
+            }
+        }
+    )
+    with client_with_stub(enabled, stub_provider) as client:
+        entry = RuntimeKnowledge.model_validate(
+            {
+                "knowledge_id": "knowledge.metrics.runtime",
+                "version": 1,
+                "title": "Runtime metrics evidence",
+                "state": "active",
+                "category": "performance_observation",
+                "domains": ["runtime"],
+                "content": {"summary": "Runtime metrics use measured evidence."},
+                "evidence": {"source_task_ids": ["task-1"]},
+                "provenance": {"source_type": "human", "created_by": "tester"},
+                "confidence": {"class": "medium", "basis": "reviewed"},
+                "lifecycle": {"approval_id": "approval-1"},
+                "validation_evidence": ["review-1"],
+            }
+        )
+        client.app.state.knowledge.put(entry)
+        client.app.state.knowledge.search(KnowledgeQuery(text="runtime metrics evidence"))
+        client.app.state.knowledge.record_outcome(entry.knowledge_id, entry.version, "helpful")
+        response = client.get("/metrics", headers={"Authorization": "Bearer test-secret"})
+
+    assert response.status_code == 200
+    assert "knowledge_retrieval_total 1" in response.text
+    assert "knowledge_helpful_total 1" in response.text
+    assert "knowledge_promoted_total 1" in response.text
+
+
 def test_auth_disabled_allows_inference_headers_or_none(
     settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # type: ignore[no-untyped-def]

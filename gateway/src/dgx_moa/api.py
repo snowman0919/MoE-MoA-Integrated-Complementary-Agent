@@ -1423,6 +1423,29 @@ def create_app(
                 ),
                 skill_deprecated_total=sum(item.state == "deprecated" for item in skill_rows),
             )
+        knowledge = request.app.state.knowledge
+        if knowledge is not None:
+            knowledge_rows = knowledge.list_entries()
+            knowledge_metrics = [
+                knowledge.metrics(item.knowledge_id, item.version) for item in knowledge_rows
+            ]
+            overlays.update(
+                knowledge_retrieval_total=sum(item.retrieved for item in knowledge_metrics),
+                knowledge_helpful_total=sum(item.helpful for item in knowledge_metrics),
+                knowledge_harmful_total=sum(item.harmful for item in knowledge_metrics),
+                knowledge_conflict_total=sum(item.open_conflicts for item in knowledge_metrics)
+                // 2,
+                knowledge_candidate_created_total=sum(
+                    item.state == "candidate" for item in knowledge_rows
+                ),
+                knowledge_promoted_total=sum(
+                    item.state == "active" and item.lifecycle.approval_id is not None
+                    for item in knowledge_rows
+                ),
+                knowledge_deprecated_total=sum(
+                    item.state == "deprecated" for item in knowledge_rows
+                ),
+            )
         observation_bus = request.app.state.observation
         if observation_bus is not None:
             overlays.update(

@@ -443,6 +443,8 @@ class Controller:
         model = (
             self.frontier.config.model
             if role == "frontier" and self.frontier is not None
+            else self.settings.remote_judge.model
+            if role == "judge" and invocation.get("provider") == "nvidia_nim"
             else self.settings.models[role].served_name
         )
         try:
@@ -2839,17 +2841,28 @@ class Controller:
             self.terminate_loop(state, "JUDGE_REJECTED")
         else:
             state.phase = Phase.CORRECTION
+        latency_seconds = time.monotonic() - started
+        judge_usage = await self.remote_judge.usage(package.request_id)
         self.record_observed_invocation(
             state,
             {
                 "role": "judge",
                 "provider": "nvidia_nim",
                 "model": self.settings.remote_judge.model,
-                "latency_ms": (time.monotonic() - started) * 1000,
+                "latency_ms": latency_seconds * 1000,
+                **judge_usage,
                 "status": "completed",
             },
         )
-        self.store.event(state.session_id, "judge_completed", safe_result)
+        self.store.event(
+            state.session_id,
+            "judge_completed",
+            safe_result
+            | {
+                "latency_seconds": latency_seconds,
+                "total_tokens": judge_usage.get("total_tokens", 0),
+            },
+        )
         state.evaluations.append(
             {
                 "evaluation_id": str(uuid.uuid4()),

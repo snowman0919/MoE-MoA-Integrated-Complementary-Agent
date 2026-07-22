@@ -3467,3 +3467,18 @@ The complete serialized verification passed with `830 passed`, the existing
 third-party Starlette warning, 81 files formatted, clean Ruff and strict mypy
 across 41 source files, clean systemd/shell/diff checks, and 10/10 complete
 traces with 100.0% mandatory-field completeness.
+
+## Knowledge and Judge metric wiring — 2026-07-22
+
+The fixed label-free metrics endpoint now overlays measured Knowledge retrieval,
+helpful/harmful outcomes, open conflicts, candidates, promotions, and
+deprecations from the separate registry. Remote Judge completion events carry
+only measured latency and token counts from the bounded provider ledger; later
+confirmed false-approval/false-rejection and approval-timeout events increment
+their fixed counters. Unit and endpoint tests cover each path without request,
+prompt, path, or raw-failure labels.
+
+The serialized gate passed with `832 passed`, the existing Starlette warning,
+81 formatted files, clean Ruff and strict mypy across 41 source files, clean
+systemd/shell/diff checks, and 10/10 complete traces with 100.0% mandatory-field
+completeness. This is unit/mock evidence; no live NIM token accounting occurred.

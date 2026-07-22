@@ -38,3 +38,24 @@ def test_runtime_metrics_classify_loop_outcomes_without_reason_labels() -> None:
     assert snapshot["loop_failed_total"] == 2
     assert snapshot["loop_no_progress_total"] == 1
     assert snapshot["loop_budget_exhausted_total"] == 1
+
+
+def test_runtime_metrics_record_judge_usage_and_later_corrected_labels() -> None:
+    metrics = RuntimeMetrics()
+    metrics.observe_event(
+        "request",
+        "judge_completed",
+        {"verdict": "revise", "latency_seconds": 1.25, "total_tokens": 321},
+        "timestamp",
+    )
+    metrics.observe_event("request", "judge_false_approval_confirmed", {}, "timestamp")
+    metrics.observe_event("request", "judge_false_rejection_confirmed", {}, "timestamp")
+    metrics.observe_event("request", "approval_timeout", {}, "timestamp")
+
+    snapshot = metrics.snapshot()
+    assert snapshot["judge_revision_total"] == 1
+    assert snapshot["judge_latency_seconds"] == 1.25
+    assert snapshot["judge_tokens_total"] == 321
+    assert snapshot["judge_false_approval_total"] == 1
+    assert snapshot["judge_false_rejection_total"] == 1
+    assert snapshot["approval_timeouts_total"] == 1
