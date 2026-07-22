@@ -14,7 +14,7 @@ Updated: 2026-07-22
 | Multiple API tokens and per-token usage | yes | yes | yes | production yes | yes |
 | Codex Responses text/function/custom tool loop | yes | yes | yes | production yes | yes |
 | Runtime model invocation-rate CSV | yes | yes | yes | production live clients | yes |
-| Bounded Loop Engineering Phase A + action-boundary B | yes | yes | yes | isolated success/no-progress/duplicate | no |
+| Bounded Loop Engineering Phase A + action-boundary B | yes | yes | yes | live production success/correction | yes |
 | Runtime Skills Phase C foundation | yes | yes | yes | isolated governed lifecycle | no |
 | Runtime Knowledge Phase C foundation | yes | yes | yes | isolated registry/retrieval/conflict/report | no |
 | Declarative Policy Phase D foundation | yes | yes | yes | isolated redaction | no |
@@ -95,6 +95,11 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   cold/warm routing. The production worktree is `main@29bd904`; Planner and
   Reviewer remain local models, with remote execution used only by routing
   policy while a cold local specialist warms independently.
+- PRs `#50` and `#51` closed live-provider Loop completion and specialist
+  warm-up/review guard races. Loop Engineering is enabled in the protected
+  production environment; the remaining Skills, Knowledge, evolution, policy,
+  training, weekly, replay-admin, retention-apply, and observation-control gates
+  remain disabled.
 
 ## Runtime
 
@@ -121,12 +126,13 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   and Hermes plus the primary Reasoner path physically produced six Executor
   records and one exact `Qwythos-v2-9B:Q4` Reasoner record through an isolated
   development gateway. Production clients now physically update the same CSV.
-- Deployed source contains disabled Phase A state and Phase B action
+- Deployed source contains production-enabled Phase A state and Phase B action
   admission. Evidence-linked criteria, iterations, role/tool/token/known-cost/
   wall-time budgets, progress evidence allowlisting, stable repeated-failure
   policy, and explicit termination reasons are unit-tested. An isolated physical
-  run exercised success, no-progress, and duplicate-failure termination;
-  production stays disabled.
+  run exercised success, no-progress, and duplicate-failure termination. Live
+  production subsequently exercised evidence-backed success and correction
+  without weakening the Reviewer gate.
 - Deployed source also contains a disabled runtime Skill registry with
   immutable versions, bounded active-only retrieval, Executor-only activation,
   structured recurring-pattern drafts, isolated multi-gate candidate evaluation,

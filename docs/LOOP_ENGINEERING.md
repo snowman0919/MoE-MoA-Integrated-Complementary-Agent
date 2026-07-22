@@ -3,7 +3,8 @@
 ## Current development boundary
 
 The `dev` source contains the Phase A state foundation and the Phase B bounded
-action loop. It is disabled by default and has not been enabled in production.
+action loop. It is disabled by checked-in default and enabled by the protected
+production environment after the live-provider gate passed on 2026-07-22.
 An isolated synthetic physical run has exercised successful, no-progress, and
 duplicate-failure termination.
 
@@ -72,9 +73,10 @@ An isolated process may provide the same object through
 low/medium/high risk overrides. Do not enable it in production until isolated
 live providers and real-client validation pass.
 
-## Remaining production gates
+## Production gate status
 
 Permission, operator-decision, policy-block and unresolved-disagreement paths
-terminate explicitly. Runtime Skills, declarative policy, observers, training,
-weekly packaging, and replay are implemented behind disabled gates. Live-provider
-loop execution, real-client validation, and production enablement remain pending.
+terminate explicitly. Live Reasoner, Executor, local/remote Reviewer, real-client
+success, correction, cold-routing, and warm-up-transition validation passed.
+Runtime Skills, declarative policy, training, weekly packaging, replay, and the
+other separately governed capabilities retain their own disabled gates.

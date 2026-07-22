@@ -3816,3 +3816,44 @@ policy decision, a bounded empty Knowledge retrieval, non-empty Evidence Graph,
 and a training candidate without exposing secrets. The full automated suite
 then passed with `849 passed`; an additional regression case covers the
 pre-synthesis-approved path.
+
+## Production Loop Engineering and review guard gate — 2026-07-22
+
+PR `#50` deployed the completion-evidence fix as `main@04c11ce`. The protected
+production environment enabled Loop Engineering, and the controlled gateway
+restart performed the selected exact Executor full stop/start. The unchanged
+65,536 context, one sequence, 1,700,000,000 KV bytes, 0.5 GPU utilization, and
+MARLIN baseline loaded all 10/10 shards and passed its inference readiness
+probe. One request at the reconciliation boundary correctly returned retryable
+503 while generation 13 was still `load_queued`; the retry ran with Executor
+READY.
+
+That retry used remote Reviewer while the local Reviewer was `LOADING`, returned
+HTTP 200, persisted two completion-evidence items, retained Reviewer approval,
+and terminated the production loop `SUCCESS` with `phase=completed`,
+`final_status=completed`, and observation status `ok`. The remote call completed
+in 13.063 seconds and reused the independent local warm-up.
+
+The local Reviewer initially failed engine initialization and continued through
+the remote provider as designed. Its bounded service retry later passed 4/4
+shards and the real readiness probe. A subsequent request exposed a guard race:
+the remote response and local READY transition both succeeded, but the lifecycle
+transition invalidated the local evaluation-guard transition ID and produced
+HTTP 502. The stuck guard was cleared only after the request ended and Reviewer
+READY was verified.
+
+PR `#51` fixed that race as `main@0ba545d`: remote specialist calls no longer
+claim a local evaluation guard, while a selected local specialist remains
+protected by its existing active-request lease. The deterministic regression
+forces a Reviewer READY transition during the remote call. The serialized gate
+passed with `850 passed`, clean Ruff, strict mypy, systemd and shell validation,
+10/10 complete traces, and 100.0% mandatory trace fields.
+
+The controlled production rerun overlapped remote Reviewer calls with local
+generation 16 warm-up and returned HTTP 200 without the prior guard error. The
+Reviewer rejected deliberately incomplete release evidence with Important and
+Critical findings, so the Loop correctly remained in `correction` rather than
+claiming success. The evaluation guard was false after the request. Local
+Reviewer generation 16 then completed 4/4 shards, passed the real inference
+probe, and reached logical `READY`. Gateway, Executor, Reasoner, resident target,
+and Remote Judge remained ready/available throughout the final check.
