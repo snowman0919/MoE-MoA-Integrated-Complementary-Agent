@@ -404,7 +404,9 @@ def test_weekly_knowledge_and_runtime_reports_require_human_decisions(tmp_path: 
     registry.record_outcome(entry.knowledge_id, entry.version, "harmful")
     knowledge_report = weekly_knowledge_report(registry, tmp_path / "reports")
     runtime_report = weekly_runtime_improvement_report(
-        tmp_path / "reports", knowledge_report=knowledge_report
+        tmp_path / "reports",
+        knowledge_report=knowledge_report,
+        analyses={"prompt_candidates": [{"artifact_id": "prompt.executor.candidate"}]},
     )
 
     assert knowledge_report["lowest_value"][0]["knowledge_id"] == entry.knowledge_id
@@ -412,6 +414,7 @@ def test_weekly_knowledge_and_runtime_reports_require_human_decisions(tmp_path: 
     assert knowledge_report["recommended_actions"][0]["requires_approval"] is True
     assert knowledge_report["automatically_performed"] == []
     assert runtime_report["automatic_actions_taken"] == []
+    assert runtime_report["prompt_candidates"][0]["artifact_id"] == "prompt.executor.candidate"
     assert runtime_report["human_decisions_required"][0]["knowledge_id"] == entry.knowledge_id
     assert (tmp_path / "reports/weekly-knowledge-report.json").is_file()
     assert (tmp_path / "reports/weekly-runtime-improvement-report.json").is_file()

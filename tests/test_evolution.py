@@ -6,8 +6,10 @@ import pytest
 from dgx_moa.controller import Controller
 from dgx_moa.evolution import (
     EvolutionArtifact,
+    EvolutionCandidateGenerator,
     EvolutionEvaluation,
     EvolutionRegistry,
+    EvolutionSignal,
     PromptRegistry,
 )
 from dgx_moa.state import SessionState, StateStore
@@ -93,6 +95,79 @@ def test_high_impact_evolution_candidate_requires_judge_evidence(tmp_path: Path)
     )
 
     assert rejected.state == "rejected"
+
+
+def test_evidence_signals_generate_only_sanitized_idempotent_candidates(tmp_path: Path) -> None:
+    registry = EvolutionRegistry(tmp_path / "evolution.db")
+    generator = EvolutionCandidateGenerator(registry)
+    signals = [
+        EvolutionSignal(
+            signal_type="invalid_structured_output",
+            candidate_kind="prompt",
+            scope="executor",
+            occurrences=3,
+            evidence_ids=["failure-1", "failure-2"],
+            proposed_payload={
+                "role": "executor",
+                "template": "Return the schema; contact alice@example.invalid only if needed.",
+            },
+        ),
+        EvolutionSignal(
+            signal_type="repeated_unsafe_action",
+            candidate_kind="policy",
+            scope="destructive",
+            occurrences=2,
+            evidence_ids=["unsafe-1", "unsafe-2"],
+            proposed_payload={
+                "when": {"destructive": True},
+                "require": {"approval": True},
+            },
+        ),
+        EvolutionSignal(
+            signal_type="latency_cost",
+            candidate_kind="routing",
+            scope="planner",
+            occurrences=5,
+            evidence_ids=["latency-1"],
+            proposed_payload={"rules": [{"when": "simple", "avoid": "planner"}]},
+        ),
+    ]
+
+    candidates = generator.generate_many(signals, created_by="weekly-generator")
+    replayed = generator.generate(signals[0], created_by="weekly-generator")
+
+    assert [item.kind for item in candidates] == ["prompt", "policy", "routing"]
+    assert all(item.state == "candidate" and item.approval_id is None for item in candidates)
+    assert candidates[1].high_impact is True
+    assert "alice@example.invalid" not in candidates[0].payload["template"]
+    assert replayed.artifact_id == candidates[0].artifact_id
+    assert replayed.version == candidates[0].version
+    assert len(registry.list_artifacts()) == 3
+
+
+def test_evolution_generator_rejects_mismatched_or_singleton_signals(tmp_path: Path) -> None:
+    generator = EvolutionCandidateGenerator(EvolutionRegistry(tmp_path / "evolution.db"))
+    with pytest.raises(ValueError, match="greater than or equal to 2"):
+        EvolutionSignal(
+            signal_type="invalid_structured_output",
+            candidate_kind="prompt",
+            scope="executor",
+            occurrences=1,
+            evidence_ids=["one"],
+            proposed_payload={"role": "executor", "template": "schema"},
+        )
+    with pytest.raises(ValueError, match="not valid"):
+        generator.generate(
+            EvolutionSignal(
+                signal_type="repeated_unsafe_action",
+                candidate_kind="routing",
+                scope="executor",
+                occurrences=2,
+                evidence_ids=["one", "two"],
+                proposed_payload={"rules": [{"when": "unsafe", "route": "reviewer"}]},
+            ),
+            created_by="generator",
+        )
 
 
 def test_active_prompt_registry_changes_only_role_policy(settings, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]

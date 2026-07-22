@@ -3447,3 +3447,23 @@ The complete serialized verification passed with `828 passed` and the existing
 third-party Starlette warning, 81 files formatted, clean Ruff, strict mypy clean
 across 41 source files, clean systemd/shell/diff checks, and 10/10 complete
 traces with 100.0% mandatory-field completeness.
+
+## Evidence-driven evolution candidate generation — 2026-07-22
+
+The development generator requires at least two occurrences and explicit source
+evidence, rejects signal/kind mismatches, sanitizes secrets and personal data,
+and idempotently creates Prompt, Policy, Routing, or failure-handling candidates.
+It never advances beyond `candidate`; generated Policy artifacts are always
+high impact and therefore retain the Reviewer/Judge/canary/approval gates.
+
+`/tmp/dgx-moa-v2-candidates-yXECD5/runtime/physical-validation.json` reports
+`status=passed` and `policy_routing_candidate_generation=true`. The isolated run
+generated both candidate kinds and proved they remained unpromoted while the
+rest of the bounded runtime validator and real 7-Zip archive checks passed. The
+regenerated archive SHA-256 is
+`5d5c2c837225b0222afb8f34d028e52701baa56922bdf9b2de191d04e255c23f`.
+
+The complete serialized verification passed with `830 passed`, the existing
+third-party Starlette warning, 81 files formatted, clean Ruff and strict mypy
+across 41 source files, clean systemd/shell/diff checks, and 10/10 complete
+traces with 100.0% mandatory-field completeness.

@@ -709,11 +709,42 @@ def create_app(
                         if app.state.knowledge is not None
                         else None
                     )
+                    evolution_artifacts = (
+                        app.state.prompts.registry.list_artifacts()
+                        if app.state.prompts is not None
+                        else []
+                    )
+                    candidate_rows = [
+                        artifact.model_dump(mode="json")
+                        for artifact in evolution_artifacts
+                        if artifact.state == "candidate"
+                    ]
                     await asyncio.to_thread(
                         weekly_runtime_improvement_report,
                         report_root,
                         skill_report=skill_report,
                         knowledge_report=knowledge_report,
+                        analyses={
+                            "prompt_regressions": [
+                                artifact.model_dump(mode="json")
+                                for artifact in evolution_artifacts
+                                if artifact.kind in {"prompt", "judge_prompt"}
+                                and artifact.state == "rejected"
+                            ],
+                            "prompt_candidates": [
+                                row
+                                for row in candidate_rows
+                                if row["kind"] in {"prompt", "judge_prompt"}
+                            ],
+                            "policy_candidates": [
+                                row for row in candidate_rows if row["kind"] == "policy"
+                            ],
+                            "routing_candidates": [
+                                row
+                                for row in candidate_rows
+                                if row["kind"] in {"routing", "failure_handling"}
+                            ],
+                        },
                         notifier=notify_weekly,
                     )
 

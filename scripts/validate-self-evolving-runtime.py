@@ -9,7 +9,13 @@ import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from dgx_moa.evolution import EvolutionArtifact, EvolutionEvaluation, EvolutionRegistry
+from dgx_moa.evolution import (
+    EvolutionArtifact,
+    EvolutionCandidateGenerator,
+    EvolutionEvaluation,
+    EvolutionRegistry,
+    EvolutionSignal,
+)
 from dgx_moa.knowledge import (
     KnowledgeConfidence,
     KnowledgeContent,
@@ -320,6 +326,32 @@ def main() -> None:
     assert (runtime_report_root / "weekly-runtime-improvement-report.json").is_file()
 
     evolution = EvolutionRegistry(root / "evolution/evolution.db")
+    generated_evolution = EvolutionCandidateGenerator(evolution).generate_many(
+        [
+            EvolutionSignal(
+                signal_type="repeated_unsafe_action",
+                candidate_kind="policy",
+                scope="destructive",
+                occurrences=2,
+                evidence_ids=["unsafe-1", "unsafe-2"],
+                proposed_payload={
+                    "when": {"destructive": True},
+                    "require": {"approval": True},
+                },
+            ),
+            EvolutionSignal(
+                signal_type="latency_cost",
+                candidate_kind="routing",
+                scope="planner",
+                occurrences=3,
+                evidence_ids=["latency-1"],
+                proposed_payload={"rules": [{"when": "simple", "avoid": "planner"}]},
+            ),
+        ],
+        created_by="physical-generator",
+    )
+    assert {item.kind for item in generated_evolution} == {"policy", "routing"}
+    assert all(item.state == "candidate" for item in generated_evolution)
     evolution.put(
         EvolutionArtifact(
             artifact_id="prompt.executor",
@@ -540,6 +572,7 @@ def main() -> None:
         "knowledge_validation_promotion_retrieval": True,
         "skill_knowledge_runtime_reports": True,
         "prompt_replay_canary_promotion_rollback": True,
+        "policy_routing_candidate_generation": True,
         "remote_judge_package_redaction": True,
         "capacity_guard_isolated": True,
         "privacy_redactions": {

@@ -4,11 +4,12 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .state import now
+from .training import sanitize
 
 ArtifactKind = Literal["prompt", "policy", "routing", "failure_handling", "judge_prompt"]
 ArtifactState = Literal["candidate", "evaluated", "canary", "active", "deprecated", "rejected"]
@@ -23,6 +24,40 @@ PROMPT_ROLES = frozenset(
         "skill_generation",
         "knowledge_generation",
         "dataset_transformation",
+    }
+)
+PROMPT_SIGNALS = frozenset(
+    {
+        "frequent_failure",
+        "missing_constraint",
+        "invalid_structured_output",
+        "judge_finding",
+        "reviewer_finding",
+        "routing_error",
+        "unnecessary_tool_use",
+        "excessive_token_usage",
+    }
+)
+POLICY_SIGNALS = frozenset(
+    {
+        "repeated_unsafe_action",
+        "repeated_escalation",
+        "unnecessary_agent_call",
+        "missed_security_review",
+        "misclassified_destructive_operation",
+        "repeated_privacy_exclusion",
+    }
+)
+ROUTING_SIGNALS = frozenset(
+    {
+        "agent_contribution",
+        "skill_usefulness",
+        "knowledge_usefulness",
+        "judge_correction",
+        "frontier_value",
+        "latency_cost",
+        "failure_class",
+        "task_category",
     }
 )
 
@@ -82,6 +117,87 @@ class EvolutionEvaluation(BaseModel):
             and (not high_impact or self.judge_approved)
             and bool(self.evidence_ids)
         )
+
+
+class EvolutionSignal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    signal_type: str = Field(min_length=3, max_length=64)
+    candidate_kind: ArtifactKind
+    scope: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{2,127}$")
+    occurrences: int = Field(ge=2)
+    evidence_ids: list[str] = Field(min_length=1)
+    proposed_payload: dict[str, Any]
+    high_impact: bool = False
+
+
+class EvolutionCandidateGenerator:
+    """Turn repeated measured signals into immutable, unpromoted candidates."""
+
+    def __init__(self, registry: EvolutionRegistry):
+        self.registry = registry
+
+    @staticmethod
+    def _validate_signal(signal: EvolutionSignal) -> None:
+        allowed = {
+            "prompt": PROMPT_SIGNALS,
+            "judge_prompt": PROMPT_SIGNALS,
+            "policy": POLICY_SIGNALS,
+            "routing": ROUTING_SIGNALS,
+            "failure_handling": ROUTING_SIGNALS,
+        }[signal.candidate_kind]
+        if signal.signal_type not in allowed:
+            raise ValueError("signal type is not valid for candidate kind")
+
+    def generate(self, signal: EvolutionSignal, *, created_by: str) -> EvolutionArtifact:
+        self._validate_signal(signal)
+        payload = cast(dict[str, Any], sanitize(signal.proposed_payload).value)
+        if signal.candidate_kind in {"prompt", "judge_prompt"}:
+            role = payload.get("role")
+            template = payload.get("template")
+            if role not in PROMPT_ROLES or not isinstance(template, str) or not template.strip():
+                raise ValueError("Prompt candidate signal requires role and template")
+        elif signal.candidate_kind == "policy":
+            if not isinstance(payload.get("when"), dict) or not isinstance(
+                payload.get("require"), dict
+            ):
+                raise ValueError("Policy candidate signal requires when and require objects")
+        elif not isinstance(payload.get("rules"), list) or not payload["rules"]:
+            raise ValueError("Routing candidate signal requires rules")
+        identity_material = json.dumps(
+            {
+                "kind": signal.candidate_kind,
+                "scope": signal.scope,
+                "payload": payload,
+                "evidence_ids": sorted(set(signal.evidence_ids)),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        suffix = hashlib.sha256(identity_material.encode()).hexdigest()[:12]
+        artifact_id = f"{signal.candidate_kind}.{signal.scope}.{suffix}"
+        existing = [
+            item for item in self.registry.list_artifacts() if item.artifact_id == artifact_id
+        ]
+        if existing:
+            return max(existing, key=lambda item: item.version)
+        candidate = EvolutionArtifact(
+            artifact_id=artifact_id,
+            kind=signal.candidate_kind,
+            version=1,
+            state="candidate",
+            payload=payload,
+            high_impact=signal.high_impact or signal.candidate_kind == "policy",
+            source_evidence_ids=list(dict.fromkeys(signal.evidence_ids)),
+            created_by=created_by,
+        )
+        self.registry.put(candidate)
+        return candidate
+
+    def generate_many(
+        self, signals: list[EvolutionSignal], *, created_by: str
+    ) -> list[EvolutionArtifact]:
+        return [self.generate(signal, created_by=created_by) for signal in signals]
 
 
 class EvolutionRegistry:
