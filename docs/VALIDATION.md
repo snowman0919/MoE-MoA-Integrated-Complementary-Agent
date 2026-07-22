@@ -41,6 +41,20 @@ exactly for every nonzero aggregate: Executor 16/16 completed invocations and
 runtime Skills, declarative policy, live observation, training collection, and
 weekly jobs remain disabled; this deployment did not enable or export them.
 
+### Isolated observer and real-clock scheduler follow-up
+
+Three focused physical checks passed against a real loopback HTTP server:
+Discord/Telegram-shaped thread targets and safe payloads, HTTP 429 and connection
+outage isolation, and scoped approval controls covering allowlists, nonce expiry,
+audit, and idempotency. No actual platform credential or message was used.
+
+The first real-clock scheduler probe passed the OS abbreviation `KST`, which is
+not an IANA ZoneInfo key, so both scheduler tasks exited and the probe correctly
+timed out. The authoritative rerun used the configured `Asia/Seoul` key and real
+`asyncio.sleep`: package fired at `2026-07-22T09:09:00.005371+09:00` and Skill
+maintenance at `2026-07-22T09:09:00.291290+09:00`. This proves isolated
+wall-clock firing, not a production weekly run or real chat delivery.
+
 ## Governed runtime production deployment — 2026-07-22
 
 PR `#34` merged to `main` as `979a608` and the production worktree was
