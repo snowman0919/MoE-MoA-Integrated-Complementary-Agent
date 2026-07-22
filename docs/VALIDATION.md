@@ -3272,3 +3272,29 @@ All eight commands ran sequentially and exited zero:
 7. `scripts/audit-trace-completeness.sh data/traces`: 10/10 complete, zero
    incomplete/legacy, 100.0% mandatory-field completeness.
 8. `git diff --check`: no output.
+
+# MoA Runtime v2.0 release gate — 2026-07-22
+
+The current `dev@7b9055f` release candidate passed the complete serialized
+promotion gate before the `main` merge:
+
+- `uv run pytest -q`: `803 passed`, with the existing third-party Starlette
+  TestClient deprecation warning.
+- Ruff format/check and strict mypy: clean across 75 formatted files and 38
+  source files.
+- `systemd-analyze --user verify systemd/*`, every `scripts/*.sh` `bash -n`,
+  and `git diff --check`: clean.
+- `scripts/audit-trace-completeness.sh data/traces`: 10/10 sessions complete,
+  zero incomplete or legacy sessions, 100.0% mandatory-field completeness.
+- `scripts/validate-self-evolving-runtime.py` passed with real 7-Zip 23.01.
+  It verified bounded success/no-progress/duplicate termination, exact mocked
+  replay, Evidence Graph restoration, governed Skill evaluation/canary/
+  promotion/rollback, privacy redaction, capacity isolation, archive creation,
+  integrity testing, idempotent replay, revocation/regeneration, empty-week and
+  corrupt/archive-failure handling. The regenerated archive SHA-256 was
+  `03fc6cab9f6c84b466cbd209bdcdbd5913daafeecf988b1edde44541c9884b4a`.
+
+The temporary synthetic evidence root was
+`/tmp/dgx-moa-v2-release-cHXe8L`. No production data was read or packaged.
+Production-disabled gates remain disabled unless separately documented as
+physically enabled.
