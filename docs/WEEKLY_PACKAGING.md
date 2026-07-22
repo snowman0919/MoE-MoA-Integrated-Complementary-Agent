@@ -60,11 +60,13 @@ Reports contain real role/type/language/quality/privacy/
 dedup/Skill/routing/failure aggregates and request/candidate indices. Completion
 publishes only package ID, counts, relative storage identifier, checksum, and
 verification status through the observation bus. Checked-in weekly jobs remain
-disabled. The production filesystem currently has less than the configured
-10 GB reserve, so enabling the scheduler remains blocked. An isolated real-clock
+disabled. After an approved pip-cache purge restored 16,222,420,992 bytes free,
+the protected production override enabled the bounded scheduler with the same
+10 GB reserve. An isolated real-clock
 check scheduled both jobs for the next
 `Asia/Seoul` minute: package fired at `2026-07-22T09:09:00.005371+09:00` and
 Skill maintenance at `2026-07-22T09:09:00.291290+09:00`. The first validation
 attempt used the non-IANA OS abbreviation `KST` and timed out; the authoritative
-rerun used the configured IANA key `Asia/Seoul`. No production scheduled run or
-real Discord/Telegram notification has occurred.
+rerun used the configured IANA key `Asia/Seoul`. The first approved production
+runs are scheduled for Skill maintenance at `2026-07-26T03:00:00+09:00` and
+packaging at `2026-07-27T02:00:00+09:00`; no scheduled production run has fired.

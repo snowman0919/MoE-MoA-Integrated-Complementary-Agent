@@ -1,6 +1,6 @@
 # Training Data
 
-The disabled Phase F collector is separate from operational traces. Completed
+The Phase F collector is separate from operational traces. Completed
 trace snapshots may be projected into a dedicated SQLite WAL database and a
 content-addressed Zstandard JSON object store only when collection is explicitly
 enabled. Object writes are bounded, hash-verified, deduplicated and atomically
@@ -39,7 +39,7 @@ projections retain severity/category and deterministic confirmation metadata,
 not verbatim provider findings or correction prose. Without that explicit
 permission, raw external output remains ineligible.
 
-The disabled admin workflow can inspect a candidate, perform only allowlisted
+The admin workflow can inspect a candidate, perform only allowlisted
 review-state transitions, and retrieve the immutable audit history. Approval
 and packaging fail closed for ineligible candidates. Request exclusion creates
 a tombstone and transactionally revokes linked candidates; repository exclusion
@@ -56,5 +56,7 @@ backup uses SQLite online backup, integrity check, fsync, and atomic replace.
 This foundation does not train a model or upload anything. An isolated synthetic
 run physically collected candidates, backed up and integrity-checked the WAL
 store, and placed non-empty loop-transition and repair-preference datasets in a
-verified real 7z archive. The authenticated workflows and weekly scheduler
-remain disabled in production.
+verified real 7z archive. Production collection and the bounded weekly scheduler
+are enabled only through the protected override for workspace `moa-production`;
+external output, retention apply, archive export, and model training remain
+disabled.
