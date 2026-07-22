@@ -21,3 +21,4 @@ data/state/tailscale-models.json
 models/
 worktrees/
 *.log
+/nim_api
