@@ -38,7 +38,7 @@ LifecycleState = Literal[
     "unloading",
     "failed",
 ]
-DriverStatus = Literal["active", "inactive", "failed"]
+DriverStatus = Literal["active", "activating", "inactive", "failed"]
 DriverOperation = Literal["status", "start", "stop", "cursor", "progress"]
 DriverErrorKind = Literal["timeout", "command_failed", "malformed_output"]
 ProgressQuality = Literal[
@@ -1609,6 +1609,7 @@ class LifecycleStore:
     def reconcile(self, driver: LifecycleDriver) -> dict[str, LifecycleRecord]:
         target: dict[DriverStatus, LifecycleState] = {
             "active": "process_starting",
+            "activating": "process_starting",
             "inactive": "cold",
             "failed": "failed",
         }
@@ -2144,7 +2145,7 @@ class LifecycleCoordinator:
         await self._owned_load_driver_call(self.driver.start, role)
         while True:
             driver_status = await asyncio.to_thread(self.driver.status, role)
-            if driver_status != "active":
+            if driver_status not in {"active", "activating"}:
                 raise LifecycleLoadError(
                     f"service_{driver_status}", "service did not become active"
                 )
@@ -2419,6 +2420,7 @@ class SystemdLifecycleDriver:
         lines = output.splitlines()
         states: dict[str, DriverStatus] = {
             "active": "active",
+            "activating": "activating",
             "inactive": "inactive",
             "failed": "failed",
         }
@@ -2427,7 +2429,7 @@ class SystemdLifecycleDriver:
         return states[lines[0]]
 
     def start(self, role: str) -> None:
-        args = ["systemctl", "--user", "start", self._unit(role)]
+        args = ["systemctl", "--user", "start", "--no-block", self._unit(role)]
         self._run("start", args)
 
     def stop(self, role: str) -> None:
