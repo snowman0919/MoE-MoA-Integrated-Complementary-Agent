@@ -46,6 +46,9 @@ gateway:
   live_observation:
     enabled: false
     level: normal
+    include_prompt: false
+    include_reasoner_artifact: false
+    max_content_characters: 2000
     queue_size: 256
     batch_size: 10
     batch_interval_seconds: 2

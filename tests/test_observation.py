@@ -15,6 +15,7 @@ from dgx_moa.observation import (
     ObservationEvent,
     TelegramProvider,
     public_event,
+    render_events,
 )
 from dgx_moa.state import StateStore
 
@@ -53,6 +54,18 @@ def test_public_event_allowlists_fields_and_drops_unpublished_content() -> None:
 
     assert published is not None
     assert published.details == {"task_id": "task-1", "phase": "intake"}
+    detailed = public_event(
+        "request-1",
+        "request_received",
+        {"prompt": "inspect token=synthetic-secret-value and report", "task_id": "task-1"},
+        "2026-07-22T00:00:00Z",
+        include_prompt=True,
+    )
+    assert detailed is not None
+    assert detailed.details == {
+        "prompt": "inspect token=[REDACTED] and report",
+        "task_id": "task-1",
+    }
     weekly = public_event(
         "weekly-maintenance",
         "weekly_package_completed",
@@ -69,6 +82,36 @@ def test_public_event_allowlists_fields_and_drops_unpublished_content() -> None:
     assert weekly is not None
     assert "archive_path" not in weekly.details
     assert public_event("request-1", "token_delta", {"text": "secret"}, "now") is None
+
+
+def test_render_events_uses_readable_multiline_cards() -> None:
+    rendered = render_events(
+        [
+            ObservationEvent(
+                event_type="reasoner_completed",
+                request_id="request-1",
+                created_at="2026-07-22T00:00:00Z",
+                details={
+                    "confidence": 0.8,
+                    "problem_interpretation": "Inspect the runtime",
+                    "reasoning_summary": ["Read evidence", "Validate behavior"],
+                    "risks": ["Provider outage"],
+                },
+            )
+        ]
+    )
+
+    assert rendered == (
+        "🧠 Reasoner completed\n"
+        "Request: request-1\n"
+        "Confidence: 0.8\n"
+        "Interpretation: Inspect the runtime\n"
+        "Reasoning summary:\n"
+        "  • Read evidence\n"
+        "  • Validate behavior\n"
+        "Risks:\n"
+        "  • Provider outage"
+    )
 
 
 @pytest.mark.asyncio
