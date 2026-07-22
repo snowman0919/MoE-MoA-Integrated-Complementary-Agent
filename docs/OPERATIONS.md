@@ -139,15 +139,23 @@ an isolated gateway and pass a complete versioned policy object through
 metadata; do not store credentials or approval secrets inside a policy file.
 See `docs/POLICY_ENGINE.md` for the implemented and missing enforcement edges.
 
-## Isolated live observation development
+## Live observation operations
 
-Keep `gateway.live_observation.enabled: false` until using synthetic or dedicated
-test channels. Supply webhook and bot credentials only through the protected
+Checked-in `gateway.live_observation.enabled` remains `false`. Supply webhook and
+bot credentials only through the protected
 `DGX_MOA_LIVE_OBSERVATION` runtime object. Never commit them. Controls require
 both `admin_api_enabled` and `live_observation.controls.enabled`, plus an empty-
 by-default user/role policy. Issue request-scoped nonces through
 `POST /v1/admin/observation/nonces` and submit bounded commands through
 `POST /v1/admin/observation/commands`. See `docs/LIVE_OBSERVATION.md`.
+
+The reviewed production override currently enables only Telegram observation;
+Discord and controls remain disabled. The token and target are 0600 files outside
+the worktree and are injected into the ignored 0600 environment. Rollback is to
+remove `DGX_MOA_LIVE_OBSERVATION` from that environment, restart the fixed
+gateway unit, wait for resident restoration, and verify observer metrics stop
+changing. Never print the effective JSON because it contains the bot token and
+chat ID.
 
 ## Isolated training collection development
 

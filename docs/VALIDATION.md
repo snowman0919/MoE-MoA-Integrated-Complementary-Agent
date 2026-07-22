@@ -55,6 +55,30 @@ timed out. The authoritative rerun used the configured `Asia/Seoul` key and real
 maintenance at `2026-07-22T09:09:00.291290+09:00`. This proves isolated
 wall-clock firing, not a production weekly run or real chat delivery.
 
+### Production Telegram observation enablement
+
+The operator supplied one raw Telegram bot token in a 0600 untracked file. It
+matched the Bot API token shape, authenticated as `@kodex9_AI_observer_bot`, and
+was immediately moved out of the Git worktree to
+`/home/kotori9/.config/dgx-moa/telegram.token`; the discovered target was stored
+separately with mode 0600 and neither value was printed. The initial update poll
+was empty. After the user initiated `/start`, exactly one private target was
+available.
+
+The runtime `TelegramProvider` sent an allowlisted validation event successfully;
+synthetic prompt and authorization fields were absent before transport. The
+protected production environment was then updated atomically with Telegram
+observation enabled and controls disabled. The required gateway restart used the
+selected exact Executor stop/start and restored the resident profile with
+`68366192640` available bytes and the unchanged 65,536-token baseline.
+
+As in the prior deployment, the first request immediately after resident
+readiness received one transient HTTP `503`; the bounded retry had no further
+failure. The successful production `dgx-moa` request returned exact
+`TELEGRAM_PRODUCTION_OK` and `finish_reason=stop`. Observer metrics changed from
+zero to three sent events with zero drops and zero Telegram errors. Weekly jobs,
+training collection, observation controls, and Discord remain disabled.
+
 ## Governed runtime production deployment — 2026-07-22
 
 PR `#34` merged to `main` as `979a608` and the production worktree was

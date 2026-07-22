@@ -18,7 +18,7 @@ Updated: 2026-07-22
 | Runtime Skills Phase C foundation | yes | yes | yes | isolated governed lifecycle | no |
 | Declarative Policy Phase D foundation | yes | yes | yes | isolated redaction | no |
 | Typed Evidence Graph Phase E foundation | yes | yes | yes | isolated replay validation | no |
-| Discord/Telegram Live Observation Phase E | yes | yes | yes | isolated loopback transport/control; platform pending | no |
+| Discord/Telegram Live Observation Phase E | yes | yes | yes | production Telegram; isolated Discord/control | Telegram yes; controls no |
 | Privacy-aware Training Collection Phase F | yes | yes | yes | isolated role/loop/preference archive | no |
 | Weekly Skill/Data Packaging Phase G | yes | yes | yes | isolated real 7z + wall-clock scheduler; platform pending | no |
 | Execution Replay Phase H foundation | yes | yes | yes | isolated exact loop replay | no |
@@ -76,6 +76,11 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   continuation, metrics, and invocation CSV checks passed. Loop Engineering,
   Skills, policy, observation, training, and weekly-job production gates remain
   disabled.
+- Telegram observation was subsequently enabled through the protected production
+  environment after a real Bot API identity, target, safe-payload, and send
+  validation. A production `dgx-moa` request emitted three observer events with
+  zero Telegram errors or drops. Discord and observation controls remain
+  disabled.
 
 ## Runtime
 
@@ -127,7 +132,8 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   graph consistency passed an isolated exact replay.
 - A bounded internal event bus, Discord/Telegram senders, safe event projection,
   batching, drop/error metrics, and optional authenticated control commands are
-  implemented but disabled. No platform message has been sent physically.
+  implemented. Telegram observation is production-enabled; Discord and controls
+  remain disabled.
 - A separate training event/candidate store, content-addressed objects,
   sanitization, repository/opt-out/license gates, role-specific candidates,
   deduplication, transactional review audit, request/repository exclusion, and
