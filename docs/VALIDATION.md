@@ -3790,3 +3790,29 @@ was ready, all three local model services plus the external Reasoner were ready,
 and the Remote Judge reported available. Consequently the OpenCode provider
 slice is production-complete, but the full self-evolving-runtime objective is
 not complete until its remaining documented physical production gates pass.
+
+## Live-provider Loop Engineering shadow gate — 2026-07-22
+
+A loopback-only shadow gateway used the production `main` model endpoints and
+OpenCode credential while isolating its state, Skill, Knowledge, evolution,
+training, and weekly stores under `/tmp`. Lifecycle mutation, Frontier, and
+observation delivery were disabled. Loop Engineering, Runtime Skills, Runtime
+Knowledge, runtime evolution, declarative policy, training collection, and the
+weekly scheduler were enabled only in that shadow process.
+
+The first clean local-provider run exposed a real completion bug: the Reasoner,
+Executor, and local Reviewer completed and the Reviewer returned `approved`, but
+post-synthesis metadata was applied only inside the conditional post-synthesis
+review block. Because the pre-synthesis review had already approved the request,
+that block was skipped; the HTTP 200 response was correct but completion
+evidence remained empty and the loop stayed open.
+
+Moving metadata application after the optional review block preserved the
+review requirement while closing the missed path. The identical fixed-code run
+returned HTTP 200 with exact `LOOP_GATE_OK`, persisted two acceptance-evidence
+items, retained `review_status=approved`, and terminated the loop `SUCCESS` with
+`phase=completed` and `final_status=completed`. It also recorded a declarative
+policy decision, a bounded empty Knowledge retrieval, non-empty Evidence Graph,
+and a training candidate without exposing secrets. The full automated suite
+then passed with `849 passed`; an additional regression case covers the
+pre-synthesis-approved path.

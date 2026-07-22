@@ -6356,6 +6356,59 @@ def test_loop_tool_budget_is_enforced_before_client_receives_nonstream_call(
         assert state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
 
 
+def test_loop_completion_metadata_is_retained_without_reviewer(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "loop-success"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "complete"}],
+                "metadata": {"completion_evidence": {"live inference": "observed"}},
+            },
+        )
+        state = client.app.state.store.get("loop-success")
+
+    assert response.status_code == 200
+    assert state is not None and state.engineering_loop is not None
+    assert state.phase == Phase.EXECUTING
+    assert state.final_status is None
+    assert state.engineering_loop.termination_reason is None
+    assert state.completion_evidence == {"live inference": "observed"}
+
+
+def test_loop_completion_closes_after_pre_synthesis_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "reviewed-success"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "review a validated change"}],
+                "metadata": {
+                    "executor_complete": True,
+                    "diff_summary": "one validated change",
+                    "completion_evidence": {"tests pass": "exit 0"},
+                },
+            },
+        )
+        state = client.app.state.store.get("reviewed-success")
+
+    assert response.status_code == 200
+    assert state is not None and state.engineering_loop is not None
+    assert state.review_status == "approved"
+    assert state.phase == Phase.COMPLETED
+    assert state.final_status == "completed"
+    assert state.engineering_loop.termination_reason == "SUCCESS"
+    assert state.completion_evidence == {"tests pass": "exit 0"}
+
+
 def test_timeout_and_http_500_mapping(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     original = stub_provider.complete
 
