@@ -736,15 +736,17 @@ class Controller:
             repository_id, "unknown"
         )
         state.route, state.route_reasons = select_route(metadata)
-        self.apply_declarative_policy(state, metadata)
-        if state.route == "escalation":
-            state.judge_status = "eligible"
-        self.store.event(
-            state.session_id,
-            "route_selected",
-            {"route": state.route, "reasons": state.route_reasons},
-        )
-        self.store.save(state)
+        try:
+            self.apply_declarative_policy(state, metadata)
+            if state.route == "escalation":
+                state.judge_status = "eligible"
+        finally:
+            self.store.event(
+                state.session_id,
+                "route_selected",
+                {"route": state.route, "reasons": state.route_reasons},
+            )
+            self.store.save(state)
 
     def apply_declarative_policy(self, state: SessionState, metadata: dict[str, Any]) -> None:
         if self.policy is None or not self.settings.declarative_policy.enabled:

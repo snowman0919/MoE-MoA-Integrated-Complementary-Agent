@@ -185,6 +185,7 @@ def test_controller_blocks_missing_policy_approval_and_persists_reason(
     assert persisted.phase == Phase.BLOCKED
     assert persisted.engineering_loop is not None
     assert persisted.engineering_loop.termination_reason == "PERMISSION_REQUIRED"
+    assert "route_selected" in {event["event_type"] for event in store.events(state.session_id)}
 
 
 def test_controller_enforces_tool_deny_and_evidence_field_redaction(tmp_path) -> None:  # type: ignore[no-untyped-def]

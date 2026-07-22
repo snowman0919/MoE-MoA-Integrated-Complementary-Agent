@@ -20,7 +20,7 @@ Updated: 2026-07-22
 | Declarative Policy Phase D foundation | yes | yes | yes | production approval fail-closed | yes |
 | OpenCode Go GLM-5.2 Remote Judge | yes | yes | yes | live matrix and production readiness | yes |
 | Remote-first Planner/Reviewer cold routing | yes | yes | yes | production cold/warm routing | yes |
-| Typed Evidence Graph Phase E foundation | yes | yes | yes | isolated replay validation | no |
+| Typed Evidence Graph Phase E foundation | yes | yes | yes | production graph and isolated replay | yes |
 | Telegram Live Observation Phase E | yes | yes | yes | production Telegram; isolated control | Telegram yes; controls no |
 | Privacy-aware Training Collection Phase F | yes | yes | yes | isolated role/loop/preference archive | no |
 | Weekly Skill/Knowledge/Data Packaging Phase G | yes | yes | yes | isolated reports, real 7z + wall-clock scheduler; platform pending | no |
@@ -115,7 +115,8 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 
 - Gateway: authenticated direct tailnet TCP at `100.125.239.72:9000`.
 - Model endpoints: loopback-only executor `8101`, planner `8102`, reviewer `8103`.
-- Context limits are executor, planner, and reviewer `65536`.
+- Production context limits are Executor `65536`, Planner `8192`, and Reviewer
+  `8192`.
 - The deployed `main` runtime exposes `dgx-moa`, `dgx-moa-fast`,
   `dgx-moa-agent`, and `dgx-moa-orchestrated`. `dgx-moa` is the primary
   Reasoner + Executor core; `dgx-moa-fast` is the explicitly Executor-only
@@ -179,9 +180,10 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   corruption, archiver-failure, late-arrival, and capacity-isolation checks on
   synthetic data. No scheduled or production run exists.
 - Hash-protected replay snapshots and exact/mock versus live/comparative replay
-  modes plus an exact/audit admin API are implemented. An isolated exact replay
-  reproduced the persisted loop state and validated the non-empty Evidence
-  Graph; no live-provider or production replay has been exercised.
+  modes plus an exact/audit admin API are implemented. Isolated replay restored
+  loop state and a non-empty Evidence Graph; production exact mock replay passed
+  through the operator-only API. Live comparative replay remains isolated from
+  the admin surface and fails closed there.
 - The authenticated development `/metrics` endpoint exposes the fixed Goal
   metric names without labels or event content. Loop events and current
   Skill/observer/training aggregates are connected; scheduler/package and some
