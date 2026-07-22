@@ -484,7 +484,7 @@ def create_app(
                                 }
                             ],
                             "temperature": 0,
-                            "max_tokens": 8,
+                            "max_tokens": 256,
                             "stream": False,
                         },
                     )
