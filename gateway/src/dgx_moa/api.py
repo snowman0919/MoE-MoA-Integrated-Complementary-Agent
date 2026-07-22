@@ -2328,7 +2328,12 @@ def create_app(
             request.app.state.store.event(
                 state_session_id,
                 "executor_started",
-                {"role": "executor", "phase": state.phase},
+                {
+                    "role": "executor",
+                    "phase": state.phase,
+                    "provider": "local",
+                    "model": configured.models["executor"].served_name,
+                },
             )
             if body.stream:
                 stream_lease_ids = tuple(

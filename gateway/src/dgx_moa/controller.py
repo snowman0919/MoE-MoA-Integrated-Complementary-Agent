@@ -234,7 +234,7 @@ class Controller:
         response, decision = await self.specialists.complete(
             role,
             request,
-            request_id=state.session_id,
+            request_id=state.current_request_id or state.session_id,
             revision=self.settings.models[role].revision,
             timeout_seconds=getattr(self.settings.limits, f"{role}_timeout_seconds"),
             local_only=role in state.specialist_local_only_roles,
@@ -1496,7 +1496,8 @@ class Controller:
             else (
                 "Use native OpenAI tool calls when an action is required. Otherwise return normal "
                 "assistant content. Do not encode tool calls as JSON text or wrap native tool "
-                "calls in prose or Markdown fences."
+                "calls in prose or Markdown fences. Be concise by default; expand only when the "
+                "objective explicitly requests detail."
             )
         )
         prompt_artifact = self.prompts.active_artifact(role) if self.prompts else None
@@ -1861,7 +1862,11 @@ class Controller:
             decision_id = self._record_decision(
                 "reasoner", state, {"type": "structured_reasoning_request"}, state.objective
             )
-            self.store.event(state.session_id, "reasoner_started", {"role": "reasoner"})
+            self.store.event(
+                state.session_id,
+                "reasoner_started",
+                {"role": "reasoner", "provider": "local", "model": reasoner.served_name},
+            )
             reasoner_started = time.monotonic()
             try:
                 for attempt in range(2):
@@ -1935,6 +1940,9 @@ class Controller:
                 "reasoner_completed",
                 {
                     "decision_id": decision_id,
+                    "role": "reasoner",
+                    "provider": "local",
+                    "model": reasoner.served_name,
                     "confidence_category": contribution.confidence_category,
                     "recommended_agents": [
                         item.role for item in contribution.additional_agents if item.needed
@@ -2043,7 +2051,12 @@ class Controller:
                         self.store.event(
                             state.session_id,
                             "frontier_collaboration_started",
-                            {"mode": mode, "parallel": orchestration.parallelizable},
+                            {
+                                "mode": mode,
+                                "parallel": orchestration.parallelizable,
+                                "provider": "codex_oauth",
+                                "model": self.frontier.config.model,
+                            },
                         )
                     else:
                         frontier_pending = (mode, evidence)
@@ -2284,9 +2297,15 @@ class Controller:
             self.store.event(
                 state.session_id,
                 "frontier_collaboration_started",
-                {"mode": mode, "parallel": False},
+                {
+                    "mode": mode,
+                    "parallel": False,
+                    "provider": "codex_oauth",
+                    "model": self.frontier.config.model,
+                },
             )
         if frontier_task is not None:
+            assert self.frontier is not None
             try:
                 frontier_result = await frontier_task
             except LoopAdmissionError:
@@ -2341,6 +2360,8 @@ class Controller:
                     "frontier_collaboration_completed",
                     {
                         "mode": frontier_result.mode,
+                        "provider": "codex_oauth",
+                        "model": self.frontier.config.model,
                         "latency_ms": frontier_result.latency_ms,
                         "prompt_tokens": frontier_result.prompt_tokens,
                         "completion_tokens": frontier_result.completion_tokens,
@@ -3011,6 +3032,8 @@ class Controller:
             "judge_completed",
             safe_result
             | {
+                "provider": "opencode_go",
+                "model": self.settings.remote_judge.model,
                 "latency_seconds": latency_seconds,
                 "total_tokens": judge_usage.get("total_tokens", 0),
             },
