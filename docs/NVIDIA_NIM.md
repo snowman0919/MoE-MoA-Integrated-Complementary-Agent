@@ -24,6 +24,20 @@ A successful health probe does not prove
 judgment quality; the full physical matrix in `docs/REMOTE_JUDGE.md` is the
 enablement gate.
 
+After placing a fresh credential only in the process environment, run the live
+matrix without printing either variable:
+
+```bash
+uv run scripts/validate-remote-judge.py \
+  --output /tmp/dgx-moa-live-remote-judge/validation.json
+```
+
+The validator records only verdict categories, criterion states, counts, and
+token usage. It never records evidence text, endpoints, headers, or credentials.
+It requires valid approval, unsupported-claim rejection, failed-test detection,
+missing-criterion detection, bounded edits, corrected recheck approval, and
+local third-call rejection before writing `status=passed`.
+
 Rollback is removal of `DGX_MOA_REMOTE_JUDGE` followed by a fixed gateway-unit
 restart and authenticated health verification. The disabled configuration does
 not require an NVIDIA key and leaves the existing local Heavy Judge profile

@@ -44,3 +44,6 @@ enable the provider until the cases in `docs/VALIDATION.md` cover valid approval
 unsupported claims, failed-test inconsistency, missing acceptance evidence,
 edits, timeout, rate limit, invalid output, redaction, denied training policy,
 and two-call enforcement.
+Use `scripts/validate-remote-judge.py` for the credentialed quality cases. Mock
+transport tests remain the authority for deterministic timeout, rate-limit,
+invalid-output, redaction, and retry fault injection.
