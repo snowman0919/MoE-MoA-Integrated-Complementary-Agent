@@ -114,6 +114,34 @@ async def test_ready_local_is_selected_by_queue_and_cost_prediction() -> None:
     assert not remote.requests
 
 
+def test_predictive_prewarm_skips_ready_specialist() -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    calls = 0
+
+    async def warmup(_role: str) -> Any:
+        nonlocal calls
+        calls += 1
+        return None
+
+    router = SpecialistRouter(
+        config(),
+        local={"planner": MockPlannerProvider({}), "reviewer": MockReviewerProvider({})},
+        remote={"planner": MockPlannerProvider({}), "reviewer": MockReviewerProvider({})},
+        lifecycle_store=Records(planner=record("ready"), reviewer=record("ready")),
+        warmup=warmup,
+        event=lambda _request, event_type, payload: events.append((event_type, payload)),
+    )
+
+    router.prewarm(
+        {"architecture": True, "tests_scheduled": True},
+        "one",
+        {"planner": "rev", "reviewer": "rev"},
+    )
+
+    assert events == []
+    assert calls == 0
+
+
 @pytest.mark.asyncio
 async def test_provider_is_pinned_after_remote_dispatch_failure() -> None:
     local = MockPlannerProvider({"provider": "local"})
