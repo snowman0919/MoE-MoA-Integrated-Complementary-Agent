@@ -69,6 +69,46 @@ SAFE_PAYLOAD_KEYS = {
     "low_value_count",
     "job",
 }
+PROMPT_PAYLOAD_KEYS = ("prompt",)
+REASONER_PAYLOAD_KEYS = (
+    "problem_interpretation",
+    "reasoning_summary",
+    "risks",
+    "unknowns",
+    "recommended_actions",
+)
+
+EVENT_TITLES = {
+    "request_received": "📥 Request received",
+    "reasoner_completed": "🧠 Reasoner completed",
+    "tool_call_requested": "🛠 Executor step requested",
+    "executor_skills_selected": "🧩 Executor skills selected",
+    "plan_created": "🗺 Plan created",
+    "review_completed": "🔎 Review completed",
+    "frontier_collaboration_started": "🌐 Frontier collaboration started",
+    "frontier_collaboration_completed": "🌐 Frontier collaboration completed",
+    "task_completed": "✅ Task completed",
+    "request_finalized": "✅ Request finalized",
+    "stream_failed": "❌ Stream failed",
+    "provider_failure": "❌ Provider failure",
+}
+
+DETAIL_LABELS = {
+    "task_id": "Task",
+    "phase": "Phase",
+    "step": "Step",
+    "status": "Status",
+    "role": "Role",
+    "mode": "Mode",
+    "latency_ms": "Latency (ms)",
+    "confidence": "Confidence",
+    "prompt": "Prompt",
+    "problem_interpretation": "Interpretation",
+    "reasoning_summary": "Reasoning summary",
+    "risks": "Risks",
+    "unknowns": "Unknowns",
+    "recommended_actions": "Recommended actions",
+}
 
 
 class ObservationEvent(BaseModel):
@@ -108,11 +148,40 @@ class ObservationProvider(Protocol):
 
 
 def public_event(
-    request_id: str, event_type: str, payload: dict[str, Any], created_at: str
+    request_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    created_at: str,
+    *,
+    include_prompt: bool = False,
+    include_reasoner_artifact: bool = False,
+    max_content_characters: int = 2_000,
 ) -> ObservationEvent | None:
     if event_type not in PUBLISHED_EVENTS:
         return None
-    details = {key: payload[key] for key in SAFE_PAYLOAD_KEYS.intersection(payload)}
+    allowed = set(SAFE_PAYLOAD_KEYS)
+    if include_prompt:
+        allowed.update(PROMPT_PAYLOAD_KEYS)
+    if include_reasoner_artifact:
+        allowed.update(REASONER_PAYLOAD_KEYS)
+    details = {key: value for key, value in payload.items() if key in allowed}
+    content_budget = max_content_characters
+    for key in (*PROMPT_PAYLOAD_KEYS, *REASONER_PAYLOAD_KEYS):
+        if key not in details:
+            continue
+        value = details[key]
+        if isinstance(value, str):
+            details[key] = value[:content_budget]
+            content_budget -= len(details[key])
+        elif isinstance(value, list):
+            retained: list[Any] = []
+            for item in value:
+                text = str(item)
+                if content_budget <= 0:
+                    break
+                retained.append(text[:content_budget])
+                content_budget -= len(retained[-1])
+            details[key] = retained
     return ObservationEvent(
         event_type=event_type,
         request_id=request_id,
@@ -121,14 +190,34 @@ def public_event(
     )
 
 
-def render_events(events: Sequence[ObservationEvent]) -> str:
-    lines = []
+def _render_detail(label: str, value: Any) -> list[str]:
+    if isinstance(value, list):
+        if not value:
+            return [f"{label}: none"]
+        return [f"{label}:", *(f"  • {item}" for item in value)]
+    if isinstance(value, dict):
+        if not value:
+            return [f"{label}: none"]
+        return [f"{label}:", *(f"  • {key}: {item}" for key, item in value.items())]
+    text = str(value)
+    if "\n" in text or len(text) > 120:
+        return [f"{label}:", *(f"  {line}" for line in text.splitlines())]
+    return [f"{label}: {text}"]
+
+
+def render_events(events: Sequence[ObservationEvent], max_characters: int = 4_000) -> str:
+    blocks = []
     for event in events:
-        details = " ".join(f"{key}={value}" for key, value in sorted(event.details.items()))
-        lines.append(
-            f"[{event.event_type}] request={event.request_id}" + (f" {details}" if details else "")
-        )
-    return "\n".join(lines)[:4_000]
+        lines = [EVENT_TITLES.get(event.event_type, event.event_type.replace("_", " ").title())]
+        lines.append(f"Request: {event.request_id}")
+        for key, value in event.details.items():
+            label = DETAIL_LABELS.get(key, key.replace("_", " ").title())
+            lines.extend(_render_detail(label, value))
+        blocks.append("\n".join(lines))
+    rendered = "\n\n──────────\n\n".join(blocks)
+    if len(rendered) <= max_characters:
+        return rendered
+    return rendered[: max_characters - 16].rstrip() + "\n… (truncated)"
 
 
 class DiscordProvider:
@@ -191,18 +280,32 @@ class ObservationBus:
         queue_size: int = 256,
         batch_size: int = 10,
         batch_interval_seconds: float = 2,
+        include_prompt: bool = False,
+        include_reasoner_artifact: bool = False,
+        max_content_characters: int = 2_000,
     ):
         self.providers = list(providers)
         self.queue: asyncio.Queue[ObservationEvent] = asyncio.Queue(maxsize=queue_size)
         self.batch_size = batch_size
         self.batch_interval_seconds = batch_interval_seconds
+        self.include_prompt = include_prompt
+        self.include_reasoner_artifact = include_reasoner_artifact
+        self.max_content_characters = max_content_characters
         self.task: asyncio.Task[None] | None = None
         self.metrics = {"sent": 0, "dropped": 0, "discord_errors": 0, "telegram_errors": 0}
 
     def publish_store_event(
         self, request_id: str, event_type: str, payload: dict[str, Any], created_at: str
     ) -> None:
-        event = public_event(request_id, event_type, payload, created_at)
+        event = public_event(
+            request_id,
+            event_type,
+            payload,
+            created_at,
+            include_prompt=self.include_prompt,
+            include_reasoner_artifact=self.include_reasoner_artifact,
+            max_content_characters=self.max_content_characters,
+        )
         if event is None:
             return
         try:

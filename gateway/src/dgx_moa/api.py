@@ -506,6 +506,9 @@ def create_app(
                 queue_size=observation.queue_size,
                 batch_size=observation.batch_size,
                 batch_interval_seconds=observation.batch_interval_seconds,
+                include_prompt=observation.include_prompt,
+                include_reasoner_artifact=observation.include_reasoner_artifact,
+                max_content_characters=observation.max_content_characters,
             )
             if observation.enabled and observation_providers
             else None
@@ -1904,7 +1907,19 @@ def create_app(
             request.app.state.store.event(
                 state_session_id,
                 "request_received",
-                {"stream": body.stream, "task_id": task_id},
+                {
+                    "stream": body.stream,
+                    "task_id": task_id,
+                    **(
+                        {
+                            "prompt": state.objective[
+                                : configured.live_observation.max_content_characters
+                            ]
+                        }
+                        if configured.live_observation.include_prompt
+                        else {}
+                    ),
+                },
             )
             state.runtime_mode = mode
             state.request_class = request_class

@@ -6,11 +6,16 @@ insertion is non-blocking; queue saturation or provider failure affects only
 observation and never waits in the request path.
 
 Discord uses a configured webhook and optional thread ID. Telegram uses a bot
-token, chat ID, and optional message-thread ID. Events are batched and contain
-only allowlisted status fields. Prompts, repository contents, credentials,
-environment data, token deltas, and hidden reasoning are never selected for
-publication. Provider secrets use Pydantic `SecretStr` and must arrive through a
-protected runtime configuration source.
+token, chat ID, and optional message-thread ID. Events are batched and rendered
+as readable multi-line cards. The default publishes only allowlisted status
+fields. An operator may separately enable the bounded user prompt and the
+Reasoner's structured artifact (`problem_interpretation`, explicit reasoning
+summary, risks, unknowns, and recommended actions). Hidden model reasoning is
+never available to this path. Credentials, environment data, and token deltas
+remain excluded, and the selected content is still passed through secret
+redaction. Telegram and Discord are external processors even when the gateway
+itself is tailnet-only. Provider secrets use Pydantic `SecretStr` and must arrive
+through a protected runtime configuration source.
 
 Optional controls are separately disabled. The only accepted commands are
 `approve`, `reject`, `pause`, `resume`, `terminate`, `show-status`,
@@ -25,6 +30,9 @@ gateway:
   live_observation:
     enabled: false
     level: normal
+    include_prompt: false
+    include_reasoner_artifact: false
+    max_content_characters: 2000
     queue_size: 256
     batch_size: 10
     batch_interval_seconds: 2

@@ -1761,6 +1761,17 @@ class Controller:
                     "recommended_agents": [
                         item.role for item in contribution.additional_agents if item.needed
                     ],
+                    **(
+                        {
+                            "problem_interpretation": contribution.problem_interpretation,
+                            "reasoning_summary": contribution.reasoning,
+                            "risks": contribution.risks,
+                            "unknowns": contribution.unknowns,
+                            "recommended_actions": contribution.recommended_actions,
+                        }
+                        if self.settings.live_observation.include_reasoner_artifact
+                        else {}
+                    ),
                 },
             )
         orchestration: OrchestrationDecision | None = None

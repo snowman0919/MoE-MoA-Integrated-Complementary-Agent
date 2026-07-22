@@ -294,6 +294,9 @@ class LiveObservationConfig(BaseModel):
 
     enabled: bool = False
     level: Literal["minimal", "normal", "verbose", "debug"] = "normal"
+    include_prompt: bool = False
+    include_reasoner_artifact: bool = False
+    max_content_characters: int = Field(default=2_000, ge=200, le=10_000)
     queue_size: int = Field(default=256, ge=1, le=10_000)
     batch_size: int = Field(default=10, ge=1, le=50)
     batch_interval_seconds: float = Field(default=2, ge=0.1, le=60)

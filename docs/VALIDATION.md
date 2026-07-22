@@ -1,5 +1,20 @@
 # Validation
 
+## Readable detailed live observation — 2026-07-22
+
+The live-observation formatter now renders batched events as separated multi-line
+cards. Isolated tests verified that prompt and structured Reasoner artifacts are
+excluded by default, admitted only by their independent operator settings,
+bounded by `max_content_characters`, and passed through the existing secret
+redactor before provider delivery. This path exposes the Reasoner's explicit
+schema artifact, not hidden model reasoning. Telegram and Discord remain
+external processors even when the gateway listener is tailnet-only.
+
+The focused observation/config run passed 36 tests. The full regression run
+passed 803 tests with the existing third-party Starlette TestClient deprecation
+warning. Ruff reported no issues, and strict mypy reported no issues in 37
+source files. No production provider delivery is claimed by this local result.
+
 ## Governed data-path production deployment — 2026-07-22
 
 PR `#36` merged to `main` as `40fce082860b0884f224127a7ebafc6eae4f94d5`
