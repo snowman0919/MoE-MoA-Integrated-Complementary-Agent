@@ -3725,3 +3725,14 @@ Archive inspection confirmed all five new routing paths:
 `specialist-residency-routing.jsonl`, `local-vs-remote-routing.jsonl`,
 `warmup-decisions.jsonl`, `eviction-decisions.jsonl`, and
 `latency-prediction.jsonl`.
+
+The first production cold smoke returned HTTP 200 through remote
+`deepseek-v4-pro` in 36.584 seconds while reusing local load generation 15. The
+first local load attempt failed with a measured CUDA OOM and was recorded as
+`specialist_warmup_failed`; systemd's bounded retry subsequently brought the
+Planner endpoint up without affecting the resident Executor. A direct real
+inference readiness check then exposed an insufficient 8-token probe: it ended
+with `finish_reason=length` and null content. The same probe at 256 tokens ended
+with `finish_reason=stop` and content `READY` in 6.2 seconds. The readiness token
+limit was raised to the physically successful value before final production
+acceptance.
