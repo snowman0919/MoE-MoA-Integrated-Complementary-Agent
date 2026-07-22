@@ -3857,3 +3857,31 @@ claiming success. The evaluation guard was false after the request. Local
 Reviewer generation 16 then completed 4/4 shards, passed the real inference
 probe, and reached logical `READY`. Gateway, Executor, Reasoner, resident target,
 and Remote Judge remained ready/available throughout the final check.
+
+## Runtime context and declarative Policy production gate — 2026-07-22
+
+A loopback-only shadow used the production Executor endpoint and isolated
+registries. One human-approved test Skill, one validated test Knowledge entry,
+and one bounded policy rule were active only in that shadow. A real
+`dgx-moa-fast` request returned exact `CONTEXT_GATE_OK`, selected
+`validation.evidence@1.0.0` and `validation.measured-evidence@1`, matched policy
+`bounded-validation`, reduced the loop tool budget to 5, retained completion
+evidence, and kept observation status `ok`. Evidence Graph nodes included the
+Skill selection, Knowledge entry, and hashed policy decision.
+
+Production then enabled empty governed Skill and Knowledge registries plus
+declarative Policy `production-v1`. The controlled restart again completed the
+unchanged Executor 10/10 load and inference readiness probe; the already warm
+Reviewer also passed its 4/4 load and readiness probe before resident target
+restoration. An ordinary production request returned HTTP 200 with exact
+`PROD_CONTEXT_OK`, zero Skill/Knowledge selections, one unmatched
+`production-v1` decision, and observation status `ok`. The empty Skill metrics
+database existed and the production Knowledge SQLite integrity check passed.
+
+A second production request marked `destructive_operation=true` without the
+required approval. It was rejected before model execution with HTTP 403,
+`code=approval_required`, `phase=blocked`, `final_status=blocked`, and Loop
+termination `PERMISSION_REQUIRED`. The evidence recorded matched rule
+`destructive-operation-approval` and required approval
+`destructive-operation`. No Skill, Knowledge, Prompt, or Policy candidate was
+automatically promoted.

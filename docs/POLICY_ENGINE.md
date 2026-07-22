@@ -20,8 +20,9 @@ Configured dotted-field redaction is applied before Evidence Graph, decision,
 raw tool-result, normalized tool-execution, orchestration, Reasoner, Planner,
 Reviewer, Frontier, and Judge persistence. Redacting a whole list or object
 preserves its container type so downstream schemas remain valid. Unit tests and
-isolated physical validation cover these boundaries; the engine remains
-disabled in production.
+isolated physical validation cover these boundaries. The protected production
+environment enables version `production-v1` with one fail-closed approval rule
+for requests explicitly marked as destructive.
 
 ```yaml
 gateway:

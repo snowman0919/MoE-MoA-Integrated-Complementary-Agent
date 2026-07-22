@@ -3,8 +3,9 @@
 ## Development boundary
 
 Runtime Skills are implemented in `gateway/src/dgx_moa/skills.py` and remain
-disabled in checked-in configuration. No production Skill registry was created
-or populated by this work.
+disabled in checked-in configuration. The protected production environment
+enables an empty governed registry; no production Skill was promoted or
+populated by this work.
 
 A Skill is a validated resource with a safe ID, immutable semantic version,
 source and lifecycle state, matching tags, input/output contracts, structured
