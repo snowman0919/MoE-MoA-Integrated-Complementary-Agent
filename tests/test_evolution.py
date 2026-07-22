@@ -193,10 +193,10 @@ def test_active_prompt_registry_changes_only_role_policy(settings, tmp_path: Pat
         prompts=prompts,
     )
 
-    rendered = controller.prompt_sandwich(
-        "executor", SessionState(session_id="prompt"), "evidence", "act"
-    )
+    state = SessionState(session_id="prompt")
+    rendered = controller.prompt_sandwich("executor", state, "evidence", "act")
 
     assert "Use the registered prompt." in rendered
     assert "EXACT OUTPUT SCHEMA" in rendered
     assert "No hidden reasoning" in rendered
+    assert state.prompt_versions == {"executor": "prompt.executor@1"}

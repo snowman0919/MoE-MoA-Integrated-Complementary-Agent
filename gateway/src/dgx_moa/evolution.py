@@ -424,8 +424,11 @@ class PromptRegistry:
     def __init__(self, path: str | Path):
         self.registry = EvolutionRegistry(path)
 
-    def active_template(self, role: str) -> str | None:
+    def active_artifact(self, role: str) -> EvolutionArtifact | None:
         if role not in PROMPT_ROLES:
             raise ValueError("unsupported prompt role")
-        artifact = self.registry.active(f"prompt.{role}")
+        return self.registry.active(f"prompt.{role}")
+
+    def active_template(self, role: str) -> str | None:
+        artifact = self.active_artifact(role)
         return str(artifact.payload["template"]) if artifact else None
