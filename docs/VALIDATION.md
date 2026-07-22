@@ -3753,3 +3753,21 @@ and warm-up benefit. The post-restart metrics also exposed that predictive
 prewarming a role already in `READY` was incorrectly counted as a reused
 started/completed warm-up. The scheduler was corrected to return `not_needed`
 without creating a task or event for an already-ready specialist.
+
+After that correction, a fresh gateway process started with zero specialist
+metrics. A READY Planner architecture request completed HTTP 200 through local
+Planner in 51.738 seconds, while warm-up started/completed/failed/unused metrics
+all remained zero. This confirms predictive classification no longer creates a
+false warm-up for a resident specialist.
+
+Reviewer production coverage used an initially stopped local service. A forced
+code-review request completed HTTP 200 through remote `deepseek-v4-flash` in
+4.771 seconds with routing reason `local_not_ready` and reused load generation
+13. Local loading continued independently and passed the real inference probe
+after 168.115 seconds, producing `specialist_warmup_completed` and logical state
+`READY`. A subsequent forced review saw that READY local provider but selected
+remote with reason `remote_predicted_faster`; it completed HTTP 200 in 7.016
+seconds. Throughout these Planner and Reviewer checks, the gateway, Executor,
+and Reasoner remained ready; no current request changed providers after
+dispatch. The final automated gate contains `847 passed`, clean Ruff, and clean
+strict mypy across 41 source files.
