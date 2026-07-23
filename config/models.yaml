@@ -24,7 +24,7 @@ gateway:
       reasoner_reentries: 4
       planner_calls: 2
       reviewer_calls: 2
-      frontier_calls: 2
+      frontier_calls: 3
       judge_calls: 2
       tokens: 250000
       external_cost_usd: 10

@@ -4778,3 +4778,27 @@ events reported `provider=frontier`, `routing_reason=local_busy`, and completed
 OAuth provenance `default`. Executor active requests returned to zero after
 both responses. The post-deployment gateway journal contained no traceback,
 error, exception, 401, or disconnect entry in the inspected window.
+
+## Codex goal loop-budget recovery — 2026-07-24
+
+Production session `54981845-e11a-4522-9991-da99bc2b3de1` failed at
+05:28 KST with `loop_budget_exhausted`, followed by five client reconnects that
+received generic backend failures from the already-blocked session. Persisted
+state showed 27 of 30 tool calls still available, but zero of two Frontier
+calls remained. The configured Frontier client permitted three invocations per
+task, so its third collaboration attempt reached the lower loop budget first
+and blocked the whole session.
+
+The loop model, settings default, production configuration, and example
+configuration now all allow three Frontier calls. A regression assertion
+requires the default loop budget to cover the Frontier task limit. The focused
+suite passed `34 passed`; the full suite passed `906 passed` with the existing
+third-party Starlette warning. Ruff lint/format and strict mypy over 45 source
+modules passed.
+
+The operator-supplied ignored `openrouter_api` replacement had the expected
+OpenRouter key shape and mode `0600`. The official current-key endpoint
+returned HTTP 200, and a two-token physical
+`anthropic/claude-sonnet-4.6` completion returned HTTP 200. The same bytes were
+installed in the production worktree with mode `0600`; the active gateway was
+not restarted because the fallback reads the key file at invocation time.
