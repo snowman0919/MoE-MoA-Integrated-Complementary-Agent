@@ -2322,7 +2322,8 @@ def create_app(
                 state, raw, roles, ensure_dynamic_roles
             )
             if state.engineering_loop is not None and prepared.get("tools"):
-                prepared["parallel_tool_calls"] = False
+                if prepared.get("parallel_tool_calls") is None:
+                    prepared["parallel_tool_calls"] = True
                 if state.engineering_loop.remaining_budget.tool_calls == 0:
                     prepared["tool_choice"] = "none"
                     request.app.state.store.event(
@@ -2484,36 +2485,43 @@ def create_app(
                         max_event_bytes=configured.limits.max_sse_event_bytes,
                     )
                     try:
-                        async with asyncio.timeout_at(
+                        deadline = (
                             executor_started + configured.limits.executor_total_timeout_seconds
-                        ):
-                            async with aclosing(forwarder):
-                                async for chunk in forwarder:
-                                    required_admissions = max(
-                                        len(observation.tool_call_ids),
-                                        1 if observation.tool_delta_seen else 0,
+                        )
+                        async with aclosing(forwarder):
+                            while True:
+                                remaining = deadline - time.monotonic()
+                                if remaining <= 0:
+                                    raise TimeoutError
+                                try:
+                                    chunk = await asyncio.wait_for(
+                                        anext(forwarder), timeout=remaining
                                     )
-                                    while admitted_tool_calls < required_admissions:
-                                        request.app.state.controller.admit_tool_call(
-                                            state,
-                                            observation.tool_call_names.get(admitted_tool_calls),
+                                except StopAsyncIteration:
+                                    break
+                                required_admissions = max(
+                                    len(observation.tool_call_ids),
+                                    1 if observation.tool_delta_seen else 0,
+                                )
+                                while admitted_tool_calls < required_admissions:
+                                    request.app.state.controller.admit_tool_call(
+                                        state,
+                                        observation.tool_call_names.get(admitted_tool_calls),
+                                    )
+                                    admitted_tool_calls += 1
+                                observed_total_tokens = observation.usage.get("total_tokens", 0)
+                                if observed_total_tokens > accounted_total_tokens:
+                                    request.app.state.controller.record_loop_usage(
+                                        state,
+                                        total_tokens=(
+                                            observed_total_tokens - accounted_total_tokens
                                         )
-                                        admitted_tool_calls += 1
-                                    observed_total_tokens = observation.usage.get("total_tokens", 0)
-                                    if observed_total_tokens > accounted_total_tokens:
-                                        request.app.state.controller.record_loop_usage(
-                                            state,
-                                            total_tokens=(
-                                                observed_total_tokens - accounted_total_tokens
-                                            ),
-                                        )
-                                        accounted_total_tokens = observed_total_tokens
-                                    if "first_downstream_byte" not in state.timings_ms:
-                                        state.timings_ms["first_downstream_byte"] = elapsed_ms(
-                                            accepted
-                                        )
-                                        first_byte_at = time.time()
-                                    yield chunk
+                                    )
+                                    accounted_total_tokens = observed_total_tokens
+                                if "first_downstream_byte" not in state.timings_ms:
+                                    state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                                    first_byte_at = time.time()
+                                yield chunk
                         stream_completed = True
                     except TimeoutError as error:
                         stage_status["executor_total"] = "timed_out"
@@ -3176,9 +3184,37 @@ def create_app(
             stop=body.stop,
         )
         if body.stream:
-            response_session_id = (
-                x_session_id or str(body.metadata.get("session_id") or "") or str(uuid.uuid4())
-            )
+            response_session_id = x_session_id or str(body.metadata.get("session_id") or "")
+            if not response_session_id:
+                objective = next(
+                    (
+                        text_content(message.get("content"))
+                        for message in messages
+                        if message.get("role") == "user"
+                    ),
+                    "",
+                )
+                owner = request.app.state.store.find_tool_owner(
+                    tool_result_call_ids(messages),
+                    getattr(request.state, "api_token_id", "legacy"),
+                    objective,
+                )
+                if owner is not None:
+                    response_session_id = owner.session_id
+                    supplied_ids = tool_result_call_ids(messages)
+                    if not set(owner.pending_tool_call_ids).intersection(supplied_ids):
+                        owner.pending_tool_call_ids = []
+                        request.app.state.store.save(owner)
+                    request.app.state.lifecycle_store.release_continuation(
+                        "executor", continuation_correlation(owner.session_id)
+                    )
+                    request.app.state.store.event(
+                        owner.session_id,
+                        "responses_session_recovered",
+                        {"reason": "tool_result_owner"},
+                    )
+                else:
+                    response_session_id = str(uuid.uuid4())
 
             async def response_stream() -> AsyncIterator[bytes]:
                 chat_task: asyncio.Task[Response] | None = None
