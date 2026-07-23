@@ -3557,6 +3557,17 @@ def create_app(
         key_event(request, "revoke", name)
         return key_response({"key": record})
 
+    @app.delete("/v1/admin/api-keys/{name}", dependencies=[Depends(admin_auth)])
+    async def api_key_delete(name: str, request: Request) -> Response:
+        try:
+            request.app.state.api_keys.delete(name)
+        except KeyError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found") from error
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        key_event(request, "delete", name)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @app.get("/admin/profile", response_model=ProfileResponse, dependencies=[Depends(admin_auth)])
     async def profile(request: Request) -> dict[str, str]:
         return dict(request.app.state.profiles.current())

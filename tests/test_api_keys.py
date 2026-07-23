@@ -63,6 +63,12 @@ def test_key_store_enforces_expiry_limits_admin_cap_and_file_mode(tmp_path: Path
     assert store.verify(token) == "limited"
     store.revoke("limited")
     assert store.verify(token) is None
+    store.delete("limited")
+    with pytest.raises(KeyError):
+        store.get("limited")
+    store.revoke("client")
+    with pytest.raises(ValueError, match="environment API keys"):
+        store.delete("client")
     database_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("state.db*"))
     assert token.encode() in database_bytes
 
@@ -149,7 +155,13 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert (
             client.post("/v1/admin/api-keys/operator/revoke", headers=operator).status_code == 409
         )
+        assert client.delete("/v1/admin/api-keys/new-client", headers=operator).status_code == 409
+        assert (
+            client.post("/v1/admin/api-keys/new-client/revoke", headers=operator).status_code == 200
+        )
+        assert client.delete("/v1/admin/api-keys/new-client", headers=operator).status_code == 204
+        assert client.delete("/v1/admin/api-keys/new-client", headers=operator).status_code == 404
         audit = client.app.state.store.events("api-key-admin")
 
-    assert [event["payload"]["action"] for event in audit] == ["create"]
+    assert [event["payload"]["action"] for event in audit] == ["create", "revoke", "delete"]
     assert new_token not in json.dumps(audit)

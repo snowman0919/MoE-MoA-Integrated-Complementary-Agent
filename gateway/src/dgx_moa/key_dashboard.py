@@ -84,7 +84,10 @@ async function load(){
     cell(row,fmtTime(key.expires_at));cell(row,(stats.requests||0)+"/"+(key.request_limit||"∞"));
     cell(row,(stats.total_tokens||0).toLocaleString()+"/"+(key.token_limit||"∞"));
     const actions=document.createElement("td");
-    for(const [title,action,cls] of [["회전","rotate",""],["한도","update",""],["폐기","revoke","danger"]]){
+    const available=key.status==="revoked"
+      ?(key.source==="managed"?[["삭제","delete","danger"]]:[]):[
+        ["회전","rotate",""],["한도","update",""],["폐기","revoke","danger"]];
+    for(const [title,action,cls] of available){
       const button=document.createElement("button");button.textContent=title;button.className=cls;
       button.onclick=()=>change(key,action);actions.append(button)}row.append(actions);$("keys").append(row)});
   bars("tasks",data.usage.tasks,item=>item.name+" · "+item.request_class+" · "+item.model_alias,
@@ -94,13 +97,16 @@ async function load(){
 }
 async function change(key,action){
   if(action==="revoke"&&!confirm(key.name+" 키를 폐기할까요?"))return;
+  if(action==="delete"&&!confirm(key.name+" 키를 영구 삭제할까요? 사용 기록은 유지됩니다."))return;
   try{let body;
     if(action==="rotate")body={name:key.name,kind:key.kind,expires_in_days:Number($("days").value),
       request_limit:key.request_limit,token_limit:key.token_limit};
     if(action==="update")body={request_limit:Number(prompt("새 요청 한도",key.request_limit||"")),
       token_limit:Number(prompt("새 토큰 한도",key.token_limit||""))};
-    const result=await api("/v1/admin/api-keys/"+key.name+"/"+action,
-      {method:"POST",body:body?JSON.stringify(body):undefined});
+    const path=action==="delete"?"/v1/admin/api-keys/"+key.name:
+      "/v1/admin/api-keys/"+key.name+"/"+action;
+    const result=await api(path,
+      {method:action==="delete"?"DELETE":"POST",body:body?JSON.stringify(body):undefined});
     $("secret").textContent=result&&result.api_key?"새 키: "+result.api_key:"";await load()}
   catch(error){alert(error.message)}
 }
