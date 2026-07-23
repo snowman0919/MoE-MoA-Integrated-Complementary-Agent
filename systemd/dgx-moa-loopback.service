@@ -6,7 +6,7 @@ StartLimitIntervalSec=600
 StartLimitBurst=3
 
 [Service]
-Type=notify
+Type=exec
 EnvironmentFile=/home/kotori9/dgx-moa-agent/.env
 EnvironmentFile=-/home/kotori9/dgx-moa-agent/.env.local
 ExecStart=/bin/sh -c 'exec /usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=5min "$DGX_MOA_BIND_HOST:$DGX_MOA_BIND_PORT"'
