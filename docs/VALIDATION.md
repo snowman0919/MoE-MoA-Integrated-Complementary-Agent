@@ -4417,3 +4417,20 @@ received two identical `MCP_SERVER_UNAVAILABLE` observations in session
 `phase=executing` with no final status. Gateway and both authenticated
 tailnet/loopback listeners were active. Hermes was not restarted and retained
 PID 1796553.
+
+## Operator console backing model names — 2026-07-23
+
+The operator console now lists the configured Executor, Planner, and Reviewer
+service names beside their backing model repositories. The same label is used
+in usage legends and tooltips, and comes from the active model configuration
+rather than a duplicated UI mapping.
+
+The full suite passed `871 passed` with the existing third-party Starlette
+warning; targeted Ruff and JavaScript syntax checks were clean. Production
+`main@42ba003` returned HTTP 200 with
+`dgx-moa-executor -> RedHatAI/Qwen3-Coder-Next-NVFP4`,
+`dgx-moa-planner -> cyankiwi/Nemotron-Cascade-2-30B-A3B-AWQ-4bit`, and
+`dgx-moa-reviewer -> CohereLabs/North-Mini-Code-1.0-w4a16`. The deployed HTML
+contained the catalog and shared model-label rendering. Gateway and both
+tailnet/loopback listeners were active. Hermes was not restarted and retained
+PID 1796553.
