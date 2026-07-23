@@ -164,6 +164,19 @@ def argument_paths(arguments: Any) -> set[str]:
     }
 
 
+def clean_tool_output(value: object) -> str:
+    text = str(value)
+    if text.startswith("Chunk ID: ") and "\nOutput:\n" in text:
+        text = text.split("\nOutput:\n", 1)[1]
+    return "".join(
+        line
+        for line in text.splitlines(keepends=True)
+        if not (
+            line.startswith("pyenv: cannot rehash: ") and line.rstrip().endswith(" isn't writable")
+        )
+    )
+
+
 def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
     """Keep tool evidence structured; tolerate OpenCode-compatible string payloads."""
     content = message.get("content", "")
@@ -175,8 +188,8 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
     result = {
         "tool_name": str(parsed.get("tool_name", parsed.get("name", "shell"))),
         "arguments": parsed.get("arguments", {}),
-        "stdout": str(parsed.get("stdout", "")),
-        "stderr": str(parsed.get("stderr", parsed.get("error", ""))),
+        "stdout": clean_tool_output(parsed.get("stdout", "")),
+        "stderr": clean_tool_output(parsed.get("stderr", parsed.get("error", ""))),
         "exit_code": int(parsed.get("exit_code", 0)),
         "duration_ms": int(parsed.get("duration_ms", 0)),
         "truncated": bool(parsed.get("truncated", False)),
@@ -1066,6 +1079,10 @@ class Controller:
             state.tool_executions = state.tool_executions[-self.settings.limits.max_steps :]
             self.store.event(state.session_id, "tool_execution_recorded", execution)
             target_paths = argument_paths(arguments)
+            actionable_failure = failed and not (
+                state.resolved_objective
+                and any(path.endswith("goal-objective.md") for path in target_paths)
+            )
             if (
                 not failed
                 and not state.resolved_objective
@@ -1117,7 +1134,7 @@ class Controller:
                 generated_from=state.last_decision_id,
             )
             state.no_progress_count = 0
-            if failed and call:
+            if actionable_failure and call:
                 call_fingerprint = fingerprint(call)
                 if state.engineering_loop is not None:
                     loop_failure = register_failure(
@@ -1526,7 +1543,8 @@ class Controller:
             "For /goal requests, reading or summarizing the objective is not completion. "
             "Continue with tool calls while required work remains, and give a final answer only "
             "after the objective's validation criteria have verified evidence. Do not reread an "
-            "unchanged objective file after a successful read."
+            "unchanged objective file after a successful read. When CURRENT OBJECTIVE contains "
+            "the loaded objective, do not call filesystem or MCP tools for that objective again."
             if role == "executor" and state.objective.lstrip().lower().startswith("/goal ")
             else ""
         )

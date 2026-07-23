@@ -1059,6 +1059,49 @@ def test_successful_goal_read_becomes_effective_objective(
     )
 
 
+def test_goal_read_strips_shell_noise_and_redundant_failure_is_not_actionable(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    path = "/Users/test/.codex/attachments/task/goal-objective.md"
+    actual = ("격리된 기능을 구현하고 실제 증거로 검증한다. " * 15).strip()
+    goal_messages = tool_messages(
+        "read-goal",
+        (
+            "Chunk ID: abc123\nWall time: 0.1 seconds\nProcess exited with code 0\n"
+            "Original token count: 100\nOutput:\n"
+            "pyenv: cannot rehash: /Users/test/.pyenv/shims isn't writable\n"
+            f"{actual}"
+        ),
+    )
+    goal_messages[0]["tool_calls"][0]["function"] = {
+        "name": "read_file",
+        "arguments": json.dumps({"path": path}),
+    }
+    state = controller.session(
+        "noisy-goal",
+        [
+            {"role": "user", "content": f"/goal Read {path} before continuing."},
+            *goal_messages,
+        ],
+    )
+
+    redundant_messages = tool_messages(
+        "redundant-read", "resources/read failed: unknown MCP server 'filesystem'"
+    )
+    redundant_messages[0]["tool_calls"][0]["function"] = {
+        "name": "read_mcp_resource",
+        "arguments": json.dumps({"uri": f"file://{path}"}),
+    }
+    controller._observe(state, redundant_messages)
+
+    assert state.resolved_objective == actual
+    assert active_failures(state) == []
+    assert state.tool_executions[-1]["failure_class"] == "MCP_SERVER_UNAVAILABLE"
+    prompt = controller.prompt_sandwich("executor", state, "continue", "continue")
+    assert "do not call filesystem or MCP tools for that objective again" in prompt
+
+
 @pytest.mark.asyncio
 async def test_planner_and_reviewer_routing(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     store = StateStore(settings.state_db)
