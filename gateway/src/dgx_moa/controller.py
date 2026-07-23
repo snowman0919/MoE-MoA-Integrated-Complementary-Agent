@@ -152,6 +152,10 @@ def active_failures(state: SessionState) -> list[dict[str, Any]]:
     return [item for item in state.failures if item.get("resolution_status", "active") == "active"]
 
 
+def has_mcp_server_failure(state: SessionState) -> bool:
+    return any(item.get("failure_class") == "MCP_SERVER_UNAVAILABLE" for item in state.failures)
+
+
 def effective_objective(state: SessionState) -> str:
     return state.resolved_objective or state.objective
 
@@ -159,7 +163,7 @@ def effective_objective(state: SessionState) -> str:
 def argument_paths(arguments: Any) -> set[str]:
     text = arguments if isinstance(arguments, str) else json.dumps(arguments, sort_keys=True)
     return {
-        match.removeprefix("file://").rstrip(",);]")
+        match.removeprefix("file://").rstrip(",.);]")
         for match in re.findall(r"(?:file://)?/[^\s\"'\\]+", text)
     }
 
@@ -676,6 +680,19 @@ class Controller:
         if state is None:
             state = SessionState(session_id=session_id)
             self.store.event(session_id, "session_started", {})
+        loop = state.engineering_loop
+        if (
+            loop is not None
+            and loop.termination_reason == "CLIENT_CANCELLED"
+            and state.control_state == "running"
+        ):
+            loop.termination_reason = None
+            loop.progress_state = "progressing"
+            loop.started_at_epoch = time.time()
+            state.final_status = None
+            if state.phase == Phase.BLOCKED:
+                state.phase = Phase.REPLANNING
+            self.store.event(session_id, "engineering_loop_resumed", {"reason": "client_retry"})
         if state.objective.lower().startswith("generate a title for this conversation"):
             for message in messages:
                 if message.get("role") != "user":
@@ -703,6 +720,8 @@ class Controller:
                 "user",
                 {"content_sha256": hashlib.sha256(state.objective.encode()).hexdigest()},
             )
+        if state.resolved_objective:
+            messages[:] = compact_resolved_goal_history(messages, argument_paths(state.objective))
         if state.engineering_loop is not None:
             for message in messages:
                 if message.get("role") != "user":
@@ -1614,11 +1633,7 @@ class Controller:
             "server names or altered URIs. Use an available native file or shell tool for local "
             "paths; if none exists, report the unavailable capability once and continue any "
             "independent work."
-            if role == "executor"
-            and any(
-                item.get("failure_class") == "MCP_SERVER_UNAVAILABLE"
-                for item in active_failures(state)
-            )
+            if role == "executor" and has_mcp_server_failure(state)
             else ""
         )
         prompt_artifact = self.prompts.active_artifact(role) if self.prompts else None
@@ -2571,21 +2586,24 @@ class Controller:
                     "goal_history_compacted",
                     {"messages_removed": removed},
                 )
-        if any(
-            item.get("failure_class") == "MCP_SERVER_UNAVAILABLE" for item in active_failures(state)
-        ):
+        if has_mcp_server_failure(state):
             tools = body.get("tools")
             if isinstance(tools, list):
+                unavailable = {
+                    "read_mcp_resource",
+                    "list_mcp_resources",
+                    "list_mcp_resource_templates",
+                }
                 body["tools"] = [
                     tool
                     for tool in tools
                     if not (
                         isinstance(tool, dict)
                         and (
-                            tool.get("name") == "read_mcp_resource"
+                            tool.get("name") in unavailable
                             or (
                                 isinstance(tool.get("function"), dict)
-                                and tool["function"].get("name") == "read_mcp_resource"
+                                and tool["function"].get("name") in unavailable
                             )
                         )
                     )
@@ -2595,7 +2613,7 @@ class Controller:
                         state.session_id,
                         "tool_temporarily_unavailable",
                         {
-                            "tool": "read_mcp_resource",
+                            "tools": sorted(unavailable),
                             "reason": "mcp_server_unavailable",
                         },
                     )

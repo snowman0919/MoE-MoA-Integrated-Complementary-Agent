@@ -698,6 +698,10 @@ async def test_duplicate_unavailable_mcp_replans_without_409_and_removes_read_to
             },
             {
                 "type": "function",
+                "function": {"name": "list_mcp_resources", "parameters": {}},
+            },
+            {
+                "type": "function",
                 "function": {"name": "exec_command", "parameters": {}},
             },
         ],
@@ -713,6 +717,43 @@ async def test_duplicate_unavailable_mcp_replans_without_409_and_removes_read_to
         event["event_type"] == "tool_temporarily_unavailable"
         for event in store.events(state.session_id)
     )
+
+
+def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session("retryable-cancel", [{"role": "user", "content": "continue"}])
+    controller.select_route(state, {})
+    state.phase = Phase.BLOCKED
+    state.final_status = "blocked"
+    controller.terminate_loop(state, "CLIENT_CANCELLED")
+    store.save(state)
+
+    resumed = controller.session(
+        state.session_id,
+        [{"role": "user", "content": "continue after reconnect"}],
+    )
+
+    assert resumed.engineering_loop is not None
+    assert resumed.engineering_loop.termination_reason is None
+    assert resumed.phase == Phase.REPLANNING
+    assert resumed.final_status is None
+    assert any(
+        event["event_type"] == "engineering_loop_resumed"
+        for event in store.events(state.session_id)
+    )
+
+    resumed.control_state = "terminated"
+    controller.terminate_loop(resumed, "CLIENT_CANCELLED")
+    store.save(resumed)
+    not_resumed = controller.session(
+        state.session_id,
+        [{"role": "user", "content": "retry after operator termination"}],
+    )
+    assert not_resumed.engineering_loop.termination_reason == "CLIENT_CANCELLED"
 
 
 def test_loop_duplicate_failure_policy_persists_across_retries(
@@ -1205,6 +1246,60 @@ def test_resolved_goal_history_drops_reads_but_keeps_work() -> None:
 
     assert [message.get("tool_call_id") for message in compacted] == [None, None, "work"]
     assert compacted[1]["tool_calls"][0]["id"] == "work"
+
+
+def test_resolved_goal_history_is_compacted_before_observation(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    path = "/Users/test/.codex/attachments/task/goal-objective.md"
+    store = StateStore(settings.state_db)
+    store.save(
+        SessionState(
+            session_id="resolved-goal-retry",
+            objective=f"/goal Read {path}.",
+            resolved_objective="구현하고 검증한다.",
+        )
+    )
+    messages = [
+        {"role": "user", "content": f"/goal Read {path}."},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "old-read",
+                    "function": {
+                        "name": "read_mcp_resource",
+                        "arguments": json.dumps({"server": "missing", "uri": f"file://{path}"}),
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "old-read",
+            "content": "resources/read failed: unknown MCP server 'missing'",
+        },
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "work",
+                    "function": {
+                        "name": "inspect_workspace",
+                        "arguments": '{"path":"/workspace"}',
+                    },
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "work", "content": "implementation evidence"},
+    ]
+
+    state = Controller(settings, store, stub_provider).session(  # type: ignore[arg-type]
+        "resolved-goal-retry", messages
+    )
+
+    assert [item["tool_name"] for item in state.tool_executions] == ["inspect_workspace"]
+    assert all(item.get("failure_class") != "MCP_SERVER_UNAVAILABLE" for item in state.failures)
 
 
 @pytest.mark.asyncio
