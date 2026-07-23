@@ -1016,6 +1016,49 @@ def test_goal_text_parts_keep_language_and_require_evidence(
     assert store.find_tool_owner({"call-remapped"}, "client", objective) is None
 
 
+def test_successful_goal_read_becomes_effective_objective(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    path = "/Users/test/.codex/attachments/task/goal-objective.md"
+    wrapper = f"/goal Read {path} before continuing."
+    actual = ("Implement the sanitized event feed and validate it. " * 8).strip()
+    state = controller.session(
+        "resolved-goal",
+        [
+            {"role": "user", "content": wrapper},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "read-goal",
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "arguments": json.dumps({"path": path}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "read-goal",
+                "content": actual,
+            },
+        ],
+    )
+
+    prompt = controller.prompt_sandwich("executor", state, "goal loaded", "continue")
+
+    assert state.objective == wrapper
+    assert state.resolved_objective == actual
+    assert f"CURRENT OBJECTIVE\n{actual}" in prompt
+    assert any(
+        event["event_type"] == "goal_objective_resolved"
+        for event in controller.store.events(state.session_id)
+    )
+
+
 @pytest.mark.asyncio
 async def test_planner_and_reviewer_routing(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     store = StateStore(settings.state_db)

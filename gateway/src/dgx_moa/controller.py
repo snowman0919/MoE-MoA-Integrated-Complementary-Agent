@@ -152,6 +152,10 @@ def active_failures(state: SessionState) -> list[dict[str, Any]]:
     return [item for item in state.failures if item.get("resolution_status", "active") == "active"]
 
 
+def effective_objective(state: SessionState) -> str:
+    return state.resolved_objective or state.objective
+
+
 def argument_paths(arguments: Any) -> set[str]:
     text = arguments if isinstance(arguments, str) else json.dumps(arguments, sort_keys=True)
     return {
@@ -1062,6 +1066,19 @@ class Controller:
             state.tool_executions = state.tool_executions[-self.settings.limits.max_steps :]
             self.store.event(state.session_id, "tool_execution_recorded", execution)
             target_paths = argument_paths(arguments)
+            if (
+                not failed
+                and not state.resolved_objective
+                and "goal-objective.md" in state.objective
+                and any(path.endswith("goal-objective.md") for path in target_paths)
+                and len(result["stdout"].strip()) >= 200
+            ):
+                state.resolved_objective = result["stdout"].strip()
+                self.store.event(
+                    state.session_id,
+                    "goal_objective_resolved",
+                    {"characters": len(state.resolved_objective)},
+                )
             if not failed and target_paths:
                 for failure in active_failures(state):
                     if not target_paths.intersection(failure.get("target_paths", [])):
@@ -1274,7 +1291,7 @@ class Controller:
         }
         if role == "executor":
             return base | {
-                "objective": state.objective,
+                "objective": effective_objective(state),
                 "policy": (
                     "tool calls allowed; verified tool and validation evidence override "
                     "conflicting model assertions; model contributions are advisory and "
@@ -1296,7 +1313,7 @@ class Controller:
             }
         if role == "planner":
             return base | {
-                "objective": state.objective,
+                "objective": effective_objective(state),
                 "plan": state.plan,
                 "completed_steps": state.completed_steps,
                 "verified_facts": facts,
@@ -1305,7 +1322,7 @@ class Controller:
             }
         if role == "reasoner":
             return base | {
-                "user_objective": state.objective,
+                "user_objective": effective_objective(state),
                 "relevant_conversation_state": {
                     "phase": state.phase,
                     "completed_steps": state.completed_steps,
@@ -1332,7 +1349,9 @@ class Controller:
         try:
             matches = self.skills.search(
                 SkillQuery(
-                    text=" ".join((state.objective, " ".join(state.acceptance_criteria))),
+                    text=" ".join(
+                        (effective_objective(state), " ".join(state.acceptance_criteria))
+                    ),
                     task_type=str(metadata.get("task_type", state.request_class)),
                     language=str(metadata.get("language", "")),
                     framework=str(metadata.get("framework", "")),
@@ -1408,7 +1427,9 @@ class Controller:
         try:
             matches = self.knowledge.search(
                 KnowledgeQuery(
-                    text=" ".join((state.objective, " ".join(state.acceptance_criteria))),
+                    text=" ".join(
+                        (effective_objective(state), " ".join(state.acceptance_criteria))
+                    ),
                     domains=[
                         str(value)
                         for value in (metadata.get("language"), metadata.get("framework"))
@@ -1489,7 +1510,7 @@ class Controller:
             "TASK REQUIREMENTS\n"
             + json.dumps(state.acceptance_criteria, ensure_ascii=False, sort_keys=True)
             if role in {"reviewer", "judge"}
-            else f"CURRENT OBJECTIVE\n{state.objective}"
+            else f"CURRENT OBJECTIVE\n{effective_objective(state)}"
         )
         final_output = (
             f"Return one JSON object only: {schema}"
@@ -1590,7 +1611,7 @@ class Controller:
         mandatory = [
             role for role in state.roles_required if role in {"planner", "reviewer", "judge"}
         ]
-        objective = state.objective.lower()
+        objective = effective_objective(state).lower()
         implementation_evidence = bool(
             metadata.get("diff_summary")
             or metadata.get("relevant_diff")
@@ -1642,7 +1663,7 @@ class Controller:
                         + json.dumps(
                             redact(
                                 {
-                                    "objective": state.objective,
+                                    "objective": effective_objective(state),
                                     "request_class": state.request_class,
                                     "route": state.route,
                                     "reasoner": reasoner.model_dump(),
@@ -1680,7 +1701,10 @@ class Controller:
             },
         }
         decision_id = self._record_decision(
-            "executor", state, {"type": "orchestration_request"}, state.objective
+            "executor",
+            state,
+            {"type": "orchestration_request"},
+            effective_objective(state),
         )
         orchestration_started = time.monotonic()
         response = await self.provider.complete(
@@ -1864,7 +1888,7 @@ class Controller:
                             json.dumps(
                                 redact(
                                     {
-                                        "objective": state.objective,
+                                        "objective": effective_objective(state),
                                         "constraints": state.acceptance_criteria,
                                         "current_plan": state.plan[-8:],
                                         "recent_tool_results": state.tool_results[-4:],
@@ -1893,7 +1917,10 @@ class Controller:
                 },
             }
             decision_id = self._record_decision(
-                "reasoner", state, {"type": "structured_reasoning_request"}, state.objective
+                "reasoner",
+                state,
+                {"type": "structured_reasoning_request"},
+                effective_objective(state),
             )
             self.store.event(
                 state.session_id,
@@ -2024,11 +2051,11 @@ class Controller:
                     if request.get("metadata", {}).get("unresolved_disagreement")
                     else "code_review"
                     if request.get("metadata", {}).get("code_review")
-                    or "review" in state.objective.lower()
+                    or "review" in effective_objective(state).lower()
                     else "architecture"
                 )
                 evidence = {
-                    "objective": state.objective,
+                    "objective": effective_objective(state),
                     "constraints": state.acceptance_criteria,
                     "reasoner_hypotheses": reasoner_contribution.hypotheses,
                     "reasoner_recommendations": reasoner_contribution.recommended_actions,
@@ -2100,7 +2127,7 @@ class Controller:
                     self.safe_payload(
                         state,
                         {
-                            "objective": state.objective,
+                            "objective": effective_objective(state),
                             "acceptance_criteria": state.acceptance_criteria,
                             "changed_paths": request.get("metadata", {}).get("changed_paths", []),
                             "diff_summary": request.get("metadata", {}).get("diff_summary", ""),
@@ -2287,7 +2314,7 @@ class Controller:
                             )
                         else:
                             frontier_review_evidence = {
-                                "objective": state.objective,
+                                "objective": effective_objective(state),
                                 "acceptance_criteria": state.acceptance_criteria,
                                 "changed_paths": request.get("metadata", {}).get(
                                     "changed_paths", []
@@ -2548,7 +2575,7 @@ class Controller:
         choice = (response.get("choices") or [{}])[0]
         current_completion = metadata.get("completion_evidence")
         evidence = {
-            "original_objective": state.objective,
+            "original_objective": effective_objective(state),
             "acceptance_criteria": state.acceptance_criteria,
             "changed_paths": metadata.get("changed_paths", []),
             "diff_summary": metadata.get("diff_summary", ""),
@@ -2669,7 +2696,7 @@ class Controller:
                     retry_evidence = json.dumps(
                         redact(
                             {
-                                "objective": state.objective,
+                                "objective": effective_objective(state),
                                 "acceptance_criteria": state.acceptance_criteria,
                                 "evidence": observation,
                             }
@@ -2863,7 +2890,7 @@ class Controller:
         }
         package = JudgeEvidencePackage(
             request_id=state.current_request_id or state.session_id,
-            objective=state.objective,
+            objective=effective_objective(state),
             request_constraints=list(state.acceptance_criteria),
             risk_class=cast(
                 Literal["low", "medium", "high", "critical"],

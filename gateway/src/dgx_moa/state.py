@@ -98,6 +98,7 @@ class SessionState(BaseModel):
     timings_ms: dict[str, float] = Field(default_factory=dict)
     task_id: str = ""
     objective: str = ""
+    resolved_objective: str = ""
     repository: dict[str, str] = Field(default_factory=dict)
     route: str = "standard"
     route_reasons: list[str] = Field(default_factory=list)
