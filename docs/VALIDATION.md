@@ -4361,3 +4361,23 @@ authenticated loopback `/v1/models` request, and HTTP 200 for the same
 authenticated tailnet request. The loopback socket and proxy were both active
 with service type `exec`. Gateway and Hermes were not restarted, and Hermes
 retained PID 1796553.
+
+## API-key form validation and unlimited quotas — 2026-07-23
+
+The operator form previously discarded the gateway's structured
+`error.message` and attempted to parse every error response as JSON. A
+validation failure therefore appeared only as `Unprocessable Content`, while
+an upstream HTML error produced `Unexpected token '<'`. The UI now lowercases
+key names while typing, displays structured validation messages, and falls back
+to the HTTP status when a response is not JSON. Blank quota creation and update
+values map to database `NULL`, which is the existing unlimited representation.
+
+The full suite passed `870 passed` with the existing third-party Starlette
+warning; JavaScript syntax checking, Ruff, and strict mypy over 42 source files
+were clean. Production `main@a484b9d` created the attempted `Reici` input as
+active general key `reici` with request limit 5,000 and token limit 1,000,000.
+A temporary key created with both limits omitted returned `NULL` for both,
+then revoked and deleted with HTTP 204. The updated UI contained lowercase
+normalization, non-JSON error handling, and explicit `공란=무제한` labels.
+After the deployment restart, gateway, loopback socket, and loopback proxy were
+active; Hermes was not restarted and retained PID 1796553.
