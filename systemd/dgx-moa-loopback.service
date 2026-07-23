@@ -2,8 +2,8 @@
 Description=DGX MoA loopback gateway proxy
 Requires=dgx-moa-gateway.service dgx-moa-loopback.socket
 After=dgx-moa-gateway.service dgx-moa-loopback.socket
-StartLimitIntervalSec=600
-StartLimitBurst=3
+StartLimitIntervalSec=60
+StartLimitBurst=10
 
 [Service]
 Type=exec
