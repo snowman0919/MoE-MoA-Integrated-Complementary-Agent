@@ -4763,3 +4763,18 @@ Starlette warning. The focused busy/failover set passed 30 tests. The abandoned
 isolated dev gateway on loopback port 19000 was identified by PID, process
 group, and working directory before termination; production port 9000 and the
 role-model services were not restarted during this validation.
+
+Production `main@45192c1` was deployed after a zero-active-request drain. Only
+`dgx-moa-gateway.service` changed PID, from `2812477` to `3150695`; Hermes
+retained PID `1796553`, Executor `1709495`, Planner `2969174`, and Reviewer
+`2969170`. Loopback and tailnet health returned HTTP 200, both administrator
+pages returned HTTP 200, the API-key list omitted raw values, and its deployed
+HTML contained `Qwen3-Next`, `Nemotron-30B`, and `North-Mini-30B`.
+
+The production concurrency probe held a real local `dgx-moa-fast` request until
+`active_requests=1`, then submitted a distinct Korean session. Both requests
+returned HTTP 200; the second returned exact `BUSY_FALLBACK_OK`. Its stored
+events reported `provider=frontier`, `routing_reason=local_busy`, and completed
+OAuth provenance `default`. Executor active requests returned to zero after
+both responses. The post-deployment gateway journal contained no traceback,
+error, exception, 401, or disconnect entry in the inspected window.
