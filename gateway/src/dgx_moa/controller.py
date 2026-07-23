@@ -1649,6 +1649,12 @@ class Controller:
             if role == "executor"
             else ""
         )
+        progress_constraint = (
+            "Before each tool batch, give one concise user-visible progress sentence describing "
+            "the immediate action; do not expose hidden reasoning."
+            if role == "executor"
+            else ""
+        )
         workspace_constraint = (
             "No repository identity was supplied. Inspect the current directory once; if it is "
             "writable, use it as the isolated workspace. Do not scan filesystem roots or search "
@@ -1698,6 +1704,8 @@ class Controller:
                 + " "
                 + tool_batching
                 + " "
+                + progress_constraint
+                + " "
                 + workspace_constraint
                 + " "
                 + mcp_fallback_constraint
@@ -1710,7 +1718,9 @@ class Controller:
     def executor_tokens(self, request: dict[str, Any]) -> int:
         requested_tokens = int(request.get("max_tokens") or self.settings.limits.executor_tokens)
         if requested_tokens > self.settings.limits.executor_max_tokens:
-            raise ValueError("max_tokens exceeds server maximum 16384")
+            raise ValueError(
+                f"max_tokens exceeds server maximum {self.settings.limits.executor_max_tokens}"
+            )
         return requested_tokens
 
     def derived_confidence(

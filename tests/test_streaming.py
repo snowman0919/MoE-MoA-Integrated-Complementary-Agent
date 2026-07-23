@@ -10,6 +10,7 @@ from dgx_moa.streaming import (
     MAX_BUFFERED_RESPONSE_CHARS,
     StreamObservation,
     forward_sse,
+    keepalive_sse,
     reported_usage,
     response_usage,
     responses_sse,
@@ -108,9 +109,9 @@ async def test_responses_sse_defers_custom_kind_and_rejects_non_string_input() -
 
 
 @pytest.mark.asyncio
-async def test_responses_sse_hides_tool_preamble_and_terminates_failures(caplog) -> None:  # type: ignore[no-untyped-def]
+async def test_responses_sse_preserves_tool_progress_and_terminates_failures(caplog) -> None:  # type: ignore[no-untyped-def]
     async def tool_upstream():
-        yield b'data: {"choices":[{"delta":{"content":"private plan"}}]}\n\n'
+        yield 'data: {"choices":[{"delta":{"content":"목표 파일을 확인합니다."}}]}\n\n'.encode()
         yield (
             b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
             b'"id":"call-one","function":{"name":"exec_command",'
@@ -124,7 +125,7 @@ async def test_responses_sse_hides_tool_preamble_and_terminates_failures(caplog)
         for line in chunk.decode().splitlines()
         if line.startswith("data: ")
     ]
-    assert all(event.get("delta") != "private plan" for event in tool_events)
+    assert any(event.get("delta") == "목표 파일을 확인합니다." for event in tool_events)
     assert tool_events[-1]["type"] == "response.completed"
 
     async def failed_upstream():
@@ -181,6 +182,64 @@ async def test_responses_sse_maps_unsupported_read_file_to_exec_command() -> Non
     assert added["item"]["name"] == "exec_command"
     assert json.loads(done["arguments"]) == {"cmd": "cat -- '/tmp/goal objective.md'"}
     assert all(event.get("item", {}).get("name") != "read_file" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_maps_local_mcp_file_to_exec_command() -> None:
+    async def upstream():
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call-mcp","function":{"name":"read_mcp_resource",'
+            b'"arguments":"{\\"server\\":\\"codex-apps\\",'
+            b'\\"uri\\":\\"file:///Users/test/goal%20objective.md\\"}"}}]},'
+            b'"finish_reason":"tool_calls"}]}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa",
+            function_tool_names={"exec_command", "read_mcp_resource"},
+            progress_language="ko",
+        )
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+    added = next(
+        event
+        for event in events
+        if event["type"] == "response.output_item.added" and event["output_index"] == 1
+    )
+    done = next(
+        event for event in events if event["type"] == "response.function_call_arguments.done"
+    )
+
+    assert added["item"]["name"] == "exec_command"
+    progress_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.get("delta") == "다음 도구 작업을 준비합니다."
+    )
+    assert progress_index < events.index(added)
+    assert json.loads(done["arguments"]) == {"cmd": "cat -- '/Users/test/goal objective.md'"}
+    assert all(event.get("item", {}).get("name") != "read_mcp_resource" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_keepalive_sse_covers_silent_upstream() -> None:
+    release = asyncio.Event()
+
+    async def upstream():
+        await release.wait()
+        yield b"event: done\ndata: done\n\n"
+
+    stream = keepalive_sse(upstream(), interval_seconds=0.01)
+    assert await anext(stream) == b": keep-alive\n\n"
+    release.set()
+    assert await anext(stream) == b"event: done\ndata: done\n\n"
+    await stream.aclose()
 
 
 @pytest.mark.asyncio

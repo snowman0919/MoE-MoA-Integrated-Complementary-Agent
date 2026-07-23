@@ -3341,17 +3341,35 @@ def test_excessive_executor_output_budget_is_rejected(
             json={
                 "model": "dgx-moa-agent",
                 "messages": [{"role": "user", "content": "work"}],
-                "max_tokens": 16_385,
+                "max_tokens": 32_769,
             },
         )
 
     assert response.status_code == 400
     assert response.json()["error"] == {
-        "message": "max_tokens exceeds server maximum 16384",
+        "message": "max_tokens exceeds server maximum 32768",
         "type": "invalid_request_error",
         "code": "invalid_request",
         "param": "max_tokens",
     }
+
+
+def test_executor_accepts_compatible_harness_output_budget(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "work"}],
+                "max_tokens": 32_768,
+            },
+        )
+
+    assert response.status_code == 200
+    assert stub_provider.requests[-1]["max_tokens"] == 32_768
 
 
 def test_excessive_budget_preserves_reused_completed_session(
@@ -3379,7 +3397,7 @@ def test_excessive_budget_preserves_reused_completed_session(
                 "model": "dgx-moa-agent",
                 "messages": [{"role": "user", "content": "new task"}],
                 "metadata": {"no_progress": True},
-                "max_tokens": 16_385,
+                "max_tokens": 32_769,
             },
         )
         state = client.app.state.store.get("completed-budget")

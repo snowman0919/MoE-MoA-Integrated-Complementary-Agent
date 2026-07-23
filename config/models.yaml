@@ -180,7 +180,7 @@ gateway:
     planner_tokens: 4096
     reasoner_tokens: 1500
     executor_tokens: 4096
-    executor_max_tokens: 16384
+    executor_max_tokens: 32768
     reviewer_tokens: 1500
     judge_tokens: 2500
     max_stream_capture_bytes: 1000000

@@ -1,5 +1,37 @@
 # Validation
 
+## Codex Responses continuity and client matrix — 2026-07-24
+
+The reported Codex Goal session did not fail at its first MCP lookup. The
+unknown `codex-apps` server call fell back to a successful native file read,
+but later unnecessary probes consumed the Engineering loop and five client
+retries surfaced the terminal failure as a stream interruption.
+
+Responses translation now converts only local `file://` MCP reads to a
+shell-quoted `exec_command`, preserves a concise user-visible progress message
+before each tool batch, pins the selected call for that turn, and emits SSE
+keep-alives while the upstream model is silent. The Executor prompt asks for
+independent tools in one batch while retaining ordered tools as sequential
+continuations. The compatible output ceiling is 32,768 tokens within the
+preserved 65,536-token Executor context.
+
+The isolated suite passed `879 passed`; Ruff formatting, Ruff lint, strict mypy
+over 43 source files, and `git diff --check` passed. An exact Responses request
+for the reported `codex-apps` plus macOS `file://` URI emitted Korean progress
+before an `exec_command` call and terminated with `response.completed`.
+A forced client disconnect received an immediate SSE keep-alive, and a retry
+with the same session completed without a terminal loop reason.
+
+Hermes Agent 0.18.2, OpenCode 1.17.18, and the official Codex CLI build at
+`808d3c2702ce8eae007c457aa930e7c3b68dd5f6c` ran in separate read-only-root
+Docker sandboxes with capabilities dropped and only isolated client state and
+workspaces writable. Hermes accepted a 32,768-token request, created and
+verified `HERMES_32768_PASS`, and reported in Korean. OpenCode emitted ordered
+`write`, `bash`, and Korean final events, independently verifying
+`OPENCODE_32768_PASS`. Codex read the Goal document, batched `pwd` and `ls`,
+created and separately verified `CODEX_32768_PASS`, then returned a Korean
+completion instead of stopping after the document read.
+
 ## Resolved Goal history compaction — 2026-07-23
 
 Postdeployment session `a1bc31fd-543b-4df2-abf0-baadbd43de8b`

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import shlex
@@ -7,6 +8,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from dataclasses import dataclass, field
+from urllib.parse import unquote, urlsplit
 
 from .usage import SQLITE_MAX_INTEGER
 
@@ -141,6 +143,34 @@ async def forward_sse(
             await close()
 
 
+async def keepalive_sse(
+    upstream: AsyncIterator[bytes], *, interval_seconds: float = 15
+) -> AsyncGenerator[bytes, None]:
+    """Keep an SSE connection active while its next real event is pending."""
+    if interval_seconds <= 0:
+        raise ValueError("keepalive interval must be positive")
+    iterator = upstream.__aiter__()
+    pending: asyncio.Future[bytes] | None = None
+    try:
+        while True:
+            pending = pending or asyncio.ensure_future(anext(iterator))
+            if not (await asyncio.wait((pending,), timeout=interval_seconds))[0]:
+                yield b": keep-alive\n\n"
+                continue
+            try:
+                yield pending.result()
+            except StopAsyncIteration:
+                return
+            pending = None
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+        close = getattr(iterator, "aclose", None)
+        if close is not None:
+            await close()
+
+
 def response_usage(value: object) -> dict[str, object] | None:
     usage = reported_usage(value)
     if not usage:
@@ -169,6 +199,7 @@ async def responses_sse(
     custom_tool_names: set[str] | None = None,
     function_tool_names: set[str] | None = None,
     session_id: str = "unknown",
+    progress_language: str = "en",
 ) -> AsyncGenerator[bytes, None]:
     """Translate Chat Completions SSE into Responses text and function-call events."""
     response_id = f"resp_{uuid.uuid4().hex}"
@@ -278,74 +309,47 @@ async def responses_sse(
                             "_arguments_emitted": 0,
                             "_added": False,
                             "_kind": "",
-                            "_compat_read_file": False,
+                            "_compat_local_file": False,
+                            "_original_name": "",
                         }
                     item = tool_calls[index]
                     if tool_delta.get("id"):
                         item["call_id"] = tool_delta["id"]
                     if function.get("name"):
                         name = str(function["name"])
-                        compat_read_file = (
-                            name == "read_file"
-                            and "read_file" not in (function_tool_names or set())
+                        compat_local_file = (
+                            name in {"read_file", "read_mcp_resource"}
                             and "exec_command" in (function_tool_names or set())
+                            and (
+                                name == "read_mcp_resource"
+                                or "read_file" not in (function_tool_names or set())
+                            )
                         )
-                        item["name"] = "exec_command" if compat_read_file else name
-                        item["_compat_read_file"] = compat_read_file
+                        item["name"] = name
+                        item["_original_name"] = name
+                        item["_compat_local_file"] = compat_local_file
                     arguments = function.get("arguments")
                     if isinstance(arguments, str) and arguments:
                         item["_arguments"] = str(item["_arguments"]) + arguments
-                    if (
-                        not item["_added"]
-                        and item["name"]
-                        and item["call_id"]
-                        and not item["_compat_read_file"]
-                    ):
-                        is_custom = item["name"] in (custom_tool_names or set())
-                        item["id"] = f"{'ctc' if is_custom else 'fc'}_{uuid.uuid4().hex}"
-                        item["type"] = "custom_tool_call" if is_custom else "function_call"
-                        item["_kind"] = "custom" if is_custom else "function"
-                        item["_added"] = True
-                        if is_custom:
-                            item["input"] = ""
-                        else:
-                            item["status"] = "in_progress"
-                            item["arguments"] = ""
-                        yield event(
-                            "response.output_item.added",
-                            output_index=index + 1,
-                            item={
-                                key: value for key, value in item.items() if not key.startswith("_")
-                            },
-                        )
-                    if item["_kind"] == "function":
-                        emitted_value = item["_arguments_emitted"]
-                        emitted = emitted_value if isinstance(emitted_value, int) else 0
-                        pending_arguments = str(item["_arguments"])[emitted:]
-                        if pending_arguments:
-                            item["arguments"] = str(item["arguments"]) + pending_arguments
-                            item["_arguments_emitted"] = emitted + len(pending_arguments)
-                            yield event(
-                                "response.function_call_arguments.delta",
-                                response_id=response_id,
-                                item_id=item["id"],
-                                output_index=index + 1,
-                                delta=pending_arguments,
-                            )
-
         if not terminal_seen:
             raise ValueError("upstream stream ended before terminal marker")
-        text = "" if tool_calls else "".join(text_parts)
-        if not tool_calls:
-            for content in text_parts:
-                yield event(
-                    "response.output_text.delta",
-                    item_id=message_id,
-                    output_index=0,
-                    content_index=0,
-                    delta=content,
-                    logprobs=[],
-                )
+        text = "".join(text_parts)
+        if tool_calls and not text.strip():
+            text = (
+                "다음 도구 작업을 준비합니다."
+                if progress_language == "ko"
+                else "Preparing the next tool action."
+            )
+            text_parts = [text]
+        for content in text_parts:
+            yield event(
+                "response.output_text.delta",
+                item_id=message_id,
+                output_index=0,
+                content_index=0,
+                delta=content,
+                logprobs=[],
+            )
         part: dict[str, object] = {
             "type": "output_text",
             "text": text,
@@ -377,18 +381,32 @@ async def responses_sse(
         yield event("response.output_item.done", output_index=0, item=completed_message)
         completed_output = [completed_message]
         for index, item in sorted(tool_calls.items()):
-            if item["_compat_read_file"]:
+            if item["_compat_local_file"]:
                 try:
-                    path = json.loads(str(item["_arguments"]))["path"]
+                    arguments = json.loads(str(item["_arguments"]))
+                    if item["_original_name"] == "read_mcp_resource":
+                        uri = arguments["uri"]
+                        parsed = urlsplit(uri)
+                        path = (
+                            unquote(parsed.path)
+                            if parsed.scheme == "file" and parsed.netloc in {"", "localhost"}
+                            else ""
+                        )
+                    else:
+                        path = arguments["path"]
                     if not isinstance(path, str) or not path:
                         raise TypeError
                 except (KeyError, TypeError, ValueError):
                     path = ""
-                item["_arguments"] = json.dumps(
-                    {"cmd": f"cat -- {shlex.quote(path)}"},
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
+                if path:
+                    item["name"] = "exec_command"
+                    item["_arguments"] = json.dumps(
+                        {"cmd": f"cat -- {shlex.quote(path)}"},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                else:
+                    item["_compat_local_file"] = False
             if not item["_added"]:
                 is_custom = item["name"] in (custom_tool_names or set())
                 item["id"] = f"{'ctc' if is_custom else 'fc'}_{uuid.uuid4().hex}"
@@ -439,6 +457,14 @@ async def responses_sse(
                 continue
             item.pop("_arguments", None)
             item["status"] = "completed"
+            if item["arguments"]:
+                yield event(
+                    "response.function_call_arguments.delta",
+                    response_id=response_id,
+                    item_id=item["id"],
+                    output_index=index + 1,
+                    delta=item["arguments"],
+                )
             yield event(
                 "response.function_call_arguments.done",
                 response_id=response_id,
