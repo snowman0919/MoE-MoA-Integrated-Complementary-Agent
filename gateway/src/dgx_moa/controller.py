@@ -1809,6 +1809,8 @@ class Controller:
         request: dict[str, Any],
         roles: tuple[str, ...],
         ensure_roles: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
+        *,
+        tool_continuation: bool = False,
     ) -> dict[str, Any]:
         body = request.copy()
         metadata = dict(request.get("metadata", {}))
@@ -1834,8 +1836,13 @@ class Controller:
         body["max_tokens"] = self.executor_tokens(body)
         if state.phase == Phase.BLOCKED:
             raise ValueError("session blocked after no progress")
-        self.admit_loop_iteration(state)
-        reasoner = self.settings.models.get("reasoner") if "reasoner" in roles else None
+        if not tool_continuation:
+            self.admit_loop_iteration(state)
+        reasoner = (
+            self.settings.models.get("reasoner")
+            if "reasoner" in roles and not tool_continuation
+            else None
+        )
         reasoner_advice = ""
         reasoner_contribution: ReasonerContribution | None = None
         if reasoner:

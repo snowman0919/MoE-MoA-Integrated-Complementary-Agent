@@ -4056,6 +4056,7 @@ def test_request_json_cannot_select_runtime_trace_provenance(
 
 
 def test_tool_result_continuation_uses_same_session(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
     original = stub_provider.complete
 
     async def continue_after_tool(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
@@ -4113,6 +4114,8 @@ def test_tool_result_continuation_uses_same_session(settings, stub_provider: Stu
                 "truncated": False,
             }
         ]
+        assert stub_provider.calls.count("reasoner") == 1
+        assert state.engineering_loop and state.engineering_loop.iteration == 1
 
 
 def test_failed_tool_evidence_reinvokes_reasoner_and_overrides_self_confidence(
