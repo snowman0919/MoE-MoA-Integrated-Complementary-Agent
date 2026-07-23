@@ -4434,3 +4434,26 @@ warning; targeted Ruff and JavaScript syntax checks were clean. Production
 contained the catalog and shared model-label rendering. Gateway and both
 tailnet/loopback listeners were active. Hermes was not restarted and retained
 PID 1796553.
+
+## Codex interrupted-goal stream recovery — 2026-07-23
+
+The Codex failure was a transport-retry deadlock rather than an unreadable
+attachment. The native `exec_command` had already resolved the goal objective,
+but a downstream stream interruption permanently terminated the engineering
+loop as `CLIENT_CANCELLED`; five Codex reconnects then reused the same blocked
+session. Running sessions now resume after transport cancellation, while
+operator-terminated sessions remain terminal. Replayed goal-file reads are
+compacted before observation, and MCP read/list tools remain suppressed after
+an unavailable-server failure even when a native fallback resolved it.
+
+The full suite passed `873 passed` with the existing third-party Starlette
+warning, and targeted Ruff checks were clean. After production
+`main@fd315cb`, the original failed session
+`ee8b0c96-e22a-4d40-bc0d-83998d9452bf` returned HTTP 200 with
+`response.completed`, no `response.failed`, and only an `exec_command` tool
+call. It recorded `engineering_loop_resumed` and suppressed
+`read_mcp_resource`, `list_mcp_resources`, and
+`list_mcp_resource_templates`. Persisted state was `phase=executing`,
+`final_status=null`, and `termination_reason=null`. Gateway and both
+tailnet/loopback listeners were active. Hermes was not restarted and retained
+PID 1796553.
