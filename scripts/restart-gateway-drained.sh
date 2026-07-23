@@ -35,4 +35,12 @@ done
 
 trap - ERR INT TERM
 systemctl --user restart dgx-moa-gateway.service
-"$(dirname "$0")/healthcheck.sh"
+healthcheck="$(dirname "$0")/healthcheck.sh"
+for ((attempt = 1; attempt <= 30; attempt++)); do
+    if "$healthcheck" >/dev/null 2>&1; then
+        "$healthcheck"
+        exit 0
+    fi
+    sleep 1
+done
+"$healthcheck"

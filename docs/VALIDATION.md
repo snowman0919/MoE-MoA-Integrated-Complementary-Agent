@@ -4595,3 +4595,21 @@ independent host run of the generated tests also exited 0. The full suite
 passed `885 passed` with the existing third-party Starlette warning. Ruff
 formatting, Ruff lint, strict mypy over 42 source files, and `git diff --check`
 were clean.
+
+Production `main@ca84bcc` was fast-forwarded after the pre-deployment checks.
+The drain API reported no active request before each gateway-only restart.
+Both loopback and tailnet `healthz`, `readyz`, and authenticated model checks
+returned HTTP 200; Hermes remained active with PID 1796553. The first restart
+also exposed a false-negative in the deployment script: its health check ran
+before the approximately two-second gateway startup completed. The script now
+retries the same health contract for up to 30 seconds instead of reporting a
+successful restart as failed and inviting a duplicate restart.
+
+An official Codex CLI run then targeted production `127.0.0.1:9000` from a
+fresh isolated workspace. It read the Korean objective, created `result.txt`,
+validated the exact `PRODUCTION_GOAL_OK` content with exit code 0, and returned
+a concrete Korean completion report rather than a preparation marker. Gateway
+session `f44ca58f-a31a-4e0d-9771-a767e6bfaf21` recorded six successful tool
+results and seven completed streams. An independent host assertion returned
+`artifact=PASS`; post-run loopback and tailnet health/readiness checks remained
+HTTP 200.
