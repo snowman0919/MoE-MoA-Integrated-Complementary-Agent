@@ -4094,3 +4094,26 @@ cold miss 1, warm-up started 1, completed 1, failed 0. Live observation sent 32
 events with zero drops and zero Telegram errors. Gateway, Executor, Reviewer,
 and Hermes were active; `/readyz` reported Executor, Reviewer, and Reasoner
 ready with Remote Judge available.
+
+## Codex goal continuation and language preservation — 2026-07-23
+
+The reported Codex goal run created eight separate runtime sessions for one
+tool loop. The final session remained `phase=executing`, had no completion
+criteria or termination reason, and recorded `finish_reason=stop`; the client
+therefore treated the Executor's English objective summary as goal completion.
+Responses text-part content had also been stored as a Python list
+representation instead of the contained text. Six accumulated tool results and
+one pending call per prior session confirmed that remapped continuation call
+IDs prevented the existing exact-owner lookup from joining the turns.
+
+The gateway now extracts text parts through one shared helper. When a
+sessionless continuation has a remapped call ID, it reuses a single
+unfinished same-token, same-objective owner and rejects ambiguous matches. It
+also clears the superseded pending ID and releases the continuation lease.
+Executor constraints preserve the actual objective's language, including an
+objective loaded through a wrapper, and prohibit treating a `/goal` file read
+or summary as completion without verified criteria. Existing independent
+Planner, Reviewer, and Frontier tasks remain parallel; dependency-ordered
+Reasoner, Executor routing, and final synthesis remain sequential. The full
+suite passed `861 passed` with the existing third-party Starlette warning;
+Ruff, strict mypy over 41 source files, and `git diff --check` were clean.

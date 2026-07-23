@@ -68,7 +68,7 @@ from .routing import (
 )
 from .runtime_status import memory_available as runtime_memory_available
 from .runtime_status import report as runtime_report
-from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest
+from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest, text_content
 from .security import admin_dependency, auth_dependency
 from .skills import SkillRegistry
 from .specialists import (
@@ -175,7 +175,7 @@ def title_request_index(messages: list[dict[str, Any]]) -> int | None:
     """Return OpenCode's trailing automatic title prompt, if present."""
     title_generator = any(
         message.get("role") == "system"
-        and str(message.get("content", ""))
+        and text_content(message.get("content"))
         .strip()
         .lower()
         .startswith("you are a title generator. you output only a thread title.")
@@ -184,7 +184,7 @@ def title_request_index(messages: list[dict[str, Any]]) -> int | None:
     for index in range(len(messages) - 1, -1, -1):
         message = messages[index]
         if message.get("role") == "user":
-            content = str(message.get("content", "")).strip().lower()
+            content = text_content(message.get("content")).strip().lower()
             if content.startswith("generate a title for this conversation"):
                 return index
             if not title_generator:
@@ -1837,12 +1837,26 @@ def create_app(
         provided_session_id = x_session_id or str(body.metadata.get("session_id") or "")
         session_id = provided_session_id or str(uuid.uuid4())
         api_token_id = getattr(request.state, "api_token_id", "legacy")
+        recovered_tool_owner = False
         if not provided_session_id:
+            objective = next(
+                (
+                    text_content(message.get("content"))
+                    for message in raw["messages"]
+                    if message.get("role") == "user"
+                ),
+                "",
+            )
             tool_owner = request.app.state.store.find_tool_owner(
-                tool_result_call_ids(raw["messages"]), api_token_id
+                tool_result_call_ids(raw["messages"]), api_token_id, objective
             )
             if tool_owner is not None:
                 session_id = tool_owner.session_id
+                supplied_ids = tool_result_call_ids(raw["messages"])
+                if not set(tool_owner.pending_tool_call_ids).intersection(supplied_ids):
+                    tool_owner.pending_tool_call_ids = []
+                    request.app.state.store.save(tool_owner)
+                    recovered_tool_owner = True
         try:
             raw["max_tokens"] = request.app.state.controller.executor_tokens(raw)
         except ValueError as error:
@@ -2243,7 +2257,7 @@ def create_app(
 
         try:
             continuation_owner = continuation_correlation(state_session_id)
-            if has_matching_tool_result(raw["messages"]):
+            if recovered_tool_owner or has_matching_tool_result(raw["messages"]):
                 request.app.state.lifecycle_store.release_continuation(
                     "executor", continuation_owner
                 )

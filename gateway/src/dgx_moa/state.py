@@ -205,15 +205,17 @@ class StateStore:
             ).fetchone()
         return SessionState.model_validate_json(row[0]) if row else None
 
-    def find_tool_owner(self, tool_call_ids: set[str], api_token_id: str) -> SessionState | None:
+    def find_tool_owner(
+        self, tool_call_ids: set[str], api_token_id: str, objective: str = ""
+    ) -> SessionState | None:
         if not tool_call_ids:
             return None
         with self._connect() as database:
             rows = database.execute(
                 "SELECT payload FROM sessions ORDER BY updated_at DESC"
             ).fetchall()
-        for (payload,) in rows:
-            state = SessionState.model_validate_json(payload)
+        states = [SessionState.model_validate_json(payload) for (payload,) in rows]
+        for state in states:
             if state.api_token_id != api_token_id:
                 continue
             pending = set(state.pending_tool_call_ids)
@@ -221,6 +223,17 @@ class StateStore:
                 pending.add(state.last_tool_call["id"])
             if pending.intersection(tool_call_ids):
                 return state
+        candidates = [
+            state
+            for state in states
+            if state.api_token_id == api_token_id
+            and state.objective == objective
+            and state.final_status is None
+            and state.pending_tool_call_ids
+        ]
+        # ponytail: ambiguous identical concurrent goals need a client-provided session ID.
+        if len(candidates) == 1:
+            return candidates[0]
         return None
 
     def save(self, state: SessionState) -> None:

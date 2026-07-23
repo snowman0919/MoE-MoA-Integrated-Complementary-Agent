@@ -983,6 +983,39 @@ def test_new_session_uses_latest_user_message(settings, stub_provider: StubProvi
     assert state.objective == "current task"
 
 
+def test_goal_text_parts_keep_language_and_require_evidence(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    objective = "/goal 첨부된 목표를 구현하고 검증해"
+    state = controller.session(
+        "goal-text-parts",
+        [{"role": "user", "content": [{"type": "text", "text": objective}]}],
+    )
+    state.api_token_id = "client"
+    state.pending_tool_call_ids = ["call-original"]
+    store.save(state)
+
+    prompt = controller.prompt_sandwich("executor", state, "objective loaded", "continue")
+    owner = store.find_tool_owner({"call-remapped"}, "client", objective)
+
+    assert state.objective == objective
+    assert owner and owner.session_id == state.session_id
+    assert "language of the user's actual objective" in prompt
+    assert "reading or summarizing the objective is not completion" in prompt
+
+    store.save(
+        SessionState(
+            session_id="same-goal",
+            objective=objective,
+            api_token_id="client",
+            pending_tool_call_ids=["call-other"],
+        )
+    )
+    assert store.find_tool_owner({"call-remapped"}, "client", objective) is None
+
+
 @pytest.mark.asyncio
 async def test_planner_and_reviewer_routing(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     store = StateStore(settings.state_db)
