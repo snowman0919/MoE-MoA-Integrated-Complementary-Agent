@@ -28,6 +28,7 @@ from .controller import (
     LoopAdmissionError,
     PolicyBlocked,
     ReasonerUnavailable,
+    active_failures,
 )
 from .evolution import PromptRegistry
 from .frontier import CodexOAuthCollaboration, load_frontier_config
@@ -2318,8 +2319,17 @@ def create_app(
             if body.metadata.get("no_progress"):
                 request.app.state.controller.note_no_progress(state)
             active_stage = "planner" if "planner" in roles else "request"
+            tool_continuation = (
+                recovered_tool_owner
+                or has_matching_tool_result(raw["messages"])
+                or bool(getattr(request.state, "responses_tool_owner_recovered", False))
+            ) and not active_failures(state)
             prepared = await request.app.state.controller.prepare_executor(
-                state, raw, roles, ensure_dynamic_roles
+                state,
+                raw,
+                roles,
+                ensure_dynamic_roles,
+                tool_continuation=tool_continuation,
             )
             if state.engineering_loop is not None and prepared.get("tools"):
                 if prepared.get("parallel_tool_calls") is None:
@@ -3204,6 +3214,7 @@ def create_app(
                 )
                 if owner is not None:
                     response_session_id = owner.session_id
+                    request.state.responses_tool_owner_recovered = True
                     supplied_ids = tool_result_call_ids(messages)
                     if not set(owner.pending_tool_call_ids).intersection(supplied_ids):
                         owner.pending_tool_call_ids = []

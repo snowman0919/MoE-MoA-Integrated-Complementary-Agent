@@ -1,5 +1,21 @@
 # Validation
 
+## Successful tool-continuation budget — 2026-07-23
+
+The postdeployment Codex Goal retry preserved one session and reached executor
+step three, but failed after four HTTP turns. Persisted state showed 27 of 30
+tool calls still available while the four-iteration and four-Reasoner-entry
+budgets were exhausted. The successful objective-file reads were therefore
+being charged as new Engineering iterations and rerunning the Reasoner even
+though they were continuations of one Executor decision.
+
+Successful tool-result continuations now remain in the current Engineering
+iteration and return directly to the Executor. A continuation with active tool
+failure evidence retains the existing full orchestration and Reasoner re-entry.
+Focused tests verified one Reasoner/iteration for a successful continuation and
+two Reasoner calls for a failed continuation. The full isolated suite passed
+863 tests; Ruff and strict mypy passed.
+
 ## Streaming goal continuity and tool batching — 2026-07-23
 
 Inspection of the attached Hermes/Codex goal run found 107 SQLite session rows
