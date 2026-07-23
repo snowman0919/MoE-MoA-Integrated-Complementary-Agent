@@ -6571,3 +6571,93 @@ def test_terminal_state_lookup_failure_still_releases_active_lease(
                 },
             )
         assert_no_request_leases(client.app)
+
+
+def test_responses_goal_recovers_remapped_tool_continuation(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def complete(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role != "executor":
+            return await original(role, model, request, **kwargs)
+        if any(message.get("role") == "tool" for message in request["messages"]):
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "목표 작업을 계속합니다."},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-original",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_goal",
+                                    "arguments": '{"path":"goal-objective.md"}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+
+    stub_provider.complete = complete  # type: ignore[method-assign]
+    objective = "/goal Read the objective file before continuing."
+    tool = {
+        "type": "function",
+        "name": "read_goal",
+        "parameters": {"type": "object", "properties": {}},
+    }
+    with client_with_stub(settings, stub_provider) as client:
+        first = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": objective}],
+                    }
+                ],
+                "tools": [tool],
+            },
+        )
+        second = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "input": [
+                    {"role": "user", "content": objective},
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call-remapped",
+                        "output": "실제 목표는 구현과 검증이다.",
+                    },
+                ],
+                "tools": [tool],
+            },
+        )
+        with sqlite3.connect(settings.state_db) as database:
+            states = [
+                SessionState.model_validate_json(row[0])
+                for row in database.execute("SELECT payload FROM sessions").fetchall()
+            ]
+
+    assert first.status_code == second.status_code == 200
+    assert second.json()["output"][0]["content"][0]["text"] == "목표 작업을 계속합니다."
+    assert len(states) == 1
+    assert states[0].objective == objective
+    assert states[0].pending_tool_call_ids == []

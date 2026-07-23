@@ -5,6 +5,18 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+def text_content(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(
+            part["text"]
+            for part in value
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        )
+    return "" if value is None else str(value)
+
+
 class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
