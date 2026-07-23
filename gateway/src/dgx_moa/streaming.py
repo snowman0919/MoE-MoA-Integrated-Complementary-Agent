@@ -15,6 +15,25 @@ from .usage import SQLITE_MAX_INTEGER
 LOGGER = logging.getLogger(__name__)
 TOKEN_FIELDS = ("prompt_tokens", "completion_tokens", "total_tokens")
 MAX_BUFFERED_RESPONSE_CHARS = 1_000_000
+PROGRESS_ONLY_TEXT = {
+    "Preparing the next tool action.",
+    "다음 도구 작업을 준비합니다.",
+}
+
+
+class ProgressOnlyResponse(Exception):
+    """The model stopped after emitting only a progress marker."""
+
+
+def is_progress_only(text: str) -> bool:
+    stripped = text.strip()
+    return stripped in PROGRESS_ONLY_TEXT or (
+        len(stripped) <= 128
+        and (
+            stripped.endswith(" 도구를 실행합니다.")
+            or (stripped.startswith("Running ") and stripped.endswith("."))
+        )
+    )
 
 
 def _log_token(value: str) -> str:
@@ -200,6 +219,7 @@ async def responses_sse(
     function_tool_names: set[str] | None = None,
     session_id: str = "unknown",
     progress_language: str = "en",
+    goal_already_loaded: bool = False,
 ) -> AsyncGenerator[bytes, None]:
     """Translate Chat Completions SSE into Responses text and function-call events."""
     response_id = f"resp_{uuid.uuid4().hex}"
@@ -334,11 +354,17 @@ async def responses_sse(
         if not terminal_seen:
             raise ValueError("upstream stream ended before terminal marker")
         text = "".join(text_parts)
+        if not tool_calls and is_progress_only(text):
+            raise ProgressOnlyResponse
         if tool_calls and not text.strip():
+            first_tool = tool_calls[min(tool_calls)]
+            tool_name = (
+                "exec_command" if first_tool["_compat_local_file"] else str(first_tool["name"])
+            )
             text = (
-                "다음 도구 작업을 준비합니다."
+                f"{tool_name} 도구를 실행합니다."
                 if progress_language == "ko"
-                else "Preparing the next tool action."
+                else f"Running {tool_name}."
             )
             text_parts = [text]
         for content in text_parts:
@@ -407,6 +433,49 @@ async def responses_sse(
                     )
                 else:
                     item["_compat_local_file"] = False
+            if item["name"] == "exec_command":
+                try:
+                    arguments = json.loads(str(item["_arguments"]))
+                except ValueError:
+                    arguments = None
+                if (
+                    isinstance(arguments, dict)
+                    and arguments.get("sandbox_permissions") == "require_escalated"
+                ):
+                    for key in ("sandbox_permissions", "justification", "prefix_rule"):
+                        arguments.pop(key, None)
+                    item["_arguments"] = json.dumps(
+                        arguments,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    LOGGER.info(
+                        "responses_exec_escalation_suppressed session_id=%s",
+                        _log_token(session_id),
+                    )
+                command = arguments.get("cmd") if isinstance(arguments, dict) else None
+                if (
+                    goal_already_loaded
+                    and isinstance(command, str)
+                    and "goal-objective.md" in command
+                    and any(
+                        token in f" {command}"
+                        for token in (" cat ", " head ", " tail ", " wc ", " od ", " xxd ")
+                    )
+                ):
+                    item["_arguments"] = json.dumps(
+                        {
+                            "cmd": (
+                                "printf '%s\\n' "
+                                "'Goal objective already loaded; continue implementation.'"
+                            )
+                        },
+                        separators=(",", ":"),
+                    )
+                    LOGGER.info(
+                        "responses_goal_reread_suppressed session_id=%s",
+                        _log_token(session_id),
+                    )
             if not item["_added"]:
                 is_custom = item["name"] in (custom_tool_names or set())
                 item["id"] = f"{'ctc' if is_custom else 'fc'}_{uuid.uuid4().hex}"
@@ -487,6 +556,8 @@ async def responses_sse(
             len(text),
             len(completed_output),
         )
+    except ProgressOnlyResponse:
+        raise
     except Exception as error:
         terminal_error = {
             "type": "backend_error",

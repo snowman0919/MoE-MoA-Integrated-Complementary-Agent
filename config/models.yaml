@@ -173,7 +173,7 @@ gateway:
         maximum_timeout_seconds: 1800
         minimum_ready_residency_seconds: 300
   limits:
-    max_tool_output_characters: 1000
+    max_tool_output_characters: 16000
     max_retained_observations: 12
     max_error_lines: 40
     max_diff_summary_lines: 100

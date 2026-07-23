@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 import pytest
 from dgx_moa.streaming import (
     MAX_BUFFERED_RESPONSE_CHARS,
+    ProgressOnlyResponse,
     StreamObservation,
     forward_sse,
     keepalive_sse,
@@ -49,6 +50,21 @@ async def test_responses_sse_translates_chat_text_and_usage() -> None:
     assert completed["response"]["usage"]["input_tokens_details"] == {"cached_tokens": 1}
     assert completed["response"]["usage"]["output_tokens_details"] == {"reasoning_tokens": 1}
     assert all(b"data: [DONE]" not in chunk for chunk in chunks)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    ["다음 도구 작업을 준비합니다.", "exec_command 도구를 실행합니다."],
+)
+async def test_responses_sse_rejects_progress_only_stop(text: str) -> None:
+    async def upstream():
+        yield f'data: {{"choices":[{{"delta":{{"content":"{text}"}}}}]}}\n\n'.encode()
+        yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    with pytest.raises(ProgressOnlyResponse):
+        _ = [chunk async for chunk in responses_sse(upstream(), "dgx-moa")]
 
 
 @pytest.mark.parametrize("invalid", [-1, True, SQLITE_MAX_INTEGER + 1])
@@ -220,11 +236,73 @@ async def test_responses_sse_maps_local_mcp_file_to_exec_command() -> None:
     progress_index = next(
         index
         for index, event in enumerate(events)
-        if event.get("delta") == "다음 도구 작업을 준비합니다."
+        if event.get("delta") == "exec_command 도구를 실행합니다."
     )
     assert progress_index < events.index(added)
     assert json.loads(done["arguments"]) == {"cmd": "cat -- '/Users/test/goal objective.md'"}
     assert all(event.get("item", {}).get("name") != "read_mcp_resource" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_keeps_exec_command_inside_current_sandbox() -> None:
+    async def upstream():
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call-shell","function":{"name":"exec_command",'
+            b'"arguments":"{\\"cmd\\":\\"apt-get update\\",'
+            b'\\"sandbox_permissions\\":\\"require_escalated\\",'
+            b'\\"justification\\":\\"install dependency\\",'
+            b'\\"prefix_rule\\":[\\"apt-get\\"]}"}}]},'
+            b'"finish_reason":"tool_calls"}]}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa",
+            function_tool_names={"exec_command"},
+        )
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+    done = next(
+        event for event in events if event["type"] == "response.function_call_arguments.done"
+    )
+
+    assert json.loads(done["arguments"]) == {"cmd": "apt-get update"}
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_suppresses_loaded_goal_reread() -> None:
+    async def upstream():
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call-shell","function":{"name":"exec_command",'
+            b'"arguments":"{\\"cmd\\":\\"cat /workspace/goal-objective.md\\"}"}}]},'
+            b'"finish_reason":"tool_calls"}]}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa",
+            function_tool_names={"exec_command"},
+            goal_already_loaded=True,
+        )
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+    done = next(
+        event for event in events if event["type"] == "response.function_call_arguments.done"
+    )
+
+    assert json.loads(done["arguments"]) == {
+        "cmd": "printf '%s\\n' 'Goal objective already loaded; continue implementation.'"
+    }
 
 
 @pytest.mark.asyncio

@@ -1650,8 +1650,9 @@ class Controller:
             else ""
         )
         progress_constraint = (
-            "Before each tool batch, give one concise user-visible progress sentence describing "
-            "the immediate action; do not expose hidden reasoning."
+            "When work remains, call the required tool in the same response; never return only a "
+            "progress marker. Do not expose hidden reasoning. Never request elevated permissions "
+            "or install missing system dependencies; use available tools or report the blocker."
             if role == "executor"
             else ""
         )

@@ -4563,3 +4563,35 @@ the gateway completed the final turn in 2.622 seconds, the Docker process
 exited 0, the host artifact assertion passed, and the client received the
 Korean completion message `완료되었습니다.` No MCP-resource call or repeated
 goal-file read occurred.
+
+## Codex progress-only stop recovery — 2026-07-24
+
+Production session `e6205d45-765f-4671-854c-73d15fa38944` resolved a
+950-character goal and successfully ran four inspection tools, but its final
+upstream turn returned `finish_reason=stop` with only
+`다음 도구 작업을 준비합니다.`. The session still had no completion criteria,
+final status, or termination reason and retained 135,870 tokens plus 26 tool
+calls. This was an invalid Executor completion, not a request-budget or
+transport failure.
+
+Responses translation now rejects a progress-only `stop`, retries it once
+inside the same request with an explicit tool-or-evidence constraint, and
+returns a structured incomplete-response failure if the retry is also empty.
+Actual tool turns identify the selected tool instead of using the ambiguous
+generic marker. Resolved goal-file rereads are converted to a bounded
+continuation observation, unsupported elevation arguments are removed under
+approval-never execution, and the Executor instruction requires the tool call
+in the same response. The measured 1,000-character aggregate tool-observation
+budget was also raised to a bounded 16,000 characters: it had truncated a
+1,038-character source file and caused repeated `cat`, `head`, `od`, and
+`xxd` inspections.
+
+The isolated official Codex CLI validation used a 526-byte Korean goal. It
+read the goal once, observed the full 1,038-byte `event_feed.py`, created
+`test_event_feed.py`, and ran four standard-library tests with exit code 0.
+Gateway session `a1245c3e-71ff-4dcc-a4a5-a9af307f86f4` recorded one resolved
+goal, five successful tool results, and a concrete Korean final report; an
+independent host run of the generated tests also exited 0. The full suite
+passed `885 passed` with the existing third-party Starlette warning. Ruff
+formatting, Ruff lint, strict mypy over 42 source files, and `git diff --check`
+were clean.

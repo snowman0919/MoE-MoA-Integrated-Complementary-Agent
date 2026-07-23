@@ -91,6 +91,7 @@ from .specialists import (
 )
 from .state import Phase, StateStore
 from .streaming import (
+    ProgressOnlyResponse,
     StreamObservation,
     forward_sse,
     keepalive_sse,
@@ -3295,11 +3296,13 @@ def create_app(
                 chat_task: asyncio.Task[Response] | None = None
                 loading_deadline = time.monotonic() + configured.limits.model_load_timeout_seconds
                 initial_heartbeat_sent = False
+                progress_only_retried = False
+                current_body = chat_body
                 try:
                     while True:
                         chat_task = asyncio.create_task(
                             chat(
-                                chat_body,
+                                current_body,
                                 request,
                                 response_session_id,
                                 x_runtime_channel,
@@ -3358,16 +3361,62 @@ def create_app(
                                 yield chunk
                             return
                         if isinstance(chat_result, StreamingResponse):
-                            async for chunk in keepalive_sse(
-                                responses_sse(
-                                    chat_result.body_iterator,
-                                    response_model,
-                                    custom_tool_names=custom_tool_names,
-                                    function_tool_names=function_tool_names,
-                                    session_id=response_session_id,
-                                    progress_language=progress_language,
+                            translated: list[bytes] = []
+                            response_state = request.app.state.store.get(response_session_id)
+                            try:
+                                async for chunk in keepalive_sse(
+                                    responses_sse(
+                                        chat_result.body_iterator,
+                                        response_model,
+                                        custom_tool_names=custom_tool_names,
+                                        function_tool_names=function_tool_names,
+                                        session_id=response_session_id,
+                                        progress_language=progress_language,
+                                        goal_already_loaded=bool(
+                                            response_state and response_state.resolved_objective
+                                        ),
+                                    )
+                                ):
+                                    if chunk.startswith(b":"):
+                                        yield chunk
+                                    else:
+                                        translated.append(chunk)
+                            except ProgressOnlyResponse:
+                                if progress_only_retried:
+                                    async for chunk in responses_error_sse(
+                                        response_model,
+                                        session_id=response_session_id,
+                                        error_type="incomplete_response",
+                                        code="incomplete_response",
+                                        source="progress_only_response",
+                                        status_code=status.HTTP_502_BAD_GATEWAY,
+                                    ):
+                                        yield chunk
+                                    return
+                                progress_only_retried = True
+                                request.app.state.store.event(
+                                    response_session_id,
+                                    "progress_only_response_retried",
+                                    {},
                                 )
-                            ):
+                                current_body = current_body.model_copy(
+                                    update={
+                                        "messages": [
+                                            *current_body.messages,
+                                            ChatMessage(
+                                                role="developer",
+                                                content=(
+                                                    "The previous answer was only a progress "
+                                                    "marker. Call the next required tool, or "
+                                                    "return a concrete final result with evidence "
+                                                    "only if the objective is complete."
+                                                ),
+                                            ),
+                                        ]
+                                    }
+                                )
+                                continue
+                            for chunk in translated:
                                 yield chunk
                             return
                         chat_payload = _chat_response_payload(chat_result)
