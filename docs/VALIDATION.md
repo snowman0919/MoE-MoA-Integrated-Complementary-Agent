@@ -1,5 +1,34 @@
 # Validation
 
+## Goal shell-noise and redundant-read recovery — 2026-07-23
+
+The reported interrupted Goal session
+`3b922bcb-f099-4282-b9d5-484cbf6ca3b7` ended with
+`BUDGET_EXHAUSTED`, not an initial transport failure. All seven stored tool
+results had exit code zero. Successful file output included the Codex command
+envelope and `pyenv: cannot rehash ... isn't writable`; later failed
+`filesystem` MCP retries were registered as active failures and consumed the
+remaining Engineering iterations. The client reconnects then surfaced the
+terminal 409 as repeated 502 responses.
+
+Tool-result normalization now removes the Codex command envelope and that exact
+benign pyenv startup warning while preserving real stderr, exit codes, and
+failure classes. A failed duplicate read of an already resolved
+`goal-objective.md` remains recorded evidence but does not reopen the completed
+read or consume another Engineering iteration. The Executor prompt also treats
+the loaded current objective as authoritative and forbids another filesystem or
+MCP read of that objective.
+
+PR `#75` deployed to production main
+`a84e4cbc5a324c8db220d826d6d40e2116bb97f7`. The full isolated suite passed
+865 tests; Ruff and strict mypy passed. Authenticated physical session
+`physical-goal-noise-1784801408` stored 434 objective characters with the
+startup warning absent, retained the redundant MCP failure as
+`MCP_SERVER_UNAVAILABLE`, had zero active failures, stayed on Engineering
+iteration one with three iterations remaining, and continued to
+`inspect_workspace`. Gateway readiness was `ready`; Hermes retained PID
+`1796553` and its `2026-07-23 16:30:58 KST` start time throughout deployment.
+
 ## Resolved Goal objective propagation — 2026-07-23
 
 The reported summary-only Goal output was traced to a predeployment session:
