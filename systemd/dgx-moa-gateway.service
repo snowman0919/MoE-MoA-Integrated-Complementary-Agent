@@ -22,7 +22,9 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/kotori9/dgx-moa-agent
+ReadWritePaths=/home/kotori9/code
 ReadWritePaths=/home/kotori9/models
+ReadWritePaths=/home/kotori9/.local/share/dgx-moa/codex-profiles
 ReadWritePaths=%t/dgx-moa
 RuntimeDirectory=dgx-moa
 LockPersonality=true
@@ -30,4 +32,3 @@ RestrictSUIDSGID=true
 
 [Install]
 WantedBy=default.target
-

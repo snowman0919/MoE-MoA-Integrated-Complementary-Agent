@@ -3,10 +3,11 @@
 Planner and Reviewer remain local specialist roles. When a managed local role is
 `READY` (only after a real inference probe) and its queue-aware completion
 estimate is within the configured cost margin, the request uses the local
-provider. A cold, loading, degraded, evicting, failed, or slower local role does
-not delay an ordinary request: OpenCode Go handles that specialist call while a
-singleflight local warm-up runs independently. The warmed role is eligible only
-for later calls.
+provider. A busy, cold, loading, degraded, evicting, failed, or slower local
+role does not delay an ordinary request: OpenCode Go handles that specialist
+call while a singleflight local warm-up runs independently when needed. The
+warmed role is eligible only for later calls. Explicit local-only policy may
+queue behind a healthy busy specialist.
 
 The remote cold-start models are `deepseek-v4-pro` for Planner and
 `deepseek-v4-flash` for Reviewer. They do not replace the local models. The

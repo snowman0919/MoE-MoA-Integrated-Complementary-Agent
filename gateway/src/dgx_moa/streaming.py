@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shlex
 import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from dataclasses import dataclass, field
+from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from .usage import SQLITE_MAX_INTEGER
@@ -18,6 +20,7 @@ MAX_BUFFERED_RESPONSE_CHARS = 1_000_000
 PROGRESS_ONLY_TEXT = {
     "Preparing the next tool action.",
     "다음 도구 작업을 준비합니다.",
+    "다음 작업에 필요한 증거를 확인합니다.",
 }
 
 
@@ -38,6 +41,88 @@ def is_progress_only(text: str) -> bool:
 
 def _log_token(value: str) -> str:
     return "".join(character if character.isprintable() else "?" for character in value)[:256]
+
+
+def tool_progress_text(tool_calls: dict[int, dict[str, object]], progress_language: str) -> str:
+    if len(tool_calls) > 1:
+        return (
+            "필요한 증거를 한 번에 확인합니다."
+            if progress_language == "ko"
+            else "Checking the required evidence together."
+        )
+    first_tool = tool_calls[min(tool_calls)]
+    try:
+        arguments = json.loads(str(first_tool["_arguments"]))
+    except (KeyError, TypeError, ValueError):
+        arguments = {}
+    command = arguments.get("cmd") if isinstance(arguments, dict) else None
+    if isinstance(command, str):
+        if "goal-objective" in command:
+            return (
+                "목표 문서를 확인합니다."
+                if progress_language == "ko"
+                else "Reading the goal objective."
+            )
+        if "AGENTS.md" in command or "docs/STATE.md" in command:
+            return (
+                "저장소 지침과 필수 운영 문서를 확인합니다."
+                if progress_language == "ko"
+                else "Reading the repository instructions and required operational documents."
+            )
+    justification = arguments.get("justification") if isinstance(arguments, dict) else None
+    if (
+        isinstance(justification, str)
+        and 1 <= len(justification.strip()) <= 200
+        and "\n" not in justification
+        and (progress_language != "ko" or re.search("[가-힣]", justification))
+    ):
+        return justification.strip()
+    return (
+        "다음 작업에 필요한 증거를 확인합니다."
+        if progress_language == "ko"
+        else "Checking evidence needed for the next step."
+    )
+
+
+def batch_goal_prerequisite_read(
+    tool_calls: dict[int, dict[str, object]],
+    prerequisites: tuple[str, ...],
+) -> bool:
+    """Combine a first prerequisite read without creating extra tool calls."""
+    if len(prerequisites) < 2 or len(tool_calls) != 1:
+        return False
+    item = next(iter(tool_calls.values()))
+    try:
+        arguments = json.loads(str(item.get("_arguments", "")))
+    except ValueError:
+        return False
+    command = arguments.get("cmd") if isinstance(arguments, dict) else None
+    path = arguments.get("path") if isinstance(arguments, dict) else None
+    if item.get("name") == "exec_command":
+        if not isinstance(command, str) or not re.search(r"(?:^|\s)(?:cat|head|sed)\s", command):
+            return False
+        source = command
+    elif item.get("_compat_local_file") and isinstance(path, str):
+        source = path
+    else:
+        return False
+    matched = next((candidate for candidate in prerequisites if candidate in source), None)
+    if matched is None:
+        return False
+    absolute = re.search(rf"(?P<path>/[^\s\"';]*{re.escape(matched)})", source)
+    root = absolute.group("path")[: -len(matched)] if absolute else ""
+    arguments = {
+        "cmd": "head -n 400 -- "
+        + " ".join(shlex.quote(f"{root}{candidate}") for candidate in prerequisites)
+    }
+    item["name"] = "exec_command"
+    item["_compat_local_file"] = False
+    item["_arguments"] = json.dumps(
+        arguments,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return True
 
 
 def reported_usage(value: object) -> dict[str, int]:
@@ -211,6 +296,27 @@ def response_usage(value: object) -> dict[str, object] | None:
     }
 
 
+async def completed_chat_sse(payload: dict[str, Any]) -> AsyncIterator[bytes]:
+    """Expose one completed Chat Completions payload through the SSE translator."""
+    choice = (payload.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    tool_calls = [
+        {**tool_call, "index": index}
+        for index, tool_call in enumerate(message.get("tool_calls") or [])
+    ]
+    event = {
+        "choices": [
+            {
+                "delta": {"content": message.get("content"), "tool_calls": tool_calls},
+                "finish_reason": choice.get("finish_reason"),
+            }
+        ],
+        "usage": payload.get("usage"),
+    }
+    yield f"data: {json.dumps(event, ensure_ascii=False, separators=(',', ':'))}\n\n".encode()
+    yield b"data: [DONE]\n\n"
+
+
 async def responses_sse(
     upstream: AsyncIterable[str | bytes | memoryview[int]],
     model: str,
@@ -220,6 +326,8 @@ async def responses_sse(
     session_id: str = "unknown",
     progress_language: str = "en",
     goal_already_loaded: bool = False,
+    goal_prerequisites: tuple[str, ...] = (),
+    require_tool_action: bool = False,
 ) -> AsyncGenerator[bytes, None]:
     """Translate Chat Completions SSE into Responses text and function-call events."""
     response_id = f"resp_{uuid.uuid4().hex}"
@@ -353,19 +461,17 @@ async def responses_sse(
                         item["_arguments"] = str(item["_arguments"]) + arguments
         if not terminal_seen:
             raise ValueError("upstream stream ended before terminal marker")
+        if batch_goal_prerequisite_read(tool_calls, goal_prerequisites):
+            LOGGER.info(
+                "responses_goal_prerequisites_batched session_id=%s count=%d",
+                _log_token(session_id),
+                len(goal_prerequisites),
+            )
         text = "".join(text_parts)
-        if not tool_calls and is_progress_only(text):
+        if not tool_calls and (require_tool_action or is_progress_only(text)):
             raise ProgressOnlyResponse
-        if tool_calls and not text.strip():
-            first_tool = tool_calls[min(tool_calls)]
-            tool_name = (
-                "exec_command" if first_tool["_compat_local_file"] else str(first_tool["name"])
-            )
-            text = (
-                f"{tool_name} 도구를 실행합니다."
-                if progress_language == "ko"
-                else f"Running {tool_name}."
-            )
+        if tool_calls:
+            text = tool_progress_text(tool_calls, progress_language)
             text_parts = [text]
         for content in text_parts:
             yield event(

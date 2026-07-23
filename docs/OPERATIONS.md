@@ -13,9 +13,17 @@ OpenAI API key is configured. Enablement requires both the gateway feature gate
 and a reviewed Frontier config. Safe checked-in defaults remain disabled. See
 `FRONTIER.md`.
 
-The 2026-07-21 production deployment passed that gate and enables Frontier with
-ordered `primary`/`secondary` OAuth profiles. Safe checked-in defaults remain
-disabled; production enablement stays in the ignored 0600 environment file.
+The 2026-07-21 production deployment passed that gate and enables Frontier.
+Current failover order is isolated `primary`, isolated `secondary`, then the
+host `default` Codex OAuth profile. A new request arriving while the local
+Executor already owns an active lease is pinned to this remote logical-Executor
+path; Frontier cannot execute host tools and may only return client tool calls
+through the authenticated gateway. When all OAuth profiles fail for an approved
+mandatory call, the optional OpenRouter Claude fallback is attempted at most
+once per correlation ID. It requires a valid ignored `openrouter_api` file with
+mode `0600`; missing or rejected credentials fail closed. Safe gateway defaults
+remain disabled; production enablement stays in the ignored 0600 environment
+file.
 
 Gateway authentication may use legacy `DGX_MOA_API_KEY` or the preferred JSON
 mapping `DGX_MOA_API_KEYS`, whose keys are non-secret usage IDs. Rotate values
@@ -41,6 +49,22 @@ HttpOnly, SameSite-Strict cookie; the raw credential is not kept in browser
 storage. Raw key values are fetched only by the eye/copy controls. State
 database backups must be treated as secrets. A limit reached response is `429`;
 expired or revoked keys receive the same `401` as an unknown key.
+
+`/admin` is the operator landing page. It links to API Key Control and includes
+an independent Codex CLI client configured against the loopback gateway as a
+Responses custom provider. Chat mode is read-only. Agent mode is
+`workspace-write`, accepts only a selected Git workspace whose resolved path
+remains below `~/code`, keeps tool network access disabled, and serializes turns
+through one gateway-local lock. Codex sessions use a separate ignored
+`CODEX_HOME` below `data/run`; browser-held session IDs can resume only the same
+mode and workspace until the gateway restarts.
+
+The client lazily creates `admin-codex-cli` as a general, never-admin API key
+with a 365-day expiry, 10,000-request limit, and 100,000,000-token limit. The
+provider key exists only in the Codex process environment; Codex tool
+subprocesses inherit only core non-secret environment names. The UI and safe
+NDJSON adapter expose final agent messages, command names/status, file-change
+status, and token usage, but not reasoning items or raw command output.
 
 ## Gateway and systemd
 

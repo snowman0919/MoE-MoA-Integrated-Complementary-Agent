@@ -9,6 +9,9 @@ import httpx
 
 from .config import ModelConfig
 
+PLANNER_REASONING_TOKENS = 768
+PLANNER_FINAL_TOKENS = 1_536
+
 
 class StageTimeout(TimeoutError):
     def __init__(self, stage: str):
@@ -77,7 +80,156 @@ class ModelProvider:
             body.pop("tools", None)
             body.pop("tool_choice", None)
             body["stream"] = False
+        if role == "planner" and model.reasoning_parser == "nemotron_v3":
+            template_options = dict(body.get("chat_template_kwargs") or {})
+            template_options.update(
+                enable_thinking=True,
+                reasoning_budget=PLANNER_REASONING_TOKENS,
+            )
+            body["chat_template_kwargs"] = template_options
         return body
+
+    @staticmethod
+    async def fit_specialist_completion(
+        client: httpx.AsyncClient,
+        model: ModelConfig,
+        body: dict[str, Any],
+    ) -> None:
+        """Fit local specialist output to the context actually served by vLLM."""
+        requested = body.get("max_tokens")
+        if not isinstance(requested, int) or isinstance(requested, bool) or requested < 1:
+            return
+        try:
+            response = await client.post(
+                f"{model.base_url.rstrip('/')}/tokenize",
+                json={
+                    "model": model.served_name,
+                    "messages": body.get("messages", []),
+                    "chat_template_kwargs": body.get("chat_template_kwargs"),
+                },
+            )
+            if response.is_error:
+                return
+            tokenization = response.json()
+        except (httpx.HTTPError, ValueError):
+            return
+        prompt_tokens = tokenization.get("count")
+        context_length = tokenization.get("max_model_len")
+        if (
+            not isinstance(prompt_tokens, int)
+            or isinstance(prompt_tokens, bool)
+            or not isinstance(context_length, int)
+            or isinstance(context_length, bool)
+        ):
+            return
+        available = max(1, context_length - prompt_tokens - 8)
+        body["max_tokens"] = min(requested, available)
+
+    @staticmethod
+    async def context_fits(
+        model: ModelConfig,
+        request: dict[str, Any],
+        *,
+        timeout_seconds: float = 10,
+    ) -> bool | None:
+        """Return measured local context fit, or None when the tokenizer is unavailable."""
+        body = ModelProvider.body("executor", model, request)
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                async with httpx.AsyncClient(timeout=None) as client:
+                    response = await client.post(
+                        f"{model.base_url.rstrip('/')}/tokenize",
+                        json={
+                            "model": model.served_name,
+                            "messages": body.get("messages", []),
+                            "tools": body.get("tools"),
+                        },
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+        except (TimeoutError, httpx.HTTPError, ValueError):
+            return None
+        prompt_tokens = payload.get("count")
+        context_length = payload.get("max_model_len", model.context_length)
+        output_tokens = body.get("max_tokens", 0)
+        if not all(
+            isinstance(value, int) and not isinstance(value, bool)
+            for value in (prompt_tokens, context_length, output_tokens)
+        ):
+            return None
+        return int(prompt_tokens) + int(output_tokens) <= int(context_length)
+
+    @classmethod
+    async def complete_reasoning_planner(
+        cls,
+        client: httpx.AsyncClient,
+        model: ModelConfig,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Run bounded English analysis, then finalize the structured local plan."""
+        analysis_body = {
+            **body,
+            "max_tokens": min(
+                int(body.get("max_tokens", PLANNER_REASONING_TOKENS)),
+                PLANNER_REASONING_TOKENS,
+            ),
+        }
+        analysis_body.pop("response_format", None)
+        await cls.fit_specialist_completion(client, model, analysis_body)
+        analysis_response = await client.post(
+            f"{model.base_url.rstrip('/')}/v1/chat/completions",
+            json=analysis_body,
+        )
+        analysis_response.raise_for_status()
+        analysis_payload = cast(dict[str, Any], analysis_response.json())
+        analysis_message = (
+            analysis_payload.get("choices", [{}])[0].get("message", {})
+            if isinstance(analysis_payload.get("choices"), list)
+            else {}
+        )
+        private_analysis = (
+            analysis_message.get("reasoning_content") or analysis_message.get("content") or ""
+        )
+
+        final_messages = [dict(message) for message in body.get("messages", [])]
+        if isinstance(private_analysis, str) and private_analysis:
+            final_messages.append(
+                {"role": "assistant", "reasoning_content": private_analysis, "content": ""}
+            )
+        final_messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Using the private English analysis above, return only one minimal valid "
+                    "JSON object matching the required schema. Do not repeat the analysis."
+                ),
+            }
+        )
+        final_body = {
+            **body,
+            "messages": final_messages,
+            "max_tokens": min(
+                int(body.get("max_tokens", PLANNER_FINAL_TOKENS)),
+                PLANNER_FINAL_TOKENS,
+            ),
+            "chat_template_kwargs": {
+                "enable_thinking": False,
+                "truncate_history_thinking": False,
+            },
+        }
+        await cls.fit_specialist_completion(client, model, final_body)
+        final_response = await client.post(
+            f"{model.base_url.rstrip('/')}/v1/chat/completions",
+            json=final_body,
+        )
+        final_response.raise_for_status()
+        final_payload = cast(dict[str, Any], final_response.json())
+        usage = final_payload.setdefault("usage", {})
+        analysis_usage = analysis_payload.get("usage", {})
+        if isinstance(usage, dict) and isinstance(analysis_usage, dict):
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                usage[key] = int(usage.get(key, 0) or 0) + int(analysis_usage.get(key, 0) or 0)
+        return final_payload
 
     @staticmethod
     def ollama_body(model: ModelConfig, request: dict[str, Any]) -> dict[str, Any]:
@@ -140,9 +292,14 @@ class ModelProvider:
                             json=self.ollama_body(model, request),
                         )
                     else:
+                        body = self.body(role, model, request)
+                        if role == "planner" and model.reasoning_parser == "nemotron_v3":
+                            return await self.complete_reasoning_planner(client, model, body)
+                        if role == "reviewer":
+                            await self.fit_specialist_completion(client, model, body)
                         response = await client.post(
                             f"{model.base_url.rstrip('/')}/v1/chat/completions",
-                            json=self.body(role, model, request),
+                            json=body,
                         )
                     response.raise_for_status()
                     payload = cast(dict[str, Any], response.json())

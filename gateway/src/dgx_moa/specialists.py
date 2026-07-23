@@ -370,10 +370,22 @@ class SpecialistRouter:
             + self.config.remote_queue_latency_seconds
             + self.config.remote_latency_seconds[role]
         )
-        local_ready = local_state in {"READY", "BUSY"}
-        use_local = local_ready
+        local_available = local_state in {"READY", "BUSY"}
+        estimated_remote_cost = (
+            max(int(request.get("max_tokens", 0) or 0), 1)
+            * self.config.remote_cost_per_million_tokens_usd
+            / 1_000_000
+        )
+        cost_adjusted_remote = (
+            predicted_remote + estimated_remote_cost * self.config.cost_seconds_per_usd
+        )
+        use_local = (
+            local_state == "READY"
+            and predicted_local
+            <= cost_adjusted_remote + self.config.local_preference_margin_seconds
+        )
         if local_only:
-            if not local_ready:
+            if not local_available:
                 self._schedule_warmup(role, revision, request_id, "local_only_cold_miss")
                 raise SpecialistUnavailable(f"required local {role} is not ready")
             use_local = True
@@ -391,15 +403,19 @@ class SpecialistRouter:
         if isinstance(provider_model, ModelConfig):
             provider_model = provider_model.served_name
         warmup_status = "not_needed"
-        if not use_local and not local_ready:
+        if not use_local and not local_available:
             warmup_status = self._schedule_warmup(role, revision, request_id, "cold_miss")
         reason = (
             "local_only_policy"
             if local_only
             else "local_ready"
             if use_local
+            else "local_busy"
+            if local_state == "BUSY"
+            else "remote_predicted_faster"
+            if local_state == "READY"
             else "local_not_ready"
-            if not local_ready
+            if not local_available
             else "local_readiness_race"
         )
         decision: dict[str, Any] = {

@@ -1194,6 +1194,114 @@ def test_successful_goal_read_becomes_effective_objective(
     )
 
 
+@pytest.mark.asyncio
+async def test_resolved_goal_continuation_runs_orchestration_once(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="resolved-goal-orchestration",
+        runtime_mode="orchestrated",
+        roles_required=["reasoner", "executor"],
+        objective="/goal 목표 파일을 읽어",
+        resolved_objective="기능을 설계하고 구현한 뒤 코드 검토를 수행한다.",
+    )
+    request = {"messages": [{"role": "user", "content": state.objective}], "metadata": {}}
+
+    await controller.prepare_executor(
+        state, request, ("reasoner", "executor"), tool_continuation=True
+    )
+    first_calls = list(stub_provider.calls)
+    await controller.prepare_executor(
+        state, request, ("reasoner", "executor"), tool_continuation=True
+    )
+
+    assert "reasoner" in first_calls
+    assert "planner" in first_calls
+    planner_index = stub_provider.calls.index("planner")
+    assert stub_provider.requests[planner_index]["messages"][0]["role"] == "user"
+    assert state.resolved_objective_orchestrated is True
+    assert stub_provider.calls.count("reasoner") == 1
+    assert any(
+        event["event_type"] == "resolved_goal_orchestration_started"
+        for event in controller.store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolved_goal_batches_prerequisites_before_orchestration(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="resolved-goal-prerequisites",
+        runtime_mode="orchestrated",
+        roles_required=["reasoner", "executor"],
+        objective="/goal 목표 파일을 읽어",
+        resolved_objective=(
+            "먼저 AGENTS.md와 docs/STATE.md, docs/OPERATIONS.md, "
+            "docs/VALIDATION.md, docs/TRACE_SCHEMA.md를 읽고 구현한다."
+        ),
+    )
+    request = {
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {},
+        "tools": [{"type": "function", "function": {"name": "exec_command"}}],
+    }
+
+    bootstrap = await controller.prepare_executor(
+        state, request, ("reasoner", "executor"), tool_continuation=True
+    )
+
+    assert stub_provider.calls == []
+    assert state.resolved_objective_orchestrated is False
+    assert (
+        "Read every pending prerequisite document in this single response"
+        in bootstrap["messages"][0]["content"]
+    )
+    calls = [
+        {
+            "id": f"read-{index}",
+            "type": "function",
+            "function": {
+                "name": "exec_command",
+                "arguments": json.dumps({"cmd": f"cat {path}"}),
+            },
+        }
+        for index, path in enumerate(
+            (
+                "AGENTS.md",
+                "docs/STATE.md",
+                "docs/OPERATIONS.md",
+                "docs/VALIDATION.md",
+                "docs/TRACE_SCHEMA.md",
+            )
+        )
+    ]
+    controller._observe(
+        state,
+        [
+            {"role": "assistant", "content": None, "tool_calls": calls},
+            *[
+                {
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "content": "required document evidence",
+                }
+                for call in calls
+            ],
+        ],
+    )
+
+    await controller.prepare_executor(
+        state, request, ("reasoner", "executor"), tool_continuation=True
+    )
+
+    assert "reasoner" in stub_provider.calls
+    assert "executor" in stub_provider.calls
+    assert state.resolved_objective_orchestrated is True
+
+
 def test_goal_read_strips_shell_noise_and_redundant_failure_is_not_actionable(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1758,6 +1866,24 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
     assert controller.has_review_evidence(SessionState(session_id="chat"), {}) is False
     assert (
         controller.has_review_evidence(
+            SessionState(
+                session_id="goal-read",
+                tool_results=[{"tool_name": "exec_command", "stdout": "goal objective"}],
+                tool_executions=[
+                    {
+                        "tool_name": "exec_command",
+                        "normalized_arguments": {"cmd": "cat goal-objective.md"},
+                        "exit_code": 0,
+                        "filesystem_effect": {"unknown_effect": True},
+                    }
+                ],
+            ),
+            {},
+        )
+        is False
+    )
+    assert (
+        controller.has_review_evidence(
             SessionState(session_id="edit", tool_results=[{"changed_paths": ["a.py"]}]), {}
         )
         is True
@@ -1774,6 +1900,23 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
             SessionState(session_id="claim"), {"completion_evidence": "claimed"}
         )
         is False
+    )
+    assert (
+        controller.has_review_evidence(
+            SessionState(
+                session_id="patch",
+                tool_executions=[
+                    {
+                        "tool_name": "apply_patch",
+                        "normalized_arguments": {},
+                        "exit_code": 0,
+                        "filesystem_effect": {"unknown_effect": True},
+                    }
+                ],
+            ),
+            {},
+        )
+        is True
     )
 
 

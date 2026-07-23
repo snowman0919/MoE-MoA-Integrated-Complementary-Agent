@@ -9,6 +9,7 @@ model: gpt-5.6-sol
 reasoning_effort: high
 primary_profile: primary
 secondary_profile: secondary
+tertiary_profile: default
 allow_profile_failover: true
 max_invocations_per_task: 3
 max_recursive_cycles: 3
@@ -18,3 +19,9 @@ collaboration_retries: 1
 circuit_failure_limit: 3
 circuit_cooldown_seconds: 300
 max_evidence_characters: 24000
+max_executor_evidence_characters: 800000
+openrouter_fallback_enabled: true
+openrouter_model: anthropic/claude-sonnet-4.6
+openrouter_api_key_file: openrouter_api
+openrouter_timeout_seconds: 300
+openrouter_max_evidence_characters: 800000
