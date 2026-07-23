@@ -12,6 +12,7 @@ from dgx_moa.controller import (
     LoopAdmissionError,
     active_failures,
     classify_failure,
+    compact_resolved_goal_history,
     fingerprint,
 )
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
@@ -1100,6 +1101,43 @@ def test_goal_read_strips_shell_noise_and_redundant_failure_is_not_actionable(
     assert state.tool_executions[-1]["failure_class"] == "MCP_SERVER_UNAVAILABLE"
     prompt = controller.prompt_sandwich("executor", state, "continue", "continue")
     assert "do not call filesystem or MCP tools for that objective again" in prompt
+
+
+def test_resolved_goal_history_drops_reads_but_keeps_work() -> None:
+    path = "/Users/test/.codex/attachments/task/goal-objective.md"
+    messages = [
+        {"role": "user", "content": f"/goal Read {path}."},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "read",
+                    "function": {"name": "shell", "arguments": json.dumps({"cmd": f"cat {path}"})},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "read", "content": "loaded objective"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "work",
+                    "function": {
+                        "name": "inspect_workspace",
+                        "arguments": '{"path":"/workspace"}',
+                    },
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "work", "content": "implementation evidence"},
+    ]
+
+    compacted = compact_resolved_goal_history(messages, {path})
+
+    assert [message.get("tool_call_id") for message in compacted] == [None, None, "work"]
+    assert compacted[1]["tool_calls"][0]["id"] == "work"
 
 
 @pytest.mark.asyncio

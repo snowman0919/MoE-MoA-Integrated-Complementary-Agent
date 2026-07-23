@@ -177,6 +177,33 @@ def clean_tool_output(value: object) -> str:
     )
 
 
+def compact_resolved_goal_history(
+    messages: list[dict[str, Any]], goal_paths: set[str]
+) -> list[dict[str, Any]]:
+    goal_call_ids = {
+        str(call.get("id"))
+        for message in messages
+        for call in (message.get("tool_calls") or [])
+        if isinstance(call, dict)
+        and goal_paths.intersection(
+            argument_paths((call.get("function") or {}).get("arguments", {}))
+        )
+    }
+    compacted: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") == "tool" and str(message.get("tool_call_id")) in goal_call_ids:
+            continue
+        item = message.copy()
+        if calls := item.get("tool_calls"):
+            item["tool_calls"] = [
+                call for call in calls if str(call.get("id")) not in goal_call_ids
+            ]
+            if not item["tool_calls"] and not item.get("content"):
+                continue
+        compacted.append(item)
+    return compacted
+
+
 def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
     """Keep tool evidence structured; tolerate OpenCode-compatible string payloads."""
     content = message.get("content", "")
@@ -2495,6 +2522,17 @@ class Controller:
         )
         self.store.event(state.session_id, "tool_call_requested", {"step": state.step_count})
         self.store.save(state)
+        if state.resolved_objective:
+            original_count = len(body["messages"])
+            body["messages"] = compact_resolved_goal_history(
+                body["messages"], argument_paths(state.objective)
+            )
+            if removed := original_count - len(body["messages"]):
+                self.store.event(
+                    state.session_id,
+                    "goal_history_compacted",
+                    {"messages_removed": removed},
+                )
         messages = compress_messages(body["messages"], self.settings.limits)
         messages.insert(
             0,
