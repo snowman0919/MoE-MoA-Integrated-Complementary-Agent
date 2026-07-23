@@ -415,7 +415,12 @@ async def responses_sse(
                         parsed = urlsplit(uri)
                         path = (
                             unquote(parsed.path)
-                            if parsed.scheme == "file" and parsed.netloc in {"", "localhost"}
+                            if (
+                                parsed.scheme == "file"
+                                and parsed.netloc in {"", "localhost"}
+                                or not parsed.scheme
+                                and parsed.path.startswith("/")
+                            )
                             else ""
                         )
                     else:

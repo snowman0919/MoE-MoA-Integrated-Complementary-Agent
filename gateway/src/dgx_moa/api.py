@@ -376,6 +376,26 @@ def _responses_payload(
     return payload
 
 
+async def _completed_chat_sse(payload: dict[str, Any]) -> AsyncIterator[bytes]:
+    choice = (payload.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    tool_calls = [
+        {**tool_call, "index": index}
+        for index, tool_call in enumerate(message.get("tool_calls") or [])
+    ]
+    event = {
+        "choices": [
+            {
+                "delta": {"content": message.get("content"), "tool_calls": tool_calls},
+                "finish_reason": choice.get("finish_reason"),
+            }
+        ],
+        "usage": payload.get("usage"),
+    }
+    yield f"data: {json.dumps(event, ensure_ascii=False, separators=(',', ':'))}\n\n".encode()
+    yield b"data: [DONE]\n\n"
+
+
 def _chat_response_payload(response: Response) -> dict[str, Any] | None:
     raw_body = getattr(response, "body", None)
     if not raw_body:
@@ -3297,6 +3317,7 @@ def create_app(
                 loading_deadline = time.monotonic() + configured.limits.model_load_timeout_seconds
                 initial_heartbeat_sent = False
                 progress_only_retried = False
+                judge_non_stream_retried = False
                 current_body = chat_body
                 try:
                     while True:
@@ -3421,6 +3442,41 @@ def create_app(
                             return
                         chat_payload = _chat_response_payload(chat_result)
                         upstream_error = chat_payload.get("error") if chat_payload else None
+                        if (
+                            chat_result.status_code == status.HTTP_409_CONFLICT
+                            and isinstance(upstream_error, dict)
+                            and upstream_error.get("type") == "judge_non_stream_required"
+                            and not judge_non_stream_retried
+                        ):
+                            judge_non_stream_retried = True
+                            request.app.state.store.event(
+                                response_session_id,
+                                "responses_judge_non_stream_retried",
+                                {},
+                            )
+                            current_body = current_body.model_copy(
+                                update={"stream": False, "stream_options": None}
+                            )
+                            continue
+                        if (
+                            chat_result.status_code == status.HTTP_200_OK
+                            and chat_payload
+                            and not upstream_error
+                        ):
+                            response_state = request.app.state.store.get(response_session_id)
+                            async for chunk in responses_sse(
+                                _completed_chat_sse(chat_payload),
+                                response_model,
+                                custom_tool_names=custom_tool_names,
+                                function_tool_names=function_tool_names,
+                                session_id=response_session_id,
+                                progress_language=progress_language,
+                                goal_already_loaded=bool(
+                                    response_state and response_state.resolved_objective
+                                ),
+                            ):
+                                yield chunk
+                            return
                         if (
                             chat_result.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
                             and isinstance(upstream_error, dict)

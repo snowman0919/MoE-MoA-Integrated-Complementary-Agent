@@ -5624,6 +5624,58 @@ def test_responses_retries_progress_only_stop(  # type: ignore[no-untyped-def]
     assert stub_provider.requests[-1]["messages"][-1]["role"] == "developer"
 
 
+def test_responses_stream_retries_selective_judge_without_streaming(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    original_complete = stub_provider.complete
+
+    async def complete(role, model, request, **options):  # type: ignore[no-untyped-def]
+        if role != "executor":
+            return await original_complete(role, model, request, **options)
+        stub_provider.calls.append(role)
+        stub_provider.requests.append(request)
+        stub_provider.call_options.append(options)
+        return {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "verified result"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+
+    stub_provider.complete = complete  # type: ignore[method-assign]
+    app = create_app(settings)
+    remote = MockJudgeProvider(remote_verdict())
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.remote_judge = remote
+        app.state.remote_judge_available = True
+        app.state.controller.remote_judge = remote
+        response = client.post(
+            "/v1/responses",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "responses-judge-retry",
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "input": "verify security change",
+                "metadata": {"authentication": True},
+                "stream": True,
+            },
+        )
+        events = app.state.store.events("responses-judge-retry")
+
+    assert response.status_code == 200
+    assert "event: response.completed" in response.text
+    assert "event: response.failed" not in response.text
+    assert stub_provider.requests[-1]["stream"] is False
+    assert len(remote.packages) == 1
+    assert any(event["event_type"] == "responses_judge_non_stream_retried" for event in events)
+
+
 def test_responses_waits_through_model_loading_without_terminal_failure(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
