@@ -31,6 +31,18 @@ downstream consumer. Focused streaming, continuation, timeout, and translation
 tests passed 30/30. The final isolated suite passed 863 tests with the existing
 third-party Starlette TestClient deprecation warning.
 
+PRs `#67` and `#68` deployed to production main
+`71a2d3cabd9c26f419c636ae7bc2ad1fb0fc3e9d`. After the approved exact
+Executor full stop/start and gateway/Hermes restart, authenticated readiness
+reported resident ready with Executor and Reasoner ready. A real two-turn
+streamed `dgx-moa` tool continuation used a deliberately remapped call ID and
+returned the same session header on both turns; persisted state recorded
+`step_count=2`, one tool result, one recovery event, and remained executing
+rather than declaring completion. A separate authenticated `dgx-moa-fast`
+request omitted `parallel_tool_calls`, requested two independent functions,
+and emitted both function calls in one response with exactly one terminal
+`response.completed`.
+
 ## Readable detailed live observation — 2026-07-22
 
 The live-observation formatter now renders batched events as separated multi-line
