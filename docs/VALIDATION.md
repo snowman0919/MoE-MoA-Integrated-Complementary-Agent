@@ -1,5 +1,26 @@
 # Validation
 
+## Resolved Goal history compaction — 2026-07-23
+
+Postdeployment session `a1bc31fd-543b-4df2-abf0-baadbd43de8b`
+successfully resolved 950 objective characters but repeatedly received its
+prior Goal-reading history from the client. The Executor followed the retained
+`cat`, `wc`, `sed`, `awk`, `file`, `od`, and `xxd` pattern instead of beginning
+implementation. It terminated with two Engineering iterations and 14 tool
+calls still available because its token budget reached zero.
+
+Once an objective file is resolved, model input now removes assistant tool
+calls targeting that Goal path and their paired tool results. Unrelated
+implementation history remains. The full isolated suite passed 866 tests;
+Ruff and strict mypy passed.
+
+PR `#77` deployed to production main
+`1331ca1045b3834f578c001c930c9b8c38647151`. Authenticated physical session
+`physical-goal-compact-1784806818` resolved 579 objective characters, recorded
+two removed history messages, selected `inspect_workspace` as its next tool,
+and retained no termination reason. Gateway readiness was `ready`; Hermes
+retained PID `1796553` and its `2026-07-23 16:30:58 KST` start time.
+
 ## Goal shell-noise and redundant-read recovery — 2026-07-23
 
 The reported interrupted Goal session
