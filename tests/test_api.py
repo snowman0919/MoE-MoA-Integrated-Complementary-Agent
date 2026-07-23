@@ -4346,6 +4346,54 @@ def test_failed_tool_evidence_reinvokes_reasoner_and_overrides_self_confidence(
     assert "assertion failed" in json.dumps(reasoner_requests[-1])
 
 
+def test_responses_success_continues_after_historical_tool_failure(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    headers = {"Authorization": "Bearer test-secret", "X-Session-ID": "responses-recovery"}
+
+    def tool_result(call_id: str, output: dict[str, object]) -> list[dict[str, object]]:
+        return [
+            {
+                "type": "function_call",
+                "call_id": call_id,
+                "name": "exec_command",
+                "arguments": '{"cmd":"pwd"}',
+            },
+            {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": json.dumps(output),
+            },
+        ]
+
+    with client_with_stub(settings, stub_provider) as client:
+        failed = client.post(
+            "/v1/responses",
+            headers=headers,
+            json={
+                "model": "dgx-moa-agent",
+                "input": tool_result("call-failed", {"stderr": "not found", "exit_code": 1}),
+            },
+        )
+        reasoner_calls_after_failure = stub_provider.calls.count("reasoner")
+        recovered = client.post(
+            "/v1/responses",
+            headers=headers,
+            json={
+                "model": "dgx-moa-agent",
+                "input": tool_result("call-recovered", {"stdout": "/workspace", "exit_code": 0}),
+            },
+        )
+        state = client.app.state.store.get("responses-recovery")
+
+    assert failed.status_code == 200
+    assert recovered.status_code == 200
+    assert reasoner_calls_after_failure == 1
+    assert stub_provider.calls.count("reasoner") == 1
+    assert state and state.engineering_loop and state.engineering_loop.iteration == 1
+
+
 def test_title_request_does_not_set_the_work_session_objective(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

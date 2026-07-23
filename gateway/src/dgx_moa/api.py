@@ -32,7 +32,6 @@ from .controller import (
     LoopAdmissionError,
     PolicyBlocked,
     ReasonerUnavailable,
-    active_failures,
     pending_goal_prerequisites,
 )
 from .evolution import PromptRegistry
@@ -2328,7 +2327,10 @@ def create_app(
                 request.app.state.lifecycle_store.release_continuation(
                     "executor", continuation_owner
                 )
+            previous_state = request.app.state.store.get(state_session_id)
+            previous_failure_count = len(previous_state.failures) if previous_state else 0
             state = request.app.state.controller.session(state_session_id, raw["messages"])
+            new_failure_observed = len(state.failures) > previous_failure_count
             state.current_request_id = usage_request_id
             state.api_token_id = api_token_id
             task_id = task_id or state.task_id or state_session_id
@@ -2411,7 +2413,7 @@ def create_app(
                 recovered_tool_owner
                 or has_matching_tool_result(raw["messages"])
                 or bool(getattr(request.state, "responses_tool_owner_recovered", False))
-            ) and not active_failures(state)
+            ) and not new_failure_observed
             prepared = await request.app.state.controller.prepare_executor(
                 state,
                 raw,
