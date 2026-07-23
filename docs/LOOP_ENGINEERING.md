@@ -58,7 +58,7 @@ gateway:
       reviewer_calls: 2
       frontier_calls: 2
       judge_calls: 2
-      tokens: 250000
+      tokens: 1000000
       external_cost_usd: 10
       wall_clock_seconds: 1800
     duplicate_fingerprint_limit: 2

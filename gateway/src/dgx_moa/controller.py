@@ -1057,6 +1057,11 @@ class Controller:
 
     def _observe(self, state: SessionState, messages: list[dict[str, Any]]) -> None:
         calls_by_id: dict[str, dict[str, Any]] = {}
+        observed_tool_call_ids = {
+            str(execution.get("tool_call_id"))
+            for execution in state.tool_executions
+            if execution.get("tool_call_id")
+        }
         for index, message in enumerate(messages):
             if message.get("role") == "assistant" and message.get("tool_calls"):
                 calls = message["tool_calls"]
@@ -1085,6 +1090,8 @@ class Controller:
             state.pending_tool_call_ids = [
                 call_id for call_id in state.pending_tool_call_ids if call_id != tool_call_id
             ]
+            if tool_call_id and tool_call_id in observed_tool_call_ids:
+                continue
             result = normalize_tool_result(message)
             for key in ("stdout", "stderr"):
                 result[key] = compress_text(result[key], self.settings.limits)
@@ -1113,6 +1120,7 @@ class Controller:
                         "permission denied",
                         "unsupported call",
                         "resources/read failed",
+                        "failed to parse function arguments",
                     )
                 )
             )
@@ -1177,6 +1185,7 @@ class Controller:
             }
             state.tool_executions.append(execution)
             state.tool_executions = state.tool_executions[-self.settings.limits.max_steps :]
+            observed_tool_call_ids.add(tool_call_id)
             self.store.event(state.session_id, "tool_execution_recorded", execution)
             target_paths = argument_paths(arguments)
             actionable_failure = failed and not (
@@ -1696,7 +1705,9 @@ class Controller:
         workspace_constraint = (
             "No repository identity was supplied. Inspect the current directory once; if it is "
             "writable, use it as the isolated workspace. Do not scan filesystem roots or search "
-            "unrelated home, environment, or system paths for another repository."
+            "unrelated home, environment, or system paths for another repository. The fallback "
+            "repository label external-api is not a directory name. Read AGENTS.md only at the "
+            "workspace root or its ancestors; do not descend into unrelated nested repositories."
             if role == "executor"
             and state.repository.get("identity_quality") == "client_unspecified"
             else ""

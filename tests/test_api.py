@@ -2709,6 +2709,14 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             "read_file is not a supported Codex tool" in model["base_instructions"]
             for model in models["models"]
         )
+        assert all(
+            "Do not discover MCP resources for local paths" in model["base_instructions"]
+            for model in models["models"]
+        )
+        assert all(
+            "integer session_id returned by exec_command" in model["base_instructions"]
+            for model in models["models"]
+        )
         assert all(model["comp_hash"] == "dgx-moa-65536-v1" for model in models["models"])
         response = client.post(
             "/v1/chat/completions",

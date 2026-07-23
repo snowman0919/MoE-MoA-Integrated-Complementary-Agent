@@ -1742,7 +1742,9 @@ def create_app(
                         "You are a coding agent. Follow the user's instructions and use the "
                         "provided tools to inspect, edit, and verify the workspace. Use "
                         "exec_command for local paths and file:// URIs; read_file is not a "
-                        "supported Codex tool. Call "
+                        "supported Codex tool. Do not discover MCP resources for local paths. "
+                        "Batch independent reads and checks. Use only an integer session_id "
+                        "returned by exec_command with write_stdin; never invent one. Call "
                         "read_mcp_resource only with an exact server and URI returned by MCP "
                         "resource discovery; integration display names are not MCP server IDs."
                     ),

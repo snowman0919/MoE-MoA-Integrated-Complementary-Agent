@@ -90,6 +90,14 @@ def test_token_and_external_cost_budgets_fail_closed() -> None:
     assert loop.termination_reason == "BUDGET_EXHAUSTED"
 
 
+def test_default_token_budget_allows_long_native_agent_session() -> None:
+    loop = new_loop("request", "implement and verify")
+
+    assert consume_usage(loop, "tokens", 250_000)
+    assert loop.remaining_budget.tokens == 750_000
+    assert loop.termination_reason is None
+
+
 def test_user_feedback_is_content_free_and_deduplicated() -> None:
     loop = new_loop("request", "initial objective")
 
