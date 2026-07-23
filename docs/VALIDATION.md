@@ -1,5 +1,22 @@
 # Validation
 
+## Resolved Goal objective propagation — 2026-07-23
+
+The reported summary-only Goal output was traced to a predeployment session:
+the last matching request preceded the current runtime deployment and no
+matching postdeployment request existed. Its stored evidence nevertheless
+confirmed a separate defect: after a successful objective-file fallback read,
+the session retained only the `/goal ...goal-objective.md` wrapper as the model
+objective. The loaded document remained ordinary recent tool output, so the
+Executor could summarize it instead of treating it as the task.
+
+The stable wrapper remains the session-correlation objective. A successful
+read of its `goal-objective.md` target now records a bounded resolved objective,
+and every model-facing role uses that document as the effective task. Failed
+MCP output cannot populate it. Focused propagation and continuation tests
+passed 4/4; the full isolated suite passed 864 tests, and Ruff and strict mypy
+passed.
+
 ## Successful tool-continuation budget — 2026-07-23
 
 The postdeployment Codex Goal retry preserved one session and reached executor
