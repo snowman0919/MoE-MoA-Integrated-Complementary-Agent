@@ -4644,3 +4644,15 @@ official Codex CLI Goal then read its objective and state document, implemented
 the sanitizer, created five standard-library tests, ran them twice with exit
 code 0, and returned a concise Korean evidence report. An independent host
 test run also passed.
+
+Production `main@cc77b57` was deployed through a zero-active-request drain;
+the readiness retry completed successfully and only
+`dgx-moa-gateway.service` restarted. Production request
+`prod-absolute-mcp-map-20260724` returned an `exec_command` for the plain
+absolute MCP path and a completed Responses event. Official Codex CLI session
+`2460544c-66a2-49ea-bdaa-ae80f2458c6f` then resolved the Korean objective
+once, read `docs/STATE.md`, implemented the sanitizer, created and ran four
+tests with exit code 0, and returned a Korean evidence report. It recorded six
+successful tool results and seven completed streams; an independent host test
+run passed. Loopback and tailnet health/readiness remained HTTP 200, and Hermes
+was not restarted and retained PID 1796553.
