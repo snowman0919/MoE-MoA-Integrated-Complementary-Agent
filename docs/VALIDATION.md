@@ -4904,3 +4904,15 @@ set passed `289 passed`; the full suite passed
 `918 passed` with one third-party Starlette warning. Ruff lint/format and
 strict mypy over 45 source modules exited 0. The real local
 `dgx-moa-reviewer` returned `verdict=approved` with zero findings.
+
+Production `main@f3e2443` was deployed after authenticated drains. Across the
+two gateway-only restarts the gateway PID changed from `3333227` to `3511166`
+and then `3514831`; Executor remained `1709495`, Planner `3491920`, Reviewer
+`3491942`, and Hermes `1796553`. The deployed configuration reported a
+1,000,000-token loop budget. A production-code reconstruction of the failed
+250,000-token state recovered exactly 750,000 tokens, cleared termination, and
+entered replanning; the six production regression cases and healthcheck exited
+0. The live model manifest contained the corrected local-path and integer
+session-ID instructions. The inspected post-restart journal contained no
+traceback, exception, disconnect, loop-budget exhaustion, backend error, 401,
+or 500 entry.
