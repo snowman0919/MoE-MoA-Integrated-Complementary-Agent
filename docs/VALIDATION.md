@@ -4398,3 +4398,22 @@ the `operator` key across four models and 26,553 measured tokens; every row was
 pinned to the requested key. The deployed page contained the stacked plot,
 model legend, and daily token title. Gateway, loopback socket, and loopback
 proxy were active; Hermes was not restarted and retained PID 1796553.
+
+## Unknown MCP server recovery — 2026-07-23
+
+An unavailable MCP server no longer terminates the correction turn with HTTP
+409. Exact repeats of this failure request replanning while the existing
+duplicate-failure boundary remains unchanged for other tools. The next Executor
+request omits `read_mcp_resource` and explicitly directs local paths to an
+available native file or shell tool, preventing retries with guessed server
+names or altered URIs.
+
+The full suite passed `871 passed` with the existing third-party Starlette
+warning, and targeted Ruff checks were clean. Production `main@beae5dc`
+received two identical `MCP_SERVER_UNAVAILABLE` observations in session
+`validation-mcp-recovery-7409647564`. The Responses API returned HTTP 200 in
+2.304 seconds with an `exec_command` function call. Persisted events included
+`replan_requested` and `tool_temporarily_unavailable`; the session remained
+`phase=executing` with no final status. Gateway and both authenticated
+tailnet/loopback listeners were active. Hermes was not restarted and retained
+PID 1796553.
