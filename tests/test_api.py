@@ -5584,6 +5584,46 @@ def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def
     assert executor["success_count"] == 1
 
 
+def test_responses_retries_progress_only_stop(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider
+) -> None:
+    calls = 0
+
+    async def stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        stub_provider.calls.append(role)
+        stub_provider.requests.append(request)
+        text = "다음 도구 작업을 준비합니다." if calls == 1 else "구현과 검증을 완료했습니다."
+
+        async def chunks():  # type: ignore[no-untyped-def]
+            yield f'data: {{"choices":[{{"delta":{{"content":"{text}"}}}}]}}\n\n'.encode()
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    stub_provider.stream = stream  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "responses-progress-retry",
+            },
+            json={"model": "dgx-moa-fast", "input": "작업을 완료해", "stream": True},
+        )
+        events = client.app.state.store.events("responses-progress-retry")
+
+    assert calls == 2
+    assert response.text.count("event: response.created") == 1
+    assert "다음 도구 작업을 준비합니다." not in response.text
+    assert "구현과 검증을 완료했습니다." in response.text
+    assert "event: response.completed" in response.text
+    assert any(event["event_type"] == "progress_only_response_retried" for event in events)
+    assert stub_provider.requests[-1]["messages"][-1]["role"] == "developer"
+
+
 def test_responses_waits_through_model_loading_without_terminal_failure(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

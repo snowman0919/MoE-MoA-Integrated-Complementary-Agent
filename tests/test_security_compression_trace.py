@@ -76,6 +76,13 @@ def test_tool_outputs_share_the_compression_budget() -> None:
     assert sum(len(message["content"]) for message in compressed) <= 80
 
 
+def test_default_tool_output_budget_preserves_small_source_files() -> None:
+    limits = Limits()
+    source = "x" * 1_038
+    assert limits.max_tool_output_characters == 16_000
+    assert compress_text(source, limits) == source
+
+
 def test_trace_contains_model_revision_and_context(tmp_path) -> None:  # type: ignore[no-untyped-def]
     model = ModelConfig(
         repository="test/executor",

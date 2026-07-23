@@ -39,7 +39,7 @@ def parse_bool(value: Any) -> bool:
 
 
 class Limits(BaseModel):
-    max_tool_output_characters: int = 1_000
+    max_tool_output_characters: int = 16_000
     max_retained_observations: int = 12
     max_error_lines: int = 40
     max_diff_summary_lines: int = 100
