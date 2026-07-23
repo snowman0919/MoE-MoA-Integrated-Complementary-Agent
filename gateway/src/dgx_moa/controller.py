@@ -805,22 +805,48 @@ class Controller:
         if state.task_id and state.task_id != task_id:
             raise ValueError("session task identity changed")
         state.task_id = task_id
-        if self.settings.loop_engineering.enabled and state.engineering_loop is None:
+        if self.settings.loop_engineering.enabled:
             policy = self.settings.loop_engineering
-            state.engineering_loop = new_loop(
-                state.current_request_id or state.session_id,
-                state.objective,
-                loop_type=self._loop_type(state, metadata),
-                budget=LoopBudget.model_validate(
-                    policy.budget_for(state.request_class, self._loop_risk(metadata))
-                ),
-                no_progress_iteration_limit=policy.no_progress_iteration_limit,
+            configured_budget = LoopBudget.model_validate(
+                policy.budget_for(state.request_class, self._loop_risk(metadata))
             )
-            self.store.event(
-                state.session_id,
-                "engineering_loop_started",
-                {"loop_id": state.engineering_loop.loop_id, "loop_type": "implementation"},
-            )
+            if state.engineering_loop is None:
+                state.engineering_loop = new_loop(
+                    state.current_request_id or state.session_id,
+                    state.objective,
+                    loop_type=self._loop_type(state, metadata),
+                    budget=configured_budget,
+                    no_progress_iteration_limit=policy.no_progress_iteration_limit,
+                )
+                self.store.event(
+                    state.session_id,
+                    "engineering_loop_started",
+                    {"loop_id": state.engineering_loop.loop_id, "loop_type": "implementation"},
+                )
+            elif (
+                state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
+                and state.engineering_loop.remaining_budget.tokens == 0
+            ):
+                used_tokens = sum(
+                    int(value)
+                    for invocation in state.agent_invocations
+                    if isinstance(value := invocation.get("total_tokens"), int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                )
+                remaining_tokens = max(0, configured_budget.tokens - used_tokens)
+                if remaining_tokens:
+                    state.engineering_loop.remaining_budget.tokens = remaining_tokens
+                    state.engineering_loop.termination_reason = None
+                    state.engineering_loop.progress_state = "progressing"
+                    state.engineering_loop.started_at_epoch = time.time()
+                    state.phase = Phase.REPLANNING
+                    state.final_status = None
+                    self.store.event(
+                        state.session_id,
+                        "engineering_loop_budget_expansion_recovered",
+                        {"remaining_tokens": remaining_tokens},
+                    )
         repository = metadata.get("repository")
         if isinstance(repository, dict):
             identity = {str(key): str(value) for key, value in repository.items()}

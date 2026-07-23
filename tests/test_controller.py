@@ -1061,6 +1061,40 @@ def test_enabled_loop_uses_configured_no_progress_limit(
     assert state.engineering_loop.termination_reason == "NO_PROGRESS"
 
 
+@pytest.mark.parametrize(("used_tokens", "recovered"), [(250_000, True), (1_000_000, False)])
+def test_expanded_token_budget_recovers_only_eligible_blocked_sessions(
+    settings, stub_provider: StubProvider, used_tokens: int, recovered: bool
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session("token-recovery", [{"role": "user", "content": "implement"}])
+    controller.select_route(state, {})
+    assert state.engineering_loop is not None
+    state.engineering_loop.remaining_budget.tokens = 0
+    state.engineering_loop.termination_reason = "BUDGET_EXHAUSTED"
+    state.engineering_loop.progress_state = "terminated"
+    state.agent_invocations = [{"total_tokens": used_tokens}]
+    state.phase = Phase.BLOCKED
+    state.final_status = "blocked"
+
+    controller.select_route(state, {})
+
+    if recovered:
+        assert state.engineering_loop.remaining_budget.tokens == 750_000
+        assert state.engineering_loop.termination_reason is None
+        assert state.phase == Phase.REPLANNING
+        assert state.final_status is None
+        assert any(
+            event["event_type"] == "engineering_loop_budget_expansion_recovered"
+            for event in store.events(state.session_id)
+        )
+    else:
+        assert state.engineering_loop.remaining_budget.tokens == 0
+        assert state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
+        assert state.phase == Phase.BLOCKED
+
+
 @pytest.mark.asyncio
 async def test_loop_rejects_second_executor_iteration_without_new_evidence(
     settings, stub_provider: StubProvider
