@@ -84,7 +84,7 @@ async def test_cold_misses_run_remotely_and_share_one_background_warmup() -> Non
 
 
 @pytest.mark.asyncio
-async def test_ready_local_is_selected_by_queue_and_cost_prediction() -> None:
+async def test_ready_local_is_skipped_when_remote_prediction_is_faster() -> None:
     local = MockPlannerProvider({"provider": "local"})
     remote = MockPlannerProvider({"provider": "remote"})
     acquired: list[tuple[str, str]] = []
@@ -109,12 +109,34 @@ async def test_ready_local_is_selected_by_queue_and_cost_prediction() -> None:
         "planner", {}, request_id="one", revision="rev", timeout_seconds=5
     )
 
-    assert response == {"provider": "local"}
-    assert decision["selected_provider"] == "local"
-    assert decision["routing_reason"] == "local_ready"
-    assert acquired == [("one", "planner")]
-    assert released == [("lease",)]
-    assert not remote.requests
+    assert response == {"provider": "remote"}
+    assert decision["selected_provider"] == "remote"
+    assert decision["routing_reason"] == "remote_predicted_faster"
+    assert acquired == []
+    assert released == []
+    assert len(remote.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_busy_local_specialist_immediately_uses_remote_provider() -> None:
+    local = MockPlannerProvider({"provider": "local"})
+    remote = MockPlannerProvider({"provider": "remote"})
+    router = SpecialistRouter(
+        config(),
+        local={"planner": local, "reviewer": MockReviewerProvider({})},
+        remote={"planner": remote, "reviewer": MockReviewerProvider({})},
+        lifecycle_store=Records(planner=record("ready", active=1)),
+    )
+
+    response, decision = await router.complete(
+        "planner", {}, request_id="other-session", revision="rev", timeout_seconds=5
+    )
+
+    assert response == {"provider": "remote"}
+    assert decision["residency_state"] == "BUSY"
+    assert decision["selected_provider"] == "remote"
+    assert decision["routing_reason"] == "local_busy"
+    assert not local.requests
 
 
 def test_predictive_prewarm_skips_ready_specialist() -> None:

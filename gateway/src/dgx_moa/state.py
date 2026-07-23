@@ -99,6 +99,7 @@ class SessionState(BaseModel):
     task_id: str = ""
     objective: str = ""
     resolved_objective: str = ""
+    resolved_objective_orchestrated: bool = False
     repository: dict[str, str] = Field(default_factory=dict)
     route: str = "standard"
     route_reasons: list[str] = Field(default_factory=list)

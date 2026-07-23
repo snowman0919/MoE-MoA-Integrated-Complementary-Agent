@@ -45,6 +45,119 @@ def test_runtime_version_is_2_0(settings: Settings) -> None:
     assert app.version == "2.0.0"
 
 
+def test_busy_executor_routes_new_session_to_frontier(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    controlled = settings.model_copy(
+        update={"frontier_enabled": True, "frontier_config": frontier_config}
+    )
+    app = create_app(controlled)
+
+    async def remote_execute(
+        remote_request: dict[str, object], correlation_id: str
+    ) -> dict[str, object]:
+        assert remote_request["messages"]
+        assert correlation_id.endswith(":executor_total")
+        return {
+            "id": "chatcmpl-frontier",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "원격 처리 완료"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 7},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "primary", "cost_usd": None},
+        }
+
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        held = app.state.lifecycle_store.acquire_request_leases(
+            str(uuid.uuid4()), ("executor",), kind="active_request"
+        )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "other-session"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "간단히 답해"}],
+            },
+        )
+        active = app.state.lifecycle_store.get("executor")
+        events = app.state.store.events("other-session")
+        app.state.lifecycle_store.release_leases(lease.lease_id for lease in held)
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "원격 처리 완료"
+    assert "executor" not in stub_provider.calls
+    assert active.active_request_count == 1
+    started = next(event for event in events if event["event_type"] == "executor_started")
+    assert started["payload"]["provider"] == "frontier"
+    assert started["payload"]["routing_reason"] == "local_busy"
+
+
+def test_oversized_executor_context_routes_to_frontier_before_dispatch(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "context-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    controlled = settings.model_copy(
+        update={"frontier_enabled": True, "frontier_config": frontier_config}
+    )
+    app = create_app(controlled)
+
+    async def context_fits(*_args, **_kwargs) -> bool:  # type: ignore[no-untyped-def]
+        return False
+
+    async def remote_execute(
+        _remote_request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        return {
+            "id": "chatcmpl-frontier-context",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "외부 컨텍스트 처리"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 9},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "default", "cost_usd": None},
+        }
+
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.provider.context_fits = context_fits
+        app.state.frontier.execute = remote_execute
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "large-context"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "큰 컨텍스트를 처리해"}],
+            },
+        )
+        events = app.state.store.events("large-context")
+        executor = app.state.lifecycle_store.get("executor")
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "외부 컨텍스트 처리"
+    assert "executor" not in stub_provider.calls
+    assert executor.active_request_count == 0
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
+    assert selected["payload"]["routing_reason"] == "local_context_exceeded"
+
+
 @pytest.fixture(autouse=True)
 def block_real_lifecycle_and_profile_commands(monkeypatch: pytest.MonkeyPatch) -> None:
     def tripwire(*args: object, **kwargs: object) -> None:

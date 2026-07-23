@@ -299,6 +299,144 @@ def test_codex_oauth_falls_back_to_secondary_profile(
     assert result.total_tokens == 10
 
 
+def test_codex_oauth_uses_global_default_as_tertiary_profile(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    profiles: list[str] = []
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        profile = (
+            Path(kwargs["env"]["CODEX_HOME"]).name if "CODEX_HOME" in kwargs["env"] else "default"
+        )
+        profiles.append(profile)
+        if profile != "default":
+            failure = "usage limit" if profile == "primary" else "token_invalidated"
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr=failure)
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        result_path.write_text(
+            json.dumps(
+                {
+                    "recommended_architecture": "default profile",
+                    "design_decisions": [],
+                    "tradeoffs": [],
+                    "failure_modes": [],
+                    "implementation_sequence": [],
+                    "review_questions": [],
+                }
+            )
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(
+            enabled=True,
+            primary_profile="primary",
+            secondary_profile="secondary",
+            tertiary_profile="default",
+            allow_profile_failover=True,
+            profile_root=tmp_path / "profiles",
+            collaboration_retries=0,
+        ),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    result = runner._run("architecture", {"objective": "x"}, "tertiary")
+
+    assert profiles == ["primary", "secondary", "default"]
+    assert result.profile == "default"
+
+
+@pytest.mark.asyncio
+async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    profiles: list[str] = []
+    requests: list[dict[str, object]] = []
+    key_path = tmp_path / "openrouter_api"
+    key_path.write_text("synthetic-openrouter-key")
+    key_path.chmod(0o600)
+
+    def oauth_context_failure(command, **kwargs):  # type: ignore[no-untyped-def]
+        profiles.append(Path(kwargs["env"]["CODEX_HOME"]).name)
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="context window exceeded")
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "완료했습니다.",
+                            "tool_calls": [],
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                },
+            }
+
+    class FakeClient:
+        def __init__(self, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+        def post(self, _url, **kwargs):  # type: ignore[no-untyped-def]
+            requests.append(kwargs)
+            return FakeResponse()
+
+    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", oauth_context_failure)
+    monkeypatch.setattr("dgx_moa.frontier.httpx.Client", FakeClient)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(
+            enabled=True,
+            primary_profile="primary",
+            secondary_profile="secondary",
+            allow_profile_failover=True,
+            profile_root=tmp_path / "profiles",
+            collaboration_retries=0,
+            openrouter_fallback_enabled=True,
+            openrouter_api_key_file=key_path,
+        ),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    result = await runner.execute(
+        {
+            "messages": [{"role": "user", "content": "한국어로 답해"}],
+            "tools": [],
+            "stream": True,
+        },
+        "busy-request",
+    )
+
+    assert profiles == ["primary", "secondary"]
+    assert result["choices"][0]["message"]["content"] == "완료했습니다."
+    assert result["provider_provenance"]["provider"].startswith("openrouter:")
+    assert result["provider_provenance"]["cost_usd"] == pytest.approx(0.0006)
+    assert len(requests) == 1
+    sent = requests[0]
+    assert sent["headers"]["Authorization"] == "Bearer synthetic-openrouter-key"
+    assert sent["json"]["model"] == "anthropic/claude-sonnet-4.6"
+    assert sent["json"]["reasoning"] == {"effort": "high", "exclude": True}
+    assert "synthetic-openrouter-key" not in json.dumps(sent["json"])
+
+
 @pytest.mark.parametrize(
     ("primary_failure", "failure_class"),
     [

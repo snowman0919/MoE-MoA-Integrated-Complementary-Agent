@@ -7,9 +7,16 @@
 __pycache__/
 *.py[cod]
 data/state/*.db*
+data/state.db*
 data/traces/*.jsonl
 data/traces/**/*.jsonl
 data/staging/
+data/archive-registry/
+data/evolution/
+data/knowledge/
+data/skills/
+data/training-staging/
+data/weekly-packages/
 data/benchmarks/*.json
 !data/benchmarks/mvp-baseline.json
 data/datasets/*.jsonl
@@ -23,3 +30,4 @@ worktrees/
 *.log
 /nim_api
 /opencode_api
+/openrouter_api

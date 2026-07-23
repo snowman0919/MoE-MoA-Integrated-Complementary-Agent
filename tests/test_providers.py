@@ -116,6 +116,172 @@ def test_judge_is_read_only(settings) -> None:  # type: ignore[no-untyped-def]
     assert body["stream"] is False
 
 
+def test_nemotron_planner_keeps_bounded_reasoning(settings) -> None:  # type: ignore[no-untyped-def]
+    body = ModelProvider.body(
+        "planner",
+        settings.models["planner"].model_copy(update={"reasoning_parser": "nemotron_v3"}),
+        {"messages": [{"role": "system", "content": "Plan in English."}]},
+    )
+
+    assert body["messages"][-1]["content"] == "Plan in English."
+    assert body["chat_template_kwargs"] == {
+        "enable_thinking": True,
+        "reasoning_budget": 768,
+    }
+
+
+@pytest.mark.asyncio
+async def test_executor_context_fit_uses_served_tokenizer_limit(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"count": 65_000, "max_model_len": 65_536},
+            request=request,
+        )
+
+    transport = httpx.MockTransport(respond)
+    async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "dgx_moa.providers.httpx.AsyncClient",
+        lambda **kwargs: async_client(transport=transport, **kwargs),
+    )
+
+    fits = await ModelProvider.context_fits(
+        settings.models["executor"],
+        {
+            "messages": [{"role": "user", "content": "large"}],
+            "tools": [{"type": "function", "function": {"name": "read_file"}}],
+            "max_tokens": 1_024,
+        },
+    )
+
+    assert fits is False
+    assert requests[0].url.path == "/tokenize"
+    assert json.loads(requests[0].content)["tools"][0]["function"]["name"] == "read_file"
+
+
+@pytest.mark.asyncio
+async def test_local_specialist_completion_fits_served_context(settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    completion_bodies: list[dict[str, object]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/tokenize":
+            return httpx.Response(
+                200,
+                json={"count": 6693, "max_model_len": 8192},
+                request=request,
+            )
+        completion_bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": []}, request=request)
+
+    transport = httpx.MockTransport(respond)
+    async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "dgx_moa.providers.httpx.AsyncClient",
+        lambda **kwargs: async_client(transport=transport, **kwargs),
+    )
+
+    await ModelProvider().complete(
+        "reviewer",
+        settings.models["reviewer"],
+        {"messages": [{"role": "system", "content": "review"}], "max_tokens": 1500},
+    )
+
+    assert completion_bodies[0]["max_tokens"] == 1491
+
+
+@pytest.mark.asyncio
+async def test_nemotron_planner_separates_reasoning_from_final_json(settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    completion_bodies: list[dict[str, object]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/tokenize":
+            return httpx.Response(
+                200,
+                json={"count": 100, "max_model_len": 8192},
+                request=request,
+            )
+        body = json.loads(request.content)
+        completion_bodies.append(body)
+        if body["chat_template_kwargs"]["enable_thinking"]:
+            payload = {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "reasoning_content": "Private English analysis.",
+                        }
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 768,
+                    "total_tokens": 868,
+                },
+            }
+        else:
+            payload = {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"summary":"plan","steps":[]}',
+                        }
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 110,
+                    "completion_tokens": 20,
+                    "total_tokens": 130,
+                },
+            }
+        return httpx.Response(200, json=payload, request=request)
+
+    transport = httpx.MockTransport(respond)
+    async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "dgx_moa.providers.httpx.AsyncClient",
+        lambda **kwargs: async_client(transport=transport, **kwargs),
+    )
+    model = settings.models["planner"].model_copy(update={"reasoning_parser": "nemotron_v3"})
+
+    result = await ModelProvider().complete(
+        "planner",
+        model,
+        {
+            "messages": [{"role": "user", "content": "Analyze in English and plan."}],
+            "max_tokens": 4096,
+            "response_format": {"type": "json_object"},
+        },
+    )
+
+    assert len(completion_bodies) == 2
+    assert completion_bodies[0]["max_tokens"] == 768
+    assert "response_format" not in completion_bodies[0]
+    assert completion_bodies[1]["max_tokens"] == 1536
+    assert completion_bodies[1]["chat_template_kwargs"] == {
+        "enable_thinking": False,
+        "truncate_history_thinking": False,
+    }
+    assert completion_bodies[1]["messages"][-2] == {
+        "role": "assistant",
+        "reasoning_content": "Private English analysis.",
+        "content": "",
+    }
+    assert result["choices"][0]["message"]["content"] == '{"summary":"plan","steps":[]}'
+    assert result["usage"] == {
+        "prompt_tokens": 210,
+        "completion_tokens": 788,
+        "total_tokens": 998,
+    }
+
+
 def test_missing_structured_content_is_controlled_error() -> None:
     with pytest.raises(ValueError, match="structured model response missing content"):
         parse_json_content({"choices": [{"message": {"content": None}}]})

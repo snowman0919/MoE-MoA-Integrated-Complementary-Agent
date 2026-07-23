@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -19,6 +20,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
+from .admin_codex import AdminCodexRequest, AdminCodexRunner
+from .admin_dashboard import ADMIN_DASHBOARD
 from .config import Settings, get_settings
 from .controller import (
     Controller,
@@ -30,9 +33,17 @@ from .controller import (
     PolicyBlocked,
     ReasonerUnavailable,
     active_failures,
+    pending_goal_prerequisites,
 )
 from .evolution import PromptRegistry
-from .frontier import CodexOAuthCollaboration, load_frontier_config
+from .frontier import (
+    CodexOAuthCollaboration,
+    CodexOAuthProvider,
+    load_frontier_config,
+    profile_home,
+    profile_lock,
+    profile_status,
+)
 from .key_dashboard import API_KEY_DASHBOARD
 from .knowledge import KnowledgeRegistry
 from .lifecycle import (
@@ -89,10 +100,11 @@ from .specialists import (
     RemoteReviewerProvider,
     SpecialistRouter,
 )
-from .state import Phase, StateStore
+from .state import Phase, SessionState, StateStore
 from .streaming import (
     ProgressOnlyResponse,
     StreamObservation,
+    completed_chat_sse,
     forward_sse,
     keepalive_sse,
     reported_usage,
@@ -376,26 +388,6 @@ def _responses_payload(
     return payload
 
 
-async def _completed_chat_sse(payload: dict[str, Any]) -> AsyncIterator[bytes]:
-    choice = (payload.get("choices") or [{}])[0]
-    message = choice.get("message") or {}
-    tool_calls = [
-        {**tool_call, "index": index}
-        for index, tool_call in enumerate(message.get("tool_calls") or [])
-    ]
-    event = {
-        "choices": [
-            {
-                "delta": {"content": message.get("content"), "tool_calls": tool_calls},
-                "finish_reason": choice.get("finish_reason"),
-            }
-        ],
-        "usage": payload.get("usage"),
-    }
-    yield f"data: {json.dumps(event, ensure_ascii=False, separators=(',', ':'))}\n\n".encode()
-    yield b"data: [DONE]\n\n"
-
-
 def _chat_response_payload(response: Response) -> dict[str, Any] | None:
     raw_body = getattr(response, "body", None)
     if not raw_body:
@@ -560,6 +552,7 @@ def create_app(
         project_root = Path(os.getenv("DGX_MOA_PROJECT_ROOT", ".")).resolve()
         app.state.settings = configured
         app.state.draining = False
+        app.state.executor_admission_lock = asyncio.Lock()
         app.state.api_keys = api_keys
         app.state.store = store
         app.state.runtime_metrics = RuntimeMetrics()
@@ -606,6 +599,9 @@ def create_app(
             if configured.frontier_enabled
             else None
         )
+        app.state.frontier_config = frontier_config
+        app.state.frontier_auth_active = set()
+        app.state.admin_codex = AdminCodexRunner(configured, api_keys, store)
         model_catalog = {role: model.served_name for role, model in configured.models.items()}
         if frontier_config is not None:
             model_catalog["frontier"] = frontier_config.model
@@ -629,6 +625,7 @@ def create_app(
                 configured.run_dir,
                 project_root,
             )
+        app.state.frontier = frontier
         app.state.skills = (
             SkillRegistry(configured.runtime_skills.root)
             if configured.runtime_skills.enabled
@@ -1944,6 +1941,8 @@ def create_app(
             mode = "fast"
         else:
             state_session_id = session_id
+        executor_remote = False
+        executor_routing_reason = "local_ready"
         task_id = str(raw["metadata"].get("task_id") or "")
         request_class = classify_request(mode, raw["messages"], raw.get("tools"), raw["metadata"])
         reasoner_mode = cast(ReasonerMode | None, raw["metadata"].get("reasoner_mode"))
@@ -2193,20 +2192,30 @@ def create_app(
 
         ensured_roles = list(roles)
         try:
-            initial_lease_roles = tuple(
-                role
-                for role in roles
-                if not (configured.specialist_routing.enabled and role in {"planner", "reviewer"})
-            )
-            active_lease_ids = tuple(
-                lease.lease_id
-                for lease in await request.app.state.lifecycle.acquire_request_leases(
-                    usage_request_id,
-                    initial_lease_roles,
-                    kind="active_request",
-                    require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
+            async with request.app.state.executor_admission_lock:
+                executor_remote = (
+                    request.app.state.lifecycle_store.get("executor").active_request_count > 0
+                    and request.app.state.frontier is not None
                 )
-            )
+                if executor_remote:
+                    executor_routing_reason = "local_busy"
+                initial_lease_roles = tuple(
+                    role
+                    for role in roles
+                    if not (
+                        configured.specialist_routing.enabled and role in {"planner", "reviewer"}
+                    )
+                    and not (executor_remote and role == "executor")
+                )
+                active_lease_ids = tuple(
+                    lease.lease_id
+                    for lease in await request.app.state.lifecycle.acquire_request_leases(
+                        usage_request_id,
+                        initial_lease_roles,
+                        kind="active_request",
+                        require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
+                    )
+                )
         except LifecycleNotReadyError as error:
             record = error.record
             if record.state == "failed":
@@ -2375,6 +2384,28 @@ def create_app(
                 )
             if body.metadata.get("no_progress"):
                 request.app.state.controller.note_no_progress(state)
+
+            async def remote_executor_complete(
+                executor_request: dict[str, Any], stage: str
+            ) -> dict[str, Any]:
+                frontier_provider = request.app.state.frontier
+                if frontier_provider is None:
+                    raise FrontierRequiredUnavailable("remote Frontier fallback is unavailable")
+                response = await frontier_provider.execute(
+                    executor_request,
+                    f"{usage_request_id}:{stage}",
+                )
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_remote_completed",
+                    {
+                        "stage": stage,
+                        "provider": response.get("provider_provenance", {}).get("provider"),
+                        "model": response.get("model"),
+                    },
+                )
+                return cast(dict[str, Any], response)
+
             active_stage = "planner" if "planner" in roles else "request"
             tool_continuation = (
                 recovered_tool_owner
@@ -2387,7 +2418,37 @@ def create_app(
                 roles,
                 ensure_dynamic_roles,
                 tool_continuation=tool_continuation,
+                executor_complete=remote_executor_complete if executor_remote else None,
             )
+            context_fits = getattr(request.app.state.provider, "context_fits", None)
+            if (
+                not executor_remote
+                and request.app.state.frontier is not None
+                and callable(context_fits)
+                and await context_fits(
+                    configured.models["executor"],
+                    prepared,
+                    timeout_seconds=10,
+                )
+                is False
+            ):
+                executor_remote = True
+                executor_routing_reason = "local_context_exceeded"
+                executor_lease_id = str(
+                    uuid.uuid5(uuid.UUID(usage_request_id), "active_request:executor")
+                )
+                request.app.state.lifecycle_store.release_leases((executor_lease_id,))
+                active_lease_ids = tuple(
+                    lease_id for lease_id in active_lease_ids if lease_id != executor_lease_id
+                )
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_remote_selected",
+                    {
+                        "routing_reason": "local_context_exceeded",
+                        "provider": "frontier",
+                    },
+                )
             if state.engineering_loop is not None and prepared.get("tools"):
                 if prepared.get("parallel_tool_calls") is None:
                     prepared["parallel_tool_calls"] = True
@@ -2413,27 +2474,59 @@ def create_app(
                 {
                     "role": "executor",
                     "phase": state.phase,
-                    "provider": "local",
-                    "model": configured.models["executor"].served_name,
+                    "provider": "frontier" if executor_remote else "local",
+                    "model": (
+                        request.app.state.frontier.config.model
+                        if executor_remote
+                        else configured.models["executor"].served_name
+                    ),
+                    "routing_reason": executor_routing_reason,
                 },
             )
             if body.stream:
-                stream_lease_ids = tuple(
-                    lease.lease_id
-                    for lease in await request.app.state.lifecycle.acquire_request_leases(
-                        usage_request_id,
-                        ("executor",),
-                        kind="open_stream",
-                        require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
+                remote_failure: list[str] = []
+                if executor_remote:
+
+                    async def remote_upstream() -> AsyncIterator[bytes]:
+                        try:
+                            remote_response = await remote_executor_complete(
+                                prepared, "executor_first_byte"
+                            )
+                        except Exception as error:
+                            remote_failure.append(type(error).__name__)
+                            payload = {
+                                "error": {
+                                    "message": "remote Executor fallback unavailable",
+                                    "type": "backend_error",
+                                    "code": "frontier_required_unavailable",
+                                }
+                            }
+                            yield (
+                                "data: " + json.dumps(payload, separators=(",", ":")) + "\n\n"
+                            ).encode()
+                            yield b"data: [DONE]\n\n"
+                            return
+                        async for chunk in completed_chat_sse(remote_response):
+                            yield chunk
+
+                    upstream = keepalive_sse(remote_upstream(), interval_seconds=10)
+                else:
+                    stream_lease_ids = tuple(
+                        lease.lease_id
+                        for lease in await request.app.state.lifecycle.acquire_request_leases(
+                            usage_request_id,
+                            ("executor",),
+                            kind="open_stream",
+                            require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
+                        )
                     )
-                )
-                upstream = await request.app.state.provider.stream(
-                    "executor",
-                    configured.models["executor"],
-                    prepared,
-                    timeout_seconds=configured.limits.executor_first_byte_timeout_seconds,
-                    stage="executor_first_byte",
-                )
+                    upstream = await request.app.state.provider.stream(
+                        "executor",
+                        configured.models["executor"],
+                        prepared,
+                        timeout_seconds=configured.limits.executor_first_byte_timeout_seconds,
+                        stage="executor_first_byte",
+                    )
                 state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
                 stage_status["executor_first_byte"] = "completed"
                 observation = StreamObservation(configured.limits.max_stream_capture_bytes)
@@ -2447,7 +2540,9 @@ def create_app(
                         if stream_cleaned:
                             return
                         stream_cleaned = True
-                        terminal = stream_completed or observation.done_seen
+                        terminal = (
+                            stream_completed or observation.done_seen
+                        ) and not remote_failure
                         state.timings_ms["executor_total"] = round(
                             (time.monotonic() - executor_started) * 1000, 3
                         )
@@ -2602,7 +2697,7 @@ def create_app(
                                     state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
                                     first_byte_at = time.time()
                                 yield chunk
-                        stream_completed = True
+                        stream_completed = not remote_failure
                     except TimeoutError as error:
                         stage_status["executor_total"] = "timed_out"
                         raise StageTimeout("executor_total") from error
@@ -2622,12 +2717,16 @@ def create_app(
                     media_type="text/event-stream",
                     headers={"X-Session-ID": session_id},
                 )
-            response = await request.app.state.provider.complete(
-                "executor",
-                configured.models["executor"],
-                prepared,
-                timeout_seconds=configured.limits.executor_total_timeout_seconds,
-                stage="executor_total",
+            response = (
+                await remote_executor_complete(prepared, "executor_total")
+                if executor_remote
+                else await request.app.state.provider.complete(
+                    "executor",
+                    configured.models["executor"],
+                    prepared,
+                    timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                    stage="executor_total",
+                )
             )
             state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
             state.timings_ms["executor_total"] = round(
@@ -2810,12 +2909,16 @@ def create_app(
                         )
                         active_stage = "executor_total"
                         correction_started = time.monotonic()
-                        response = await request.app.state.provider.complete(
-                            "executor",
-                            configured.models["executor"],
-                            correction_request,
-                            timeout_seconds=configured.limits.executor_total_timeout_seconds,
-                            stage="judge_correction",
+                        response = (
+                            await remote_executor_complete(correction_request, "judge_correction")
+                            if executor_remote
+                            else await request.app.state.provider.complete(
+                                "executor",
+                                configured.models["executor"],
+                                correction_request,
+                                timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                                stage="judge_correction",
+                            )
                         )
                         token_usage.update(reported_usage(response.get("usage")))
                         request.app.state.controller.record_invocation(
@@ -3319,6 +3422,16 @@ def create_app(
                 progress_only_retried = False
                 judge_non_stream_retried = False
                 current_body = chat_body
+
+                def goal_requires_tool_action(state: SessionState | None) -> bool:
+                    return bool(
+                        state
+                        and state.resolved_objective
+                        and not request.app.state.controller.has_review_evidence(
+                            state, current_body.metadata
+                        )
+                    )
+
                 try:
                     while True:
                         chat_task = asyncio.create_task(
@@ -3396,6 +3509,14 @@ def create_app(
                                         goal_already_loaded=bool(
                                             response_state and response_state.resolved_objective
                                         ),
+                                        goal_prerequisites=(
+                                            pending_goal_prerequisites(response_state)
+                                            if response_state
+                                            else ()
+                                        ),
+                                        require_tool_action=goal_requires_tool_action(
+                                            response_state
+                                        ),
                                     )
                                 ):
                                     if chunk.startswith(b":"):
@@ -3465,7 +3586,7 @@ def create_app(
                         ):
                             response_state = request.app.state.store.get(response_session_id)
                             async for chunk in responses_sse(
-                                _completed_chat_sse(chat_payload),
+                                completed_chat_sse(chat_payload),
                                 response_model,
                                 custom_tool_names=custom_tool_names,
                                 function_tool_names=function_tool_names,
@@ -3474,6 +3595,12 @@ def create_app(
                                 goal_already_loaded=bool(
                                     response_state and response_state.resolved_objective
                                 ),
+                                goal_prerequisites=(
+                                    pending_goal_prerequisites(response_state)
+                                    if response_state
+                                    else ()
+                                ),
+                                require_tool_action=goal_requires_tool_action(response_state),
                             ):
                                 yield chunk
                             return
@@ -3638,10 +3765,9 @@ def create_app(
         request.app.state.store.event("runtime-drain", "gateway_drain_cancelled", {})
         return await admin_drain_status(request)
 
-    @app.get("/admin/api-keys", response_class=HTMLResponse)
-    async def api_key_dashboard() -> HTMLResponse:
+    def admin_html(content: str) -> HTMLResponse:
         return HTMLResponse(
-            API_KEY_DASHBOARD,
+            content,
             headers={
                 "Cache-Control": "no-store",
                 "Content-Security-Policy": (
@@ -3653,6 +3779,14 @@ def create_app(
                 "X-Content-Type-Options": "nosniff",
             },
         )
+
+    @app.get("/admin", response_class=HTMLResponse)
+    async def admin_dashboard() -> HTMLResponse:
+        return admin_html(ADMIN_DASHBOARD)
+
+    @app.get("/admin/api-keys", response_class=HTMLResponse)
+    async def api_key_dashboard() -> HTMLResponse:
+        return admin_html(API_KEY_DASHBOARD)
 
     def key_response(payload: dict[str, Any]) -> JSONResponse:
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
@@ -3690,8 +3824,40 @@ def create_app(
         response.delete_cookie(ADMIN_SESSION_COOKIE, samesite="strict")
         return response
 
+    @app.get("/v1/admin/codex/workspaces", dependencies=[Depends(admin_auth)])
+    async def admin_codex_workspaces(request: Request) -> JSONResponse:
+        runner = cast(AdminCodexRunner, request.app.state.admin_codex)
+        return key_response({"root": "~/code", "workspaces": runner.workspaces()})
+
+    @app.post("/v1/admin/codex", dependencies=[Depends(admin_auth)])
+    async def admin_codex(body: AdminCodexRequest, request: Request) -> StreamingResponse:
+        stream = await cast(AdminCodexRunner, request.app.state.admin_codex).start(body)
+        return StreamingResponse(
+            stream,
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
     @app.get("/v1/admin/api-keys", dependencies=[Depends(admin_auth)])
     async def api_key_list(request: Request) -> JSONResponse:
+        model_catalog = [
+            {
+                "role": role,
+                "served_name": configured.models[role].served_name,
+                "repository": configured.models[role].repository,
+            }
+            for role in ("executor", "planner", "reviewer")
+            if role in configured.models
+        ]
+        frontier_config = request.app.state.frontier_config
+        if frontier_config is not None:
+            model_catalog.append(
+                {
+                    "role": "frontier",
+                    "served_name": frontier_config.model,
+                    "repository": "Codex OAuth",
+                }
+            )
         return key_response(
             {
                 "keys": [
@@ -3699,17 +3865,114 @@ def create_app(
                     for key in request.app.state.api_keys.list()
                 ],
                 "usage": request.app.state.usage.api_token_dashboard(),
-                "model_catalog": [
-                    {
-                        "role": role,
-                        "served_name": configured.models[role].served_name,
-                        "repository": configured.models[role].repository,
-                    }
-                    for role in ("executor", "planner", "reviewer")
-                    if role in configured.models
-                ],
+                "model_catalog": model_catalog,
                 "max_admin_keys": configured.max_admin_api_keys,
             }
+        )
+
+    def frontier_auth_profile(profile: str, request: Request) -> tuple[Path, CodexOAuthProvider]:
+        frontier_config = request.app.state.frontier_config
+        if frontier_config is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Frontier is disabled")
+        profiles = {frontier_config.primary_profile, frontier_config.secondary_profile}
+        if profile not in profiles:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Frontier profile not found")
+        root = frontier_config.profile_root
+        home = profile_home(profile, root) if root is not None else profile_home(profile)
+        return home, CodexOAuthProvider(profile, root)
+
+    @app.get("/v1/admin/frontier-auth", dependencies=[Depends(admin_auth)])
+    async def frontier_auth_status(request: Request) -> JSONResponse:
+        frontier_config = request.app.state.frontier_config
+        if frontier_config is None:
+            return key_response({"enabled": False, "profiles": []})
+        root = frontier_config.profile_root
+        profiles = dict.fromkeys(
+            profile
+            for profile in (frontier_config.primary_profile, frontier_config.secondary_profile)
+            if profile is not None
+        )
+        return key_response(
+            {
+                "enabled": True,
+                "model": frontier_config.model,
+                "profiles": [
+                    profile_status(profile, root) if root is not None else profile_status(profile)
+                    for profile in profiles
+                ],
+            }
+        )
+
+    @app.post("/v1/admin/frontier-auth/{profile}", dependencies=[Depends(admin_auth)])
+    async def frontier_auth_login(profile: str, request: Request) -> StreamingResponse:
+        home, provider = frontier_auth_profile(profile, request)
+        active = request.app.state.frontier_auth_active
+        if profile in active:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Frontier authentication already active")
+        lock = profile_lock(profile, configured.run_dir)
+        try:
+            lock.__enter__()
+        except RuntimeError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        active.add(profile)
+
+        async def login_stream() -> AsyncIterator[bytes]:
+            process: asyncio.subprocess.Process | None = None
+            try:
+                home.mkdir(parents=True, exist_ok=True, mode=0o700)
+                home.chmod(0o700)
+                process = await asyncio.create_subprocess_exec(
+                    "codex",
+                    "login",
+                    "--device-auth",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    env=provider.environment(),
+                )
+                assert process.stdout is not None
+                deadline = time.monotonic() + 16 * 60
+                while time.monotonic() < deadline:
+                    try:
+                        chunk = await asyncio.wait_for(process.stdout.read(1024), timeout=10)
+                    except TimeoutError:
+                        yield b"\n"
+                        continue
+                    if not chunk:
+                        break
+                    text = chunk.decode(errors="replace")
+                    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+                    text = "".join(
+                        character
+                        for character in text
+                        if character in "\n\t" or ord(character) >= 32
+                    )
+                    yield text.encode()
+                else:
+                    process.terminate()
+                    yield "\n인증 시간이 만료되었습니다. 다시 시도하세요.\n".encode()
+                return_code = await process.wait()
+                auth_file = home / "auth.json"
+                if return_code == 0 and auth_file.is_file():
+                    auth_file.chmod(0o600)
+                yield (
+                    "\n인증이 완료되었습니다.\n"
+                    if return_code == 0
+                    else "\n인증이 완료되지 않았습니다.\n"
+                ).encode()
+            finally:
+                if process is not None and process.returncode is None:
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=5)
+                    except TimeoutError:
+                        process.kill()
+                active.discard(profile)
+                lock.__exit__(None, None, None)
+
+        return StreamingResponse(
+            login_stream(),
+            media_type="text/plain; charset=utf-8",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
     @app.get("/v1/admin/api-keys/{name}/reveal", dependencies=[Depends(admin_auth)])

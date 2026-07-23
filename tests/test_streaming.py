@@ -15,6 +15,7 @@ from dgx_moa.streaming import (
     reported_usage,
     response_usage,
     responses_sse,
+    tool_progress_text,
 )
 from dgx_moa.usage import SQLITE_MAX_INTEGER
 
@@ -65,6 +66,42 @@ async def test_responses_sse_rejects_progress_only_stop(text: str) -> None:
 
     with pytest.raises(ProgressOnlyResponse):
         _ = [chunk async for chunk in responses_sse(upstream(), "dgx-moa")]
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_requires_tool_when_goal_has_no_implementation_evidence() -> None:
+    async def upstream():
+        yield (
+            "data: "
+            + json.dumps(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "content": (
+                                    "필수 문서를 읽었습니다. 이제 현재 구조를 파악하고 "
+                                    "설계를 시작합니다."
+                                )
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+            + "\n\n"
+        ).encode()
+        yield b"data: [DONE]\n\n"
+
+    with pytest.raises(ProgressOnlyResponse):
+        _ = [
+            chunk
+            async for chunk in responses_sse(
+                upstream(),
+                "dgx-moa",
+                require_tool_action=True,
+            )
+        ]
 
 
 @pytest.mark.parametrize("invalid", [-1, True, SQLITE_MAX_INTEGER + 1])
@@ -137,11 +174,18 @@ async def test_responses_sse_preserves_tool_progress_and_terminates_failures(cap
 
     tool_events = [
         json.loads(line[6:])
-        async for chunk in responses_sse(tool_upstream(), "dgx-moa", session_id="tool-session")
+        async for chunk in responses_sse(
+            tool_upstream(),
+            "dgx-moa",
+            session_id="tool-session",
+            progress_language="ko",
+        )
         for line in chunk.decode().splitlines()
         if line.startswith("data: ")
     ]
-    assert any(event.get("delta") == "목표 파일을 확인합니다." for event in tool_events)
+    assert any(
+        event.get("delta") == "다음 작업에 필요한 증거를 확인합니다." for event in tool_events
+    )
     assert tool_events[-1]["type"] == "response.completed"
 
     async def failed_upstream():
@@ -163,6 +207,49 @@ async def test_responses_sse_preserves_tool_progress_and_terminates_failures(cap
     assert "RuntimeError" in caplog.text
     assert "must stay private" not in caplog.text
     assert "sensitive upstream detail" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_batches_named_goal_prerequisites() -> None:
+    async def upstream():
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call-read","function":{"name":"read_file",'
+            b'"arguments":"{\\"path\\":\\"/work/AGENTS.md\\"}"}}]},'
+            b'"finish_reason":"tool_calls"}]}\n\n'
+        )
+
+    events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa",
+            function_tool_names={"exec_command"},
+            goal_already_loaded=True,
+            goal_prerequisites=(
+                "AGENTS.md",
+                "docs/STATE.md",
+                "docs/OPERATIONS.md",
+                "docs/VALIDATION.md",
+                "docs/TRACE_SCHEMA.md",
+            ),
+        )
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+
+    arguments = next(
+        event["arguments"]
+        for event in events
+        if event["type"] == "response.function_call_arguments.done"
+    )
+    command = json.loads(arguments)["cmd"]
+    assert command.startswith("head -n 400 -- ")
+    assert "/work/AGENTS.md" in command
+    assert "/work/docs/STATE.md" in command
+    assert "/work/docs/OPERATIONS.md" in command
+    assert "/work/docs/VALIDATION.md" in command
+    assert "/work/docs/TRACE_SCHEMA.md" in command
 
 
 @pytest.mark.asyncio
@@ -236,11 +323,54 @@ async def test_responses_sse_maps_local_mcp_file_to_exec_command() -> None:
     progress_index = next(
         index
         for index, event in enumerate(events)
-        if event.get("delta") == "exec_command 도구를 실행합니다."
+        if event.get("delta") == "다음 작업에 필요한 증거를 확인합니다."
     )
     assert progress_index < events.index(added)
     assert json.loads(done["arguments"]) == {"cmd": "cat -- '/Users/test/goal objective.md'"}
     assert all(event.get("item", {}).get("name") != "read_mcp_resource" for event in events)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ({"cmd": "pwd", "justification": "작업 공간을 확인합니다."}, "작업 공간을 확인합니다."),
+        (
+            {"cmd": "cat AGENTS.md docs/STATE.md docs/OPERATIONS.md"},
+            "저장소 지침과 필수 운영 문서를 확인합니다.",
+        ),
+    ],
+)
+def test_tool_progress_text_describes_immediate_purpose(
+    arguments: dict[str, str], expected: str
+) -> None:
+    calls = {0: {"_arguments": json.dumps(arguments, ensure_ascii=False)}}
+    assert tool_progress_text(calls, "ko") == expected
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_replaces_model_commentary_with_document_purpose() -> None:
+    async def upstream():
+        yield (
+            b'data: {"choices":[{"delta":{"content":"I will read the required docs first."}}]}\n\n'
+        )
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call-docs","function":{"name":"exec_command",'
+            b'"arguments":"{\\"cmd\\":\\"cat AGENTS.md docs/STATE.md\\"}"}}]},'
+            b'"finish_reason":"tool_calls"}]}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(upstream(), "dgx-moa", progress_language="ko")
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+
+    deltas = [event.get("delta") for event in events if "delta" in event]
+    assert "I will read the required docs first." not in deltas
+    assert "저장소 지침과 필수 운영 문서를 확인합니다." in deltas
 
 
 @pytest.mark.asyncio

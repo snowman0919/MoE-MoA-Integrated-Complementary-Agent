@@ -30,10 +30,13 @@ justify-content:flex-end;align-items:stretch;gap:5px}.stack{display:flex;flex-di
 min-height:1px}.segment{min-height:1px;border:1px solid #ffffff22}.day-label{font-size:10px;
 color:var(--muted);text-align:center;white-space:nowrap}.legend{display:flex;gap:14px;flex-wrap:wrap;
 margin-top:14px}.legend-item{display:flex;align-items:center;gap:6px}.swatch{width:12px;height:12px}
-#secret{word-break:break-all;color:var(--ok)}@media(max-width:600px){main{padding:16px}
-.bar-row{grid-template-columns:100px 1fr 42px}.keys{overflow:auto}}
+#secret{word-break:break-all;color:var(--ok)}#frontier-output{white-space:pre-wrap;
+word-break:break-word;color:var(--muted);max-height:220px;overflow:auto}.token-summary{color:var(--text)}
+@media(max-width:600px){main{padding:16px}.bar-row{grid-template-columns:100px 1fr 42px}
+.keys{overflow:auto}}
 </style>
 <main>
+  <p><a href="/admin">← Admin</a></p>
   <h1>API Key Control</h1>
   <p class="muted">Tailnet operator console · 원문은 눈동자 버튼을 누를 때만 표시됩니다.</p>
   <section class="card" id="login">
@@ -68,9 +71,18 @@ margin-top:14px}.legend-item{display:flex;align-items:center;gap:6px}.swatch{wid
       <h2>로컬 역할 모델</h2>
       <div id="model-catalog" class="chart"></div>
     </section>
+    <section class="card" id="frontier-card" hidden>
+      <h2>Frontier OAuth</h2>
+      <p class="muted">Codex OAuth 프로필을 API key 없이 재인증합니다.</p>
+      <p><a href="https://auth.openai.com/codex/device" target="_blank"
+        rel="noopener noreferrer">OpenAI 인증 페이지 열기</a></p>
+      <div id="frontier-auth" class="chart"></div>
+      <pre id="frontier-output"></pre>
+    </section>
     <section class="card">
       <h2>모델별 일일 토큰 사용량</h2>
       <p class="muted">선택한 키의 실제 모델 호출 토큰을 일자별로 누적합니다.</p>
+      <p id="token-summary" class="token-summary"></p>
       <div class="stacked-wrap"><div id="daily-models" class="stacked-plot"></div></div>
       <div id="model-legend" class="legend"></div>
     </section>
@@ -130,11 +142,16 @@ const bars=(id,rows,label,value)=>{
 const palette=["#7f8c3a","#70508e","#9a5e4d","#397c8f","#a37a2c","#4f75a8","#8d456f","#4f8b62"];
 const stacked=(rows,start,end)=>{
   const root=$("daily-models"),legend=$("model-legend");root.replaceChildren();legend.replaceChildren();
-  const models=[...new Set(rows.map(item=>item.model))];
+  const models=[...new Set([...modelCatalog.keys(),...rows.map(item=>item.model)])];
+  const modelTotals=new Map(models.map(model=>[model,rows.filter(item=>item.model===model)
+    .reduce((sum,item)=>sum+item.total_tokens,0)]));
+  const total=[...modelTotals.values()].reduce((sum,value)=>sum+value,0);
+  $("token-summary").textContent="선택 기간 합계 "+total.toLocaleString()+" tokens";
   models.forEach((model,index)=>{const item=document.createElement("span");item.className="legend-item";
     const swatch=document.createElement("span");swatch.className="swatch";
     swatch.style.backgroundColor=palette[index%palette.length];
-    item.append(swatch,modelLabel(model));legend.append(item)});
+    item.append(swatch,modelLabel(model)+" · "+modelTotals.get(model).toLocaleString()+" tokens");
+    legend.append(item)});
   const values=new Map(rows.map(item=>[item.day+"\\0"+item.model,item]));
   const days=[];for(let day=new Date(start+"T00:00:00Z"),last=new Date(end+"T00:00:00Z");
     day<=last;day.setUTCDate(day.getUTCDate()+1))days.push(day.toISOString().slice(0,10));
@@ -147,8 +164,8 @@ const stacked=(rows,start,end)=>{
       const segment=document.createElement("div");segment.className="segment";
       segment.style.height=(data.total_tokens/Math.max(1,totals[dayIndex])*100)+"%";
       segment.style.backgroundColor=palette[index%palette.length];
-      segment.title=modelLabel(model)+" · "+data.total_tokens.toLocaleString()+" tokens · "+
-        data.invocations.toLocaleString()+" calls";stack.append(segment)});
+      segment.title=modelLabel(model)+" · 정확한 토큰 "+data.total_tokens.toLocaleString()+
+        " · 호출 "+data.invocations.toLocaleString()+"회";stack.append(segment)});
     const label=document.createElement("span");label.className="day-label";label.textContent=day.slice(5);
     column.append(stack,label);root.append(column)});
 };
@@ -176,6 +193,7 @@ async function load(){
     const option=document.createElement("option");option.value=key.name;option.textContent=key.name;
     $("graph-key").append(option)});
   $("graph-key").value=selected&&data.keys.some(key=>key.name===selected)?selected:data.keys[0]?.name||"";
+  await loadFrontierAuth();
   await loadCharts();
 }
 async function loadCharts(){
@@ -185,6 +203,30 @@ async function loadCharts(){
   bars("models",data.models,item=>item.role+" · "+modelLabel(item.model),item=>item.invocations);
   bars("daily",data.daily,item=>item.day,item=>item.requests);
   stacked(data.daily_models,$("graph-start").value,$("graph-end").value);
+}
+async function loadFrontierAuth(){
+  const data=await api("/v1/admin/frontier-auth");
+  $("frontier-card").hidden=!data.enabled;
+  if(!data.enabled)return;
+  $("frontier-auth").replaceChildren();
+  data.profiles.forEach(profile=>{const line=document.createElement("div");
+    const state=document.createElement("span");state.textContent=profile.profile+" · "+
+      (profile.authenticated==="yes"?"자격증명 저장됨 (유효성 미검증)":"인증 필요");
+    const button=document.createElement("button");button.textContent="재인증";
+    button.onclick=()=>startFrontierAuth(profile.profile,button);
+    line.append(state,button);$("frontier-auth").append(line)});
+}
+async function startFrontierAuth(profile,button){
+  button.disabled=true;$("frontier-output").textContent="인증 요청을 시작합니다...\\n";
+  try{const response=await fetch("/v1/admin/frontier-auth/"+profile,{method:"POST"});
+    if(!response.ok)throw new Error(response.status+" "+response.statusText);
+    const reader=response.body.getReader(),decoder=new TextDecoder();
+    for(;;){const {done,value}=await reader.read();if(done)break;
+      $("frontier-output").textContent+=decoder.decode(value,{stream:true});
+      $("frontier-output").scrollTop=$("frontier-output").scrollHeight}
+    await loadFrontierAuth()}
+  catch(error){$("frontier-output").textContent+=error.message}
+  finally{button.disabled=false}
 }
 async function selectGraph(name){$("graph-key").value=name;await loadCharts();
   $("graph-filter").scrollIntoView({behavior:"smooth"})}

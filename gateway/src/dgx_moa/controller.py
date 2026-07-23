@@ -109,6 +109,15 @@ class PolicyBlocked(RuntimeError):
     pass
 
 
+GOAL_PREREQUISITE_DOCUMENTS = (
+    "AGENTS.md",
+    "docs/STATE.md",
+    "docs/OPERATIONS.md",
+    "docs/VALIDATION.md",
+    "docs/TRACE_SCHEMA.md",
+)
+
+
 def fingerprint(call: dict[str, Any]) -> str:
     normalized_call = call.get("function", call)
     normalized = json.dumps(normalized_call, sort_keys=True, separators=(",", ":"))
@@ -162,6 +171,18 @@ def has_mcp_server_failure(state: SessionState) -> bool:
 
 def effective_objective(state: SessionState) -> str:
     return state.resolved_objective or state.objective
+
+
+def pending_goal_prerequisites(state: SessionState) -> tuple[str, ...]:
+    required = {path for path in GOAL_PREREQUISITE_DOCUMENTS if path in state.resolved_objective}
+    completed: set[str] = set()
+    for execution in state.tool_executions:
+        if execution.get("exit_code") != 0:
+            continue
+        arguments = execution.get("normalized_arguments")
+        text = arguments if isinstance(arguments, str) else json.dumps(arguments, sort_keys=True)
+        completed.update(path for path in required if path in text)
+    return tuple(path for path in GOAL_PREREQUISITE_DOCUMENTS if path in required - completed)
 
 
 def argument_paths(arguments: Any) -> set[str]:
@@ -1096,7 +1117,22 @@ class Controller:
                 )
             )
             failure_class = classify_failure(observation) if failed else None
-            fact = f"tool:{message.get('tool_call_id', index)} {observation}"
+            fact = json.dumps(
+                {
+                    "tool_call_id": str(message.get("tool_call_id", index)),
+                    "tool_name": result["tool_name"],
+                    "exit_code": result["exit_code"],
+                    "failure_class": failure_class,
+                    "truncated": result["truncated"],
+                    **{
+                        key: result[key]
+                        for key in ("changed_paths", "created_paths", "deleted_paths")
+                        if key in result
+                    },
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
             if fact in state.verified_facts:
                 continue
             state.verified_facts.append(fact)
@@ -1155,6 +1191,7 @@ class Controller:
                 and len(result["stdout"].strip()) >= 200
             ):
                 state.resolved_objective = result["stdout"].strip()
+                state.resolved_objective_orchestrated = False
                 self.store.event(
                     state.session_id,
                     "goal_objective_resolved",
@@ -1383,10 +1420,10 @@ class Controller:
             "acceptance_criteria": state.acceptance_criteria,
             "repository": state.repository,
             "route": {"name": state.route, "reasons": state.route_reasons},
+            "pending_goal_prerequisites": pending_goal_prerequisites(state),
         }
         if role == "executor":
             return base | {
-                "objective": effective_objective(state),
                 "policy": (
                     "tool calls allowed; verified tool and validation evidence override "
                     "conflicting model assertions; model contributions are advisory and "
@@ -1404,20 +1441,16 @@ class Controller:
                 "retrieved_knowledge": state.knowledge_selections[
                     -self.settings.runtime_knowledge.retrieval_limit :
                 ],
-                "observation": observation,
             }
         if role == "planner":
             return base | {
-                "objective": effective_objective(state),
                 "plan": state.plan,
                 "completed_steps": state.completed_steps,
                 "verified_facts": facts,
                 "failure_fingerprints": state.failure_families,
-                "observation": observation,
             }
         if role == "reasoner":
             return base | {
-                "user_objective": effective_objective(state),
                 "relevant_conversation_state": {
                     "phase": state.phase,
                     "completed_steps": state.completed_steps,
@@ -1426,11 +1459,9 @@ class Controller:
                 "current_plan": state.plan,
                 "recent_tool_results": state.tool_results[-4:],
                 "previous_failure_evidence": active_failures(state)[-4:],
-                "executor_question": observation,
             }
         return base | {
             "verified_facts": facts,
-            "diff_or_evidence": observation,
             "review_status": state.review_status,
             "completion_evidence": state.completion_evidence,
         }
@@ -1645,7 +1676,13 @@ class Controller:
         )
         tool_batching = (
             "Batch independent tool calls in one response when their inputs do not depend on "
-            "each other's results; keep dependent actions ordered."
+            "each other's results; keep dependent actions ordered. After a wrapper objective is "
+            "loaded, the next response MUST read every named prerequisite document through "
+            "parallel tool calls or one bounded shell command; reading only one named file is "
+            "invalid. Inspect the current workspace once. Introduce each tool batch with one "
+            "concise sentence stating the immediate evidence it gathers. After a prerequisite "
+            "read succeeds, do not read the same whole file again; use one targeted search or "
+            "range only when a specific missing fact is necessary."
             if role == "executor"
             else ""
         )
@@ -1665,8 +1702,9 @@ class Controller:
             else ""
         )
         language_constraint = (
-            "Reply in the natural language of the user's actual objective; when a wrapper points "
-            "to an objective file, use the language of that file rather than the wrapper."
+            "Reason internally in English. Reply in the natural language of the user's actual "
+            "objective; when a wrapper points to an objective file, use the language of that "
+            "file rather than the wrapper."
             if role == "executor"
             else ""
         )
@@ -1753,6 +1791,7 @@ class Controller:
         state: SessionState,
         reasoner: ReasonerContribution,
         metadata: dict[str, Any],
+        executor_complete: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]] | None = None,
     ) -> OrchestrationDecision:
         mandatory = [
             role for role in state.roles_required if role in {"planner", "reviewer", "judge"}
@@ -1766,12 +1805,24 @@ class Controller:
             or metadata.get("completion_evidence")
         )
         architecture = bool(metadata.get("architecture") or metadata.get("design")) or any(
-            marker in objective for marker in ("architecture", "architect", "design", "migration")
+            marker in objective
+            for marker in (
+                "architecture",
+                "architect",
+                "design",
+                "migration",
+                "아키텍처",
+                "설계",
+                "마이그레이션",
+            )
         )
         code_review = (
             bool(metadata.get("code_review"))
             or bool(metadata.get("executor_complete") and implementation_evidence)
-            or any(marker in objective for marker in ("code review", "review this", "diff review"))
+            or any(
+                marker in objective
+                for marker in ("code review", "review this", "diff review", "코드 리뷰", "검토")
+            )
         )
         frontier_policy = (
             architecture
@@ -1853,12 +1904,16 @@ class Controller:
             effective_objective(state),
         )
         orchestration_started = time.monotonic()
-        response = await self.provider.complete(
-            "executor",
-            self.settings.models["executor"],
-            request,
-            timeout_seconds=self.settings.limits.planner_timeout_seconds,
-            stage="orchestration",
+        response = (
+            await executor_complete(request, "orchestration")
+            if executor_complete is not None
+            else await self.provider.complete(
+                "executor",
+                self.settings.models["executor"],
+                request,
+                timeout_seconds=self.settings.limits.planner_timeout_seconds,
+                stage="orchestration",
+            )
         )
         self.record_invocation(
             state,
@@ -1889,12 +1944,16 @@ class Controller:
             ]
             retry_request["max_tokens"] = min(self.settings.limits.planner_tokens, 512)
             retry_started = time.monotonic()
-            response = await self.provider.complete(
-                "executor",
-                self.settings.models["executor"],
-                retry_request,
-                timeout_seconds=self.settings.limits.planner_timeout_seconds,
-                stage="orchestration_retry",
+            response = (
+                await executor_complete(retry_request, "orchestration_retry")
+                if executor_complete is not None
+                else await self.provider.complete(
+                    "executor",
+                    self.settings.models["executor"],
+                    retry_request,
+                    timeout_seconds=self.settings.limits.planner_timeout_seconds,
+                    stage="orchestration_retry",
+                )
             )
             self.record_invocation(
                 state,
@@ -1981,9 +2040,25 @@ class Controller:
         ensure_roles: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
         *,
         tool_continuation: bool = False,
+        executor_complete: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
         body = request.copy()
         metadata = dict(request.get("metadata", {}))
+        pending_prerequisites = pending_goal_prerequisites(state)
+        if (
+            tool_continuation
+            and state.runtime_mode == "orchestrated"
+            and state.resolved_objective
+            and not state.resolved_objective_orchestrated
+            and not pending_prerequisites
+        ):
+            tool_continuation = False
+            state.resolved_objective_orchestrated = True
+            self.store.event(
+                state.session_id,
+                "resolved_goal_orchestration_started",
+                {"characters": len(state.resolved_objective)},
+            )
         local_only = metadata.get("specialist_local_only", [])
         state.specialist_local_only_roles = (
             [
@@ -2179,7 +2254,10 @@ class Controller:
         collaboration_context = ""
         if state.runtime_mode == "orchestrated" and reasoner_contribution is not None:
             orchestration = await self.orchestration_decision(
-                state, reasoner_contribution, dict(request.get("metadata", {}))
+                state,
+                reasoner_contribution,
+                dict(request.get("metadata", {})),
+                executor_complete,
             )
             dynamic = tuple(
                 role
@@ -2201,6 +2279,9 @@ class Controller:
                     else "architecture"
                 )
                 evidence = {
+                    "_paid_fallback_required": bool(
+                        request.get("metadata", {}).get("frontier_required") or "judge" in roles
+                    ),
                     "objective": effective_objective(state),
                     "constraints": state.acceptance_criteria,
                     "reasoner_hypotheses": reasoner_contribution.hypotheses,
@@ -2301,7 +2382,7 @@ class Controller:
                 "model": self.settings.models["planner"].served_name,
                 "messages": [
                     {
-                        "role": "system",
+                        "role": "user",
                         "content": self.prompt_sandwich(
                             "planner",
                             state,
@@ -2698,7 +2779,13 @@ class Controller:
                         if collaboration_context
                         else ""
                     ),
-                    "Take one useful step",
+                    (
+                        "Read every pending prerequisite document in this single response using "
+                        "parallel tool calls or one bounded shell command: "
+                        + ", ".join(pending_prerequisites)
+                        if pending_prerequisites
+                        else "Take one useful step"
+                    ),
                     available_tools=available_tools,
                 ),
             },
@@ -2708,14 +2795,49 @@ class Controller:
 
     def has_review_evidence(self, state: SessionState, metadata: dict[str, Any]) -> bool:
         completion_evidence = metadata.get("completion_evidence")
-        return bool(
-            state.tool_results
-            or state.completion_evidence
+        if (
+            state.completion_evidence
             or (isinstance(completion_evidence, dict) and completion_evidence)
             or metadata.get("changed_paths")
             or metadata.get("diff_summary")
             or metadata.get("validation_results")
-        )
+        ):
+            return True
+        if any(
+            isinstance(result, dict)
+            and any(result.get(key) for key in ("changed_paths", "created_paths", "deleted_paths"))
+            for result in state.tool_results
+        ):
+            return True
+        for execution in state.tool_executions:
+            if execution.get("tool_name") in {
+                "apply_patch",
+                "edit_file",
+                "write_file",
+                "delete_file",
+            }:
+                return True
+            effect = execution.get("filesystem_effect")
+            if isinstance(effect, dict) and any(
+                effect.get(key) for key in ("changed_paths", "created_paths", "deleted_paths")
+            ):
+                return True
+            arguments = execution.get("normalized_arguments")
+            command = arguments.get("cmd") if isinstance(arguments, dict) else None
+            if (
+                execution.get("exit_code") == 0
+                and isinstance(command, str)
+                and (
+                    re.search(
+                        r"(?:^|&&|\|\||;)\s*(?:uv run )?(?:python -m )?"
+                        r"(?:pytest|ruff(?: check| format --check)|mypy)\b",
+                        command,
+                    )
+                    or re.search(r"(?:^|&&|\|\||;)\s*git\s+diff\b", command)
+                )
+            ):
+                return True
+        return False
 
     @staticmethod
     def material_review_issue(result: dict[str, Any]) -> bool:

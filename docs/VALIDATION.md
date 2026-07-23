@@ -4215,14 +4215,13 @@ Executor five times, but all four Planner/Reviewer calls were remote; mandatory
 Frontier failure then caused Hermes to switch the client-visible final response
 to its Codex fallback.
 
-The correction passes `SessionState.current_request_id` to lifecycle leases and
-selects every inference-probed READY or BUSY local specialist. OpenCode Go is
-now the pinned fallback only while the selected local role is not ready, or if
-readiness changes during lease acquisition. Provider switching after dispatch
-remains prohibited. Runtime Knowledge and the separate GLM-5.2 Judge remain
-enabled. Executor prompting now requests concise output by default without
-forcing a language and still expands when the objective explicitly asks for
-detail.
+The correction passes `SessionState.current_request_id` to lifecycle leases and,
+at that deployment, selected every inference-probed READY or BUSY local
+specialist. The later 2026-07-24 busy-routing validation below supersedes the
+BUSY selection rule. Provider switching after dispatch remains prohibited.
+Runtime Knowledge and the separate GLM-5.2 Judge remain enabled. Executor
+prompting now requests concise output by default without forcing a language and
+still expands when the objective explicitly asks for detail.
 
 Telegram rendering is deterministic Python formatting, not an LLM call. It uses
 Korean process titles, labels, known state/provider/routing translations, and
@@ -4656,3 +4655,111 @@ tests with exit code 0, and returned a Korean evidence report. It recorded six
 successful tool results and seven completed streams; an independent host test
 run passed. Loopback and tailnet health/readiness remained HTTP 200, and Hermes
 was not restarted and retained PID 1796553.
+
+## Frontier usage visibility and operator OAuth flow — 2026-07-24
+
+The production state database contained 15 completed Frontier collaborations
+from 2026-07-21 with 220,699 prompt, 12,182 completion, and 232,881 total
+tokens. It contained no `model_invocation_usage` row for `role=frontier`
+because those calls predated the 2026-07-22 invocation-metering change. The
+historical events have no API-key attribution, so they were not guessed into a
+per-key graph. Later records contained 58 `FRONTIER_AUTH_ERROR`, 40
+`FRONTIER_CIRCUIT_OPEN`, and two invocation-limit outcomes.
+
+The operator model catalog now includes the configured Codex OAuth Frontier
+model even when the selected API key has zero metered Frontier calls. The
+daily stacked chart shows exact selected-range and per-model token totals; each
+nonzero segment exposes model, exact token count, and invocation count through
+its hover title.
+
+Authenticated administrators can start the official `codex login
+--device-auth` flow for only the configured primary or secondary profile. The
+browser streams the one-time URL/code without receiving OAuth credentials, the
+subprocess inherits the existing credential-safe environment allowlist,
+concurrent use of the same profile is locked out, and file-backed credentials
+remain mode `0600`. The checked-in gateway unit grants write access only to the
+existing external Codex profile root. Focused API-key tests passed `3 passed`;
+the combined Frontier/API-key suite passed `23 passed`. Ruff lint/format,
+JavaScript syntax validation, strict mypy on the two changed source modules, and
+`systemd-analyze --user verify` passed.
+
+## Admin routing and bounded Codex custom-provider client — 2026-07-24
+
+`/admin` now serves a no-store, same-origin operator landing page with API Key
+Control routing, runtime status, read-only chat, and workspace-write agent
+modes. The backend resolves agent workspaces under `~/code`, requires a Git
+workspace, rejects traversal, binds a resumed thread to its original mode and
+workspace, and permits one active Codex turn per gateway instance. It launches
+an isolated Codex CLI with the existing Responses custom-provider shape,
+loopback gateway URL, context 65,536, no tool network access, no login shell,
+and a shell environment allowlist that excludes the provider credential.
+
+The browser receives only bounded NDJSON events for thread identity, final
+agent messages, command/status, file-change status, errors, and measured token
+usage. A synthetic reasoning event was not emitted, and a credential-shaped
+command fragment was redacted. The custom provider uses the dedicated general
+`admin-codex-cli` key rather than an operator credential.
+
+The focused admin dashboard test passed `1 passed`; the API-key and systemd
+unit tests passed `11 passed`. Ruff, format, strict mypy, JavaScript syntax, and
+`git diff --check` passed. The wider 32-test run reported `29 passed, 3 failed`:
+all failures were existing Frontier failover assertions that expected only the
+primary profile while the inspected implementation attempted the secondary
+profile. A real Codex CLI config-parse probe emitted `thread.started` and
+attempted the configured synthetic `http://127.0.0.1:1/v1/responses` endpoint;
+the 12-second timeout intentionally stopped its retry loop. No production
+gateway request, repository edit by Codex, deployment, or service restart was
+performed.
+
+## Busy-provider and Frontier context fallback — 2026-07-24
+
+The specialist router previously reported a resident role as `BUSY` but still
+treated that state as locally eligible. It also calculated local and remote
+completion estimates without applying them to provider selection. The corrected
+policy sends ordinary BUSY Planner/Reviewer calls directly to their pinned
+OpenCode Go provider. A READY local specialist is selected only when its
+queue-plus-inference estimate is within the configured cost-adjusted margin;
+explicit local-only policy remains the sole queueing exception.
+
+When Frontier is enabled, a new session arriving while the local Executor has
+an active lease no longer acquires another local Executor or open-stream lease.
+The entire request, including orchestration retries, final synthesis, and Judge
+correction, is pinned to a remote logical Executor. Codex OAuth runs read-only,
+cannot invoke host tools for that request, and can return only bounded text or
+client tool-call descriptions. Streaming callers receive ten-second keepalives
+while the non-streaming OAuth turn runs; a terminal remote failure becomes a
+structured stream error instead of an unexplained disconnect.
+
+Before local final-synthesis dispatch, the gateway also asks the served
+Executor's real `/tokenize` endpoint for `count` and `max_model_len`. If prompt
+plus requested output exceeds that measured window after normal preparation,
+the undispatched local lease is released and the call is pinned to Frontier.
+Tokenizer unavailability does not fabricate a result or silently claim that
+the context fits. A physical loopback Executor probe returned
+`executor_context_fits=true` for a 32-token output request.
+
+OAuth failover now tries isolated `primary`, isolated `secondary`, and host
+`default` profiles before considering the paid fallback. The strict Executor
+schema initially failed a real Codex request because optional/defaulted schema
+properties were not all listed as required. Making every top-level and tool-call
+property required fixed the physical request: the full configured profile chain
+returned exact Korean `정상`, `finish_reason=stop`, model `gpt-5.6-sol`, provider
+`default`, with no paid fallback. The inspected primary profile was usage
+limited and secondary profile authentication was invalidated.
+
+The root `openrouter_api` file had mode `0600`, but its value did not have the
+OpenRouter key shape and the real endpoint returned HTTP 401. The value was
+never printed or copied to production. Synthetic transport validation proved
+that Claude `anthropic/claude-sonnet-4.6` is called only after eligible OAuth
+failure, excludes reasoning from the response, preserves the request language
+and tool definitions, records exact provider/cost provenance, and never places
+the key in the payload. Production therefore retains a working free OAuth
+fallback and will fail closed at the paid tier until an operator supplies a
+valid ignored key.
+
+Ruff passed over gateway and tests, strict mypy passed over 44 source modules,
+and the full automated suite passed `905 passed` with the existing third-party
+Starlette warning. The focused busy/failover set passed 30 tests. The abandoned
+isolated dev gateway on loopback port 19000 was identified by PID, process
+group, and working directory before termination; production port 9000 and the
+role-model services were not restarted during this validation.

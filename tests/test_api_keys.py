@@ -116,6 +116,8 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert "JSON.parse(text)" in dashboard.text
         assert "공란=무제한" in dashboard.text
         assert ".value.toLowerCase()" in dashboard.text
+        assert "정확한 토큰" in dashboard.text
+        assert "선택 기간 합계" in dashboard.text
         assert all(
             name in dashboard.text for name in ("Qwen3-Next", "Nemotron-30B", "North-Mini-30B")
         )
@@ -132,6 +134,10 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
             }
             for role in ("executor", "planner", "reviewer")
         ]
+        assert client.get("/v1/admin/frontier-auth", headers=operator).json() == {
+            "enabled": False,
+            "profiles": [],
+        }
         revealed = client.get("/v1/admin/api-keys/general/reveal", headers=operator)
         assert revealed.json()["api_key"] == "general-secret-value"
         session = client.post("/v1/admin/session", headers=operator)
@@ -238,3 +244,105 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         "delete",
     ]
     assert new_token not in json.dumps(audit)
+
+
+def test_frontier_device_auth_is_admin_only_streamed_and_profile_bounded(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    profiles = tmp_path / "profiles"
+    frontier_config = tmp_path / "frontier.yaml"
+    frontier_config.write_text(
+        "\n".join(
+            (
+                "provider: codex_oauth",
+                "enabled: true",
+                "model: gpt-5.6-sol",
+                "reasoning_effort: high",
+                "primary_profile: primary",
+                "secondary_profile: secondary",
+                "allow_profile_failover: true",
+                f"profile_root: {profiles}",
+            )
+        )
+    )
+    configured = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "api_key": None,
+            "api_keys": {
+                "operator": "operator-secret-value",
+                "general": "general-secret-value",
+            },
+            "admin_api_enabled": True,
+            "admin_token_ids": ["operator"],
+            "frontier_enabled": True,
+            "frontier_config": frontier_config,
+        }
+    )
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class Reader:
+        chunks = [
+            b"\x1b[94mhttps://auth.openai.com/codex/device\x1b[0m\nCODE: TEST-CODE\n",
+            b"",
+        ]
+
+        async def read(self, _: int) -> bytes:
+            return self.chunks.pop(0)
+
+    class Process:
+        def __init__(self) -> None:
+            self.stdout = Reader()
+            self.returncode: int | None = None
+
+        async def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+        def terminate(self) -> None:
+            self.returncode = -15
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    async def create_subprocess_exec(*args: object, **kwargs: object) -> Process:
+        calls.append((args, kwargs))
+        home = Path(str(dict(kwargs["env"])["CODEX_HOME"]))
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "auth.json").write_text("{}")
+        return Process()
+
+    monkeypatch.setattr("dgx_moa.api.ModelProvider", lambda: StubProvider())
+    monkeypatch.setattr("dgx_moa.api.asyncio.create_subprocess_exec", create_subprocess_exec)
+    with TestClient(create_app(configured), base_url="https://testserver") as client:
+        general = {"Authorization": "Bearer general-secret-value"}
+        operator = {"Authorization": "Bearer operator-secret-value"}
+        assert client.get("/v1/admin/frontier-auth", headers=general).status_code == 403
+        status_response = client.get("/v1/admin/frontier-auth", headers=operator)
+        assert status_response.json()["model"] == "gpt-5.6-sol"
+        assert [item["profile"] for item in status_response.json()["profiles"]] == [
+            "primary",
+            "secondary",
+        ]
+        assert {
+            "role": "frontier",
+            "served_name": "gpt-5.6-sol",
+            "repository": "Codex OAuth",
+        } in client.get("/v1/admin/api-keys", headers=operator).json()["model_catalog"]
+        assert (
+            client.post("/v1/admin/frontier-auth/not-configured", headers=operator).status_code
+            == 404
+        )
+        response = client.post("/v1/admin/frontier-auth/primary", headers=operator)
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert "https://auth.openai.com/codex/device" in response.text
+        assert "TEST-CODE" in response.text
+        assert "\x1b" not in response.text
+        assert "인증이 완료되었습니다." in response.text
+
+    args, kwargs = calls[0]
+    assert args == ("codex", "login", "--device-auth")
+    assert kwargs["env"]["CODEX_HOME"] == str(profiles / "primary")
+    assert "DGX_MOA_API_KEY" not in kwargs["env"]
+    assert (profiles / "primary" / "auth.json").stat().st_mode & 0o777 == 0o600
