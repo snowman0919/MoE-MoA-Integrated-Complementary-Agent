@@ -223,10 +223,10 @@ class ApiKeyStore:
         return token, self.get(name)
 
     def update(self, name: str, update: ApiKeyUpdate) -> dict[str, Any]:
-        values = update.model_dump(exclude_none=True)
+        values = update.model_dump(exclude_unset=True)
         assignments: list[str] = []
         parameters: list[Any] = []
-        if "expires_in_days" in values:
+        if values.get("expires_in_days") is not None:
             assignments.append("expires_at = ?")
             parameters.append(self.clock() + values["expires_in_days"] * 86_400)
         for field in ("request_limit", "token_limit"):
@@ -243,7 +243,7 @@ class ApiKeyStore:
             if existing is None:
                 raise KeyError(name)
             if (
-                "expires_in_days" in values
+                values.get("expires_in_days") is not None
                 and existing["kind"] == "admin"
                 and existing["revoked_at"] is None
                 and existing["expires_at"] is not None
