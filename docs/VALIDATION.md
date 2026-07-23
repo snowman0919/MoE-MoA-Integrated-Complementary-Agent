@@ -14,7 +14,10 @@ Streaming Responses now resolves same-token tool-result ownership before
 generating a session ID, including the existing unique same-objective recovery
 for remapped call IDs. A focused two-turn streamed test verified one persisted
 session, the same `X-Session-ID`, `step_count=2`, retained tool output, and a
-cleared remapped pending call. Independent tool calls now default to parallel
+cleared remapped pending call. Physical validation then exposed that the local
+Executor can emit a tool payload with `finish_reason=stop`; streamed state now
+opens the continuation whenever an observed tool-call ID exists, matching the
+already validated non-stream behavior. Independent tool calls now default to parallel
 execution when the client does not explicitly select sequential execution.
 The Executor prompt also requires batching independent calls and forbids
 re-reading an unchanged successfully loaded `/goal` objective.
@@ -25,7 +28,7 @@ task that consumed the first chunk rather than only the next upstream wait.
 The stream now applies the unchanged absolute deadline to each upstream
 `anext` operation, so a timeout raises `StageTimeout` without cancelling the
 downstream consumer. Focused streaming, continuation, timeout, and translation
-tests passed 30/30. The full isolated suite passed 862 tests with the existing
+tests passed 30/30. The final isolated suite passed 863 tests with the existing
 third-party Starlette TestClient deprecation warning.
 
 ## Readable detailed live observation — 2026-07-22

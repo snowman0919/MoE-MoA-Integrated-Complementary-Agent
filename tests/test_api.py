@@ -1493,6 +1493,40 @@ async def test_stream_tool_calls_create_one_continuation_before_stream_release(
     assert record.continuation_lease_count == 1
 
 
+@pytest.mark.asyncio
+async def test_stream_tool_payload_creates_continuation_when_finish_reason_is_stop(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    tool_delta = (
+        b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"stream-stop-call",'
+        b'"type":"function","function":{"name":"read_file","arguments":"{}"}}]}}]}\n\n'
+    )
+    terminal = b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+
+    async def streamed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        async def upstream():  # type: ignore[no-untyped-def]
+            yield tool_delta
+            yield terminal
+            yield b"data: [DONE]\n\n"
+
+        return upstream()
+
+    stub_provider.stream = streamed  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await direct_chat(app, "stream-stop-continuation", stream=True)
+        assert isinstance(response, StreamingResponse)
+        _ = b"".join([chunk async for chunk in response.body_iterator])
+        state = app.state.store.get("stream-stop-continuation")
+        record = app.state.lifecycle_store.get("executor")
+
+    assert state and state.pending_tool_call_ids == ["stream-stop-call"]
+    assert state.finish_reasons == ["stop"]
+    assert record.continuation_lease_count == 1
+
+
 def test_stream_tool_continuation_without_session_header_correlates_by_token(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
