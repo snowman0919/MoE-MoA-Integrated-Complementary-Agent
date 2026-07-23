@@ -2426,7 +2426,10 @@ def create_app(
                                 },
                                 account_loop_usage=False,
                             )
-                            if terminal and "tool_calls" in observation.finish_reasons:
+                            if terminal and (
+                                "tool_calls" in observation.finish_reasons
+                                or observation.tool_call_ids
+                            ):
                                 state.pending_tool_call_ids = list(
                                     dict.fromkeys(
                                         [
