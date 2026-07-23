@@ -4943,3 +4943,11 @@ the full suite passed `920 passed` with the existing third-party Starlette
 warning; all commands exited 0. The real local `dgx-moa-reviewer`
 (`CohereLabs/North-Mini-Code-1.0-w4a16`) returned `verdict=approved`, with no
 important findings or residual risks.
+
+Production `main@6761d45` was deployed after the authenticated drain reached
+zero active requests. Only the gateway PID changed, from `3514831` to
+`3540190`; Executor remained `1709495`, Planner `3491920`, Reviewer `3491942`,
+and Hermes `1796553`. The production healthcheck and five deployed regression
+cases exited 0. The inspected post-restart gateway journal contained no
+traceback, exception, disconnect, loop-budget exhaustion, backend error, 401,
+or 500 entry.
