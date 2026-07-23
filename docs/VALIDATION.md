@@ -4868,3 +4868,32 @@ and parsed `verdict=approved` with zero findings. The production checkout's six
 feed tests and the healthcheck both exited 0. The inspected post-restart gateway
 journal contained no traceback, exception, disconnect, loop-budget exhaustion,
 backend error, 401, or 500 entry.
+
+## Codex long tool-loop interruption recovery — 2026-07-24
+
+Production session `46756fe5-ea16-4b1e-bdbe-e057f1741c2b` ended in
+`LoopAdmissionError` after 19 Executor turns. Its 22 measured model invocations
+consumed the bounded 250,000-token engineering budget even though 15 of 30 tool
+calls and three of four iterations remained. Five client reconnects then
+received the generic blocked-session backend error. Cumulative Responses
+history also caused 19 distinct tool results to be recorded 117 times after
+older deduplication facts rotated out of the 12-item observation window.
+
+The controller now deduplicates cumulative tool results against the persisted,
+100-item tool-execution window; the 30-call loop limit therefore fits within
+that window. Codex wrapper argument errors beginning with
+`failed to parse function arguments` are failures even when the wrapper reports
+exit code 0. The bounded token allowance is 1,000,000 while iteration, tool,
+role-call, wall-time, and external-cost bounds remain unchanged. Executor
+instructions now prohibit MCP discovery for local paths, invented
+`write_stdin` session IDs, interpreting the anonymous `external-api` trace
+identity as a directory, and descending into unrelated nested repositories for
+AGENTS.md.
+
+Regression tests replayed 20 cumulative tool results and recorded exactly 20
+executions, classified the observed string-session-ID wrapper error as a
+failure, and consumed the former full 250,000-token allowance without
+termination. The focused set passed `289 passed`; the full suite passed
+`916 passed` with one third-party Starlette warning. Ruff lint/format and
+strict mypy over 45 source modules exited 0. The real local
+`dgx-moa-reviewer` returned `verdict=approved` with zero findings.

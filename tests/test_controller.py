@@ -656,6 +656,28 @@ def test_duplicate_failed_call_ignores_call_id(settings, stub_provider: StubProv
     )
 
 
+def test_cumulative_tool_history_is_recorded_once(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="cumulative")
+    history: list[dict[str, object]] = []
+
+    for index in range(20):
+        messages = tool_messages(f"call-{index}", f"result-{index}")
+        history.extend(messages)
+        controller._observe(state, messages)  # type: ignore[arg-type]
+    controller._observe(state, history)  # type: ignore[arg-type]
+
+    assert len(state.tool_executions) == 20
+    assert (
+        sum(
+            event["event_type"] == "tool_execution_recorded"
+            for event in store.events(state.session_id)
+        )
+        == 20
+    )
+
+
 @pytest.mark.asyncio
 async def test_duplicate_unavailable_mcp_replans_without_409_and_removes_read_tool(
     settings, stub_provider: StubProvider
@@ -865,6 +887,10 @@ def test_stdout_missing_file_is_a_failure(settings, stub_provider: StubProvider)
     [
         ("unsupported call: read_mcp_resources", "UNSUPPORTED_TOOL"),
         ("resources/read failed: unknown MCP server 'missing'", "MCP_SERVER_UNAVAILABLE"),
+        (
+            'failed to parse function arguments: invalid type: string "20b7d7", expected i32',
+            "TEST_FAILURE",
+        ),
     ],
 )
 def test_semantic_tool_failures_are_not_recorded_as_success(
@@ -1341,8 +1367,14 @@ def test_goal_read_strips_shell_noise_and_redundant_failure_is_not_actionable(
     assert state.resolved_objective == actual
     assert active_failures(state) == []
     assert state.tool_executions[-1]["failure_class"] == "MCP_SERVER_UNAVAILABLE"
+    state.repository = {
+        "workspace_identifier": "external-api",
+        "identity_quality": "client_unspecified",
+    }
     prompt = controller.prompt_sandwich("executor", state, "continue", "continue")
     assert "do not call filesystem or MCP tools for that objective again" in prompt
+    assert "fallback repository label external-api is not a directory name" in prompt
+    assert "do not descend into unrelated nested repositories" in prompt
 
 
 def test_resolved_goal_history_drops_reads_but_keeps_work() -> None:
