@@ -5578,6 +5578,7 @@ async def test_responses_heartbeat_close_cancels_pending_chat(
     settings.loop_engineering.enabled = True
     entered = asyncio.Event()
     cancelled = asyncio.Event()
+    normal_stream = stub_provider.stream
 
     async def pending_stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         try:
@@ -5610,11 +5611,33 @@ async def test_responses_heartbeat_close_cancels_pending_chat(
 
         await response.body_iterator.aclose()
 
-    assert cancelled.is_set()
-    assert_usage(app, "cancelled")
-    state = app.state.store.get("responses-cancel")
-    assert state is not None and state.engineering_loop is not None
-    assert state.engineering_loop.termination_reason == "CLIENT_CANCELLED"
+        assert cancelled.is_set()
+        assert_usage(app, "cancelled")
+        state = app.state.store.get("responses-cancel")
+        assert state is not None and state.engineering_loop is not None
+        assert state.engineering_loop.termination_reason == "CLIENT_CANCELLED"
+
+        stub_provider.stream = normal_stream  # type: ignore[method-assign]
+        retry = await endpoint(app, "/v1/responses", "POST")(
+            ResponsesRequest(model="dgx-moa-fast", input="retry", stream=True),
+            Request({"type": "http", "app": app}),
+            x_session_id="responses-cancel",
+            x_runtime_channel=None,
+            x_trace_origin=None,
+            x_task_id=None,
+            x_workspace_path=None,
+            x_workspace_id=None,
+            x_repository_branch=None,
+            x_repository_commit=None,
+            x_dirty_state=None,
+        )
+        retry_body = b"".join([chunk async for chunk in retry.body_iterator])
+
+    assert b"event: response.completed" in retry_body
+    resumed = app.state.store.get("responses-cancel")
+    assert resumed is not None and resumed.engineering_loop is not None
+    assert resumed.engineering_loop.termination_reason is None
+    assert resumed.final_status is None
 
 
 def test_codex_utility_model_uses_unadvertised_fast_alias(
