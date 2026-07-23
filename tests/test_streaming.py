@@ -354,6 +354,8 @@ async def test_native_tool_call_delta_bytes_are_preserved_exactly() -> None:
     assert bytes(observation.captured).startswith(tool_event)
     assert observation.tool_delta_seen
     assert observation.tool_call_names == {0: "shell"}
+    assert observation.tool_call_ids_by_index == {0: "call-1"}
+    assert observation.tool_call_arguments == {0: '{"cmd":"ls"}'}
 
 
 @pytest.mark.asyncio
