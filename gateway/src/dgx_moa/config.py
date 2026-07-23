@@ -492,6 +492,8 @@ class Settings(BaseModel):
     api_key: str | None = None
     api_keys: dict[str, str] = Field(default_factory=dict)
     admin_api_enabled: bool = False
+    admin_token_ids: tuple[str, ...] = ("operator",)
+    max_admin_api_keys: int = Field(default=3, ge=1, le=10)
     state_db: Path = Path("data/state/gateway.db")
     run_dir: Path = Path("data/run")
     runtime_channel: str = "dev"
@@ -528,6 +530,8 @@ class Settings(BaseModel):
         keys = self.api_keys or ({"default": self.api_key} if self.api_key else {})
         if any(not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", name) for name in keys):
             raise ValueError("API token IDs must be lowercase safe identifiers")
+        if any(not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", name) for name in self.admin_token_ids):
+            raise ValueError("admin token IDs must be lowercase safe identifiers")
         invalid = any(
             not value
             or value.strip().lower() in API_KEY_PLACEHOLDERS
@@ -601,6 +605,18 @@ def load_settings(path: str | Path | None = None) -> Settings:
     gateway["api_keys"] = api_keys
     gateway["admin_api_enabled"] = os.getenv(
         "DGX_MOA_ADMIN_API_ENABLED", gateway.get("admin_api_enabled", False)
+    )
+    admin_token_ids: Any = os.getenv(
+        "DGX_MOA_ADMIN_TOKEN_IDS", gateway.get("admin_token_ids", ["operator"])
+    )
+    if isinstance(admin_token_ids, str):
+        try:
+            admin_token_ids = json.loads(admin_token_ids)
+        except json.JSONDecodeError as error:
+            raise ValueError("DGX_MOA_ADMIN_TOKEN_IDS must be a JSON array") from error
+    gateway["admin_token_ids"] = admin_token_ids
+    gateway["max_admin_api_keys"] = os.getenv(
+        "DGX_MOA_MAX_ADMIN_API_KEYS", gateway.get("max_admin_api_keys", 3)
     )
     gateway["bind_host"] = os.getenv("DGX_MOA_BIND_HOST", gateway.get("bind_host", "127.0.0.1"))
     gateway["bind_port"] = os.getenv("DGX_MOA_BIND_PORT", gateway.get("bind_port", 9000))

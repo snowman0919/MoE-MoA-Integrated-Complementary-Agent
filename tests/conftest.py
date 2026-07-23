@@ -31,6 +31,7 @@ def settings(tmp_path: Path) -> Settings:
     }
     return Settings(
         api_key="test-secret",
+        admin_token_ids=("default",),
         state_db=tmp_path / "state.db",
         run_dir=tmp_path / "run",
         models=models,

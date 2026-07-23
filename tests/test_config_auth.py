@@ -50,6 +50,20 @@ def test_bind_environment_overrides(monkeypatch, tmp_path: Path) -> None:
     assert settings.bind_port == 9100
 
 
+def test_admin_key_authority_environment_is_bounded(monkeypatch, tmp_path: Path) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text("gateway: {}\nmodels: {}\n")
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "true")
+    monkeypatch.setenv("DGX_MOA_API_KEYS", '{"operator":"long-operator-secret"}')
+    monkeypatch.setenv("DGX_MOA_ADMIN_TOKEN_IDS", '["operator"]')
+    monkeypatch.setenv("DGX_MOA_MAX_ADMIN_API_KEYS", "2")
+
+    settings = load_settings(config)
+
+    assert settings.admin_token_ids == ("operator",)
+    assert settings.max_admin_api_keys == 2
+
+
 def test_loop_engineering_environment_is_strict_and_disabled_by_default(
     monkeypatch, tmp_path: Path
 ) -> None:
