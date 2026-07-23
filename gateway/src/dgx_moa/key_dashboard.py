@@ -86,7 +86,10 @@ const $=id=>document.getElementById(id);
 const fmtTime=value=>value?new Date(value*1000).toLocaleString():"없음";
 const optional=id=>$(id).value?Number($(id).value):null;
 let modelCatalog=new Map();
-const modelLabel=model=>modelCatalog.has(model)?model+" · "+modelCatalog.get(model):model;
+const modelNames=new Map([["dgx-moa-executor","Qwen3-Next"],
+  ["dgx-moa-planner","Nemotron-30B"],["dgx-moa-reviewer","North-Mini-30B"]]);
+const modelLabel=model=>model+(modelNames.has(model)?" · "+modelNames.get(model):
+  modelCatalog.has(model)?" · "+modelCatalog.get(model):"");
 const api=async(path,options={})=>{
   const response=await fetch(path,{...options,headers:{
     "Content-Type":"application/json",...(options.headers||{})}});
@@ -154,7 +157,7 @@ async function load(){
   modelCatalog=new Map(data.model_catalog.map(item=>[item.served_name,item.repository]));
   $("model-catalog").replaceChildren();
   data.model_catalog.forEach(item=>{const line=document.createElement("div");
-    line.textContent=item.served_name+" · "+item.repository;$("model-catalog").append(line)});
+    line.textContent=modelLabel(item.served_name);$("model-catalog").append(line)});
   const usage=new Map(data.usage.summary.map(item=>[item.name,item]));$("keys").replaceChildren();
   const selected=$("graph-key").value;$("graph-key").replaceChildren();
   data.keys.forEach(key=>{const row=document.createElement("tr");const stats=usage.get(key.name)||{};

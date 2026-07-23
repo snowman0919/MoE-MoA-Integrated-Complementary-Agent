@@ -116,6 +116,9 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert "JSON.parse(text)" in dashboard.text
         assert "공란=무제한" in dashboard.text
         assert ".value.toLowerCase()" in dashboard.text
+        assert all(
+            name in dashboard.text for name in ("Qwen3-Next", "Nemotron-30B", "North-Mini-30B")
+        )
 
         listing = client.get("/v1/admin/api-keys", headers=operator)
         assert listing.status_code == 200
