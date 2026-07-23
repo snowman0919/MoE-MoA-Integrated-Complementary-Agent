@@ -4613,3 +4613,34 @@ session `f44ca58f-a31a-4e0d-9771-a767e6bfaf21` recorded six successful tool
 results and seven completed streams. An independent host assertion returned
 `artifact=PASS`; post-run loopback and tailnet health/readiness checks remained
 HTTP 200.
+
+## Absolute MCP path and streaming Judge recovery — 2026-07-24
+
+Production session `2af02fc4-ddfe-46f5-942a-7e3af9a8bfe2` resolved the
+5,532-character objective, then issued five parallel `read_mcp_resource`
+calls against `codex_apps` with plain `/Users/...` paths. The Responses
+compatibility adapter handled `file://` URIs but not absolute path strings, so
+all five calls reached the unavailable MCP resource reader. The resulting
+correction required selective Remote Judge validation. Chat correctly returned
+`judge_non_stream_required`, but the Responses client repeated the same
+streaming request five times and ended with a disconnected stream.
+
+The existing local-file compatibility path now accepts absolute paths as well
+as `file://` URIs and shell-quotes them into `exec_command`. The Responses
+adapter also handles `judge_non_stream_required` once inside the original
+request: it reruns Chat without streaming, preserves keepalives, then converts
+the buffered Chat result through the existing Responses event translator.
+
+The full suite passed `887 passed` with the existing third-party Starlette
+warning; Ruff formatting, Ruff lint, strict mypy over 42 source files, and
+`git diff --check` were clean. A physical request using
+`read_mcp_resource(server=codex_apps, uri=/Users/test/work/docs/STATE.md)`
+returned one `exec_command` call containing
+`cat -- /Users/test/work/docs/STATE.md`; no MCP call reached the client. A
+physical high-risk streaming request recorded
+`responses_judge_non_stream_retried`, selected the Remote Judge, and returned
+one fail-closed Responses result rather than a 409 reconnection loop. An
+official Codex CLI Goal then read its objective and state document, implemented
+the sanitizer, created five standard-library tests, ran them twice with exit
+code 0, and returned a concise Korean evidence report. An independent host
+test run also passed.

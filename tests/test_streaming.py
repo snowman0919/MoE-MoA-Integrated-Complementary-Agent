@@ -244,6 +244,35 @@ async def test_responses_sse_maps_local_mcp_file_to_exec_command() -> None:
 
 
 @pytest.mark.asyncio
+async def test_responses_sse_maps_absolute_mcp_path_to_exec_command() -> None:
+    async def upstream():
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call-mcp","function":{"name":"read_mcp_resource",'
+            b'"arguments":"{\\"server\\":\\"codex_apps\\",'
+            b'\\"uri\\":\\"/Users/test/work/docs/STATE.md\\"}"}}]},'
+            b'"finish_reason":"tool_calls"}]}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa",
+            function_tool_names={"exec_command", "read_mcp_resource"},
+        )
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+    done = next(
+        event for event in events if event["type"] == "response.function_call_arguments.done"
+    )
+
+    assert json.loads(done["arguments"]) == {"cmd": "cat -- /Users/test/work/docs/STATE.md"}
+
+
+@pytest.mark.asyncio
 async def test_responses_sse_keeps_exec_command_inside_current_sandbox() -> None:
     async def upstream():
         yield (
