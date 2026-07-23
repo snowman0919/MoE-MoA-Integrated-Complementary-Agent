@@ -21,6 +21,7 @@ PROGRESS_ONLY_TEXT = {
     "Preparing the next tool action.",
     "다음 도구 작업을 준비합니다.",
     "다음 작업에 필요한 증거를 확인합니다.",
+    "Planner 역할이 구조와 구현 순서를 설계합니다.",
 }
 
 

@@ -56,7 +56,11 @@ async def test_responses_sse_translates_chat_text_and_usage() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "text",
-    ["다음 도구 작업을 준비합니다.", "exec_command 도구를 실행합니다."],
+    [
+        "다음 도구 작업을 준비합니다.",
+        "exec_command 도구를 실행합니다.",
+        "Planner 역할이 구조와 구현 순서를 설계합니다.",
+    ],
 )
 async def test_responses_sse_rejects_progress_only_stop(text: str) -> None:
     async def upstream():
