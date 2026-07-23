@@ -112,6 +112,8 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert "frame-ancestors 'none'" in dashboard.headers["content-security-policy"]
         assert 'type="date"' in dashboard.text
         assert "navigator.clipboard" in dashboard.text
+        assert "payload.error?.message" in dashboard.text
+        assert ".value.toLowerCase()" in dashboard.text
 
         listing = client.get("/v1/admin/api-keys", headers=operator)
         assert listing.status_code == 200
@@ -141,6 +143,13 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
             },
         )
         assert created.status_code == 200
+        invalid = client.post(
+            "/v1/admin/api-keys",
+            headers=operator,
+            json={"name": "Invalid Name", "kind": "general", "expires_in_days": 30},
+        )
+        assert invalid.status_code == 422
+        assert invalid.json()["error"]["param"] == "name"
         new_token = created.json()["api_key"]
         assert (
             client.get("/v1/models", headers={"Authorization": f"Bearer {new_token}"}).status_code
