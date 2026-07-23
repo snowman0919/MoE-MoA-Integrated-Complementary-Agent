@@ -4457,3 +4457,17 @@ call. It recorded `engineering_loop_resumed` and suppressed
 `final_status=null`, and `termination_reason=null`. Gateway and both
 tailnet/loopback listeners were active. Hermes was not restarted and retained
 PID 1796553.
+
+## Short operator model labels — 2026-07-23
+
+The operator console keeps full model repository identifiers in its
+administrator API but renders the requested compact names in the role catalog,
+usage legend, and tooltips: `Qwen3-Next`, `Nemotron-30B`, and
+`North-Mini-30B`.
+
+The full suite passed `873 passed` with the existing third-party Starlette
+warning; targeted Ruff and JavaScript syntax checks were clean. Production
+`main@356b8fa` returned HTTP 200 for the deployed console, contained all three
+compact labels, and used the shared `modelLabel` renderer for the catalog.
+Authenticated gateway listeners remained available on tailnet and loopback.
+Hermes was not restarted and retained PID 1796553.
