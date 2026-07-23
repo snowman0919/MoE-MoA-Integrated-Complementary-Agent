@@ -710,6 +710,9 @@ async def test_duplicate_unavailable_mcp_replans_without_409_and_removes_read_to
     prepared = await controller.prepare_executor(state, request, ("executor",))
 
     assert [tool["function"]["name"] for tool in prepared["tools"]] == ["exec_command"]
+    executor_prompt = prepared["messages"][0]["content"]
+    assert "Available client tools (exact names): exec_command." in executor_prompt
+    assert "Do not invent aliases such as read_file" in executor_prompt
     assert any(
         event["event_type"] == "replan_requested" for event in store.events(state.session_id)
     )
@@ -717,6 +720,22 @@ async def test_duplicate_unavailable_mcp_replans_without_409_and_removes_read_to
         event["event_type"] == "tool_temporarily_unavailable"
         for event in store.events(state.session_id)
     )
+
+
+def test_goal_file_wrapper_gets_full_completion_constraints(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="goal-wrapper",
+        objective="시작하기 전에 /tmp/task/goal-objective.md 파일을 읽어",
+    )
+
+    prompt = controller.prompt_sandwich("executor", state, "", "continue")
+
+    assert "reading or summarizing the objective is not completion" in prompt
+    assert "when no goal exists, call create_goal first" in prompt
+    assert "Never mark the goal complete" in prompt
 
 
 def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
@@ -906,6 +925,10 @@ def test_successful_same_path_fallback_resolves_mcp_failure(
 def test_failure_classification() -> None:
     assert classify_failure("No such file or directory") == "NONEXISTENT_PATH"
     assert classify_failure("unsupported call: read_mcp_resources") == "UNSUPPORTED_TOOL"
+    assert (
+        classify_failure("bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted")
+        == "SANDBOX_UNAVAILABLE"
+    )
     assert (
         classify_failure("resources/read failed: unknown MCP server 'missing'")
         == "MCP_SERVER_UNAVAILABLE"
@@ -1298,6 +1321,7 @@ def test_resolved_goal_history_is_compacted_before_observation(
         "resolved-goal-retry", messages
     )
 
+    assert messages[0]["content"] == "구현하고 검증한다."
     assert [item["tool_name"] for item in state.tool_executions] == ["inspect_workspace"]
     assert all(item.get("failure_class") != "MCP_SERVER_UNAVAILABLE" for item in state.failures)
 

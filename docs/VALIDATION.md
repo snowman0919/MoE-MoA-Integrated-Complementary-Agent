@@ -4471,3 +4471,36 @@ warning; targeted Ruff and JavaScript syntax checks were clean. Production
 compact labels, and used the shared `modelLabel` renderer for the catalog.
 Authenticated gateway listeners remained available on tailnet and loopback.
 Hermes was not restarted and retained PID 1796553.
+
+## Official Codex CLI goal-loop compatibility — 2026-07-23
+
+The 22:35 KST request was accepted and streamed normally until the gateway
+restart at 22:37:53 KST, which coincided with the model-label deployment.
+Cloudflare recorded `unexpected EOF`; the resumed session then exhausted five
+reconnections. New authenticated drain controls reject new Responses and Chat
+work with retryable HTTP 503 while allowing active requests to finish.
+`scripts/restart-gateway-drained.sh` waits for
+`active_request_count=0` before restarting the gateway and cancels drain mode
+without restarting when its bounded wait fails.
+
+An unmodified shallow clone of `https://github.com/openai/codex.git` at
+`808d3c2702ce8eae007c457aa930e7c3b68dd5f6c` was built with
+`cargo build -p codex-cli --bin codex`. The built CLI ran in a disposable
+Ubuntu 24.04 Docker sandbox with a read-only root, all Linux capabilities
+dropped, `no-new-privileges`, and only isolated `CODEX_HOME` and workspace
+mounts writable. The first physical run exposed an unsupported model-generated
+`read_file` call; the client had advertised only `exec_command` and goal/status
+tools. Responses translation now maps that exact incompatible read to a
+shell-quoted `exec_command`, and resolved goal history replaces the wrapper
+prompt with the loaded objective rather than repeatedly asking the model to
+read the same file.
+
+The final physical run read `goal-objective.md` once, created `result.txt`,
+ran `test "$(cat result.txt)" = CODEX_CLI_GOAL_OK` with exit code 0, and
+returned the concise Korean completion message. The Docker process exited 0;
+an independent host-side assertion returned `artifact=PASS`. Persisted events
+recorded one `goal_objective_resolved`, one `goal_history_compacted`, three
+successful tool results, and a final `finish_reasons=["stop"]`. Ruff formatting,
+Ruff lint, and strict mypy over 43 source files were clean; the full
+pre-deployment suite passed `876 passed` with the existing third-party
+Starlette warning.

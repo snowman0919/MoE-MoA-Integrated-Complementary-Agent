@@ -537,6 +537,7 @@ def create_app(
         provider = ModelProvider()
         project_root = Path(os.getenv("DGX_MOA_PROJECT_ROOT", ".")).resolve()
         app.state.settings = configured
+        app.state.draining = False
         app.state.api_keys = api_keys
         app.state.store = store
         app.state.runtime_metrics = RuntimeMetrics()
@@ -957,6 +958,22 @@ def create_app(
             await app.state.lifecycle.close()
 
     app = FastAPI(title="DGX MoA Agent", version="2.0.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def reject_new_work_while_draining(request: Request, call_next):  # type: ignore[no-untyped-def]
+        if (
+            getattr(request.app.state, "draining", False)
+            and request.method == "POST"
+            and request.url.path in {"/v1/chat/completions", "/v1/responses"}
+        ):
+            return error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "gateway is draining for a safe restart",
+                "server_error",
+                "gateway_draining",
+                headers={"Retry-After": "2"},
+            )
+        return await call_next(request)
 
     @app.exception_handler(HTTPException)
     async def handle_http_exception(request: Request, error: HTTPException) -> JSONResponse:
@@ -1705,8 +1722,9 @@ def create_app(
                     "upgrade": None,
                     "base_instructions": (
                         "You are a coding agent. Follow the user's instructions and use the "
-                        "provided tools to inspect, edit, and verify the workspace. Use native "
-                        "file tools or shell for local paths and file:// URIs. Call "
+                        "provided tools to inspect, edit, and verify the workspace. Use "
+                        "exec_command for local paths and file:// URIs; read_file is not a "
+                        "supported Codex tool. Call "
                         "read_mcp_resource only with an exact server and URI returned by MCP "
                         "resource discovery; integration display names are not MCP server IDs."
                     ),
@@ -3196,6 +3214,11 @@ def create_app(
         if body.instructions:
             messages.insert(0, {"role": "developer", "content": body.instructions})
         tools = _coerce_responses_tools(body.tools)
+        function_tool_names = {
+            str(tool["function"]["name"])
+            for tool in tools or []
+            if isinstance(tool.get("function"), dict) and tool["function"].get("name")
+        }
         custom_tool_names = {
             str(tool.get("name"))
             for tool in body.tools or []
@@ -3328,6 +3351,7 @@ def create_app(
                                 chat_result.body_iterator,
                                 response_model,
                                 custom_tool_names=custom_tool_names,
+                                function_tool_names=function_tool_names,
                                 session_id=response_session_id,
                             ):
                                 yield chunk
@@ -3475,6 +3499,25 @@ def create_app(
             lifecycle_mode=configured.lifecycle_mode,
             managed_roles=tuple(configured.lifecycle_unit_map),
         )
+
+    @app.get("/v1/admin/drain", dependencies=[Depends(admin_auth)])
+    async def admin_drain_status(request: Request) -> dict[str, Any]:
+        return {
+            "draining": bool(request.app.state.draining),
+            "active_request_count": request.app.state.usage.active_request_count(),
+        }
+
+    @app.post("/v1/admin/drain", dependencies=[Depends(admin_auth)])
+    async def admin_drain_start(request: Request) -> dict[str, Any]:
+        request.app.state.draining = True
+        request.app.state.store.event("runtime-drain", "gateway_drain_started", {})
+        return await admin_drain_status(request)
+
+    @app.delete("/v1/admin/drain", dependencies=[Depends(admin_auth)])
+    async def admin_drain_cancel(request: Request) -> dict[str, Any]:
+        request.app.state.draining = False
+        request.app.state.store.event("runtime-drain", "gateway_drain_cancelled", {})
+        return await admin_drain_status(request)
 
     @app.get("/admin/api-keys", response_class=HTMLResponse)
     async def api_key_dashboard() -> HTMLResponse:

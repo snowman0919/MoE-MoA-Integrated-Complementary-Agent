@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
 import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
@@ -73,9 +74,7 @@ class StreamObservation:
                     name = function.get("name") if isinstance(function, dict) else None
                     if isinstance(name, str):
                         self.tool_call_names[index] = self.tool_call_names.get(index, "") + name
-                    arguments = (
-                        function.get("arguments") if isinstance(function, dict) else None
-                    )
+                    arguments = function.get("arguments") if isinstance(function, dict) else None
                     if isinstance(arguments, str):
                         self.tool_call_arguments[index] = (
                             self.tool_call_arguments.get(index, "") + arguments
@@ -168,6 +167,7 @@ async def responses_sse(
     model: str,
     *,
     custom_tool_names: set[str] | None = None,
+    function_tool_names: set[str] | None = None,
     session_id: str = "unknown",
 ) -> AsyncGenerator[bytes, None]:
     """Translate Chat Completions SSE into Responses text and function-call events."""
@@ -278,16 +278,29 @@ async def responses_sse(
                             "_arguments_emitted": 0,
                             "_added": False,
                             "_kind": "",
+                            "_compat_read_file": False,
                         }
                     item = tool_calls[index]
                     if tool_delta.get("id"):
                         item["call_id"] = tool_delta["id"]
                     if function.get("name"):
-                        item["name"] = function["name"]
+                        name = str(function["name"])
+                        compat_read_file = (
+                            name == "read_file"
+                            and "read_file" not in (function_tool_names or set())
+                            and "exec_command" in (function_tool_names or set())
+                        )
+                        item["name"] = "exec_command" if compat_read_file else name
+                        item["_compat_read_file"] = compat_read_file
                     arguments = function.get("arguments")
                     if isinstance(arguments, str) and arguments:
                         item["_arguments"] = str(item["_arguments"]) + arguments
-                    if not item["_added"] and item["name"] and item["call_id"]:
+                    if (
+                        not item["_added"]
+                        and item["name"]
+                        and item["call_id"]
+                        and not item["_compat_read_file"]
+                    ):
                         is_custom = item["name"] in (custom_tool_names or set())
                         item["id"] = f"{'ctc' if is_custom else 'fc'}_{uuid.uuid4().hex}"
                         item["type"] = "custom_tool_call" if is_custom else "function_call"
@@ -364,6 +377,18 @@ async def responses_sse(
         yield event("response.output_item.done", output_index=0, item=completed_message)
         completed_output = [completed_message]
         for index, item in sorted(tool_calls.items()):
+            if item["_compat_read_file"]:
+                try:
+                    path = json.loads(str(item["_arguments"]))["path"]
+                    if not isinstance(path, str) or not path:
+                        raise TypeError
+                except (KeyError, TypeError, ValueError):
+                    path = ""
+                item["_arguments"] = json.dumps(
+                    {"cmd": f"cat -- {shlex.quote(path)}"},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
             if not item["_added"]:
                 is_custom = item["name"] in (custom_tool_names or set())
                 item["id"] = f"{'ctc' if is_custom else 'fc'}_{uuid.uuid4().hex}"

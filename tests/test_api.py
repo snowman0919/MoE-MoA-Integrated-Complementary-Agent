@@ -2592,6 +2592,10 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             "integration display names are not MCP server IDs" in model["base_instructions"]
             for model in models["models"]
         )
+        assert all(
+            "read_file is not a supported Codex tool" in model["base_instructions"]
+            for model in models["models"]
+        )
         assert all(model["comp_hash"] == "dgx-moa-65536-v1" for model in models["models"])
         response = client.post(
             "/v1/chat/completions",
@@ -2604,6 +2608,31 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert call["id"] == "call-preserved"
         assert response.json()["usage"]["total_tokens"] == 3
         assert stub_provider.calls == ["reasoner", "executor"]
+
+
+def test_admin_drain_rejects_new_work_and_can_be_cancelled(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.admin_api_enabled = True
+    with client_with_stub(settings, stub_provider) as client:
+        headers = {"Authorization": "Bearer test-secret"}
+        started = client.post("/v1/admin/drain", headers=headers)
+
+        assert started.status_code == 200
+        assert started.json() == {"draining": True, "active_request_count": 0}
+        rejected = client.post(
+            "/v1/responses",
+            headers=headers,
+            json={"model": "dgx-moa-fast", "input": "work"},
+        )
+        assert rejected.status_code == 503
+        assert rejected.json()["error"]["code"] == "gateway_draining"
+        assert rejected.headers["retry-after"] == "2"
+
+        cancelled = client.delete("/v1/admin/drain", headers=headers)
+        assert cancelled.status_code == 200
+        assert cancelled.json() == {"draining": False, "active_request_count": 0}
+        assert client.get("/v1/admin/drain", headers=headers).json()["draining"] is False
 
 
 def test_multiple_api_tokens_are_attributed_by_safe_id(
@@ -6733,8 +6762,7 @@ def test_streaming_responses_recovers_remapped_tool_session(
         async def chunks():  # type: ignore[no-untyped-def]
             if has_result:
                 yield (
-                    b'data: {"choices":[{"delta":{"content":"continue"},'
-                    b'"finish_reason":null}]}\n\n'
+                    b'data: {"choices":[{"delta":{"content":"continue"},"finish_reason":null}]}\n\n'
                 )
                 yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
             else:
