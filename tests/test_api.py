@@ -6346,7 +6346,7 @@ def test_loop_tool_budget_is_enforced_before_client_receives_nonstream_call(
         state = client.app.state.store.get("tool-budget")
 
     assert response.status_code == status_code
-    assert stub_provider.requests[-1]["parallel_tool_calls"] is False
+    assert stub_provider.requests[-1]["parallel_tool_calls"] is True
     assert state is not None and state.engineering_loop is not None
     if tool_budget:
         assert state.engineering_loop.remaining_budget.tool_calls == 0
@@ -6661,3 +6661,76 @@ def test_responses_goal_recovers_remapped_tool_continuation(
     assert len(states) == 1
     assert states[0].objective == objective
     assert states[0].pending_tool_call_ids == []
+
+
+def test_streaming_responses_recovers_remapped_tool_session(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    async def stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        stub_provider.requests.append(request)
+        has_result = any(message.get("role") == "tool" for message in request["messages"])
+
+        async def chunks():  # type: ignore[no-untyped-def]
+            if has_result:
+                yield (
+                    b'data: {"choices":[{"delta":{"content":"continue"},'
+                    b'"finish_reason":null}]}\n\n'
+                )
+                yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+            else:
+                yield (
+                    b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                    b'"id":"call-original","type":"function","function":{"name":'
+                    b'"read_goal","arguments":"{\\"path\\":\\"goal-objective.md\\"}"}}]},'
+                    b'"finish_reason":null}]}\n\n'
+                )
+                yield b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    stub_provider.stream = stream  # type: ignore[method-assign]
+    objective = "/goal Read the objective file before continuing."
+    tool = {
+        "type": "function",
+        "name": "read_goal",
+        "parameters": {"type": "object", "properties": {}},
+    }
+    with client_with_stub(settings, stub_provider) as client:
+        first = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "input": objective,
+                "tools": [tool],
+                "stream": True,
+            },
+        )
+        second = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "input": [
+                    {"role": "user", "content": objective},
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call-remapped",
+                        "output": "실제 목표는 구현과 검증이다.",
+                    },
+                ],
+                "tools": [tool],
+                "stream": True,
+            },
+        )
+        session_id = first.headers["X-Session-ID"]
+        state = client.app.state.store.get(session_id)
+        with sqlite3.connect(settings.state_db) as database:
+            session_count = database.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+
+    assert second.headers["X-Session-ID"] == session_id
+    assert session_count == 1
+    assert state and state.step_count == 2
+    assert state.tool_results[-1]["stdout"] == "실제 목표는 구현과 검증이다."
+    assert state.finish_reasons == ["stop"]

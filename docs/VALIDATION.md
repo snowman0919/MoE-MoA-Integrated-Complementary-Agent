@@ -1,5 +1,33 @@
 # Validation
 
+## Streaming goal continuity and tool batching — 2026-07-23
+
+Inspection of the attached Hermes/Codex goal run found 107 SQLite session rows
+for one objective between `01:46:16` and `02:40:36` UTC. Each streamed
+Responses turn received a new generated session ID before Chat continuation
+recovery could run. The rows repeatedly restarted at executor step one while
+re-observing up to 12 prior tool results; the final row remained in
+`phase=executing` with no completion criteria or termination reason despite
+returning `finish_reason=stop`.
+
+Streaming Responses now resolves same-token tool-result ownership before
+generating a session ID, including the existing unique same-objective recovery
+for remapped call IDs. A focused two-turn streamed test verified one persisted
+session, the same `X-Session-ID`, `step_count=2`, retained tool output, and a
+cleared remapped pending call. Independent tool calls now default to parallel
+execution when the client does not explicitly select sequential execution.
+The Executor prompt also requires batching independent calls and forbids
+re-reading an unchanged successfully loaded `/goal` objective.
+
+The same regression run exposed that the executor total-timeout context crossed
+an async-generator `yield`. Its scheduled cancellation therefore targeted the
+task that consumed the first chunk rather than only the next upstream wait.
+The stream now applies the unchanged absolute deadline to each upstream
+`anext` operation, so a timeout raises `StageTimeout` without cancelling the
+downstream consumer. Focused streaming, continuation, timeout, and translation
+tests passed 30/30. The full isolated suite passed 862 tests with the existing
+third-party Starlette TestClient deprecation warning.
+
 ## Readable detailed live observation — 2026-07-22
 
 The live-observation formatter now renders batched events as separated multi-line
