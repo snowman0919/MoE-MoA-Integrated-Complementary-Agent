@@ -9,6 +9,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import aclosing, asynccontextmanager
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -72,6 +73,8 @@ from .runtime_status import memory_available as runtime_memory_available
 from .runtime_status import report as runtime_report
 from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest, text_content
 from .security import (
+    ADMIN_SESSION_COOKIE,
+    ADMIN_SESSION_SECONDS,
     ApiKeyRequest,
     ApiKeyStore,
     ApiKeyUpdate,
@@ -3503,14 +3506,76 @@ def create_app(
             },
         )
 
+    @app.post("/v1/admin/session", dependencies=[Depends(admin_auth)])
+    async def api_key_session(request: Request) -> Response:
+        token = request.app.state.api_keys.create_admin_session(request.state.api_token_id)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        response.set_cookie(
+            ADMIN_SESSION_COOKIE,
+            token,
+            max_age=ADMIN_SESSION_SECONDS,
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="strict",
+        )
+        return response
+
+    @app.delete("/v1/admin/session")
+    async def api_key_session_delete(request: Request) -> Response:
+        if token := request.cookies.get(ADMIN_SESSION_COOKIE):
+            request.app.state.api_keys.delete_admin_session(token)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        response.delete_cookie(ADMIN_SESSION_COOKIE, samesite="strict")
+        return response
+
     @app.get("/v1/admin/api-keys", dependencies=[Depends(admin_auth)])
     async def api_key_list(request: Request) -> JSONResponse:
         return key_response(
             {
-                "keys": request.app.state.api_keys.list(),
+                "keys": [
+                    {field: value for field, value in key.items() if field != "api_key"}
+                    for key in request.app.state.api_keys.list()
+                ],
                 "usage": request.app.state.usage.api_token_dashboard(),
                 "max_admin_keys": configured.max_admin_api_keys,
             }
+        )
+
+    @app.get("/v1/admin/api-keys/{name}/reveal", dependencies=[Depends(admin_auth)])
+    async def api_key_reveal(name: str, request: Request) -> JSONResponse:
+        try:
+            record = request.app.state.api_keys.get(name)
+        except KeyError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found") from error
+        return key_response({"api_key": record["api_key"]})
+
+    @app.get("/v1/admin/api-keys/{name}/usage", dependencies=[Depends(admin_auth)])
+    async def api_key_usage(
+        name: str,
+        request: Request,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> JSONResponse:
+        try:
+            request.app.state.api_keys.get(name)
+        except KeyError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found") from error
+        if start and end and end < start:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "end date must not precede start date")
+        start_at = (
+            datetime.combine(start, datetime.min.time(), tzinfo=UTC).timestamp() if start else None
+        )
+        end_at = (
+            datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=UTC).timestamp()
+            if end
+            else None
+        )
+        return key_response(
+            request.app.state.usage.api_token_dashboard(
+                name=name,
+                start_at=start_at,
+                end_at=end_at,
+            )
         )
 
     @app.post("/v1/admin/api-keys", dependencies=[Depends(admin_auth)])
