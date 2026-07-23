@@ -4117,3 +4117,12 @@ Planner, Reviewer, and Frontier tasks remain parallel; dependency-ordered
 Reasoner, Executor routing, and final synthesis remain sequential. The full
 suite passed `861 passed` with the existing third-party Starlette warning;
 Ruff, strict mypy over 41 source files, and `git diff --check` were clean.
+
+Production `main@4b208b3` then ran a sessionless Responses `/goal` probe whose
+English wrapper referenced a synthetic Korean objective. Four turns retained
+one session with four steps and three tool results. The Executor first called
+`read_goal`, then called `status_check` instead of returning an objective
+summary. After the matching validation result reported all synthetic criteria
+passed, the only final text was Korean: `이제 완료되었습니다.` The persisted
+session had no pending tool calls. Gateway, Executor, Hermes, and `/readyz`
+remained healthy; Planner and Reviewer stayed dynamically cold.
