@@ -4802,3 +4802,12 @@ returned HTTP 200, and a two-token physical
 `anthropic/claude-sonnet-4.6` completion returned HTTP 200. The same bytes were
 installed in the production worktree with mode `0600`; the active gateway was
 not restarted because the fallback reads the key file at invocation time.
+
+Production `main@724c4cd` was deployed after the authenticated drain reached
+zero active requests. Only the gateway PID changed, from `3150695` to
+`3245266`; Hermes remained `1796553`, Executor `1709495`, Planner `2969174`,
+and Reviewer `2969170`. Health and model discovery passed. A physical
+`dgx-moa-orchestrated` Responses stream returned HTTP 200 with exactly one
+`response.completed` and no `response.failed`; its persisted loop state loaded
+three remaining Frontier calls. The inspected post-deployment journal contained
+no traceback, exception, disconnect, budget exhaustion, backend error, or 401.
