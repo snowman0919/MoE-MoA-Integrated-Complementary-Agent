@@ -261,6 +261,19 @@ class ApiKeyStore:
             raise KeyError(name)
         return self.get(name)
 
+    def delete(self, name: str) -> None:
+        with self._connect() as database:
+            record = database.execute(
+                "SELECT source, revoked_at FROM api_keys WHERE name = ?", (name,)
+            ).fetchone()
+            if record is None:
+                raise KeyError(name)
+            if record["source"] == "environment":
+                raise ValueError("environment API keys cannot be deleted")
+            if record["revoked_at"] is None:
+                raise ValueError("revoke the API key before deleting it")
+            database.execute("DELETE FROM api_keys WHERE name = ?", (name,))
+
     def get(self, name: str) -> dict[str, Any]:
         records = {record["name"]: record for record in self.list()}
         if name not in records:
