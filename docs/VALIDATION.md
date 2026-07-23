@@ -4858,3 +4858,13 @@ eviction, subscriber isolation, invalid and oversized input, and concurrent
 publish/read over 200 events. The final full suite passed `913 passed` with one
 third-party Starlette warning and exit code 0. Ruff lint/format passed over 82
 files, and strict mypy passed over 45 source modules; both exited 0.
+
+Production `main@a250309` was deployed after the authenticated drain reached
+zero active requests. Only the gateway PID changed from `3268815` to `3333227`;
+Hermes remained `1796553`, Executor `1709495`, Planner `2969174`, and Reviewer
+`3277489`. A post-deployment request through the deployed provider sent the real
+Reviewer template flag `reasoning=false`, received non-empty public content,
+and parsed `verdict=approved` with zero findings. The production checkout's six
+feed tests and the healthcheck both exited 0. The inspected post-restart gateway
+journal contained no traceback, exception, disconnect, loop-budget exhaustion,
+backend error, 401, or 500 entry.
