@@ -4381,3 +4381,20 @@ then revoked and deleted with HTTP 204. The updated UI contained lowercase
 normalization, non-JSON error handling, and explicit `공란=무제한` labels.
 After the deployment restart, gateway, loopback socket, and loopback proxy were
 active; Hermes was not restarted and retained PID 1796553.
+
+## Daily stacked model-usage chart — 2026-07-23
+
+The operator usage endpoint now groups actual model invocations and measured
+tokens by API key, UTC day, and model. The existing key and calendar range
+filters feed an OpenCode-style vertical stacked bar chart with a stable model
+legend and per-segment token/call tooltip. Invocation-level provider cost is
+not present in the usage database, so the chart reports tokens rather than
+inventing cost.
+
+The full suite passed `870 passed` with the existing third-party Starlette
+warning; JavaScript syntax checking, Ruff, and strict mypy over 42 source files
+were clean. Production `main@dc9b04f` returned five July daily-model rows for
+the `operator` key across four models and 26,553 measured tokens; every row was
+pinned to the requested key. The deployed page contained the stacked plot,
+model legend, and daily token title. Gateway, loopback socket, and loopback
+proxy were active; Hermes was not restarted and retained PID 1796553.
