@@ -32,6 +32,17 @@ verified `HERMES_32768_PASS`, and reported in Korean. OpenCode emitted ordered
 created and separately verified `CODEX_32768_PASS`, then returned a Korean
 completion instead of stopping after the document read.
 
+PR `#104` merged as production `main@2a6aa01`. The gateway drained to zero
+active requests before restart; readiness passed on both tailnet and loopback,
+and Hermes retained PID `1796553`. The exact production MCP request accepted
+32,768 tokens, emitted progress before the remapped `exec_command`, and ended
+with `response.completed`. The official Codex CLI then read the Goal once,
+batched `pwd` and `ls`, created and independently verified
+`PRODUCTION_CODEX_PASS`, and returned a concise Korean completion. Gateway
+session `f3865615-8154-4f3a-9284-02eeabc52b28` recorded one objective
+resolution, one history compaction, three successful tool executions, and a
+final `finish_reasons=["stop"]`.
+
 ## Resolved Goal history compaction — 2026-07-23
 
 Postdeployment session `a1bc31fd-543b-4df2-abf0-baadbd43de8b`
