@@ -1,0 +1,21 @@
+[Unit]
+Description=DGX MoA loopback gateway proxy
+Requires=dgx-moa-gateway.service dgx-moa-loopback.socket
+After=dgx-moa-gateway.service dgx-moa-loopback.socket
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=notify
+EnvironmentFile=/home/kotori9/dgx-moa-agent/.env
+EnvironmentFile=-/home/kotori9/dgx-moa-agent/.env.local
+ExecStart=/bin/sh -c 'exec /usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=5min "$DGX_MOA_BIND_HOST:$DGX_MOA_BIND_PORT"'
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6

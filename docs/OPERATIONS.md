@@ -49,10 +49,13 @@ journalctl --user -u dgx-moa-gateway.service -f
 scripts/healthcheck.sh
 ```
 
-Gateway binds the configured tailnet address on port `9000`. Local model servers
-bind only ports `8101`, `8102`, `8103`, and `8110` on loopback. The configured
-Ollama Reasoner is an external dependency and must remain protected by its own
-network boundary; this gateway does not expose or proxy its native API.
+Gateway binds the configured tailnet address on port `9000`.
+`dgx-moa-loopback.socket` exposes `127.0.0.1:9000` through the systemd socket
+proxy to that same authenticated gateway; it never binds `0.0.0.0`. Local model
+servers bind only ports `8101`, `8102`, `8103`, and `8110` on loopback. The
+configured Ollama Reasoner is an external dependency and must remain protected
+by its own network boundary; this gateway does not expose or proxy its native
+API.
 
 ```bash
 scripts/runtime-status.sh

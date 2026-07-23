@@ -119,7 +119,8 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 
 ## Runtime
 
-- Gateway: authenticated direct tailnet TCP at `100.125.239.72:9000`.
+- Gateway: authenticated direct tailnet TCP at `100.125.239.72:9000`, with
+  `127.0.0.1:9000` proxied to the same gateway by a loopback-only systemd socket.
 - Model endpoints: loopback-only executor `8101`, planner `8102`, reviewer `8103`.
 - Production context limits are Executor `65536`, Planner `8192`, and Reviewer
   `8192`.
