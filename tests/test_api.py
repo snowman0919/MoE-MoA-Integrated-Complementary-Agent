@@ -21,6 +21,7 @@ from dgx_moa.lifecycle import (
     calculate_idle_policy,
     continuation_correlation,
 )
+from dgx_moa.loop_engineering import new_loop
 from dgx_moa.remote_judge import MockJudgeProvider, RemoteJudgeVerdict
 from dgx_moa.replay import ReplaySnapshot
 from dgx_moa.schemas import ChatRequest, ResponsesRequest
@@ -5791,6 +5792,66 @@ def test_responses_retries_progress_only_stop(  # type: ignore[no-untyped-def]
     assert "event: response.completed" in response.text
     assert any(event["event_type"] == "progress_only_response_retried" for event in events)
     assert stub_provider.requests[-1]["messages"][-1]["role"] == "developer"
+
+
+def test_responses_retries_stop_while_planned_work_is_pending(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider
+) -> None:
+    calls = 0
+    session_id = "responses-planned-progress-retry"
+    test_client: TestClient | None = None
+
+    async def stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        stub_provider.calls.append(role)
+        stub_provider.requests.append(request)
+        assert test_client is not None
+        if calls == 1:
+            state = test_client.app.state.store.get(session_id)
+            assert state is not None
+            state.phase = Phase.EXECUTING
+            state.plan = [{"step": "구현과 테스트"}]
+            state.engineering_loop = state.engineering_loop or new_loop(
+                session_id, "프로토타입을 구현하고 검증하라"
+            )
+            state.review_deferred = True
+            state.review_status = "deferred"
+            test_client.app.state.store.save(state)
+
+        async def chunks():  # type: ignore[no-untyped-def]
+            if calls == 1:
+                yield (
+                    'data: {"choices":[{"delta":{"content":'
+                    '"Planner 역할이 구조와 구현 순서를 설계합니다."}}]}\n\n'
+                ).encode()
+                yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+            else:
+                yield (
+                    b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                    b'"id":"call-next","function":{"name":"exec_command",'
+                    b'"arguments":"{\\"cmd\\":\\"pwd\\"}"}}]},'
+                    b'"finish_reason":"tool_calls"}]}\n\n'
+                )
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    stub_provider.stream = stream  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        test_client = client
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={"model": "dgx-moa-fast", "input": "계속 진행해", "stream": True},
+        )
+        events = client.app.state.store.events(session_id)
+
+    assert calls == 2
+    assert "Planner 역할이 구조와 구현 순서를 설계합니다." not in response.text
+    assert '"name":"exec_command"' in response.text
+    assert "event: response.completed" in response.text
+    assert any(event["event_type"] == "progress_only_response_retried" for event in events)
 
 
 def test_responses_stream_retries_selective_judge_without_streaming(

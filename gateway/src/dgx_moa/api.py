@@ -3430,9 +3430,19 @@ def create_app(
                 def goal_requires_tool_action(state: SessionState | None) -> bool:
                     return bool(
                         state
-                        and state.resolved_objective
-                        and not request.app.state.controller.has_review_evidence(
-                            state, current_body.metadata
+                        and (
+                            (
+                                state.resolved_objective
+                                and not request.app.state.controller.has_review_evidence(
+                                    state, current_body.metadata
+                                )
+                            )
+                            or (
+                                state.engineering_loop is not None
+                                and state.plan
+                                and state.review_deferred
+                                and state.review_status != "approved"
+                            )
                         )
                     )
 

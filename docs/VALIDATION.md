@@ -4916,3 +4916,30 @@ entered replanning; the six production regression cases and healthcheck exited
 session-ID instructions. The inspected post-restart journal contained no
 traceback, exception, disconnect, loop-budget exhaustion, backend error, 401,
 or 500 entry.
+
+## Planned-work progress stop recovery — 2026-07-24
+
+Production session `f8333df3-2bd9-4bef-975a-617c1cd59d48` did not disconnect
+or exhaust a runtime budget. Its persisted state remained `phase=executing`
+with five planned steps, deferred review, no termination reason, 892,679
+tokens, and 27 tool calls available. Nevertheless, after an Executor turn
+returned the Korean Planner progress sentence with `finish_reason=stop`, the
+Responses adapter recorded `stream_completed` and `session_ended` with
+`status=completed`.
+
+The completion gate previously required a resolved objective before enforcing
+tool continuation. Direct Codex Goal sessions can already have an active
+engineering loop, plan, and deferred review while `resolved_objective` is
+empty. The gate now also rejects a no-tool stop in that measured state until
+review is approved. It reuses the existing single same-request retry and does
+not add another orchestration loop. The observed progress sentence is also
+recognized directly so an equivalent stateless response cannot be presented as
+completion.
+
+The focused reproduction passed five tests, including the exact Korean text
+and an API-level planned-state retry that emits the next `exec_command` tool
+call. Ruff format/lint passed, strict mypy passed over 45 source modules, and
+the full suite passed `920 passed` with the existing third-party Starlette
+warning; all commands exited 0. The real local `dgx-moa-reviewer`
+(`CohereLabs/North-Mini-Code-1.0-w4a16`) returned `verdict=approved`, with no
+important findings or residual risks.
