@@ -33,6 +33,8 @@ def test_loopback_socket_proxies_only_to_the_configured_gateway() -> None:
     assert "Requires=dgx-moa-gateway.service dgx-moa-loopback.socket" in service
     assert '"$DGX_MOA_BIND_HOST:$DGX_MOA_BIND_PORT"' in service
     assert "systemd-socket-proxyd" in service
+    assert "StartLimitIntervalSec=60" in service
+    assert "StartLimitBurst=10" in service
     assert "dgx-moa-*.socket" in installer
     assert "enable dgx-moa-resident.target dgx-moa-loopback.socket" in installer
 
@@ -88,8 +90,9 @@ def test_unit_environment_and_hardening() -> None:
         assert "LockPersonality=true" in unit
         assert "RestrictSUIDSGID=true" in unit
         assert "Restart=on-failure" in unit
-        assert "StartLimitIntervalSec=600" in unit
-        assert "StartLimitBurst=3" in unit
+        if "loopback" not in path.name:
+            assert "StartLimitIntervalSec=600" in unit
+            assert "StartLimitBurst=3" in unit
 
 
 def test_profile_switch_uses_systemd_and_lock() -> None:
