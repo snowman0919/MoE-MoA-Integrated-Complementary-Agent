@@ -4343,3 +4343,21 @@ list contained no plaintext field. On-demand reveal matched the configured
 operator key without logging it. The July date query returned only `operator`
 usage. Logout returned HTTP 204 and the same cookie then received HTTP 401.
 Gateway and Hermes remained active, and Hermes retained PID 1796553.
+
+## Authenticated localhost gateway access — 2026-07-23
+
+The gateway remains bound specifically to `100.125.239.72:9000`. A
+socket-activated systemd proxy now listens specifically on
+`127.0.0.1:9000` and forwards to the configured gateway bind target; no
+`0.0.0.0:9000` listener or second gateway process was introduced. The proxy
+uses the existing bind host/port environment, requires the gateway service, and
+exits after five idle minutes while its socket remains available.
+
+The full suite passed `870 passed` with the existing third-party Starlette
+warning; `systemd-analyze --user verify`, Ruff, and strict mypy over 42 source
+files were clean. Production `main@cbe61e5` returned HTTP 401 rather than a
+connection failure for unauthenticated loopback requests, HTTP 200 for an
+authenticated loopback `/v1/models` request, and HTTP 200 for the same
+authenticated tailnet request. The loopback socket and proxy were both active
+with service type `exec`. Gateway and Hermes were not restarted, and Hermes
+retained PID 1796553.

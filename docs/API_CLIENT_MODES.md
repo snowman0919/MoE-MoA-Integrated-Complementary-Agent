@@ -4,6 +4,10 @@ The authenticated gateway exposes one OpenAI-compatible API at
 `http://100.125.239.72:9000/v1` on the tailnet. Keep `DGX_MOA_API_KEY` in the
 client environment and discover the available aliases before selecting one:
 
+Clients on the gateway host may instead use `http://127.0.0.1:9000/v1`. The
+loopback socket proxies to the same gateway, so authentication is still
+required.
+
 ```bash
 export DGX_MOA_BASE_URL=http://100.125.239.72:9000/v1
 curl -fsS -H "Authorization: Bearer ${DGX_MOA_API_KEY}" \
