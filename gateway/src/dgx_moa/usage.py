@@ -868,6 +868,66 @@ class UsageStore:
             for row in rows
         }
 
+    def api_token_dashboard(self) -> dict[str, list[dict[str, Any]]]:
+        with self._connect() as database:
+            summary = database.execute(
+                "SELECT api_token_id, COUNT(*), COALESCE(SUM(total_tokens), 0), "
+                "MAX(accepted_at), SUM(status = 'completed'), SUM(status = 'failed') "
+                "FROM request_usage GROUP BY api_token_id ORDER BY api_token_id"
+            ).fetchall()
+            tasks = database.execute(
+                "SELECT api_token_id, request_class, model_alias, COUNT(*), "
+                "COALESCE(SUM(total_tokens), 0) FROM request_usage "
+                "GROUP BY api_token_id, request_class, model_alias "
+                "ORDER BY api_token_id, COUNT(*) DESC"
+            ).fetchall()
+            models = database.execute(
+                "SELECT r.api_token_id, m.role, m.model, COUNT(*), "
+                "COALESCE(SUM(m.total_tokens), 0) FROM model_invocation_usage m "
+                "JOIN request_usage r ON r.request_id = m.request_id "
+                "GROUP BY r.api_token_id, m.role, m.model "
+                "ORDER BY r.api_token_id, COUNT(*) DESC"
+            ).fetchall()
+            daily = database.execute(
+                "SELECT api_token_id, date(accepted_at, 'unixepoch'), COUNT(*) "
+                "FROM request_usage GROUP BY api_token_id, date(accepted_at, 'unixepoch') "
+                "ORDER BY 2, 1"
+            ).fetchall()
+        return {
+            "summary": [
+                {
+                    "name": row[0],
+                    "requests": int(row[1]),
+                    "total_tokens": int(row[2]),
+                    "last_used_at": row[3],
+                    "completed": int(row[4] or 0),
+                    "failed": int(row[5] or 0),
+                }
+                for row in summary
+            ],
+            "tasks": [
+                {
+                    "name": row[0],
+                    "request_class": row[1],
+                    "model_alias": row[2],
+                    "requests": int(row[3]),
+                    "total_tokens": int(row[4]),
+                }
+                for row in tasks
+            ],
+            "models": [
+                {
+                    "name": row[0],
+                    "role": row[1],
+                    "model": row[2],
+                    "invocations": int(row[3]),
+                    "total_tokens": int(row[4]),
+                }
+                for row in models
+            ],
+            "daily": [{"name": row[0], "day": row[1], "requests": int(row[2])} for row in daily],
+        }
+
     @staticmethod
     def _record(row: sqlite3.Row) -> RequestUsageRecord:
         runtime_mode = cast(

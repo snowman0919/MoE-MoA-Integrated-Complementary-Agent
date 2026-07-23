@@ -1,5 +1,22 @@
 # Security
 
+## API key authority
+
+API keys are named principals. `general` keys authorize AI endpoints only;
+`admin` keys additionally authorize administrator APIs and the tailnet key
+console. The runtime enforces expiry, revocation, cumulative request/token
+limits, and an administrator-key count ceiling before dispatching model work.
+It never derives administrator authority from possession of an arbitrary valid
+key.
+
+The operator-requested raw-key console requires plaintext key material in the
+state database. The database is therefore secret material and is forced to
+mode `0600`. Raw values are returned only from administrator endpoints with
+`Cache-Control: no-store`, are covered by runtime redaction, and are excluded
+from management audit events. The static console loads no third-party assets
+and applies a restrictive CSP. Tailnet reachability is an additional boundary,
+not a replacement for administrator authentication.
+
 - Role-model endpoints bind to loopback. The gateway binds only the configured
   tailnet address and is the sole inference ingress.
 - Direct tailnet TCP is the ingress; Tailscale Serve and Funnel are not used.

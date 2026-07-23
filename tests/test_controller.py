@@ -1006,6 +1006,14 @@ def test_goal_text_parts_keep_language_and_require_evidence(
     assert "language of the user's actual objective" in prompt
     assert "reading or summarizing the objective is not completion" in prompt
 
+    state.repository = {
+        "workspace_identifier": "external-api",
+        "identity_quality": "client_unspecified",
+    }
+    prompt = controller.prompt_sandwich("executor", state, "continue", "continue")
+    assert "Inspect the current directory once" in prompt
+    assert "Do not scan filesystem roots" in prompt
+
     store.save(
         SessionState(
             session_id="same-goal",

@@ -23,6 +23,21 @@ outside Git. `/v1/runtime-status` exposes content-free aggregate usage by ID.
 The production IDs are `legacy`, `opencode`, `hermes`, and `operator`; never put
 their values in Git, logs, traces, or documentation.
 
+When the admin API is enabled, `DGX_MOA_ADMIN_TOKEN_IDS` selects the configured
+keys that initially receive administrator authority. General keys can call only
+the authenticated AI API. Administrator keys can also open `/admin/api-keys`
+and call `/v1/admin/api-keys`; `DGX_MOA_MAX_ADMIN_API_KEYS` bounds active
+administrator keys. The operator UI supports named creation, raw-value viewing,
+rotation, expiry, revocation, cumulative request/token limits, and content-free
+request-class/model usage charts.
+
+Raw key viewing is an explicit internal-only tradeoff. The key registry is in
+the state database, whose mode is forced to `0600`; responses use `no-store`,
+the UI keeps the entered operator credential only in memory, and management
+events contain names/actions but no key values. State database backups must be
+treated as secrets. A limit reached response is `429`; expired or revoked keys
+receive the same `401` as an unknown key.
+
 ## Gateway and systemd
 
 ```bash

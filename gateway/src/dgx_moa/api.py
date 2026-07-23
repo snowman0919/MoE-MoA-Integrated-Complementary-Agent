@@ -16,7 +16,7 @@ import httpx
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from .config import Settings, get_settings
 from .controller import (
@@ -32,6 +32,7 @@ from .controller import (
 )
 from .evolution import PromptRegistry
 from .frontier import CodexOAuthCollaboration, load_frontier_config
+from .key_dashboard import API_KEY_DASHBOARD
 from .knowledge import KnowledgeRegistry
 from .lifecycle import (
     LifecycleCoordinator,
@@ -70,7 +71,13 @@ from .routing import (
 from .runtime_status import memory_available as runtime_memory_available
 from .runtime_status import report as runtime_report
 from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest, text_content
-from .security import admin_dependency, auth_dependency
+from .security import (
+    ApiKeyRequest,
+    ApiKeyStore,
+    ApiKeyUpdate,
+    admin_dependency,
+    auth_dependency,
+)
 from .skills import SkillRegistry
 from .specialists import (
     LocalPlannerProvider,
@@ -466,8 +473,14 @@ def create_app(
     lifecycle_memory_probe: Callable[[], int] = runtime_memory_available,
 ) -> FastAPI:
     configured = settings or get_settings()
-    auth = auth_dependency(configured)
-    admin_auth = admin_dependency(configured)
+    api_keys = ApiKeyStore(
+        configured.state_db,
+        configured.configured_api_keys(),
+        admin_token_ids=configured.admin_token_ids,
+        max_admin_keys=configured.max_admin_api_keys,
+    )
+    auth = auth_dependency(configured, api_keys)
+    admin_auth = admin_dependency(configured, api_keys)
 
     async def default_lifecycle_health_probe(role: str) -> bool:
         model = configured.models.get(role)
@@ -521,6 +534,7 @@ def create_app(
         provider = ModelProvider()
         project_root = Path(os.getenv("DGX_MOA_PROJECT_ROOT", ".")).resolve()
         app.state.settings = configured
+        app.state.api_keys = api_keys
         app.state.store = store
         app.state.runtime_metrics = RuntimeMetrics()
         store.subscribe_events(app.state.runtime_metrics.observe_event)
@@ -2538,7 +2552,7 @@ def create_app(
                                         state,
                                         total_tokens=(
                                             observed_total_tokens - accounted_total_tokens
-                                        )
+                                        ),
                                     )
                                     accounted_total_tokens = observed_total_tokens
                                 if "first_downstream_byte" not in state.timings_ms:
@@ -3458,6 +3472,90 @@ def create_app(
             lifecycle_mode=configured.lifecycle_mode,
             managed_roles=tuple(configured.lifecycle_unit_map),
         )
+
+    @app.get("/admin/api-keys", response_class=HTMLResponse)
+    async def api_key_dashboard() -> HTMLResponse:
+        return HTMLResponse(
+            API_KEY_DASHBOARD,
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Security-Policy": (
+                    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                    "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
+                    "form-action 'self'"
+                ),
+                "Referrer-Policy": "no-referrer",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    def key_response(payload: dict[str, Any]) -> JSONResponse:
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+    def key_event(request: Request, action: str, name: str) -> None:
+        request.app.state.store.event(
+            "api-key-admin",
+            "api_key_admin_action",
+            {
+                "action": action,
+                "name": name,
+                "operator": request.state.api_token_id,
+            },
+        )
+
+    @app.get("/v1/admin/api-keys", dependencies=[Depends(admin_auth)])
+    async def api_key_list(request: Request) -> JSONResponse:
+        return key_response(
+            {
+                "keys": request.app.state.api_keys.list(),
+                "usage": request.app.state.usage.api_token_dashboard(),
+                "max_admin_keys": configured.max_admin_api_keys,
+            }
+        )
+
+    @app.post("/v1/admin/api-keys", dependencies=[Depends(admin_auth)])
+    async def api_key_create(payload: ApiKeyRequest, request: Request) -> JSONResponse:
+        try:
+            token, record = request.app.state.api_keys.create(payload)
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        key_event(request, "create", payload.name)
+        return key_response({"api_key": token, "key": record})
+
+    @app.post("/v1/admin/api-keys/{name}/rotate", dependencies=[Depends(admin_auth)])
+    async def api_key_rotate(name: str, payload: ApiKeyRequest, request: Request) -> JSONResponse:
+        if payload.name != name:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "key name does not match path")
+        if name == request.state.api_token_id and payload.kind != "admin":
+            raise HTTPException(status.HTTP_409_CONFLICT, "cannot demote the active admin key")
+        try:
+            token, record = request.app.state.api_keys.create(payload, replace=True)
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        key_event(request, "rotate", name)
+        return key_response({"api_key": token, "key": record})
+
+    @app.post("/v1/admin/api-keys/{name}/update", dependencies=[Depends(admin_auth)])
+    async def api_key_update(name: str, payload: ApiKeyUpdate, request: Request) -> JSONResponse:
+        try:
+            record = request.app.state.api_keys.update(name, payload)
+        except KeyError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found") from error
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        key_event(request, "update", name)
+        return key_response({"key": record})
+
+    @app.post("/v1/admin/api-keys/{name}/revoke", dependencies=[Depends(admin_auth)])
+    async def api_key_revoke(name: str, request: Request) -> JSONResponse:
+        if name == request.state.api_token_id:
+            raise HTTPException(status.HTTP_409_CONFLICT, "cannot revoke the active admin key")
+        try:
+            record = request.app.state.api_keys.revoke(name)
+        except KeyError as error:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found") from error
+        key_event(request, "revoke", name)
+        return key_response({"key": record})
 
     @app.get("/admin/profile", response_model=ProfileResponse, dependencies=[Depends(admin_auth)])
     async def profile(request: Request) -> dict[str, str]:

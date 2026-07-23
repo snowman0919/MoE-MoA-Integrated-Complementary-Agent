@@ -1581,6 +1581,14 @@ class Controller:
             if role == "executor"
             else ""
         )
+        workspace_constraint = (
+            "No repository identity was supplied. Inspect the current directory once; if it is "
+            "writable, use it as the isolated workspace. Do not scan filesystem roots or search "
+            "unrelated home, environment, or system paths for another repository."
+            if role == "executor"
+            and state.repository.get("identity_quality") == "client_unspecified"
+            else ""
+        )
         language_constraint = (
             "Reply in the natural language of the user's actual objective; when a wrapper points "
             "to an objective file, use the language of that file rather than the wrapper."
@@ -1612,7 +1620,9 @@ class Controller:
                 + " "
                 + goal_constraints
                 + " "
-                + tool_batching,
+                + tool_batching
+                + " "
+                + workspace_constraint,
                 f"FINAL REQUIRED OUTPUT\n{final_output}",
             )
         )
