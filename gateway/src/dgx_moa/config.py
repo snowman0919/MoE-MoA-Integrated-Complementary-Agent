@@ -46,7 +46,7 @@ class Limits(BaseModel):
     planner_tokens: int = 4_096
     reasoner_tokens: int = 1_500
     executor_tokens: int = 4_096
-    executor_max_tokens: int = 16_384
+    executor_max_tokens: int = Field(default=32_768, ge=1, le=65_536)
     reviewer_tokens: int = 1_500
     judge_tokens: int = 2_500
     max_stream_capture_bytes: int = 1_000_000

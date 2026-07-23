@@ -93,6 +93,7 @@ from .state import Phase, StateStore
 from .streaming import (
     StreamObservation,
     forward_sse,
+    keepalive_sse,
     reported_usage,
     response_usage,
     responses_error_sse,
@@ -3098,7 +3099,7 @@ def create_app(
                 downstream_started=True,
                 retryable_failure_class="backend_error",
             )
-            if str(error) == "max_tokens exceeds server maximum 16384":
+            if str(error).startswith("max_tokens exceeds server maximum "):
                 return error_response(
                     status.HTTP_400_BAD_REQUEST,
                     str(error),
@@ -3224,6 +3225,16 @@ def create_app(
             for tool in body.tools or []
             if tool.get("type") == "custom" and tool.get("name")
         }
+        progress_language = (
+            "ko"
+            if any(
+                "\uac00" <= character <= "\ud7a3"
+                for message in messages
+                if message.get("role") == "user"
+                for character in text_content(message.get("content"))
+            )
+            else "en"
+        )
         response_model = COMPATIBILITY_MODEL_ALIASES.get(body.model, body.model)
 
         tool_choice = body.tool_choice
@@ -3347,12 +3358,15 @@ def create_app(
                                 yield chunk
                             return
                         if isinstance(chat_result, StreamingResponse):
-                            async for chunk in responses_sse(
-                                chat_result.body_iterator,
-                                response_model,
-                                custom_tool_names=custom_tool_names,
-                                function_tool_names=function_tool_names,
-                                session_id=response_session_id,
+                            async for chunk in keepalive_sse(
+                                responses_sse(
+                                    chat_result.body_iterator,
+                                    response_model,
+                                    custom_tool_names=custom_tool_names,
+                                    function_tool_names=function_tool_names,
+                                    session_id=response_session_id,
+                                    progress_language=progress_language,
+                                )
                             ):
                                 yield chunk
                             return

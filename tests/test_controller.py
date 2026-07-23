@@ -713,6 +713,7 @@ async def test_duplicate_unavailable_mcp_replans_without_409_and_removes_read_to
     executor_prompt = prepared["messages"][0]["content"]
     assert "Available client tools (exact names): exec_command." in executor_prompt
     assert "Do not invent aliases such as read_file" in executor_prompt
+    assert "give one concise user-visible progress sentence" in executor_prompt
     assert any(
         event["event_type"] == "replan_requested" for event in store.events(state.session_id)
     )
