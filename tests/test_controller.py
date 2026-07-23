@@ -656,6 +656,65 @@ def test_duplicate_failed_call_ignores_call_id(settings, stub_provider: StubProv
     )
 
 
+@pytest.mark.asyncio
+async def test_duplicate_unavailable_mcp_replans_without_409_and_removes_read_tool(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session(
+        "mcp-replan",
+        [{"role": "user", "content": "로컬 목표 파일을 읽고 구현해"}],
+    )
+    failed = tool_messages(
+        "first",
+        "resources/read failed: unknown MCP server 'filesystem'",
+    )
+    failed[0]["tool_calls"][0]["function"] = {
+        "name": "read_mcp_resource",
+        "arguments": json.dumps(
+            {
+                "server": "filesystem",
+                "uri": "file:///Users/test/.codex/attachments/task/goal-objective.md",
+            }
+        ),
+    }
+    controller._observe(state, failed)
+    failed[0]["tool_calls"][0]["id"] = "second"
+    failed[1]["tool_call_id"] = "second"
+
+    controller._observe(state, failed)
+
+    assert state.phase == Phase.REPLANNING
+    prompt = controller.prompt_sandwich("executor", state, "continue", "continue")
+    assert "Do not retry read_mcp_resource with guessed server names" in prompt
+    request = {
+        "model": "dgx-moa-agent",
+        "messages": [{"role": "user", "content": state.objective}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {"name": "read_mcp_resource", "parameters": {}},
+            },
+            {
+                "type": "function",
+                "function": {"name": "exec_command", "parameters": {}},
+            },
+        ],
+    }
+
+    prepared = await controller.prepare_executor(state, request, ("executor",))
+
+    assert [tool["function"]["name"] for tool in prepared["tools"]] == ["exec_command"]
+    assert any(
+        event["event_type"] == "replan_requested" for event in store.events(state.session_id)
+    )
+    assert any(
+        event["event_type"] == "tool_temporarily_unavailable"
+        for event in store.events(state.session_id)
+    )
+
+
 def test_loop_duplicate_failure_policy_persists_across_retries(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

@@ -1207,6 +1207,20 @@ class Controller:
                         }
                     )
                     state.failures = state.failures[-self.settings.limits.max_steps :]
+                    if failure_class == "MCP_SERVER_UNAVAILABLE":
+                        family = failure_family(observation)
+                        state.failure_families[family] = state.failure_families.get(family, 0) + 1
+                        state.phase = Phase.REPLANNING
+                        self.store.event(
+                            state.session_id,
+                            "replan_requested",
+                            {
+                                "reason": "mcp_server_unavailable",
+                                "fingerprint": family,
+                            },
+                        )
+                        self.store.save(state)
+                        continue
                     self.store.save(state)
                     raise DuplicateFailedCall("identical failed tool call blocked")
                 state.failed_call_fingerprints.append(call_fingerprint)
@@ -1595,6 +1609,18 @@ class Controller:
             if role == "executor"
             else ""
         )
+        mcp_fallback_constraint = (
+            "A requested MCP server is unavailable. Do not retry read_mcp_resource with guessed "
+            "server names or altered URIs. Use an available native file or shell tool for local "
+            "paths; if none exists, report the unavailable capability once and continue any "
+            "independent work."
+            if role == "executor"
+            and any(
+                item.get("failure_class") == "MCP_SERVER_UNAVAILABLE"
+                for item in active_failures(state)
+            )
+            else ""
+        )
         prompt_artifact = self.prompts.active_artifact(role) if self.prompts else None
         registered_policy = (
             str(prompt_artifact.payload["template"]) if prompt_artifact is not None else None
@@ -1622,7 +1648,9 @@ class Controller:
                 + " "
                 + tool_batching
                 + " "
-                + workspace_constraint,
+                + workspace_constraint
+                + " "
+                + mcp_fallback_constraint,
                 f"FINAL REQUIRED OUTPUT\n{final_output}",
             )
         )
@@ -2543,6 +2571,34 @@ class Controller:
                     "goal_history_compacted",
                     {"messages_removed": removed},
                 )
+        if any(
+            item.get("failure_class") == "MCP_SERVER_UNAVAILABLE" for item in active_failures(state)
+        ):
+            tools = body.get("tools")
+            if isinstance(tools, list):
+                body["tools"] = [
+                    tool
+                    for tool in tools
+                    if not (
+                        isinstance(tool, dict)
+                        and (
+                            tool.get("name") == "read_mcp_resource"
+                            or (
+                                isinstance(tool.get("function"), dict)
+                                and tool["function"].get("name") == "read_mcp_resource"
+                            )
+                        )
+                    )
+                ]
+                if len(body["tools"]) != len(tools):
+                    self.store.event(
+                        state.session_id,
+                        "tool_temporarily_unavailable",
+                        {
+                            "tool": "read_mcp_resource",
+                            "reason": "mcp_server_unavailable",
+                        },
+                    )
         messages = compress_messages(body["messages"], self.settings.limits)
         messages.insert(
             0,
