@@ -29,7 +29,9 @@ the authenticated AI API. Administrator keys can also open `/admin/api-keys`
 and call `/v1/admin/api-keys`; `DGX_MOA_MAX_ADMIN_API_KEYS` bounds active
 administrator keys. The operator UI supports named creation, raw-value viewing,
 rotation, expiry, revocation, cumulative request/token limits, and content-free
-request-class/model usage charts filtered by key and date.
+request-class/model usage charts filtered by key and date. It also renders
+measured model tokens as an OpenCode-style daily stacked bar chart; it does not
+estimate cost when invocation-level cost is unavailable.
 
 Raw key viewing is an explicit internal-only tradeoff. The key registry is in
 the state database, whose mode is forced to `0600`; responses use `no-store`,
