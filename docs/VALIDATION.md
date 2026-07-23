@@ -4279,9 +4279,9 @@ enforces expiry, revocation, cumulative request/token limits, and a configured
 maximum of three active admin keys. The tailnet-only `/admin/api-keys` operator
 page and its management endpoints require an admin key. Per the explicit
 operator requirement, authenticated admins can retrieve plaintext key values;
-the page uses `Cache-Control: no-store`, keeps the entered admin key in memory
-only, and emits secret-free management audit events. Database copies and
-backups therefore remain secrets.
+the page uses `Cache-Control: no-store` and emits secret-free management audit
+events. Database copies and backups therefore remain secrets. The later
+operator-session validation below supersedes the original in-memory login.
 
 Production `main@61840bf` returned HTTP 403 when a general key requested an
 admin endpoint and HTTP 200 for the configured operator key. A temporary
@@ -4321,3 +4321,25 @@ warning; Ruff and strict mypy over 42 source files were clean. Production
 204, omitted it from the next key listing, and returned HTTP 404 for a repeated
 delete. The updated UI exposed the permanent-delete confirmation flow. Gateway
 and Hermes remained active, and Hermes retained PID 1796553.
+
+## Masked key console, dated usage, and operator sessions — 2026-07-23
+
+The key list no longer returns plaintext values. The UI displays the existing
+masked value until an operator selects the eye or copy control, which calls the
+administrator-only reveal endpoint. Usage queries accept one key and an
+inclusive native-calendar date range. Operator login exchanges the credential
+for a random 30-day session; only its SHA-256 digest is stored server-side, and
+the browser receives an HttpOnly, SameSite-Strict cookie. Rotation, revocation,
+and logout invalidate associated sessions. The deployment has no Tailscale
+HTTPS certificate, so `Secure` is conditional on a future HTTPS ingress;
+traffic remains within the encrypted tailnet.
+
+The full suite passed `869 passed` with the existing third-party Starlette
+warning; Ruff, JavaScript syntax checking, and strict mypy over 42 source files
+were clean. Production `main@f03fe59` returned HTTP 204 for login and HTTP 200
+for cookie-only administrator access. The cookie carried `Max-Age=2592000`,
+`HttpOnly`, and `SameSite=strict`, contained no operator credential, and the key
+list contained no plaintext field. On-demand reveal matched the configured
+operator key without logging it. The July date query returned only `operator`
+usage. Logout returned HTTP 204 and the same cookie then received HTTP 401.
+Gateway and Hermes remained active, and Hermes retained PID 1796553.
