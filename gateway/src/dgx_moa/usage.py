@@ -921,6 +921,14 @@ class UsageStore:
                 "GROUP BY api_token_id, date(accepted_at, 'unixepoch') ORDER BY 2, 1",
                 request_parameters,
             ).fetchall()
+            daily_models = database.execute(
+                "SELECT r.api_token_id, date(r.accepted_at, 'unixepoch'), m.model, "
+                "COUNT(*), COALESCE(SUM(m.total_tokens), 0) FROM model_invocation_usage m "
+                f"JOIN request_usage r ON r.request_id = m.request_id{model_where} "
+                "GROUP BY r.api_token_id, date(r.accepted_at, 'unixepoch'), m.model "
+                "ORDER BY 2, 3",
+                model_parameters,
+            ).fetchall()
         return {
             "summary": [
                 {
@@ -954,6 +962,16 @@ class UsageStore:
                 for row in models
             ],
             "daily": [{"name": row[0], "day": row[1], "requests": int(row[2])} for row in daily],
+            "daily_models": [
+                {
+                    "name": row[0],
+                    "day": row[1],
+                    "model": row[2],
+                    "invocations": int(row[3]),
+                    "total_tokens": int(row[4]),
+                }
+                for row in daily_models
+            ],
         }
 
     @staticmethod
