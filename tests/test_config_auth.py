@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from dgx_moa.config import ModelConfig, Settings, load_settings, parse_bool
+from dgx_moa.frontier import FrontierConfig
 from pydantic import ValidationError
 
 
@@ -80,6 +81,7 @@ def test_loop_engineering_environment_is_strict_and_disabled_by_default(
     assert settings.loop_engineering.enabled is True
     assert settings.loop_engineering.defaults["iterations"] == 2
     assert settings.loop_engineering.defaults["tool_calls"] == 30
+    assert settings.loop_engineering.defaults["frontier_calls"] == 3
     assert Settings(auth_enabled=False).loop_engineering.enabled is False
 
 
@@ -97,6 +99,15 @@ def test_loop_budget_overrides_merge_request_class_then_risk() -> None:
     assert budget["iterations"] == 2
     assert budget["frontier_calls"] == 1
     assert budget["tool_calls"] == 30
+
+
+def test_default_loop_budget_covers_frontier_task_limit() -> None:
+    settings = Settings(auth_enabled=False)
+
+    assert (
+        settings.loop_engineering.defaults["frontier_calls"]
+        >= FrontierConfig().max_invocations_per_task
+    )
 
 
 def test_runtime_skills_environment_is_bounded_and_disabled_by_default(

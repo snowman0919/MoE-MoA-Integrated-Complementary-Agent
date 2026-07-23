@@ -119,7 +119,7 @@ class LoopBudget(BaseModel):
     reasoner_reentries: int = Field(default=4, ge=0)
     planner_calls: int = Field(default=2, ge=0)
     reviewer_calls: int = Field(default=2, ge=0)
-    frontier_calls: int = Field(default=2, ge=0)
+    frontier_calls: int = Field(default=3, ge=0)
     judge_calls: int = Field(default=2, ge=0)
     tokens: int = Field(default=250_000, ge=0)
     external_cost_usd: float = Field(default=10, ge=0, allow_inf_nan=False)
