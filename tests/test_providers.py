@@ -188,11 +188,12 @@ async def test_local_specialist_completion_fits_served_context(settings, monkeyp
 
     await ModelProvider().complete(
         "reviewer",
-        settings.models["reviewer"],
+        settings.models["reviewer"].model_copy(update={"reasoning_parser": "cohere_command4"}),
         {"messages": [{"role": "system", "content": "review"}], "max_tokens": 1500},
     )
 
     assert completion_bodies[0]["max_tokens"] == 1491
+    assert completion_bodies[0]["chat_template_kwargs"] == {"reasoning": False}
 
 
 @pytest.mark.asyncio

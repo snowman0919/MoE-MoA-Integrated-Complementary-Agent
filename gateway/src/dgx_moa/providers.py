@@ -87,6 +87,11 @@ class ModelProvider:
                 reasoning_budget=PLANNER_REASONING_TOKENS,
             )
             body["chat_template_kwargs"] = template_options
+        if role == "reviewer" and model.reasoning_parser == "cohere_command4":
+            body["chat_template_kwargs"] = {
+                **dict(body.get("chat_template_kwargs") or {}),
+                "reasoning": False,
+            }
         return body
 
     @staticmethod

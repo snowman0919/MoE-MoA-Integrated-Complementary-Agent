@@ -4811,3 +4811,50 @@ and Reviewer `2969170`. Health and model discovery passed. A physical
 `response.completed` and no `response.failed`; its persisted loop state loaded
 three remaining Frontier calls. The inspected post-deployment journal contained
 no traceback, exception, disconnect, budget exhaustion, backend error, or 401.
+
+## Recovered Codex tool continuation and sanitized event feed — 2026-07-24
+
+Production session `86981ee6-3f75-40f7-92f5-b9b2c92a66a4` failed at 05:40 KST
+with `loop_budget_exhausted`, then the client exhausted five reconnects. The
+session contained one earlier `NONEXISTENT_PATH` tool failure followed by
+successful tool results. The Responses adapter nevertheless treated that
+historical active failure as if every later tool continuation had just failed,
+re-entered the Reasoner four times, and exhausted the iteration budget.
+
+The adapter now compares the failure count before and after the current
+continuation. A newly observed failure still blocks continuation, while a
+successful result after a historical failure remains in the same tool loop. A
+production failed-then-successful function-output probe returned HTTP 200 for
+both requests with `reasoner_started=1`, `iteration=1`, and no termination.
+Production `main@6f1ed54` was deployed after drain; only the gateway PID changed
+from `3245266` to `3268815`.
+
+The isolated `SanitizedEventFeed` prototype uses only Python standard-library
+storage and synchronization. It emits monotonic sequence, UTC timestamp, role,
+stage, status, and recursively sanitized public messages; bounds message
+complexity and size; evicts the oldest retained event at capacity; and keeps
+subscriber cursors and returned values independent. It adds no listener,
+dependency, systemd unit, or production event-feed endpoint.
+
+The actual local Planner was `dgx-moa-planner`
+(`cyankiwi/Nemotron-Cascade-2-30B-A3B-AWQ-4bit`, displayed as
+`Nemotron-30B`). The local Executor path was `dgx-moa-executor`
+(`RedHatAI/Qwen3-Coder-Next-NVFP4`, displayed as `Qwen3-Next`). The first
+remote Reviewer attempt returned invalid structured output while the local
+Reviewer warmed independently, so Codex OAuth Frontier `gpt-5.6-sol` supplied
+the bounded architecture/code-review fallback. Once ready, the real local
+Reviewer `dgx-moa-reviewer`
+(`CohereLabs/North-Mini-Code-1.0-w4a16`, displayed as `North-Mini-30B`)
+returned `verdict=approved` with zero findings.
+
+The Reviewer readiness investigation found that this Cohere template requires
+`chat_template_kwargs.reasoning=false`; the unrelated `enable_thinking` flag
+left all generated text in hidden reasoning and returned `content=null`. The
+provider now applies the template's real flag for this served parser, with a
+regression assertion on the outbound body.
+
+The six focused feed tests cover normal events, recursive masking, capacity
+eviction, subscriber isolation, invalid and oversized input, and concurrent
+publish/read over 200 events. The final full suite passed `913 passed` with one
+third-party Starlette warning and exit code 0. Ruff lint/format passed over 82
+files, and strict mypy passed over 45 source modules; both exited 0.
