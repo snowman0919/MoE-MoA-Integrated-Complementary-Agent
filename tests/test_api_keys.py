@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 from dgx_moa.api import create_app
 from dgx_moa.config import Settings
-from dgx_moa.security import ApiKeyRequest, ApiKeyStore, ApiKeyUpdate
+from dgx_moa.security import (
+    ADMIN_SESSION_SECONDS,
+    ApiKeyRequest,
+    ApiKeyStore,
+    ApiKeyUpdate,
+)
 from dgx_moa.usage import RequestUsageStart, UsageStore
 from fastapi.testclient import TestClient
 
@@ -69,8 +74,13 @@ def test_key_store_enforces_expiry_limits_admin_cap_and_file_mode(tmp_path: Path
     store.revoke("client")
     with pytest.raises(ValueError, match="environment API keys"):
         store.delete("client")
+    session_token = store.create_admin_session("operator")
+    assert store.verify_admin_session(session_token) == "operator"
+    store.delete_admin_session(session_token)
+    assert store.verify_admin_session(session_token) is None
     database_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("state.db*"))
     assert token.encode() in database_bytes
+    assert session_token.encode() not in database_bytes
 
 
 def test_admin_key_api_separates_permissions_and_returns_no_store(
@@ -91,7 +101,7 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
     )
     stub = StubProvider()
     monkeypatch.setattr("dgx_moa.api.ModelProvider", lambda: stub)
-    with TestClient(create_app(configured)) as client:
+    with TestClient(create_app(configured), base_url="https://testserver") as client:
         general = {"Authorization": "Bearer general-secret-value"}
         operator = {"Authorization": "Bearer operator-secret-value"}
 
@@ -100,14 +110,24 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert dashboard.status_code == 200
         assert dashboard.headers["cache-control"] == "no-store"
         assert "frame-ancestors 'none'" in dashboard.headers["content-security-policy"]
+        assert 'type="date"' in dashboard.text
+        assert "navigator.clipboard" in dashboard.text
 
         listing = client.get("/v1/admin/api-keys", headers=operator)
         assert listing.status_code == 200
         assert listing.headers["cache-control"] == "no-store"
-        assert {item["api_key"] for item in listing.json()["keys"]} == {
-            "operator-secret-value",
-            "general-secret-value",
-        }
+        assert all("api_key" not in item for item in listing.json()["keys"])
+        revealed = client.get("/v1/admin/api-keys/general/reveal", headers=operator)
+        assert revealed.json()["api_key"] == "general-secret-value"
+        session = client.post("/v1/admin/session", headers=operator)
+        assert session.status_code == 204
+        cookie = session.headers["set-cookie"]
+        assert f"Max-Age={ADMIN_SESSION_SECONDS}" in cookie
+        assert "HttpOnly" in cookie
+        assert "SameSite=strict" in cookie
+        assert "Secure" in cookie
+        assert "operator-secret-value" not in cookie
+        assert client.get("/v1/admin/api-keys").status_code == 200
 
         created = client.post(
             "/v1/admin/api-keys",
@@ -144,6 +164,19 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
             item["name"] == "new-client" and item["role"] == "executor"
             for item in refreshed["usage"]["models"]
         )
+        usage = client.get(
+            "/v1/admin/api-keys/new-client/usage?start=1970-01-01&end=2999-12-31",
+            headers=operator,
+        )
+        assert usage.status_code == 200
+        assert {item["name"] for item in usage.json()["summary"]} == {"new-client"}
+        assert (
+            client.get(
+                "/v1/admin/api-keys/new-client/usage?start=2026-07-24&end=2026-07-23",
+                headers=operator,
+            ).status_code
+            == 400
+        )
         assert (
             client.post(
                 "/v1/admin/api-keys",
@@ -161,6 +194,8 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         )
         assert client.delete("/v1/admin/api-keys/new-client", headers=operator).status_code == 204
         assert client.delete("/v1/admin/api-keys/new-client", headers=operator).status_code == 404
+        assert client.delete("/v1/admin/session").status_code == 204
+        assert client.get("/v1/admin/api-keys").status_code == 401
         audit = client.app.state.store.events("api-key-admin")
 
     assert [event["payload"]["action"] for event in audit] == ["create", "revoke", "delete"]

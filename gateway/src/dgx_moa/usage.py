@@ -868,30 +868,58 @@ class UsageStore:
             for row in rows
         }
 
-    def api_token_dashboard(self) -> dict[str, list[dict[str, Any]]]:
+    def api_token_dashboard(
+        self,
+        *,
+        name: str | None = None,
+        start_at: float | None = None,
+        end_at: float | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        def filters(alias: str = "") -> tuple[str, list[Any]]:
+            prefix = f"{alias}." if alias else ""
+            clauses: list[str] = []
+            parameters: list[Any] = []
+            if name is not None:
+                clauses.append(f"{prefix}api_token_id = ?")
+                parameters.append(name)
+            if start_at is not None:
+                clauses.append(f"{prefix}accepted_at >= ?")
+                parameters.append(start_at)
+            if end_at is not None:
+                clauses.append(f"{prefix}accepted_at < ?")
+                parameters.append(end_at)
+            return (" WHERE " + " AND ".join(clauses) if clauses else ""), parameters
+
+        request_where, request_parameters = filters()
+        model_where, model_parameters = filters("r")
         with self._connect() as database:
             summary = database.execute(
                 "SELECT api_token_id, COUNT(*), COALESCE(SUM(total_tokens), 0), "
                 "MAX(accepted_at), SUM(status = 'completed'), SUM(status = 'failed') "
-                "FROM request_usage GROUP BY api_token_id ORDER BY api_token_id"
+                f"FROM request_usage{request_where} "
+                "GROUP BY api_token_id ORDER BY api_token_id",
+                request_parameters,
             ).fetchall()
             tasks = database.execute(
                 "SELECT api_token_id, request_class, model_alias, COUNT(*), "
-                "COALESCE(SUM(total_tokens), 0) FROM request_usage "
+                f"COALESCE(SUM(total_tokens), 0) FROM request_usage{request_where} "
                 "GROUP BY api_token_id, request_class, model_alias "
-                "ORDER BY api_token_id, COUNT(*) DESC"
+                "ORDER BY api_token_id, COUNT(*) DESC",
+                request_parameters,
             ).fetchall()
             models = database.execute(
                 "SELECT r.api_token_id, m.role, m.model, COUNT(*), "
                 "COALESCE(SUM(m.total_tokens), 0) FROM model_invocation_usage m "
-                "JOIN request_usage r ON r.request_id = m.request_id "
+                f"JOIN request_usage r ON r.request_id = m.request_id{model_where} "
                 "GROUP BY r.api_token_id, m.role, m.model "
-                "ORDER BY r.api_token_id, COUNT(*) DESC"
+                "ORDER BY r.api_token_id, COUNT(*) DESC",
+                model_parameters,
             ).fetchall()
             daily = database.execute(
                 "SELECT api_token_id, date(accepted_at, 'unixepoch'), COUNT(*) "
-                "FROM request_usage GROUP BY api_token_id, date(accepted_at, 'unixepoch') "
-                "ORDER BY 2, 1"
+                f"FROM request_usage{request_where} "
+                "GROUP BY api_token_id, date(accepted_at, 'unixepoch') ORDER BY 2, 1",
+                request_parameters,
             ).fetchall()
         return {
             "summary": [

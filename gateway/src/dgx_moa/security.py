@@ -22,6 +22,8 @@ SECRET_PATTERNS = (
     re.compile(r"\bmoa_[A-Za-z0-9_-]{32,}\b"),
 )
 TOKEN_ID = re.compile(r"[a-z][a-z0-9_-]{0,31}")
+ADMIN_SESSION_COOKIE = "dgx_moa_operator_session"
+ADMIN_SESSION_SECONDS = 30 * 86_400
 
 
 class ApiKeyRequest(BaseModel):
@@ -59,6 +61,11 @@ class ApiKeyStore:
                 "kind TEXT NOT NULL, source TEXT NOT NULL, created_at REAL NOT NULL, "
                 "expires_at REAL, revoked_at REAL, request_limit INTEGER, token_limit INTEGER)"
             )
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS api_key_admin_sessions ("
+                "token_hash TEXT PRIMARY KEY, api_token_id TEXT NOT NULL, "
+                "created_at REAL NOT NULL, expires_at REAL NOT NULL)"
+            )
             for name, token in configured.items():
                 digest = self._digest(token)
                 row = database.execute(
@@ -86,6 +93,9 @@ class ApiKeyStore:
                             "UPDATE api_keys SET token = ?, token_hash = ?, "
                             "created_at = ?, expires_at = NULL, revoked_at = NULL WHERE name = ?",
                             (token, digest, self.clock(), name),
+                        )
+                        database.execute(
+                            "DELETE FROM api_key_admin_sessions WHERE api_token_id = ?", (name,)
                         )
             admin_count = database.execute(
                 "SELECT COUNT(*) FROM api_keys WHERE kind = 'admin' AND revoked_at IS NULL "
@@ -193,6 +203,9 @@ class ApiKeyStore:
                         name,
                     ),
                 )
+                database.execute(
+                    "DELETE FROM api_key_admin_sessions WHERE api_token_id = ?", (name,)
+                )
             else:
                 database.execute(
                     "INSERT INTO api_keys VALUES (?, ?, ?, ?, 'managed', ?, ?, NULL, ?, ?)",
@@ -257,6 +270,7 @@ class ApiKeyStore:
                 "UPDATE api_keys SET revoked_at = ? WHERE name = ? AND revoked_at IS NULL",
                 (self.clock(), name),
             ).rowcount
+            database.execute("DELETE FROM api_key_admin_sessions WHERE api_token_id = ?", (name,))
         if not changed:
             raise KeyError(name)
         return self.get(name)
@@ -273,6 +287,40 @@ class ApiKeyStore:
             if record["revoked_at"] is None:
                 raise ValueError("revoke the API key before deleting it")
             database.execute("DELETE FROM api_keys WHERE name = ?", (name,))
+            database.execute("DELETE FROM api_key_admin_sessions WHERE api_token_id = ?", (name,))
+
+    def create_admin_session(self, name: str) -> str:
+        token = secrets.token_urlsafe(32)
+        now = self.clock()
+        with self._connect() as database:
+            database.execute("DELETE FROM api_key_admin_sessions WHERE expires_at <= ?", (now,))
+            database.execute(
+                "INSERT INTO api_key_admin_sessions VALUES (?, ?, ?, ?)",
+                (self._digest(token), name, now, now + ADMIN_SESSION_SECONDS),
+            )
+        return token
+
+    def verify_admin_session(self, token: str) -> str | None:
+        digest = self._digest(token)
+        now = self.clock()
+        with self._connect() as database:
+            row = database.execute(
+                "SELECT s.api_token_id, s.token_hash FROM api_key_admin_sessions s "
+                "JOIN api_keys k ON k.name = s.api_token_id "
+                "WHERE s.token_hash = ? AND s.expires_at > ? AND k.kind = 'admin' "
+                "AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > ?)",
+                (digest, now, now),
+            ).fetchone()
+        if row is None or not secrets.compare_digest(digest, row["token_hash"]):
+            return None
+        return str(row["api_token_id"])
+
+    def delete_admin_session(self, token: str) -> None:
+        with self._connect() as database:
+            database.execute(
+                "DELETE FROM api_key_admin_sessions WHERE token_hash = ?",
+                (self._digest(token),),
+            )
 
     def get(self, name: str) -> dict[str, Any]:
         records = {record["name"]: record for record in self.list()}
@@ -407,7 +455,14 @@ def admin_dependency(
                 )
             else:
                 scheme, _, token = (authorization or "").partition(" ")
-                matched = keys.verify(token) if scheme.lower() == "bearer" else None
+                session = request.cookies.get(ADMIN_SESSION_COOKIE, "")
+                matched = (
+                    keys.verify(token)
+                    if authorization and scheme.lower() == "bearer"
+                    else keys.verify_admin_session(session)
+                    if not authorization and session
+                    else None
+                )
                 if matched is None:
                     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid bearer token")
                 request.state.api_token_id = matched
