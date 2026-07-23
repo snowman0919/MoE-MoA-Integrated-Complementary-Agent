@@ -43,7 +43,9 @@ class StreamObservation:
     finish_reasons: list[str] = field(default_factory=list)
     tool_delta_seen: bool = False
     tool_call_ids: list[str] = field(default_factory=list)
+    tool_call_ids_by_index: dict[int, str] = field(default_factory=dict)
     tool_call_names: dict[int, str] = field(default_factory=dict)
+    tool_call_arguments: dict[int, str] = field(default_factory=dict)
     done_seen: bool = False
     usage: dict[str, int] = field(default_factory=dict)
 
@@ -71,6 +73,13 @@ class StreamObservation:
                     name = function.get("name") if isinstance(function, dict) else None
                     if isinstance(name, str):
                         self.tool_call_names[index] = self.tool_call_names.get(index, "") + name
+                    arguments = (
+                        function.get("arguments") if isinstance(function, dict) else None
+                    )
+                    if isinstance(arguments, str):
+                        self.tool_call_arguments[index] = (
+                            self.tool_call_arguments.get(index, "") + arguments
+                        )
                 if (
                     isinstance(call, dict)
                     and isinstance(call_id := call.get("id"), str)
@@ -78,6 +87,7 @@ class StreamObservation:
                     and call_id not in self.tool_call_ids
                 ):
                     self.tool_call_ids.append(call_id)
+                    self.tool_call_ids_by_index[index] = call_id
             if choice.get("finish_reason"):
                 self.finish_reasons.append(str(choice["finish_reason"]))
 

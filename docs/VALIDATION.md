@@ -13,9 +13,10 @@ Executor could summarize it instead of treating it as the task.
 The stable wrapper remains the session-correlation objective. A successful
 read of its `goal-objective.md` target now records a bounded resolved objective,
 and every model-facing role uses that document as the effective task. Failed
-MCP output cannot populate it. Focused propagation and continuation tests
-passed 4/4; the full isolated suite passed 864 tests, and Ruff and strict mypy
-passed.
+MCP output cannot populate it. Streaming tool observation also preserves the
+call arguments needed to correlate the returned content with the requested
+goal path. Focused propagation and continuation tests passed; the full isolated
+suite passed 864 tests, and Ruff and strict mypy passed.
 
 ## Successful tool-continuation budget — 2026-07-23
 

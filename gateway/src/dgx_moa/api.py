@@ -2449,7 +2449,17 @@ def create_app(
                                     )
                                 )[-configured.limits.max_steps :]
                                 if observation.tool_call_ids:
-                                    state.last_tool_call = {"id": observation.tool_call_ids[-1]}
+                                    index = max(observation.tool_call_ids_by_index)
+                                    state.last_tool_call = {
+                                        "id": observation.tool_call_ids_by_index[index],
+                                        "type": "function",
+                                        "function": {
+                                            "name": observation.tool_call_names.get(index, ""),
+                                            "arguments": observation.tool_call_arguments.get(
+                                                index, ""
+                                            ),
+                                        },
+                                    }
                                 request.app.state.lifecycle_store.refresh_continuation(
                                     usage_request_id,
                                     "executor",
