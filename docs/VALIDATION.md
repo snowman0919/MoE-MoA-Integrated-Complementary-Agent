@@ -16,6 +16,14 @@ Focused tests verified one Reasoner/iteration for a successful continuation and
 two Reasoner calls for a failed continuation. The full isolated suite passed
 863 tests; Ruff and strict mypy passed.
 
+PR `#70` deployed to production main
+`1da8de1b41bd348bd8eb5cd37f7a7873da0828f4`. An authenticated five-turn
+`dgx-moa` Responses run deliberately remapped every continuation call ID. All
+turns retained one session and completed without a failed terminal event.
+Persisted state recorded executor `step_count=5`, one Engineering iteration,
+one Reasoner invocation, four recovery events, three remaining iterations,
+three remaining Reasoner entries, and no termination reason.
+
 ## Streaming goal continuity and tool batching — 2026-07-23
 
 Inspection of the attached Hermes/Codex goal run found 107 SQLite session rows
