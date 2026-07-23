@@ -18,6 +18,13 @@ call arguments needed to correlate the returned content with the requested
 goal path. Focused propagation and continuation tests passed; the full isolated
 suite passed 864 tests, and Ruff and strict mypy passed.
 
+PRs `#72` and `#73` deployed to production main
+`094b756dd670468e53d4cd6764ebb6e4814ed710`. An authenticated two-turn
+`dgx-moa` Responses run retained one session across a remapped result, persisted
+294 characters of resolved Goal content and one resolution event, then emitted
+`inspect_workspace` with no summary text. State remained executing with
+`final_status=null`. Only the Codex gateway restarted; Hermes was not restarted.
+
 ## Successful tool-continuation budget — 2026-07-23
 
 The postdeployment Codex Goal retry preserved one session and reached executor
