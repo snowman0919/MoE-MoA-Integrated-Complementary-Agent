@@ -22,6 +22,14 @@ text-align:left}.status-active{color:var(--ok)}.status-expired,.status-revoked{c
 .chart{display:grid;gap:9px}.bar-row{display:grid;grid-template-columns:145px 1fr 55px;gap:8px;
 align-items:center}.track{height:12px;background:#0b1020;border-radius:8px;overflow:hidden}
 .bar{height:100%;background:linear-gradient(90deg,var(--accent),#8d7dff);border-radius:8px}
+.stacked-wrap{overflow-x:auto}.stacked-plot{height:300px;min-width:700px;padding:12px 8px 0;
+display:grid;grid-auto-flow:column;grid-auto-columns:minmax(20px,1fr);gap:4px;align-items:end;
+background:repeating-linear-gradient(to top,transparent 0,transparent 58px,var(--line) 59px,
+transparent 60px)}.stacked-column{height:100%;display:flex;flex-direction:column;
+justify-content:flex-end;align-items:stretch;gap:5px}.stack{display:flex;flex-direction:column-reverse;
+min-height:1px}.segment{min-height:1px;border:1px solid #ffffff22}.day-label{font-size:10px;
+color:var(--muted);text-align:center;white-space:nowrap}.legend{display:flex;gap:14px;flex-wrap:wrap;
+margin-top:14px}.legend-item{display:flex;align-items:center;gap:6px}.swatch{width:12px;height:12px}
 #secret{word-break:break-all;color:var(--ok)}@media(max-width:600px){main{padding:16px}
 .bar-row{grid-template-columns:100px 1fr 42px}.keys{overflow:auto}}
 </style>
@@ -56,6 +64,12 @@ align-items:center}.track{height:12px;background:#0b1020;border-radius:8px;overf
       <label>종료 <input id="graph-end" type="date" required></label>
       <button class="primary">그래프 조회</button>
     </form>
+    <section class="card">
+      <h2>모델별 일일 토큰 사용량</h2>
+      <p class="muted">선택한 키의 실제 모델 호출 토큰을 일자별로 누적합니다.</p>
+      <div class="stacked-wrap"><div id="daily-models" class="stacked-plot"></div></div>
+      <div id="model-legend" class="legend"></div>
+    </section>
     <div class="grid" style="margin-top:16px">
       <section class="card"><h2>작업 · 요청 모델</h2><div id="tasks" class="chart"></div></section>
       <section class="card"><h2>실제 역할 · 모델 호출</h2><div id="models" class="chart"></div></section>
@@ -104,6 +118,30 @@ const bars=(id,rows,label,value)=>{
     const count=document.createElement("span");count.textContent=value(item).toLocaleString();
     line.append(title,track,count);root.append(line)});
 };
+const palette=["#7f8c3a","#70508e","#9a5e4d","#397c8f","#a37a2c","#4f75a8","#8d456f","#4f8b62"];
+const stacked=(rows,start,end)=>{
+  const root=$("daily-models"),legend=$("model-legend");root.replaceChildren();legend.replaceChildren();
+  const models=[...new Set(rows.map(item=>item.model))];
+  models.forEach((model,index)=>{const item=document.createElement("span");item.className="legend-item";
+    const swatch=document.createElement("span");swatch.className="swatch";
+    swatch.style.backgroundColor=palette[index%palette.length];item.append(swatch,model);legend.append(item)});
+  const values=new Map(rows.map(item=>[item.day+"\\0"+item.model,item]));
+  const days=[];for(let day=new Date(start+"T00:00:00Z"),last=new Date(end+"T00:00:00Z");
+    day<=last;day.setUTCDate(day.getUTCDate()+1))days.push(day.toISOString().slice(0,10));
+  const totals=days.map(day=>models.reduce((sum,model)=>
+    sum+(values.get(day+"\\0"+model)?.total_tokens||0),0));const max=Math.max(1,...totals);
+  days.forEach((day,dayIndex)=>{const column=document.createElement("div");column.className="stacked-column";
+    const stack=document.createElement("div");stack.className="stack";
+    stack.style.height=(totals[dayIndex]/max*260)+"px";
+    models.forEach((model,index)=>{const data=values.get(day+"\\0"+model);if(!data)return;
+      const segment=document.createElement("div");segment.className="segment";
+      segment.style.height=(data.total_tokens/Math.max(1,totals[dayIndex])*100)+"%";
+      segment.style.backgroundColor=palette[index%palette.length];
+      segment.title=model+" · "+data.total_tokens.toLocaleString()+" tokens · "+
+        data.invocations.toLocaleString()+" calls";stack.append(segment)});
+    const label=document.createElement("span");label.className="day-label";label.textContent=day.slice(5);
+    column.append(stack,label);root.append(column)});
+};
 async function load(){
   const data=await api("/v1/admin/api-keys");$("content").hidden=false;$("login").hidden=true;
   const usage=new Map(data.usage.summary.map(item=>[item.name,item]));$("keys").replaceChildren();
@@ -132,6 +170,7 @@ async function loadCharts(){
   bars("tasks",data.tasks,item=>item.request_class+" · "+item.model_alias,item=>item.requests);
   bars("models",data.models,item=>item.role+" · "+item.model,item=>item.invocations);
   bars("daily",data.daily,item=>item.day,item=>item.requests);
+  stacked(data.daily_models,$("graph-start").value,$("graph-end").value);
 }
 async function selectGraph(name){$("graph-key").value=name;await loadCharts();
   $("graph-filter").scrollIntoView({behavior:"smooth"})}

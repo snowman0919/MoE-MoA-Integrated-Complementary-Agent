@@ -181,6 +181,9 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         )
         assert usage.status_code == 200
         assert {item["name"] for item in usage.json()["summary"]} == {"new-client"}
+        assert {(item["name"], item["model"]) for item in usage.json()["daily_models"]} == {
+            ("new-client", "executor")
+        }
         assert (
             client.get(
                 "/v1/admin/api-keys/new-client/usage?start=2026-07-24&end=2026-07-23",
