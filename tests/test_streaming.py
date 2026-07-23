@@ -149,6 +149,41 @@ async def test_responses_sse_hides_tool_preamble_and_terminates_failures(caplog)
 
 
 @pytest.mark.asyncio
+async def test_responses_sse_maps_unsupported_read_file_to_exec_command() -> None:
+    async def upstream():
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call-read","function":{"name":"read_file",'
+            b'"arguments":"{\\"path\\":\\"/tmp/goal objective.md\\"}"}}]},'
+            b'"finish_reason":"tool_calls"}]}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa",
+            function_tool_names={"exec_command"},
+        )
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+    added = next(
+        event
+        for event in events
+        if event["type"] == "response.output_item.added" and event["output_index"] == 1
+    )
+    done = next(
+        event for event in events if event["type"] == "response.function_call_arguments.done"
+    )
+
+    assert added["item"]["name"] == "exec_command"
+    assert json.loads(done["arguments"]) == {"cmd": "cat -- '/tmp/goal objective.md'"}
+    assert all(event.get("item", {}).get("name") != "read_file" for event in events)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "terminal",
     [

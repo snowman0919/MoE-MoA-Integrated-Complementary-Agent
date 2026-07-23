@@ -131,6 +131,10 @@ def classify_failure(observation: str) -> str:
     normalized = observation.lower()
     if "unsupported call" in normalized:
         return "UNSUPPORTED_TOOL"
+    if "bwrap:" in normalized or (
+        "sandbox" in normalized and "operation not permitted" in normalized
+    ):
+        return "SANDBOX_UNAVAILABLE"
     if "unknown mcp server" in normalized:
         return "MCP_SERVER_UNAVAILABLE"
     if any(marker in normalized for marker in ("no such file", "not found", "nonexistent")):
@@ -182,7 +186,9 @@ def clean_tool_output(value: object) -> str:
 
 
 def compact_resolved_goal_history(
-    messages: list[dict[str, Any]], goal_paths: set[str]
+    messages: list[dict[str, Any]],
+    goal_paths: set[str],
+    resolved_objective: str = "",
 ) -> list[dict[str, Any]]:
     goal_call_ids = {
         str(call.get("id"))
@@ -198,6 +204,12 @@ def compact_resolved_goal_history(
         if message.get("role") == "tool" and str(message.get("tool_call_id")) in goal_call_ids:
             continue
         item = message.copy()
+        if (
+            resolved_objective
+            and item.get("role") == "user"
+            and goal_paths.intersection(argument_paths(text_content(item.get("content"))))
+        ):
+            item["content"] = resolved_objective
         if calls := item.get("tool_calls"):
             item["tool_calls"] = [
                 call for call in calls if str(call.get("id")) not in goal_call_ids
@@ -721,7 +733,11 @@ class Controller:
                 {"content_sha256": hashlib.sha256(state.objective.encode()).hexdigest()},
             )
         if state.resolved_objective:
-            messages[:] = compact_resolved_goal_history(messages, argument_paths(state.objective))
+            messages[:] = compact_resolved_goal_history(
+                messages,
+                argument_paths(state.objective),
+                state.resolved_objective,
+            )
         if state.engineering_loop is not None:
             for message in messages:
                 if message.get("role") != "user":
@@ -1069,8 +1085,10 @@ class Controller:
                 or any(
                     marker in result["stdout"].lower()
                     for marker in (
+                        "bwrap:",
                         "not found",
                         "no such file",
+                        "operation not permitted",
                         "permission denied",
                         "unsupported call",
                         "resources/read failed",
@@ -1576,6 +1594,8 @@ class Controller:
         state: SessionState,
         observation: str,
         decision: str,
+        *,
+        available_tools: tuple[str, ...] = (),
     ) -> str:
         schema = {
             "reasoner": json.dumps(ReasonerContribution.model_json_schema(), separators=(",", ":")),
@@ -1604,8 +1624,23 @@ class Controller:
             "Continue with tool calls while required work remains, and give a final answer only "
             "after the objective's validation criteria have verified evidence. Do not reread an "
             "unchanged objective file after a successful read. When CURRENT OBJECTIVE contains "
-            "the loaded objective, do not call filesystem or MCP tools for that objective again."
-            if role == "executor" and state.objective.lstrip().lower().startswith("/goal ")
+            "the loaded objective, do not call filesystem or MCP tools for that objective again. "
+            "Before update_goal, call get_goal; when no goal exists, call create_goal first. "
+            "Never mark the goal complete until the requested implementation and validation "
+            "tool calls have succeeded."
+            if role == "executor"
+            and (
+                state.objective.lstrip().lower().startswith("/goal ")
+                or "goal-objective.md" in state.objective
+            )
+            else ""
+        )
+        tool_constraint = (
+            "Available client tools (exact names): "
+            + ", ".join(available_tools)
+            + ". Call only these exact names. Do not invent aliases such as read_file; use an "
+            "available shell tool to read a local path."
+            if role == "executor" and available_tools
             else ""
         )
         tool_batching = (
@@ -1665,7 +1700,9 @@ class Controller:
                 + " "
                 + workspace_constraint
                 + " "
-                + mcp_fallback_constraint,
+                + mcp_fallback_constraint
+                + " "
+                + tool_constraint,
                 f"FINAL REQUIRED OUTPUT\n{final_output}",
             )
         )
@@ -2578,7 +2615,9 @@ class Controller:
         if state.resolved_objective:
             original_count = len(body["messages"])
             body["messages"] = compact_resolved_goal_history(
-                body["messages"], argument_paths(state.objective)
+                body["messages"],
+                argument_paths(state.objective),
+                state.resolved_objective,
             )
             if removed := original_count - len(body["messages"]):
                 self.store.event(
@@ -2617,6 +2656,22 @@ class Controller:
                             "reason": "mcp_server_unavailable",
                         },
                     )
+        available_tools = tuple(
+            sorted(
+                {
+                    str(tool.get("name") or tool.get("function", {}).get("name"))
+                    for tool in body.get("tools") or []
+                    if isinstance(tool, dict)
+                    and (tool.get("name") or tool.get("function", {}).get("name"))
+                }
+            )
+        )
+        if state.step_count == 1:
+            self.store.event(
+                state.session_id,
+                "client_tools_available",
+                {"tools": list(available_tools)},
+            )
         messages = compress_messages(body["messages"], self.settings.limits)
         messages.insert(
             0,
@@ -2633,6 +2688,7 @@ class Controller:
                         else ""
                     ),
                     "Take one useful step",
+                    available_tools=available_tools,
                 ),
             },
         )
