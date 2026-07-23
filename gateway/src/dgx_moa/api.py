@@ -3537,6 +3537,15 @@ def create_app(
                     for key in request.app.state.api_keys.list()
                 ],
                 "usage": request.app.state.usage.api_token_dashboard(),
+                "model_catalog": [
+                    {
+                        "role": role,
+                        "served_name": configured.models[role].served_name,
+                        "repository": configured.models[role].repository,
+                    }
+                    for role in ("executor", "planner", "reviewer")
+                    if role in configured.models
+                ],
                 "max_admin_keys": configured.max_admin_api_keys,
             }
         )
