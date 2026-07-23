@@ -4504,3 +4504,19 @@ successful tool results, and a final `finish_reasons=["stop"]`. Ruff formatting,
 Ruff lint, and strict mypy over 43 source files were clean; the full
 pre-deployment suite passed `876 passed` with the existing third-party
 Starlette warning.
+
+Production `main@5e950bb` was deployed after a database-backed check reported
+`active_request_count=0`; only `dgx-moa-gateway.service` was restarted.
+Authenticated drain verification then returned HTTP 200 for start/status and
+cancel, while a new Responses request returned the expected HTTP 503
+`gateway_draining`. Hermes was not restarted and retained PID 1796553.
+
+The same built official Codex CLI then ran against production
+`127.0.0.1:9000` in a fresh disposable Docker sandbox. Gateway session
+`6f3d722f-a1cc-49cc-a7b8-8ef427152b97` recorded exactly one
+`goal_objective_resolved`, one `goal_history_compacted`, and three
+`exec_command` results with exit code 0. Its final finish reason was `stop`,
+the gateway completed the final turn in 2.622 seconds, the Docker process
+exited 0, the host artifact assertion passed, and the client received the
+Korean completion message `완료되었습니다.` No MCP-resource call or repeated
+goal-file read occurred.
