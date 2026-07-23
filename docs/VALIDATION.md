@@ -4268,3 +4268,41 @@ summary. After the matching validation result reported all synthetic criteria
 passed, the only final text was Korean: `이제 완료되었습니다.` The persisted
 session had no pending tool calls. Gateway, Executor, Hermes, and `/readyz`
 remained healthy; Planner and Reviewer stayed dynamically cold.
+
+## Operator API-key control and workspace-less goal routing — 2026-07-23
+
+The pre-change production authentication check found that every configured
+general key could call both inference and `/v1/admin/runtime-status`. The
+gateway now stores named key records in the mode-0600 state database, separates
+`general` inference authority from `admin` inference and operator authority,
+enforces expiry, revocation, cumulative request/token limits, and a configured
+maximum of three active admin keys. The tailnet-only `/admin/api-keys` operator
+page and its management endpoints require an admin key. Per the explicit
+operator requirement, authenticated admins can retrieve plaintext key values;
+the page uses `Cache-Control: no-store`, keeps the entered admin key in memory
+only, and emits secret-free management audit events. Database copies and
+backups therefore remain secrets.
+
+Production `main@61840bf` returned HTTP 403 when a general key requested an
+admin endpoint and HTTP 200 for the configured operator key. A temporary
+general key round-tripped its plaintext value through the admin-only endpoint,
+completed one inference request, returned HTTP 429 at its request limit,
+accepted an admin update, and returned HTTP 401 after revocation. The dashboard
+reported 19 task/model rows and 16 actual role/model rows. Its HTML returned
+HTTP 200 with `no-store`; the state database remained mode 0600 and the
+management audit contained no secret. The full suite passed `869 passed` with
+the existing third-party Starlette warning; Ruff, strict mypy over 42 source
+files, and focused 33-test security coverage were clean.
+
+The repeated workspace-less Codex goal failure was separate from history
+compaction: after the objective read succeeded, absent repository metadata let
+the Executor search filesystem roots and unrelated home/environment paths
+until its budget expired. Executor policy now allows one inspection of the
+current directory and uses it when writable, while prohibiting root, unrelated
+home, environment, and system-path repository searches. A production
+`dgx-moa-fast` goal continuation without repository headers was offered both
+`inspect_current_directory` and `scan_filesystem_root`; it selected only
+`inspect_current_directory`, returned `finish_reason=tool_calls`, and persisted
+`identity_quality=client_unspecified`, `phase=executing`, one pending tool call,
+and no terminal status. It therefore neither scanned roots nor treated the
+objective read as completion.
