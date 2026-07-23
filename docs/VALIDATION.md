@@ -4890,10 +4890,17 @@ instructions now prohibit MCP discovery for local paths, invented
 identity as a directory, and descending into unrelated nested repositories for
 AGENTS.md.
 
+A persisted session blocked by the former token ceiling is recoverable only
+when its measured invocation total is below the new configured ceiling. The
+controller restores exactly `configured - observed` tokens, preserves all
+other remaining budgets, and resets the wall-clock checkpoint. A session that
+has already consumed the new ceiling stays blocked.
+
 Regression tests replayed 20 cumulative tool results and recorded exactly 20
 executions, classified the observed string-session-ID wrapper error as a
-failure, and consumed the former full 250,000-token allowance without
-termination. The focused set passed `289 passed`; the full suite passed
-`916 passed` with one third-party Starlette warning. Ruff lint/format and
+failure, consumed the former full 250,000-token allowance without termination,
+and proved both eligible and ineligible stored-session recovery. The focused
+set passed `289 passed`; the full suite passed
+`918 passed` with one third-party Starlette warning. Ruff lint/format and
 strict mypy over 45 source modules exited 0. The real local
 `dgx-moa-reviewer` returned `verdict=approved` with zero findings.
