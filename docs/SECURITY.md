@@ -17,6 +17,11 @@ from management audit events. The static console loads no third-party assets
 and applies a restrictive CSP. Tailnet reachability is an additional boundary,
 not a replacement for administrator authentication.
 
+- Operator login stores only a random 30-day session in an HttpOnly,
+  SameSite-Strict cookie; the database stores its SHA-256 digest. Key rotation,
+  revocation, and logout invalidate the session. The cookie gains `Secure`
+  automatically under HTTPS; the reviewed deployment currently uses encrypted
+  tailnet transport without Tailscale HTTPS.
 - Role-model endpoints bind to loopback. The gateway binds only the configured
   tailnet address and is the sole inference ingress.
 - Direct tailnet TCP is the ingress; Tailscale Serve and Funnel are not used.

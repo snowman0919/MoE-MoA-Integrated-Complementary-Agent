@@ -29,14 +29,16 @@ the authenticated AI API. Administrator keys can also open `/admin/api-keys`
 and call `/v1/admin/api-keys`; `DGX_MOA_MAX_ADMIN_API_KEYS` bounds active
 administrator keys. The operator UI supports named creation, raw-value viewing,
 rotation, expiry, revocation, cumulative request/token limits, and content-free
-request-class/model usage charts.
+request-class/model usage charts filtered by key and date.
 
 Raw key viewing is an explicit internal-only tradeoff. The key registry is in
 the state database, whose mode is forced to `0600`; responses use `no-store`,
-the UI keeps the entered operator credential only in memory, and management
-events contain names/actions but no key values. State database backups must be
-treated as secrets. A limit reached response is `429`; expired or revoked keys
-receive the same `401` as an unknown key.
+and management events contain names/actions but no key values. Login exchanges
+the operator credential for a hashed server-side session and a 30-day
+HttpOnly, SameSite-Strict cookie; the raw credential is not kept in browser
+storage. Raw key values are fetched only by the eye/copy controls. State
+database backups must be treated as secrets. A limit reached response is `429`;
+expired or revoked keys receive the same `401` as an unknown key.
 
 ## Gateway and systemd
 
