@@ -113,6 +113,8 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert 'type="date"' in dashboard.text
         assert "navigator.clipboard" in dashboard.text
         assert "payload.error?.message" in dashboard.text
+        assert "JSON.parse(text)" in dashboard.text
+        assert "공란=무제한" in dashboard.text
         assert ".value.toLowerCase()" in dashboard.text
 
         listing = client.get("/v1/admin/api-keys", headers=operator)
@@ -186,6 +188,14 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
             ).status_code
             == 400
         )
+        cleared = client.post(
+            "/v1/admin/api-keys/new-client/update",
+            headers=operator,
+            json={"request_limit": None, "token_limit": None},
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["key"]["request_limit"] is None
+        assert cleared.json()["key"]["token_limit"] is None
         assert (
             client.post(
                 "/v1/admin/api-keys",
@@ -207,5 +217,10 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert client.get("/v1/admin/api-keys").status_code == 401
         audit = client.app.state.store.events("api-key-admin")
 
-    assert [event["payload"]["action"] for event in audit] == ["create", "revoke", "delete"]
+    assert [event["payload"]["action"] for event in audit] == [
+        "create",
+        "update",
+        "revoke",
+        "delete",
+    ]
     assert new_token not in json.dumps(audit)

@@ -41,8 +41,8 @@ align-items:center}.track{height:12px;background:#0b1020;border-radius:8px;overf
         autocapitalize="none" spellcheck="false" required>
       <select id="kind"><option value="general">일반</option><option value="admin">관리자</option></select>
       <input id="days" type="number" min="1" max="365" value="90" required>
-      <input id="request-limit" type="number" min="1" placeholder="요청 한도">
-      <input id="token-limit" type="number" min="1" placeholder="토큰 한도">
+      <input id="request-limit" type="number" min="1" placeholder="요청 한도 (공란=무제한)">
+      <input id="token-limit" type="number" min="1" placeholder="토큰 한도 (공란=무제한)">
       <button class="primary">새 키 생성</button>
       <span id="secret"></span>
     </form>
@@ -70,8 +70,10 @@ const optional=id=>$(id).value?Number($(id).value):null;
 const api=async(path,options={})=>{
   const response=await fetch(path,{...options,headers:{
     "Content-Type":"application/json",...(options.headers||{})}});
-  if(!response.ok){const payload=await response.json();
-    throw new Error(payload.detail||payload.error?.message||response.statusText)}
+  if(!response.ok){const text=await response.text();let payload={};
+    try{payload=JSON.parse(text)}catch{}
+    throw new Error(payload.detail||payload.error?.message||
+      response.status+" "+response.statusText)}
   return response.status===204?null:response.json();
 };
 const cell=(row,text,cls="")=>{const value=document.createElement("td");value.textContent=text;
@@ -142,8 +144,8 @@ async function change(key,action){
     if(action==="update"){const requests=prompt("새 요청 한도",key.request_limit||"");
       const tokens=prompt("새 토큰 한도",key.token_limit||"");
       if(requests===null||tokens===null)return;
-      body={request_limit:requests?Number(requests):key.request_limit,
-        token_limit:tokens?Number(tokens):key.token_limit}};
+      body={request_limit:requests?Number(requests):null,
+        token_limit:tokens?Number(tokens):null}};
     const path=action==="delete"?"/v1/admin/api-keys/"+key.name:
       "/v1/admin/api-keys/"+key.name+"/"+action;
     const result=await api(path,
