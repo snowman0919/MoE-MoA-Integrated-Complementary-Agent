@@ -4306,3 +4306,18 @@ home, environment, and system-path repository searches. A production
 `identity_quality=client_unspecified`, `phase=executing`, one pending tool call,
 and no terminal status. It therefore neither scanned roots nor treated the
 objective read as completion.
+
+## Revoked managed API-key deletion — 2026-07-23
+
+The operator UI previously sent the revoke endpoint again for an already
+revoked key, which correctly returned HTTP 404 but offered no permanent-delete
+path. Managed keys can now be deleted only after revocation; environment-backed
+keys remain protected because deleting their database row would only make them
+reappear at restart. Historical usage remains available for audit graphs.
+
+The full suite passed `869 passed` with the existing third-party Starlette
+warning; Ruff and strict mypy over 42 source files were clean. Production
+`main@dea5b4e` deleted the revoked managed key `validation-1784809472` with HTTP
+204, omitted it from the next key listing, and returned HTTP 404 for a repeated
+delete. The updated UI exposed the permanent-delete confirmation flow. Gateway
+and Hermes remained active, and Hermes retained PID 1796553.
