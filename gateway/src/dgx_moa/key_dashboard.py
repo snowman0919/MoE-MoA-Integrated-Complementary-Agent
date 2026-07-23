@@ -37,7 +37,8 @@ align-items:center}.track{height:12px;background:#0b1020;border-radius:8px;overf
   <div id="content" hidden>
     <button id="logout" class="danger">로그아웃</button>
     <form id="create-form" class="card">
-      <input id="name" pattern="[a-z][a-z0-9_-]{0,31}" placeholder="key-name" required>
+      <input id="name" pattern="[a-z][a-z0-9_-]{0,31}" placeholder="key-name"
+        autocapitalize="none" spellcheck="false" required>
       <select id="kind"><option value="general">일반</option><option value="admin">관리자</option></select>
       <input id="days" type="number" min="1" max="365" value="90" required>
       <input id="request-limit" type="number" min="1" placeholder="요청 한도">
@@ -69,7 +70,8 @@ const optional=id=>$(id).value?Number($(id).value):null;
 const api=async(path,options={})=>{
   const response=await fetch(path,{...options,headers:{
     "Content-Type":"application/json",...(options.headers||{})}});
-  if(!response.ok)throw new Error((await response.json()).detail||response.statusText);
+  if(!response.ok){const payload=await response.json();
+    throw new Error(payload.detail||payload.error?.message||response.statusText)}
   return response.status===204?null:response.json();
 };
 const cell=(row,text,cls="")=>{const value=document.createElement("td");value.textContent=text;
@@ -137,8 +139,11 @@ async function change(key,action){
   try{let body;
     if(action==="rotate")body={name:key.name,kind:key.kind,expires_in_days:Number($("days").value),
       request_limit:key.request_limit,token_limit:key.token_limit};
-    if(action==="update")body={request_limit:Number(prompt("새 요청 한도",key.request_limit||"")),
-      token_limit:Number(prompt("새 토큰 한도",key.token_limit||""))};
+    if(action==="update"){const requests=prompt("새 요청 한도",key.request_limit||"");
+      const tokens=prompt("새 토큰 한도",key.token_limit||"");
+      if(requests===null||tokens===null)return;
+      body={request_limit:requests?Number(requests):key.request_limit,
+        token_limit:tokens?Number(tokens):key.token_limit}};
     const path=action==="delete"?"/v1/admin/api-keys/"+key.name:
       "/v1/admin/api-keys/"+key.name+"/"+action;
     const result=await api(path,
@@ -153,11 +158,13 @@ $("login-form").onsubmit=async event=>{event.preventDefault();
   catch(error){$("auth-state").textContent=error.message}};
 $("create-form").onsubmit=async event=>{event.preventDefault();try{
   const result=await api("/v1/admin/api-keys",{method:"POST",body:JSON.stringify({
-    name:$("name").value,kind:$("kind").value,expires_in_days:Number($("days").value),
+    name:$("name").value.trim().toLowerCase(),kind:$("kind").value,
+    expires_in_days:Number($("days").value),
     request_limit:optional("request-limit"),token_limit:optional("token-limit")})});
   $("secret").textContent="키가 생성되었습니다. 목록에서 확인하세요.";
   $("name").value="";await load()}
   catch(error){alert(error.message)}};
+$("name").oninput=event=>event.target.value=event.target.value.toLowerCase();
 $("graph-filter").onsubmit=async event=>{event.preventDefault();try{await loadCharts()}
   catch(error){alert(error.message)}};
 $("logout").onclick=async()=>{await api("/v1/admin/session",{method:"DELETE"});
