@@ -121,6 +121,14 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert listing.status_code == 200
         assert listing.headers["cache-control"] == "no-store"
         assert all("api_key" not in item for item in listing.json()["keys"])
+        assert listing.json()["model_catalog"] == [
+            {
+                "role": role,
+                "served_name": configured.models[role].served_name,
+                "repository": configured.models[role].repository,
+            }
+            for role in ("executor", "planner", "reviewer")
+        ]
         revealed = client.get("/v1/admin/api-keys/general/reveal", headers=operator)
         assert revealed.json()["api_key"] == "general-secret-value"
         session = client.post("/v1/admin/session", headers=operator)

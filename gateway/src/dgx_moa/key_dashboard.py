@@ -65,6 +65,10 @@ margin-top:14px}.legend-item{display:flex;align-items:center;gap:6px}.swatch{wid
       <button class="primary">그래프 조회</button>
     </form>
     <section class="card">
+      <h2>로컬 역할 모델</h2>
+      <div id="model-catalog" class="chart"></div>
+    </section>
+    <section class="card">
       <h2>모델별 일일 토큰 사용량</h2>
       <p class="muted">선택한 키의 실제 모델 호출 토큰을 일자별로 누적합니다.</p>
       <div class="stacked-wrap"><div id="daily-models" class="stacked-plot"></div></div>
@@ -81,6 +85,8 @@ margin-top:14px}.legend-item{display:flex;align-items:center;gap:6px}.swatch{wid
 const $=id=>document.getElementById(id);
 const fmtTime=value=>value?new Date(value*1000).toLocaleString():"없음";
 const optional=id=>$(id).value?Number($(id).value):null;
+let modelCatalog=new Map();
+const modelLabel=model=>modelCatalog.has(model)?model+" · "+modelCatalog.get(model):model;
 const api=async(path,options={})=>{
   const response=await fetch(path,{...options,headers:{
     "Content-Type":"application/json",...(options.headers||{})}});
@@ -124,7 +130,8 @@ const stacked=(rows,start,end)=>{
   const models=[...new Set(rows.map(item=>item.model))];
   models.forEach((model,index)=>{const item=document.createElement("span");item.className="legend-item";
     const swatch=document.createElement("span");swatch.className="swatch";
-    swatch.style.backgroundColor=palette[index%palette.length];item.append(swatch,model);legend.append(item)});
+    swatch.style.backgroundColor=palette[index%palette.length];
+    item.append(swatch,modelLabel(model));legend.append(item)});
   const values=new Map(rows.map(item=>[item.day+"\\0"+item.model,item]));
   const days=[];for(let day=new Date(start+"T00:00:00Z"),last=new Date(end+"T00:00:00Z");
     day<=last;day.setUTCDate(day.getUTCDate()+1))days.push(day.toISOString().slice(0,10));
@@ -137,13 +144,17 @@ const stacked=(rows,start,end)=>{
       const segment=document.createElement("div");segment.className="segment";
       segment.style.height=(data.total_tokens/Math.max(1,totals[dayIndex])*100)+"%";
       segment.style.backgroundColor=palette[index%palette.length];
-      segment.title=model+" · "+data.total_tokens.toLocaleString()+" tokens · "+
+      segment.title=modelLabel(model)+" · "+data.total_tokens.toLocaleString()+" tokens · "+
         data.invocations.toLocaleString()+" calls";stack.append(segment)});
     const label=document.createElement("span");label.className="day-label";label.textContent=day.slice(5);
     column.append(stack,label);root.append(column)});
 };
 async function load(){
   const data=await api("/v1/admin/api-keys");$("content").hidden=false;$("login").hidden=true;
+  modelCatalog=new Map(data.model_catalog.map(item=>[item.served_name,item.repository]));
+  $("model-catalog").replaceChildren();
+  data.model_catalog.forEach(item=>{const line=document.createElement("div");
+    line.textContent=item.served_name+" · "+item.repository;$("model-catalog").append(line)});
   const usage=new Map(data.usage.summary.map(item=>[item.name,item]));$("keys").replaceChildren();
   const selected=$("graph-key").value;$("graph-key").replaceChildren();
   data.keys.forEach(key=>{const row=document.createElement("tr");const stats=usage.get(key.name)||{};
@@ -168,7 +179,7 @@ async function loadCharts(){
   const query=new URLSearchParams({start:$("graph-start").value,end:$("graph-end").value});
   const data=await api("/v1/admin/api-keys/"+$("graph-key").value+"/usage?"+query);
   bars("tasks",data.tasks,item=>item.request_class+" · "+item.model_alias,item=>item.requests);
-  bars("models",data.models,item=>item.role+" · "+item.model,item=>item.invocations);
+  bars("models",data.models,item=>item.role+" · "+modelLabel(item.model),item=>item.invocations);
   bars("daily",data.daily,item=>item.day,item=>item.requests);
   stacked(data.daily_models,$("graph-start").value,$("graph-end").value);
 }
