@@ -9,6 +9,8 @@ SYSTEMD = ROOT / "systemd"
 def test_required_systemd_units_exist() -> None:
     required = {
         "dgx-moa-gateway.service",
+        "dgx-moa-loopback.service",
+        "dgx-moa-loopback.socket",
         "dgx-moa-executor.service",
         "dgx-moa-planner.service",
         "dgx-moa-reviewer.service",
@@ -20,6 +22,19 @@ def test_required_systemd_units_exist() -> None:
         "dgx-moa-codex-frontier@.service",
     }
     assert required == {path.name for path in SYSTEMD.iterdir()}
+
+
+def test_loopback_socket_proxies_only_to_the_configured_gateway() -> None:
+    socket = (SYSTEMD / "dgx-moa-loopback.socket").read_text()
+    service = (SYSTEMD / "dgx-moa-loopback.service").read_text()
+    installer = (ROOT / "scripts/install-systemd-user.sh").read_text()
+    assert "ListenStream=127.0.0.1:9000" in socket
+    assert "0.0.0.0" not in socket
+    assert "Requires=dgx-moa-gateway.service dgx-moa-loopback.socket" in service
+    assert '"$DGX_MOA_BIND_HOST:$DGX_MOA_BIND_PORT"' in service
+    assert "systemd-socket-proxyd" in service
+    assert "dgx-moa-*.socket" in installer
+    assert "enable dgx-moa-resident.target dgx-moa-loopback.socket" in installer
 
 
 def test_targets_and_services_are_mutually_exclusive() -> None:
