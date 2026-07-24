@@ -3015,6 +3015,19 @@ def test_repeated_successful_inspection_marks_executor_stalled(
     )
     assert controller.executor_stalled(structured) is True
 
+    hermes = SessionState(
+        session_id="hermes-inspection",
+        tool_executions=[
+            {
+                "tool_name": "read_file" if index < 3 else "search_files",
+                "normalized_arguments": {"path": "/workspace/README.md"},
+                "exit_code": 0,
+            }
+            for index in range(4)
+        ],
+    )
+    assert controller.executor_stalled(hermes) is True
+
 
 @pytest.mark.asyncio
 async def test_completed_implementation_is_told_to_return_final(
