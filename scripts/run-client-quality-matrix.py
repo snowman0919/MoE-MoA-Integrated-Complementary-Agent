@@ -384,6 +384,10 @@ TASKS = (
             Implement `WebhookVerifier(secret, tolerance_seconds=300, clock=time.time,
             max_body_bytes=1_000_000)`.
 
+            `secret` must be non-empty bytes. `tolerance_seconds` and
+            `max_body_bytes` must be positive integers. Reject invalid constructor
+            arguments with `TypeError` or `ValueError`.
+
             `verify(body, timestamp, nonce, signature)` signs the exact bytes
             `timestamp + b"." + nonce + b"." + body` with HMAC-SHA256. The supplied
             signature format is `v1=<lowercase hex>`.
@@ -695,6 +699,10 @@ HIDDEN_CHECKS = {
         raw = timestamp.encode() + b"." + nonce.encode() + b"." + body
         signature = "v1=" + hmac.new(secret, raw, hashlib.sha256).hexdigest()
         assert verifier.verify(body, timestamp, nonce, signature)
+        dashed_nonce = "valid-nonce_1"
+        dashed_raw = b"1000." + dashed_nonce.encode() + b".x"
+        dashed = "v1=" + hmac.new(secret, dashed_raw, hashlib.sha256).hexdigest()
+        assert verifier.verify(b"x", "1000", dashed_nonce, dashed)
         upper_nonce = "uppercase_nonce"
         upper_raw = b"1000." + upper_nonce.encode() + b".x"
         upper = "v1=" + hmac.new(secret, upper_raw, hashlib.sha256).hexdigest().upper()

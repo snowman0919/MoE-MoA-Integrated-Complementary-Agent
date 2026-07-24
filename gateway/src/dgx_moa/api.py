@@ -2676,6 +2676,21 @@ def create_app(
                         "provider": "frontier",
                     },
                 )
+            if executor_remote and executor_routing_reason == "local_no_progress":
+                prepared["messages"] = [
+                    *prepared.get("messages", []),
+                    {
+                        "role": "user",
+                        "content": (
+                            "The local Executor stalled in repeated inspection without changing "
+                            "the requested source. Do not inspect another file or repeat a read. "
+                            "Call exactly one available write-capable tool now to implement the "
+                            "smallest contract-complete change. If no patch tool exists, use the "
+                            "terminal tool to write the target source file. Return a native tool "
+                            "call, not prose."
+                        ),
+                    },
+                ]
             if state.engineering_loop is not None and prepared.get("tools"):
                 if prepared.get("parallel_tool_calls") is None:
                     prepared["parallel_tool_calls"] = True

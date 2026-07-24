@@ -588,6 +588,9 @@ def test_repeated_inspection_routes_executor_to_frontier(
     assert response.json()["choices"][0]["message"]["content"] == "원격 진행 복구"
     selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
     assert selected["payload"]["routing_reason"] == "local_no_progress"
+    assert "Do not inspect another file or repeat a read" in str(
+        remote_requests[0]["messages"][-1]["content"]
+    )
     assert completion_response.status_code == 200, completion_response.text
     completion_selected = next(
         event for event in completion_events if event["event_type"] == "executor_remote_selected"
