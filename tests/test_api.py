@@ -457,6 +457,7 @@ def test_repeated_inspection_routes_executor_to_frontier(
         if "Do not repeat an inspection or validation that already succeeded"
         in str(request["messages"][-1]["content"])
     )
+    assert correction_retry["messages"][-1]["role"] == "user"
     assert "Do not repeat an inspection or validation that already succeeded" in str(
         correction_retry["messages"][-1]["content"]
     )
