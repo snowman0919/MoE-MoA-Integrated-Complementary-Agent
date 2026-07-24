@@ -5245,6 +5245,35 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         assert usage.total_tokens == 1
 
 
+def test_streaming_preserves_completed_pre_review(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    session_id = "stream-pre-reviewed"
+    with client_with_stub(settings, stub_provider) as client:
+        client.app.state.store.save(
+            SessionState(
+                session_id=session_id,
+                objective="implement and verify",
+                review_status="approved",
+                roles_required=["reasoner", "executor", "reviewer"],
+            )
+        )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "stream": True,
+                "messages": [{"role": "user", "content": "implement and verify"}],
+                "metadata": {"code_review": True},
+            },
+        )
+        state = client.app.state.store.get(session_id)
+
+    assert response.status_code == 200
+    assert state is not None
+    assert state.review_status == "approved"
+    assert state.review_deferred is False
+
+
 @pytest.mark.asyncio
 async def test_streaming_api_forwards_before_upstream_completion_and_defers_review(
     settings, stub_provider: StubProvider

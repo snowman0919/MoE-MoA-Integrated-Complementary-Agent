@@ -59,7 +59,7 @@ from .remote_judge import (
     JudgeTimeout,
     RemoteJudgeVerdict,
 )
-from .routing import ChangeRisk, heavy_eligible, needs_planner, select_route
+from .routing import ChangeRisk, heavy_eligible, needs_planner, needs_reviewer, select_route
 from .schemas import (
     JudgeVerdict,
     OrchestrationDecision,
@@ -117,13 +117,20 @@ GOAL_PREREQUISITE_DOCUMENTS = (
     "docs/TRACE_SCHEMA.md",
 )
 
-EXECUTOR_QUALITY_CONTRACT = (
+IMPLEMENTATION_QUALITY_CONTRACT = (
     "Treat the written contract and surrounding code as authoritative; supplied tests are "
     "examples, not the complete specification. Before finalizing, derive and run at least one "
     "independent requirement-based check when applicable. Review type and boundary inputs, "
     "non-finite numeric values, invariants across every public operation, failure atomicity, "
     "deterministic results, and synchronization of shared state. Do not claim completion merely "
     "because the supplied tests pass."
+)
+
+REVIEWER_QUALITY_CONTRACT = (
+    "Review independently of the supplied tests. Check type and boundary inputs, non-finite "
+    "numeric values, invariants across every public operation, failure atomicity, deterministic "
+    "results, and synchronization of shared state. Reject material correctness, security, "
+    "concurrency, or test gaps with a concrete required correction."
 )
 
 
@@ -1758,7 +1765,13 @@ class Controller:
             if role == "executor"
             else ""
         )
-        quality_constraint = EXECUTOR_QUALITY_CONTRACT if role == "executor" else ""
+        quality_constraint = (
+            IMPLEMENTATION_QUALITY_CONTRACT
+            if role == "executor"
+            else REVIEWER_QUALITY_CONTRACT
+            if role == "reviewer"
+            else ""
+        )
         workspace_constraint = (
             "No repository identity was supplied. Inspect the current directory once; if it is "
             "writable, use it as the isolated workspace. Do not scan filesystem roots or search "
@@ -2467,26 +2480,34 @@ class Controller:
                         )
                     else:
                         frontier_pending = (mode, evidence)
-            if "reviewer" in roles and self.has_review_evidence(
-                state, dict(request.get("metadata", {}))
-            ):
-                review_evidence = json.dumps(
-                    self.safe_payload(
-                        state,
-                        {
-                            "objective": effective_objective(state),
-                            "acceptance_criteria": state.acceptance_criteria,
-                            "changed_paths": request.get("metadata", {}).get("changed_paths", []),
-                            "diff_summary": request.get("metadata", {}).get("diff_summary", ""),
-                            "validation_results": request.get("metadata", {}).get(
-                                "validation_results", []
-                            ),
-                            "tool_results": state.tool_results[-4:],
-                        },
-                    ),
-                    ensure_ascii=False,
-                )
-                pre_review_task = asyncio.create_task(self.review(state, review_evidence))
+        metadata = dict(request.get("metadata", {}))
+        review_evidence_available = self.has_review_evidence(state, metadata)
+        if needs_reviewer(state, tool_continuation, review_evidence_available):
+            roles = tuple(dict.fromkeys((*roles, "reviewer")))
+            state.roles_required = list(roles)
+            if ensure_roles is not None:
+                await ensure_roles(("reviewer",))
+            self.store.event(
+                state.session_id,
+                "reviewer_required",
+                {"trigger": "implementation_evidence"},
+            )
+        if "reviewer" in roles and review_evidence_available:
+            review_evidence = json.dumps(
+                self.safe_payload(
+                    state,
+                    {
+                        "objective": effective_objective(state),
+                        "acceptance_criteria": state.acceptance_criteria,
+                        "changed_paths": metadata.get("changed_paths", []),
+                        "diff_summary": metadata.get("diff_summary", ""),
+                        "validation_results": metadata.get("validation_results", []),
+                        "tool_results": state.tool_results[-4:],
+                    },
+                ),
+                ensure_ascii=False,
+            )
+            pre_review_task = asyncio.create_task(self.review(state, review_evidence))
         if reasoner_contribution is not None:
             state.derived_confidence = self.derived_confidence(
                 state,
