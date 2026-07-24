@@ -1309,6 +1309,8 @@ class Controller:
             observed_tool_call_ids.add(tool_call_id)
             self.store.event(state.session_id, "tool_execution_recorded", execution)
             changed_files = not failed and self.tool_execution_changes_files(execution)
+            if changed_files:
+                state.frontier_review_verified = False
             if changed_files and state.frontier_correction_required:
                 state.frontier_correction_required = False
                 state.frontier_correction_pending_verification = True
@@ -2792,8 +2794,11 @@ class Controller:
                 review_assurance_needed = pre_review_result.get(
                     "status"
                 ) == "approved" and (
-                    not pre_review_result.get("findings")
-                    or state.frontier_correction_pending_verification
+                    state.frontier_correction_pending_verification
+                    or (
+                        not pre_review_result.get("findings")
+                        and not state.frontier_review_verified
+                    )
                 )
                 if material_review_issue or review_assurance_needed:
                     review_trigger = (
@@ -2960,6 +2965,7 @@ class Controller:
                     and self.material_frontier_review(frontier_result.output)
                 )
                 if material_frontier_review:
+                    state.frontier_review_verified = False
                     state.frontier_correction_pending_verification = False
                     state.review_status = "rejected_frontier"
                     state.review_deferred = True
@@ -2978,14 +2984,17 @@ class Controller:
                             ),
                         },
                     )
-                elif (
-                    frontier_result.mode == "code_review"
-                    and state.frontier_correction_pending_verification
-                ):
+                elif frontier_result.mode == "code_review":
+                    correction_verified = state.frontier_correction_pending_verification
                     state.frontier_correction_pending_verification = False
+                    state.frontier_review_verified = True
                     self.store.event(
                         state.session_id,
-                        "frontier_correction_verified",
+                        (
+                            "frontier_correction_verified"
+                            if correction_verified
+                            else "frontier_review_verified"
+                        ),
                         {"verdict": frontier_result.output.get("verdict")},
                     )
                 if (

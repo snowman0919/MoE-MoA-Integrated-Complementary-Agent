@@ -678,6 +678,7 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
         "frontier-correction-verification:frontier:2"
     ]
     assert state.frontier_correction_pending_verification is False
+    assert state.frontier_review_verified is True
     assert any(
         event["event_type"] == "frontier_collaboration_started"
         and event["payload"].get("trigger") == "frontier_correction_verification"
@@ -685,6 +686,14 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
     )
     assert any(
         event["event_type"] == "frontier_correction_verified"
+        for event in store.events(state.session_id)
+    )
+
+    await controller.prepare_executor(state, request, ("reasoner", "executor"))
+
+    assert frontier.calls == 1
+    assert not any(
+        event["event_type"] == "frontier_unavailable"
         for event in store.events(state.session_id)
     )
 
@@ -1193,6 +1202,7 @@ def test_frontier_correction_latch_requires_a_new_file_change(
 
     assert state.frontier_correction_required is False
     assert state.frontier_correction_pending_verification is True
+    assert state.frontier_review_verified is False
     assert state.review_status == "deferred"
     assert state.review_deferred is True
     assert any(
