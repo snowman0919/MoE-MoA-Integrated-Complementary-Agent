@@ -37,7 +37,7 @@ def reviewer_finding(severity: str = "important") -> dict[str, object]:
 
 
 def test_normalize_tool_result_preserves_hermes_output() -> None:
-    result = normalize_tool_result(
+    terminal = normalize_tool_result(
         {
             "role": "tool",
             "name": "terminal",
@@ -47,7 +47,7 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
         }
     )
 
-    assert result == {
+    assert terminal == {
         "tool_name": "terminal",
         "arguments": {},
         "stdout": "tests timed out",
@@ -55,6 +55,25 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
         "exit_code": 124,
         "duration_ms": 0,
         "truncated": False,
+    }
+    read_file = normalize_tool_result(
+        {
+            "role": "tool",
+            "name": "read_file",
+            "content": json.dumps({"content": "file body", "total_lines": 1}),
+        }
+    )
+    assert read_file["stdout"] == "file body"
+    search = normalize_tool_result(
+        {
+            "role": "tool",
+            "name": "search_files",
+            "content": json.dumps({"files": ["tests/test_task.py"], "total_count": 1}),
+        }
+    )
+    assert json.loads(search["stdout"]) == {
+        "files": ["tests/test_task.py"],
+        "total_count": 1,
     }
 
 
