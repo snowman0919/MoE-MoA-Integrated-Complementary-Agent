@@ -2341,8 +2341,41 @@ def create_app(
                 )
             previous_state = request.app.state.store.get(state_session_id)
             previous_failure_count = len(previous_state.failures) if previous_state else 0
-            state = request.app.state.controller.session(state_session_id, raw["messages"])
-            new_failure_observed = len(state.failures) > previous_failure_count
+            duplicate_failure_recovery = False
+            try:
+                state = request.app.state.controller.session(state_session_id, raw["messages"])
+            except DuplicateFailedCall:
+                recovered = request.app.state.store.get(state_session_id)
+                repeated_actions = (
+                    sum(
+                        failure.get("failure_class") == "REPEATED_ACTION"
+                        for failure in recovered.failures
+                    )
+                    if recovered is not None
+                    else 0
+                )
+                terminated = bool(
+                    recovered is not None
+                    and recovered.engineering_loop is not None
+                    and recovered.engineering_loop.termination_reason is not None
+                )
+                if (
+                    request.app.state.frontier is None
+                    or recovered is None
+                    or repeated_actions != 1
+                    or terminated
+                ):
+                    raise
+                state = recovered
+                duplicate_failure_recovery = True
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_duplicate_failure_recovery",
+                    {"provider": "frontier"},
+                )
+            new_failure_observed = (
+                len(state.failures) > previous_failure_count or duplicate_failure_recovery
+            )
             state.current_request_id = usage_request_id
             state.api_token_id = api_token_id
             task_id = task_id or state.task_id or state_session_id
@@ -2533,10 +2566,14 @@ def create_app(
             if (
                 not executor_remote
                 and request.app.state.frontier is not None
-                and state.frontier_correction_required
+                and (state.frontier_correction_required or duplicate_failure_recovery)
             ):
                 executor_remote = True
-                executor_routing_reason = "frontier_correction_required"
+                executor_routing_reason = (
+                    "local_duplicate_failure"
+                    if duplicate_failure_recovery
+                    else "frontier_correction_required"
+                )
                 executor_lease_id = str(
                     uuid.uuid5(uuid.UUID(usage_request_id), "active_request:executor")
                 )
