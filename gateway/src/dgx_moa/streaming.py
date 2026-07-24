@@ -42,6 +42,7 @@ KOREAN_PROGRESS_ENDINGS = tuple(
         "추가",
         "적용",
         "진행",
+        "시작",
     )
     for suffix in ("합니다.", "하겠습니다.")
 )

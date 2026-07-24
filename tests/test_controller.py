@@ -2374,7 +2374,6 @@ def test_implementation_completion_requires_change_validation_and_review(
     state = SessionState(
         session_id="implementation-gate",
         objective="Implement rate_limiter.py in this repository and test it.",
-        plan=[{"step": "Implement the module and run tests"}],
     )
 
     assert controller.requires_implementation_tool_action(state, {}) is True

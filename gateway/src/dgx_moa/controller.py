@@ -3051,13 +3051,8 @@ class Controller:
     def requires_implementation_tool_action(
         self, state: SessionState, metadata: dict[str, Any]
     ) -> bool:
-        if not state.plan:
-            return False
-        work = (
-            effective_objective(state)
-            + "\n"
-            + json.dumps(state.plan, ensure_ascii=False, sort_keys=True)
-        ).lower()
+        objective = effective_objective(state).lower()
+        work = objective + "\n" + json.dumps(state.plan, ensure_ascii=False, sort_keys=True).lower()
         requests_change = any(
             marker in work
             for marker in (
@@ -3078,7 +3073,7 @@ class Controller:
             )
         )
         targets_repository = any(
-            marker in work
+            marker in objective
             for marker in (
                 "repository",
                 "repo",
@@ -3086,15 +3081,12 @@ class Controller:
                 "project",
                 " file",
                 "module",
-                " test",
                 ".py",
                 ".js",
                 ".ts",
                 "저장소",
-                "코드",
                 "파일",
                 "모듈",
-                "테스트",
             )
         )
         if not (requests_change and targets_repository):

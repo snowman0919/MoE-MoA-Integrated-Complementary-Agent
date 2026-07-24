@@ -66,6 +66,7 @@ async def test_responses_sse_translates_chat_text_and_usage() -> None:
         "구현을 위한 설계를 마친 후, `rate_limiter.py`를 작성합니다.",
         "이제 테스트 파일을 검토하여 구현 요구사항을 정확히 이해합니다.",
         "테스트 코드를 확인하여 구현 사양을 완전히 파악합니다.",
+        "테스트 파일을 확인하고 구현을 시작합니다.",
         "Inspecting the tests.",
     ],
 )
