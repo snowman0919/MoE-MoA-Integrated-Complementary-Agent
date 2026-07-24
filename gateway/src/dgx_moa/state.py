@@ -93,6 +93,7 @@ class SessionState(BaseModel):
     roles_required: list[str] = Field(default_factory=lambda: ["executor"])
     review_fail_closed: bool = False
     review_deferred: bool = False
+    frontier_correction_required: bool = False
     finish_reasons: list[str] = Field(default_factory=list)
     truncated: bool = False
     timings_ms: dict[str, float] = Field(default_factory=dict)

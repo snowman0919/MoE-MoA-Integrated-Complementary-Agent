@@ -1269,11 +1269,17 @@ class Controller:
             state.tool_executions = state.tool_executions[-self.settings.limits.max_steps :]
             observed_tool_call_ids.add(tool_call_id)
             self.store.event(state.session_id, "tool_execution_recorded", execution)
-            if (
-                not failed
-                and state.review_status == "approved"
-                and self.tool_execution_changes_files(execution)
-            ):
+            changed_files = not failed and self.tool_execution_changes_files(execution)
+            if changed_files and state.frontier_correction_required:
+                state.frontier_correction_required = False
+                state.review_status = "deferred"
+                state.review_deferred = True
+                self.store.event(
+                    state.session_id,
+                    "frontier_correction_applied",
+                    {"reason": "implementation_changed_after_frontier_rejection"},
+                )
+            elif changed_files and state.review_status == "approved":
                 state.review_status = "deferred"
                 state.review_deferred = True
                 self.store.event(
@@ -2448,9 +2454,8 @@ class Controller:
                 if role not in {"reviewer", "frontier"} or role in reused_roles:
                     continue
                 reused_roles.add(role)
-                collaboration_context += (
-                    f"\nPrior {role.title()} contribution:\n"
-                    + json.dumps(artifact.get("output", {}), ensure_ascii=False)
+                collaboration_context += f"\nPrior {role.title()} contribution:\n" + json.dumps(
+                    artifact.get("output", {}), ensure_ascii=False
                 )
                 if reused_roles == {"reviewer", "frontier"}:
                     break
@@ -2896,6 +2901,8 @@ class Controller:
                     "verdict"
                 ) in {"revise", "reject"}:
                     state.review_status = "rejected_frontier"
+                    state.review_deferred = True
+                    state.frontier_correction_required = True
                     state.phase = Phase.CORRECTION
                     state.derived_confidence = "conflicted"
                     self.store.event(
@@ -3045,7 +3052,8 @@ class Controller:
                         + ", ".join(pending_prerequisites)
                         if pending_prerequisites
                         else (
-                            "Implementation, validation, and required review evidence are complete. "
+                            "Implementation, validation, and required review evidence "
+                            "are complete. "
                             "Return the concise final result now; do not call more tools."
                             if implementation_complete
                             else "Take one useful step"
@@ -3138,10 +3146,13 @@ class Controller:
             for execution in state.tool_executions
         )
         validated = self.has_review_evidence(state, metadata)
-        review_ready = state.review_status == "approved" or (
-            "reviewer" not in state.roles_required
-            and state.review_status == "pending"
-            and not state.review_deferred
+        review_ready = not state.frontier_correction_required and (
+            state.review_status == "approved"
+            or (
+                "reviewer" not in state.roles_required
+                and state.review_status == "pending"
+                and not state.review_deferred
+            )
         )
         return not (changed and validated and review_ready)
 
@@ -3492,6 +3503,13 @@ class Controller:
                 state.session_id,
                 "review_status_normalized",
                 {"reason": "required_correction_present"},
+            )
+        if result.get("status") == "approved" and state.frontier_correction_required:
+            result["status"] = "rejected"
+            self.store.event(
+                state.session_id,
+                "review_status_normalized",
+                {"reason": "frontier_correction_not_applied"},
             )
         safe_result = cast(dict[str, Any], self.safe_payload(state, result))
         state.review_status = result.get("status", "rejected")
