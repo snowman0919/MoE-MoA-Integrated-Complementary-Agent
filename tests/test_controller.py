@@ -581,9 +581,11 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
 
         def __init__(self) -> None:
             self.calls = 0
+            self.correlation_ids: list[str] = []
 
         async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
             self.calls += 1
+            self.correlation_ids.append(correlation_id)
             return FrontierCollaborationResult(
                 mode="code_review",
                 output={
@@ -672,6 +674,9 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
 
     assert frontier.calls == 1
     assert state.frontier_invocations == 2
+    assert frontier.correlation_ids == [
+        "frontier-correction-verification:frontier:2"
+    ]
     assert state.frontier_correction_pending_verification is False
     assert any(
         event["event_type"] == "frontier_collaboration_started"
@@ -2776,6 +2781,21 @@ def test_implementation_completion_requires_change_validation_and_review(
         plan=[{"step": "Explain the concept"}],
     )
     assert controller.requires_implementation_tool_action(question, {}) is False
+
+
+def test_frontier_missing_tests_block_approval(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    assert controller.material_frontier_review(
+        {
+            "verdict": "approve",
+            "critical": [],
+            "important": [],
+            "missing_tests": ["strict JSON NaN rejection"],
+        }
+    )
 
 
 def test_review_evidence_survives_non_file_tools_but_not_a_new_change(

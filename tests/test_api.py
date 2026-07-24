@@ -151,6 +151,7 @@ def test_busy_executor_remote_stream_failure_is_observable(
     assert failed["payload"] == {
         "provider": "frontier",
         "failure_class": "RuntimeError",
+        "failure_code": "FRONTIER_OPENROUTER_FAILURE",
         "routing_reason": "local_busy",
     }
 
