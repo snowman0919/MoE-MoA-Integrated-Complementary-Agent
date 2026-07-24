@@ -3086,7 +3086,11 @@ class Controller:
                     arguments = json.loads(arguments)
                 except ValueError:
                     arguments = {}
-            command = arguments.get("cmd") if isinstance(arguments, dict) else None
+            command = (
+                arguments.get("cmd") or arguments.get("command")
+                if isinstance(arguments, dict)
+                else None
+            )
             if (
                 execution.get("exit_code") == 0
                 and isinstance(command, str)
@@ -3185,13 +3189,21 @@ class Controller:
                     arguments = json.loads(arguments)
                 except ValueError:
                     arguments = {}
-            command = arguments.get("cmd") if isinstance(arguments, dict) else None
-            if not isinstance(command, str) or not re.search(
-                r"(?:^|&&|\|\||;|\n)\s*(?:cat|head|tail|ls|find|rg|sed\s+-n)\b",
-                command,
-            ):
+            tool_name = str(execution.get("tool_name", ""))
+            command = (
+                arguments.get("cmd") or arguments.get("command")
+                if isinstance(arguments, dict)
+                else None
+            )
+            command_inspection = isinstance(command, str) and bool(
+                re.search(
+                    r"(?:^|&&|\|\||;|\n)\s*(?:cat|head|tail|ls|find|rg|sed\s+-n)\b",
+                    command,
+                )
+            )
+            if not command_inspection and tool_name not in {"read", "list", "glob", "grep"}:
                 continue
-            targets = argument_paths(command)
+            targets = argument_paths(arguments)
             if not targets and "No active process session" in str(
                 execution.get("stdout_summary", "")
             ):
@@ -3223,7 +3235,10 @@ class Controller:
     def tool_execution_changes_files(execution: dict[str, Any]) -> bool:
         if execution.get("tool_name") in {
             "apply_patch",
+            "delete",
             "edit_file",
+            "edit",
+            "write",
             "write_file",
             "delete_file",
         }:
@@ -3239,7 +3254,11 @@ class Controller:
                 arguments = json.loads(arguments)
             except ValueError:
                 arguments = {}
-        command = arguments.get("cmd") if isinstance(arguments, dict) else None
+        command = (
+            arguments.get("cmd") or arguments.get("command")
+            if isinstance(arguments, dict)
+            else None
+        )
         return isinstance(command, str) and bool(
             re.search(
                 r"(?:^|&&|\|\||;|\n)\s*(?:"
