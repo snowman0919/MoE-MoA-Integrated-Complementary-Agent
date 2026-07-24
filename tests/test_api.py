@@ -3195,7 +3195,8 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             for model in models["models"]
         )
         assert all(
-            "strictly positive unless the contract explicitly permits zero"
+            "Collection, sample, and selection counts may be zero" in model["base_instructions"]
+            and "Security or resource capacities and timeouts must be strictly positive"
             in model["base_instructions"]
             for model in models["models"]
         )
