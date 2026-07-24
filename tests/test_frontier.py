@@ -23,6 +23,7 @@ from dgx_moa.frontier import (
     evaluate_frontier_candidate,
     frontier_eligible,
     load_frontier_config,
+    normalize_openrouter_tool_calls,
     openrouter_response_schema,
     profile_lock,
     profile_status,
@@ -203,6 +204,30 @@ def test_openrouter_schema_removes_unsupported_numeric_constraints() -> None:
     assert '"minimum"' not in encoded
     assert '"maximum"' not in encoded
     assert '"confidence"' in encoded
+
+
+def test_openrouter_tool_calls_drop_provider_metadata() -> None:
+    calls = normalize_openrouter_tool_calls(
+        [
+            {
+                "index": 0,
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "write_file", "arguments": {"path": "x", "content": "y"}},
+            }
+        ]
+    )
+
+    assert calls == [
+        {
+            "id": "call-1",
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "arguments": '{"path":"x","content":"y"}',
+            },
+        }
+    ]
 
 
 def test_frontier_review_requires_finite_arithmetic_parameters() -> None:
