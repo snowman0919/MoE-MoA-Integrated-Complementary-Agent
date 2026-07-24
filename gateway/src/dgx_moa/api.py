@@ -2523,6 +2523,18 @@ def create_app(
                             )
                         except Exception as error:
                             remote_failure.append(type(error).__name__)
+                            request.app.state.controller.record_provider_failure(
+                                state, "executor", error
+                            )
+                            request.app.state.store.event(
+                                state_session_id,
+                                "executor_remote_failed",
+                                {
+                                    "provider": "frontier",
+                                    "failure_class": type(error).__name__,
+                                    "routing_reason": executor_routing_reason,
+                                },
+                            )
                             payload = {
                                 "error": {
                                     "message": "remote Executor fallback unavailable",
@@ -3503,6 +3515,7 @@ def create_app(
                             or (
                                 state.engineering_loop is not None
                                 and state.plan
+                                and "reviewer" in state.roles_required
                                 and state.review_deferred
                                 and state.review_status != "approved"
                             )
