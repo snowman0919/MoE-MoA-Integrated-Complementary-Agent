@@ -464,7 +464,7 @@ async def test_local_review_escalates_to_frontier_code_review(
             return FrontierCollaborationResult(
                 mode="code_review",
                 output={
-                    "verdict": "revise",
+                    "verdict": "approve" if clean_approval else "revise",
                     "critical": [],
                     "important": ["fix the boundary"],
                     "suggestions": [],
