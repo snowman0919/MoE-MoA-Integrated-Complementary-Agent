@@ -104,6 +104,57 @@ def test_busy_executor_routes_new_session_to_frontier(
     assert started["payload"]["routing_reason"] == "local_busy"
 
 
+def test_busy_executor_remote_stream_failure_is_observable(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "frontier-failure.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    controlled = settings.model_copy(
+        update={"frontier_enabled": True, "frontier_config": frontier_config}
+    )
+    app = create_app(controlled)
+
+    async def remote_execute(
+        _remote_request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        raise RuntimeError("FRONTIER_OPENROUTER_FAILURE")
+
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        held = app.state.lifecycle_store.acquire_request_leases(
+            str(uuid.uuid4()), ("executor",), kind="active_request"
+        )
+        try:
+            response = client.post(
+                "/v1/chat/completions",
+                headers={
+                    "Authorization": "Bearer test-secret",
+                    "X-Session-ID": "remote-failure",
+                },
+                json={
+                    "model": "dgx-moa-fast",
+                    "messages": [{"role": "user", "content": "간단히 답해"}],
+                    "stream": True,
+                },
+            )
+            events = app.state.store.events("remote-failure")
+        finally:
+            app.state.lifecycle_store.release_leases(lease.lease_id for lease in held)
+
+    assert response.status_code == 200
+    assert "frontier_required_unavailable" in response.text
+    failed = next(event for event in events if event["event_type"] == "executor_remote_failed")
+    assert failed["payload"] == {
+        "provider": "frontier",
+        "failure_class": "RuntimeError",
+        "routing_reason": "local_busy",
+    }
+
+
 def test_oversized_executor_context_routes_to_frontier_before_dispatch(
     settings: Settings, stub_provider: StubProvider
 ) -> None:
@@ -5923,6 +5974,7 @@ def test_responses_retries_stop_while_planned_work_is_pending(  # type: ignore[n
             state.engineering_loop = state.engineering_loop or new_loop(
                 session_id, "프로토타입을 구현하고 검증하라"
             )
+            state.roles_required = ["executor", "reviewer"]
             state.review_deferred = True
             state.review_status = "deferred"
             test_client.app.state.store.save(state)
@@ -5960,6 +6012,54 @@ def test_responses_retries_stop_while_planned_work_is_pending(  # type: ignore[n
     assert '"name":"exec_command"' in response.text
     assert "event: response.completed" in response.text
     assert any(event["event_type"] == "progress_only_response_retried" for event in events)
+
+
+def test_responses_accepts_concrete_final_with_stale_deferred_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    calls = 0
+    session_id = "responses-stale-deferred-review"
+    test_client: TestClient | None = None
+
+    async def stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        stub_provider.calls.append(role)
+        assert test_client is not None
+        state = test_client.app.state.store.get(session_id)
+        assert state is not None
+        state.plan = [{"step": "구현과 테스트"}]
+        state.engineering_loop = state.engineering_loop or new_loop(
+            session_id, "프로토타입을 구현하고 검증하라"
+        )
+        state.roles_required = ["reasoner", "executor"]
+        state.review_deferred = True
+        state.review_status = "deferred"
+        test_client.app.state.store.save(state)
+
+        async def chunks():  # type: ignore[no-untyped-def]
+            yield (
+                b'data: {"choices":[{"delta":{"content":'
+                b'"\\uad6c\\ud604 \\uc644\\ub8cc, \\ud14c\\uc2a4\\ud2b8 4\\uac1c\\uac00 '
+                b'\\ud1b5\\uacfc\\ud588\\uc2b5\\ub2c8\\ub2e4."}},'
+                b'"finish_reason":"stop"}]}\n\n'
+            )
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    stub_provider.stream = stream  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        test_client = client
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={"model": "dgx-moa-fast", "input": "계속 진행해", "stream": True},
+        )
+
+    assert calls == 1
+    assert "event: response.completed" in response.text
+    assert "incomplete_response" not in response.text
 
 
 def test_responses_stream_retries_selective_judge_without_streaming(
