@@ -2455,7 +2455,6 @@ def create_app(
                 retry_request["stream"] = False
                 retry_request["messages"] = [
                     *executor_request.get("messages", []),
-                    message,
                     {
                         "role": "user",
                         "content": (
