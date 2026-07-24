@@ -3375,6 +3375,7 @@ class Controller:
                 "read",
                 "read_file",
                 "view_image",
+                "write_stdin",
                 "list",
                 "glob",
                 "grep",
@@ -3382,8 +3383,9 @@ class Controller:
             }:
                 continue
             targets = argument_paths(arguments)
-            if not targets and "No active process session" in str(
-                execution.get("stdout_summary", "")
+            if not targets and any(
+                marker in str(execution.get("stdout_summary", ""))
+                for marker in ("No active process session", "Unknown process id")
             ):
                 targets = {"invalid-process-session"}
             for target in targets:

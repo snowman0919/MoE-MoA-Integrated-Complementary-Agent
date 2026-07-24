@@ -3054,6 +3054,20 @@ def test_repeated_successful_inspection_marks_executor_stalled(
     )
     assert controller.executor_stalled(codex) is True
 
+    invalid_process = SessionState(
+        session_id="invalid-process-inspection",
+        tool_executions=[
+            {
+                "tool_name": "write_stdin",
+                "normalized_arguments": {"session_id": 0},
+                "stdout_summary": "write_stdin failed: Unknown process id 0",
+                "exit_code": 0,
+            }
+            for _ in range(3)
+        ],
+    )
+    assert controller.executor_stalled(invalid_process) is True
+
 
 @pytest.mark.asyncio
 async def test_completed_implementation_is_told_to_return_final(
