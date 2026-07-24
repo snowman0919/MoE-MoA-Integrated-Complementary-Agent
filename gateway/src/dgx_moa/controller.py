@@ -3352,7 +3352,14 @@ class Controller:
                     command,
                 )
             )
-            if not command_inspection and tool_name not in {"read", "list", "glob", "grep"}:
+            if not command_inspection and tool_name not in {
+                "read",
+                "read_file",
+                "list",
+                "glob",
+                "grep",
+                "search_files",
+            }:
                 continue
             targets = argument_paths(arguments)
             if not targets and "No active process session" in str(
