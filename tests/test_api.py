@@ -271,6 +271,98 @@ def test_repeated_failure_routes_executor_to_frontier(
     assert selected["payload"]["routing_reason"] == "local_repeated_failure"
 
 
+def test_duplicate_failed_call_routes_once_to_frontier(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "duplicate-failure-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    controlled = settings.model_copy(
+        update={"frontier_enabled": True, "frontier_config": frontier_config}
+    )
+    app = create_app(controlled)
+    remote_calls = 0
+    call = {
+        "id": "call-duplicate",
+        "type": "function",
+        "function": {"name": "shell", "arguments": '{"cmd":"false"}'},
+    }
+    repeated_call = {**call, "id": "call-duplicate-again"}
+
+    async def remote_execute(
+        _remote_request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        nonlocal remote_calls
+        remote_calls += 1
+        return {
+            "id": "chatcmpl-frontier-duplicate-failure",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "원격 전략 전환 완료"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 8},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "primary", "cost_usd": None},
+        }
+
+    session_id = "duplicate-failure-recovery"
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        app.state.store.save(
+            SessionState(
+                session_id=session_id,
+                objective="Fix the failed implementation.",
+                failed_call_fingerprints=[fingerprint(call)],
+            )
+        )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [
+                    {"role": "assistant", "tool_calls": [repeated_call]},
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-duplicate-again",
+                        "content": '{"exit_code":2,"error":"bad"}',
+                    },
+                ],
+            },
+        )
+        blocked = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [
+                    {"role": "assistant", "tool_calls": [call]},
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-duplicate",
+                        "content": '{"exit_code":2,"error":"bad"}',
+                    },
+                ],
+            },
+        )
+        events = app.state.store.events(session_id)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["choices"][0]["message"]["content"] == "원격 전략 전환 완료"
+    assert blocked.status_code == 409
+    assert remote_calls == 1
+    assert "executor" not in stub_provider.calls
+    selected = next(
+        event for event in events if event["event_type"] == "executor_remote_selected"
+    )
+    assert selected["payload"]["routing_reason"] == "local_duplicate_failure"
+
+
 def test_repeated_inspection_routes_executor_to_frontier(
     settings: Settings, stub_provider: StubProvider
 ) -> None:
