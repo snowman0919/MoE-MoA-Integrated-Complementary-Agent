@@ -22,6 +22,13 @@ from typing import Any
 HARNESSES = ("baseline", "opencode", "codex", "hermes")
 CORE_ENV = ("HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "SHELL", "TERM", "USER")
 TEST_COMMAND = (sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v")
+DOCKER_IMAGE = "python:3.11-slim"
+CODEX_BINARY = Path(
+    "/home/kotori9/.codex/packages/standalone/releases/0.145.0-aarch64-unknown-linux-musl/bin/codex"
+)
+OPENCODE_BINARY = Path("/home/kotori9/.opencode/bin/opencode")
+HERMES_ROOT = Path("/home/kotori9/.hermes/hermes-agent")
+HERMES_PYTHON_ROOT = Path("/home/kotori9/.pyenv/versions/3.11.14")
 BAD_TERMINALS = (
     "stream disconnected before completion",
     "reconnecting 5/5",
@@ -698,7 +705,7 @@ def prompt(task: Task) -> str:
     return (
         "이 저장소의 신규 실사용급 작업을 완료하라. AGENTS.md, README.md, tests/를 확인하고 "
         f"{task.source_name}만 구현하라. 테스트나 요구사항 파일은 수정하지 마라. "
-        f"`{sys.executable} -m unittest discover -s tests -v`를 실제 실행하고, 실패하면 수정 후 "
+        "`python -m unittest discover -s tests -v`를 실제 실행하고, 실패하면 수정 후 "
         "재실행하라. 도구 실행 없이 완료를 선언하지 말고 진행 문장만 남긴 채 종료하지 마라. "
         "최종 응답은 한국어 6줄 이내로 변경 파일, 테스트 명령/결과, 남은 위험을 적어라."
     )
@@ -741,6 +748,101 @@ def run_process(
         return subprocess.CompletedProcess(
             command, 124, stdout or "", (stderr or "") + "\ntimeout\n"
         )
+
+
+def docker_command(
+    workspace: Path,
+    state: Path,
+    inner: list[str],
+    *,
+    environment_names: tuple[str, ...] = (),
+    extra_environment: tuple[str, ...] = (),
+    read_only_mounts: tuple[tuple[Path, str], ...] = (),
+) -> list[str]:
+    state.mkdir(parents=True, exist_ok=True, mode=0o700)
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "--init",
+        "--network",
+        "host",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        "512",
+        "--memory",
+        "2g",
+        "--cpus",
+        "4",
+        "--tmpfs",
+        "/tmp:rw,nosuid,nodev,size=512m",
+        "--tmpfs",
+        "/run:rw,nosuid,nodev,size=16m",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+        "--workdir",
+        str(workspace),
+        "--volume",
+        f"{workspace}:{workspace}:rw",
+        "--volume",
+        f"{state}:/state:rw",
+        "--env",
+        "HOME=/state",
+        "--env",
+        "USER=quality",
+        "--env",
+        "LOGNAME=quality",
+        "--env",
+        "LANG=C.UTF-8",
+        "--env",
+        "PATH=/tools:/usr/local/bin:/usr/bin:/bin",
+    ]
+    for name in environment_names:
+        command.extend(("--env", name))
+    for value in extra_environment:
+        command.extend(("--env", value))
+    for source, target in read_only_mounts:
+        command.extend(("--volume", f"{source}:{target}:ro"))
+    return [*command, DOCKER_IMAGE, *inner]
+
+
+def codex_moa_command(args: argparse.Namespace, workspace: Path, task: Task) -> list[str]:
+    provider = "dgx_moa_quality"
+    base_url = args.gateway.rstrip("/") + "/v1"
+    return [
+        "/tools/codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--strict-config",
+        "--ignore-user-config",
+        "-c",
+        'model="dgx-moa-orchestrated"',
+        "-c",
+        "model_context_window=65536",
+        "-c",
+        'model_reasoning_effort="high"',
+        "-c",
+        'model_verbosity="low"',
+        "-c",
+        f"model_provider={json.dumps(provider)}",
+        "-c",
+        f"model_providers.{provider}.name={json.dumps('DGX MoA quality')}",
+        "-c",
+        f"model_providers.{provider}.base_url={json.dumps(base_url)}",
+        "-c",
+        f"model_providers.{provider}.env_key={json.dumps('DGX_MOA_API_KEY')}",
+        "-c",
+        f"model_providers.{provider}.wire_api={json.dumps('responses')}",
+        "-C",
+        str(workspace),
+        prompt(task),
+    ]
 
 
 def run_codex_admin(args: argparse.Namespace, workspace: Path, task: Task) -> tuple[int, str, str]:
@@ -787,8 +889,8 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
                 "XDG_STATE_HOME": str(state / "state"),
             }
         )
-        command = [
-            "/home/kotori9/.opencode/bin/opencode",
+        inner = [
+            "/tools/opencode",
             "run",
             "--format",
             "json",
@@ -800,25 +902,74 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             "dgx-moa/dgx-moa-agent",
             prompt(task),
         ]
+        command = (
+            docker_command(
+                workspace,
+                state,
+                inner,
+                environment_names=("DGX_MOA_API_KEY",),
+                read_only_mounts=((OPENCODE_BINARY, "/tools/opencode"),),
+            )
+            if args.runtime == "docker"
+            else inner
+        )
         run = run_process(command, cwd=workspace, environment=environment, timeout=args.timeout)
         return_code, stdout, stderr = run.returncode, run.stdout, run.stderr
     elif harness == "codex":
-        return_code, stdout, stderr = run_codex_admin(args, workspace, task)
-        return_code = 0 if return_code == 200 else return_code
+        if args.runtime == "docker":
+            key = os.getenv("DGX_MOA_OPENCODE_KEY")
+            if not key:
+                raise RuntimeError("DGX_MOA_OPENCODE_KEY is required")
+            state = args.output_root / args.run_id / "profiles" / f"codex-{task.slug}"
+            command = docker_command(
+                workspace,
+                state,
+                codex_moa_command(args, workspace, task),
+                environment_names=("DGX_MOA_API_KEY",),
+                extra_environment=("CODEX_HOME=/state",),
+                read_only_mounts=((CODEX_BINARY, "/tools/codex"),),
+            )
+            run = run_process(
+                command,
+                cwd=workspace,
+                environment=filtered_env({"DGX_MOA_API_KEY": key}),
+                timeout=args.timeout,
+            )
+            return_code, stdout, stderr = run.returncode, run.stdout, run.stderr
+        else:
+            return_code, stdout, stderr = run_codex_admin(args, workspace, task)
+            return_code = 0 if return_code == 200 else return_code
     elif harness == "baseline":
-        command = [
-            "/home/kotori9/.local/bin/codex",
+        inner = [
+            "/tools/codex" if args.runtime == "docker" else str(CODEX_BINARY),
             "exec",
             "--ephemeral",
             "--json",
-            "--sandbox",
-            "workspace-write",
+            *(
+                ["--dangerously-bypass-approvals-and-sandbox"]
+                if args.runtime == "docker"
+                else ["--sandbox", "workspace-write"]
+            ),
             "-C",
             str(workspace),
             "-m",
             "gpt-5.6-sol",
             prompt(task),
         ]
+        if args.runtime == "docker":
+            state = args.output_root / args.run_id / "profiles" / f"baseline-{task.slug}"
+            command = docker_command(
+                workspace,
+                state,
+                inner,
+                extra_environment=("CODEX_HOME=/state",),
+                read_only_mounts=(
+                    (CODEX_BINARY, "/tools/codex"),
+                    (Path.home() / ".codex/auth.json", "/state/auth.json"),
+                ),
+            )
+        else:
+            command = inner
         run = run_process(
             command,
             cwd=workspace,
@@ -833,8 +984,10 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
         shutil.copy2("/home/kotori9/.hermes/.env", hermes_home / ".env")
         (hermes_home / "config.yaml").chmod(0o600)
         (hermes_home / ".env").chmod(0o600)
-        usage_path = evidence / "usage.json"
-        command = [
+        usage_path = (
+            Path("/state/usage.json") if args.runtime == "docker" else evidence / "usage.json"
+        )
+        inner = [
             "/home/kotori9/.hermes/hermes-agent/venv/bin/python",
             "-m",
             "hermes_cli.main",
@@ -848,6 +1001,20 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             "dgx-moa-orchestrated",
             "--pass-session-id",
         ]
+        command = (
+            docker_command(
+                workspace,
+                hermes_home,
+                inner,
+                extra_environment=("HERMES_HOME=/state",),
+                read_only_mounts=(
+                    (HERMES_ROOT, str(HERMES_ROOT)),
+                    (HERMES_PYTHON_ROOT, str(HERMES_PYTHON_ROOT)),
+                ),
+            )
+            if args.runtime == "docker"
+            else inner
+        )
         run = run_process(
             command,
             cwd=workspace,
@@ -865,6 +1032,8 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
         "started_at_epoch": started_at,
         "ended_at_epoch": time.time(),
         "duration_seconds": duration,
+        "runtime": args.runtime,
+        "container_image": DOCKER_IMAGE if args.runtime == "docker" else None,
     }
     (evidence / "run.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
@@ -914,6 +1083,7 @@ def score_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, A
         "tool_evidence": tool_evidence,
         "korean_final": korean_final,
         "no_bad_terminal": no_bad_terminal,
+        "docker_isolation": run.get("runtime") == "docker",
     }
     score = {
         **run,
@@ -971,6 +1141,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=Path("/tmp/dgx-moa-client-quality"))
     parser.add_argument("--gateway", default="http://127.0.0.1:9000")
     parser.add_argument("--timeout", type=int, default=1_800)
+    parser.add_argument("--runtime", choices=("host", "docker"), default="docker")
     return parser.parse_args()
 
 

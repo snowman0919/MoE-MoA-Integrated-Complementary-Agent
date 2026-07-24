@@ -1607,6 +1607,63 @@ async def test_stream_tool_calls_create_one_continuation_before_stream_release(
     assert record.continuation_lease_count == 1
 
 
+def test_stream_tool_budget_exhaustion_returns_terminal_sse_error(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    settings.loop_engineering.defaults["tool_calls"] = 1
+    tool_delta = (
+        b'data: {"choices":[{"delta":{"tool_calls":['
+        b'{"index":0,"id":"call-one","type":"function","function":'
+        b'{"name":"read_file","arguments":"{}"}},'
+        b'{"index":1,"id":"call-two","type":"function","function":'
+        b'{"name":"read_file","arguments":"{}"}}]}}]}\n\n'
+    )
+
+    async def streamed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        async def upstream():  # type: ignore[no-untyped-def]
+            yield tool_delta
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return upstream()
+
+    stub_provider.stream = streamed  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "stream-budget",
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "inspect"}],
+                "stream": True,
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "description": "read",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+            },
+        )
+        state = client.app.state.store.get("stream-budget")
+        record = client.app.state.lifecycle_store.get("executor")
+
+    assert response.status_code == 200
+    assert '"code":"loop_budget_exhausted"' in response.text
+    assert response.text.endswith("data: [DONE]\n\n")
+    assert state is not None and state.final_status == "blocked"
+    assert record.active_request_count == 0
+    assert record.open_stream_count == 0
+    assert record.continuation_lease_count == 0
+
+
 @pytest.mark.asyncio
 async def test_stream_tool_payload_creates_continuation_when_finish_reason_is_stop(
     settings, stub_provider: StubProvider

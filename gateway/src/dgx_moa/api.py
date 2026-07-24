@@ -2535,6 +2535,7 @@ def create_app(
                 stage_status["executor_first_byte"] = "completed"
                 observation = StreamObservation(configured.limits.max_stream_capture_bytes)
                 stream_completed = False
+                loop_admission_failed = False
                 stream_cleanup_lock = asyncio.Lock()
                 stream_cleaned = False
 
@@ -2648,6 +2649,8 @@ def create_app(
                                     retryable_failure_class=(
                                         "executor_total_timeout"
                                         if terminal_status == "timed_out"
+                                        else None
+                                        if loop_admission_failed
                                         else "backend_error"
                                         if terminal_status == "failed"
                                         else None
@@ -2655,7 +2658,7 @@ def create_app(
                                 )
 
                 async def stream_response() -> AsyncIterator[bytes]:
-                    nonlocal first_byte_at, stream_completed
+                    nonlocal first_byte_at, loop_admission_failed, stream_completed
                     admitted_tool_calls = 0
                     accounted_total_tokens = 0
                     forwarder = forward_sse(
@@ -2702,6 +2705,28 @@ def create_app(
                                     first_byte_at = time.time()
                                 yield chunk
                         stream_completed = not remote_failure
+                    except LoopAdmissionError:
+                        loop_admission_failed = True
+                        stage_status["executor_total"] = "failed"
+                        request.app.state.store.event(
+                            state_session_id,
+                            "stream_loop_admission_failed",
+                            {"code": "loop_budget_exhausted"},
+                        )
+                        payload = {
+                            "error": {
+                                "message": "tool loop budget exhausted",
+                                "type": "loop_admission_error",
+                                "code": "loop_budget_exhausted",
+                            }
+                        }
+                        if "first_downstream_byte" not in state.timings_ms:
+                            state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                            first_byte_at = time.time()
+                        yield (
+                            "data: " + json.dumps(payload, separators=(",", ":")) + "\n\n"
+                        ).encode()
+                        yield b"data: [DONE]\n\n"
                     except TimeoutError as error:
                         stage_status["executor_total"] = "timed_out"
                         raise StageTimeout("executor_total") from error

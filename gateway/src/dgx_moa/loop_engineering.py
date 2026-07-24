@@ -115,7 +115,7 @@ class LoopBudget(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     iterations: int = Field(default=4, ge=0)
-    tool_calls: int = Field(default=30, ge=0)
+    tool_calls: int = Field(default=100, ge=0)
     reasoner_reentries: int = Field(default=4, ge=0)
     planner_calls: int = Field(default=2, ge=0)
     reviewer_calls: int = Field(default=2, ge=0)
