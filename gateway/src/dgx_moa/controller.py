@@ -311,7 +311,19 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
     try:
         parsed = json.loads(content) if isinstance(content, str) else content
     except ValueError:
-        parsed = {"stdout": str(content)}
+        try:
+            prefix, offset = json.JSONDecoder().raw_decode(content)
+            suffix = content[offset:].strip()
+            if not (
+                isinstance(prefix, dict)
+                and suffix.startswith("[Tool loop warning:")
+            ):
+                raise ValueError
+            parsed = dict(prefix)
+            output_key = "stdout" if "stdout" in parsed else "output"
+            parsed[output_key] = f"{parsed.get(output_key, '')}\n\n{suffix}".strip()
+        except (TypeError, ValueError):
+            parsed = {"stdout": str(content)}
     parsed = parsed if isinstance(parsed, dict) else {"stdout": str(parsed)}
     if "stdout" in parsed:
         stdout = parsed["stdout"]
