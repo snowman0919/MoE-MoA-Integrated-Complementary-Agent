@@ -81,7 +81,7 @@ def test_loop_engineering_environment_is_strict_and_disabled_by_default(
     assert settings.loop_engineering.enabled is True
     assert settings.loop_engineering.defaults["iterations"] == 2
     assert settings.loop_engineering.defaults["tool_calls"] == 100
-    assert settings.loop_engineering.defaults["frontier_calls"] == 3
+    assert settings.loop_engineering.defaults["frontier_calls"] == 4
     assert Settings(auth_enabled=False).loop_engineering.enabled is False
 
 

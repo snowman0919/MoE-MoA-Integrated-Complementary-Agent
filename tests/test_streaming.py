@@ -532,7 +532,7 @@ async def test_responses_sse_replaces_invented_write_stdin_session_id() -> None:
         async for chunk in responses_sse(
             upstream(),
             "dgx-moa-agent",
-            function_tool_names={"write_stdin"},
+            function_tool_names={"exec_command", "write_stdin"},
         )
         for line in chunk.decode().splitlines()
         if line.startswith("data: ")
@@ -541,7 +541,15 @@ async def test_responses_sse_replaces_invented_write_stdin_session_id() -> None:
     done = next(
         event for event in events if event["type"] == "response.function_call_arguments.done"
     )
-    assert json.loads(done["arguments"]) == {"session_id": 0, "chars": ""}
+    output = next(
+        event
+        for event in events
+        if event["type"] == "response.output_item.done" and event["output_index"] == 1
+    )
+    assert output["item"]["name"] == "exec_command"
+    assert json.loads(done["arguments"]) == {
+        "cmd": "printf '%s\\n' 'No active process session; use exec_command or apply_patch.'"
+    }
 
 
 @pytest.mark.asyncio
