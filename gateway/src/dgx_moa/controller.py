@@ -2561,8 +2561,12 @@ class Controller:
                         frontier_pending = (mode, evidence)
         metadata = dict(request.get("metadata", {}))
         review_evidence_available = self.has_review_evidence(state, metadata)
-        if (not progress_retry or state.review_deferred) and needs_reviewer(
-            state, tool_continuation or state.review_deferred, review_evidence_available
+        if (
+            not state.frontier_correction_required
+            and (not progress_retry or state.review_deferred)
+            and needs_reviewer(
+                state, tool_continuation or state.review_deferred, review_evidence_available
+            )
         ):
             roles = tuple(dict.fromkeys((*roles, "reviewer")))
             state.roles_required = list(roles)

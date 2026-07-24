@@ -2437,6 +2437,29 @@ def create_app(
                 )
                 return cast(dict[str, Any], response)
 
+            if (
+                not executor_remote
+                and request.app.state.frontier is not None
+                and state.frontier_correction_required
+            ):
+                executor_remote = True
+                executor_routing_reason = "frontier_correction_required"
+                executor_lease_id = str(
+                    uuid.uuid5(uuid.UUID(usage_request_id), "active_request:executor")
+                )
+                request.app.state.lifecycle_store.release_leases((executor_lease_id,))
+                active_lease_ids = tuple(
+                    lease_id for lease_id in active_lease_ids if lease_id != executor_lease_id
+                )
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_remote_selected",
+                    {
+                        "routing_reason": executor_routing_reason,
+                        "provider": "frontier",
+                    },
+                )
+
             active_stage = "planner" if "planner" in roles else "request"
             tool_continuation = (
                 recovered_tool_owner
@@ -3684,11 +3707,13 @@ def create_app(
                                                 role="developer",
                                                 content=(
                                                     "The previous answer did not prove completion. "
-                                                    "A code block in the answer does not modify the "
-                                                    "workspace. Call the next required tool to apply "
-                                                    "the implementation and run validation. Return a "
-                                                    "final result only after recorded change, test, "
-                                                    "and required review evidence exists."
+                                                    "A code block in the answer "
+                                                    "does not modify the workspace. "
+                                                    "Call the required tool "
+                                                    "to implement and validate. "
+                                                    "Return a final result only "
+                                                    "after recorded change, "
+                                                    "test, and required review evidence exists."
                                                 ),
                                             ),
                                         ],
