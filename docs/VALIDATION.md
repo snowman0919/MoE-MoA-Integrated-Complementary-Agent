@@ -4951,3 +4951,106 @@ and Hermes `1796553`. The production healthcheck and five deployed regression
 cases exited 0. The inspected post-restart gateway journal contained no
 traceback, exception, disconnect, loop-budget exhaustion, backend error, 401,
 or 500 entry.
+
+## Docker client quality matrix and context-fit recovery — 2026-07-25
+
+OpenCode, Codex, and the installed Hermes were run in separate read-only,
+capability-dropped Docker containers against five newly initialized Git
+fixtures each. Every fixture had a failing starter, immutable task tests, a
+separate hidden verifier, and a source-only change gate. These are the final
+functional runs:
+
+| Harness | Task | Run | Harness/test/hidden exit | Seconds |
+| --- | --- | --- | --- | ---: |
+| OpenCode | rate-limiter | `20260724-qm-final3` | `0/0/0` | 428.034 |
+| OpenCode | atomic-store | `20260724-qm-final4` | `0/0/0` | 213.797 |
+| OpenCode | dag-runner | `20260724-qm-final1` | `0/0/0` | 239.729 |
+| OpenCode | webhook-verifier | `20260724-qm-contract4` | `0/0/0` | 171.664 |
+| OpenCode | log-report | `20260724-qm-final8` | `0/0/0` | 254.556 |
+| Codex | rate-limiter | `20260724-qm-final9` | `0/0/0` | 460.207 |
+| Codex | atomic-store | `20260724-qm-final11` | `0/0/0` | 169.612 |
+| Codex | dag-runner | `20260724-qm-final11` | `0/0/0` | 209.850 |
+| Codex | webhook-verifier | `20260724-qm-contract6` | `0/0/0` | 137.393 |
+| Codex | log-report | `20260724-qm-final13` | `0/0/0` | 244.026 |
+| Hermes | rate-limiter | `20260724-qm-final26` | `0/0/0` | 197.382 |
+| Hermes | atomic-store | `20260724-qm-final44` | `0/0/0` | 342.922 |
+| Hermes | dag-runner | `20260724-qm-final28` | `0/0/0` | 249.707 |
+| Hermes | webhook-verifier | `20260724-qm-contract4` | `0/0/0` | 268.365 |
+| Hermes | log-report | `20260724-qm-final28` | `0/0/0` | 335.578 |
+
+All 15 score artifacts report `status=passed`; all ten checks per row are true:
+container isolation, harness exit, public and hidden validation exits, Korean
+final output, clean terminal, source-only change, unchanged tests, and recorded
+tool evidence. The original `gpt-5.6-sol` baseline passed four of the same five
+strict task verifiers; its webhook implementation accepted invalid
+configuration and failed that hidden contract check.
+
+A blind Claude Sonnet 4.6 review (`gen-1784896025-QJZxLw4MPyEqwKO7E6Mx`)
+scored the then-current task sets `214/250` for the baseline, `206/250` for
+Codex, `202/250` for OpenCode, and `181/250` for Hermes. It exposed real
+contract gaps that the public tests did not cover. A bounded follow-up
+(`gen-1784899732-P74uQoBC5xfpCu6mP5Cx`) cost `$0.175179` and reached its
+8,000-token output limit; no further paid review was used. The common quality
+contract now rejects unused unbounded state and undocumented monotonic-input
+restrictions (`a246909`), retains bounded implementation evidence for review
+(`119dfd9`), and recognizes shell-wrapped and installed-Hermes validation
+evidence (`9f5e986`).
+
+Codex run `20260725-qm-codex-terminal1` then reproduced a terminal failure after
+the implementation and tests had passed. Session
+`6cb4fb70-44be-44ef-ac90-13e0d074ed45` showed repeated local Reviewer HTTP 400
+responses, consumed its Reviewer-call budget, and emitted a failed Responses
+terminal that Codex retried five times. The Reviewer journal supplied the root
+cause: its physically served context was 8,192 tokens while the request
+contained at least 8,192 input tokens plus output.
+
+Tokenizing the exact failed-session evidence measured:
+
+| Review evidence cap | Prompt tokens | Requested output | Total |
+| ---: | ---: | ---: | ---: |
+| 16,000 characters | 8,419 | 1,500 | 9,919 |
+| 10,000 characters | 5,026 | 1,500 | 6,526 |
+| 8,000 characters | 4,034 | 1,500 | 5,534 |
+
+The selected cap is 10,000 characters. A direct local
+`dgx-moa-reviewer` call over the failed evidence returned valid
+`status=approved` JSON in 1.174 seconds with 5,026 prompt and 12 completion
+tokens. Specialist routing also preflights the served tokenizer before local
+dispatch: a measured overflow selects the remote Planner/Reviewer with reason
+`local_context_exceeded`; an explicit local-only request fails closed. Provider
+selection remains pinned after dispatch.
+
+Fresh Docker run `20260725-qm-codex-context1` completed in 272.657 seconds with
+exit `0`; public and hidden tests exited `0`, and all ten score checks passed.
+Its final session `5dc7ccc8-f5bd-45a8-a39d-f8bbba51e720` recorded ten tool
+results, two completed reviews with no review failure, Codex OAuth Frontier
+correction, final local Reviewer approval, `finish_reason=stop`, and completed
+session termination. The final local Reviewer invocation used
+`dgx-moa-reviewer`, 5,869 total tokens, and 3.845 seconds. The full repository
+suite passed `981 passed` with one third-party Starlette warning; Ruff passed.
+Production merge `970fbfc` deployed commit `749e77f`, and `/readyz` reported
+Executor, Planner, Reviewer, and Reasoner ready with Judge stopped.
+
+## Executor prefix-cache feasibility — 2026-07-25
+
+The protected Executor baseline remains unchanged: context `65536`, one
+sequence, `1700000000` KV-cache bytes, `gpu_memory_utilization=0.5`, and
+MARLIN. Automatic prefix caching is not enabled. Two identical direct requests
+with 32,012 prompt tokens and one output token took 7.404 and 7.438 seconds;
+both reported zero prefix-cache queries and hits. The current runtime therefore
+does not reuse the repeated request prefix.
+
+An isolated vLLM 0.22.1 candidate added `--enable-prefix-caching` while keeping
+the selected Executor arguments and using port 19301. Qwen3Next selected the
+experimental aligned Mamba-cache path and failed before readiness with
+`ModuleNotFoundError: No module named 'flash_attn.ops'`. No package was
+installed, the candidate was rejected, and the exact production Executor
+service was restored.
+
+SGLang provides RadixAttention prefix reuse and continuous batching, so it is a
+valid future engine candidate rather than a production toggle. It must still
+physically pass the repository's Qwen3-Next NVFP4/MARLIN, 65,536-context,
+one-sequence, memory, tool-calling, quality, and rollback gates. Until then,
+bounded specialist evidence, compressed tool history, context-aware remote
+routing, and concurrent independent-role work are the approved throughput
+controls; no speculative SGLang migration is deployed.
