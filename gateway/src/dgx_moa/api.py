@@ -24,7 +24,7 @@ from .admin_codex import AdminCodexRequest, AdminCodexRunner
 from .admin_dashboard import ADMIN_DASHBOARD
 from .config import Settings, get_settings
 from .controller import (
-    EXECUTOR_QUALITY_CONTRACT,
+    IMPLEMENTATION_QUALITY_CONTRACT,
     Controller,
     DuplicateFailedCall,
     FrontierRequiredUnavailable,
@@ -1748,7 +1748,7 @@ def create_app(
                         "returned by exec_command with write_stdin; never invent one. Call "
                         "read_mcp_resource only with an exact server and URI returned by MCP "
                         "resource discovery; integration display names are not MCP server IDs."
-                        f" {EXECUTOR_QUALITY_CONTRACT}"
+                        f" {IMPLEMENTATION_QUALITY_CONTRACT}"
                     ),
                     "model_messages": None,
                     "include_skills_usage_instructions": False,
@@ -2603,7 +2603,11 @@ def create_app(
                         try:
                             state.finish_reasons = observation.finish_reasons
                             state.truncated = "length" in observation.finish_reasons
-                            if terminal and "reviewer" in state.roles_required:
+                            if (
+                                terminal
+                                and "reviewer" in state.roles_required
+                                and state.review_status != "approved"
+                            ):
                                 state.review_deferred = True
                                 state.review_status = "deferred"
                                 stage_status["reviewer"] = "deferred"
