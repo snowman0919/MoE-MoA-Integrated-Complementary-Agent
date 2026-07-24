@@ -3019,6 +3019,15 @@ class Controller:
         ) and not self.requires_implementation_tool_action(
             state, dict(request.get("metadata", {}))
         )
+        if implementation_complete and tool_continuation:
+            body["tools"] = []
+            body.pop("tool_choice", None)
+            available_tools = ()
+            self.store.event(
+                state.session_id,
+                "completed_implementation_tools_suppressed",
+                {"reason": "change_validation_and_review_complete"},
+            )
         messages.insert(
             0,
             {

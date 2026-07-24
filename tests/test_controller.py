@@ -2507,12 +2507,20 @@ async def test_completed_implementation_is_told_to_return_final(
         "model": "dgx-moa",
         "messages": [{"role": "user", "content": state.objective}],
         "metadata": {},
+        "tools": [
+            {"type": "function", "function": {"name": "exec_command", "parameters": {}}}
+        ],
+        "tool_choice": "auto",
     }
 
-    prepared = await controller.prepare_executor(state, request, ("executor", "reviewer"))
+    prepared = await controller.prepare_executor(
+        state, request, ("executor", "reviewer"), tool_continuation=True
+    )
 
     prompt = prepared["messages"][0]["content"]
     assert "Return the concise final result now; do not call more tools." in prompt
+    assert prepared["tools"] == []
+    assert "tool_choice" not in prepared
 
 
 def test_review_observation_is_bounded_redacted_and_complete(
