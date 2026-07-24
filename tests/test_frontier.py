@@ -226,6 +226,9 @@ def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
     assert isinstance(command, list)
     assert command[command.index("--sandbox") + 1] == "read-only"
     assert "sk-secret-value" not in str(observed["task"])
+    if mode == "code_review":
+        assert "Do not turn optional hardening" in str(observed["task"])
+        assert "Use approve when the stated contract is met" in str(observed["task"])
     assert COLLABORATION_SCHEMAS[mode].model_validate(result.output)
     assert result.total_tokens == 16
     assert result.cost_usd == 0.000021

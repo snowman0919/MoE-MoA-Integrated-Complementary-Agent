@@ -221,10 +221,12 @@ def test_repeated_inspection_routes_executor_to_frontier(
         update={"frontier_enabled": True, "frontier_config": frontier_config}
     )
     app = create_app(controlled)
+    remote_requests: list[dict[str, object]] = []
 
     async def remote_execute(
         _remote_request: dict[str, object], _correlation_id: str
     ) -> dict[str, object]:
+        remote_requests.append(_remote_request)
         if _correlation_id.endswith("correction_tool_retry"):
             return {
                 "id": "chatcmpl-frontier-correction-tool",
@@ -448,6 +450,15 @@ def test_repeated_inspection_routes_executor_to_frontier(
     assert any(
         event["event_type"] == "frontier_correction_tool_retry_completed"
         for event in correction_events
+    )
+    correction_retry = next(
+        request
+        for request in remote_requests
+        if "Do not repeat an inspection or validation that already succeeded"
+        in str(request["messages"][-1]["content"])
+    )
+    assert "Do not repeat an inspection or validation that already succeeded" in str(
+        correction_retry["messages"][-1]["content"]
     )
     assert newly_rejected_response.status_code == 200, newly_rejected_response.text
     assert newly_rejected_response.json()["choices"][0]["finish_reason"] == "tool_calls"

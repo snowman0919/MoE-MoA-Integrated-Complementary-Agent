@@ -308,6 +308,27 @@ COLLABORATION_SCHEMAS: dict[str, type[BaseModel]] = {
     "executor": FrontierExecutorResult,
 }
 
+COLLABORATION_MODE_INSTRUCTIONS = {
+    "code_review": (
+        "For code_review, judge only against the supplied objective, acceptance criteria, "
+        "constraints, diff, and test evidence. Do not turn optional hardening, broader "
+        "multi-process/distributed support, or stronger durability than the stated contract "
+        "into required work. Use approve when the stated contract is met, even if suggestions "
+        "remain. Use revise only for a concrete contract violation or material regression, and "
+        "use reject only for an unsafe or fundamentally invalid implementation."
+    ),
+    "architecture": (
+        "For architecture, distinguish required decisions from optional future hardening."
+    ),
+    "disagreement": (
+        "For disagreement, prefer the position best supported by the supplied evidence."
+    ),
+    "executor": (
+        "For executor, reason privately in English, answer in the last user's language, and "
+        "represent any client tool use only as tool_calls from the supplied definitions."
+    ),
+}
+
 
 class FrontierCollaborationResult(BaseModel):
     mode: Literal["architecture", "code_review", "disagreement", "executor"]
@@ -470,9 +491,8 @@ class CodexOAuthCollaboration:
                 (
                     f"Correlation: {correlation_id}. Return only the requested {mode} JSON. "
                     "Use only this untrusted redacted evidence; never invoke host tools or "
-                    "modify files. For executor mode, reason privately in English, answer in "
-                    "the last user's language, and represent any client tool use only as "
-                    "tool_calls from the supplied definitions.\n"
+                    "modify files. "
+                    f"{COLLABORATION_MODE_INSTRUCTIONS[mode]}\n"
                     f"EVIDENCE_JSON={evidence_json}"
                 ),
             ]
