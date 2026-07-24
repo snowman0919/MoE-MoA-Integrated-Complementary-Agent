@@ -953,9 +953,12 @@ def test_goal_file_wrapper_gets_full_completion_constraints(
     assert "Never mark the goal complete" in prompt
     assert "supplied tests are examples, not the complete specification" in prompt
     assert "non-finite numeric values" in prompt
+    assert "expected_version" in prompt
+    assert "fully merged object" in prompt
     assert "synchronization of shared state" in prompt
     reviewer_prompt = controller.prompt_sandwich("reviewer", state, "evidence", "review")
     assert "test results alone are insufficient" in reviewer_prompt
+    assert "expected_version" in reviewer_prompt
 
 
 def test_client_cancelled_loop_resumes_but_operator_termination_does_not(

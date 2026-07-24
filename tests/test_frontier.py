@@ -254,6 +254,8 @@ def test_frontier_review_requires_finite_arithmetic_parameters() -> None:
     assert "even when supplied tests omit those cases" in prompt
     assert "timestamp, duration, window, size, or capacity arithmetic" in prompt
     assert "allow_nan=False" in prompt
+    assert "expected_version" in prompt
+    assert "fully merged object" in prompt
     assert "when missing_tests is non-empty, use revise" in prompt
 
 
