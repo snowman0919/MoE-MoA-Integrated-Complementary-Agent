@@ -2556,8 +2556,12 @@ def test_implementation_completion_requires_change_validation_and_review(
             "exit_code": 0,
         }
     )
+    assert controller.requires_implementation_tool_action(state, {}) is True
+    assert controller.implementation_completion_ready(state, {}) is False
+    state.runtime_mode = "fast"
     assert controller.requires_implementation_tool_action(state, {}) is False
     assert controller.implementation_completion_ready(state, {}) is True
+    state.runtime_mode = "agent"
 
     state.roles_required.append("reviewer")
     state.review_status = "rejected"
@@ -2578,6 +2582,28 @@ def test_implementation_completion_requires_change_validation_and_review(
         plan=[{"step": "Explain the concept"}],
     )
     assert controller.requires_implementation_tool_action(question, {}) is False
+
+
+def test_review_evidence_survives_non_file_tools_but_not_a_new_change(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="review-evidence-order",
+        tool_executions=[
+            {"tool_name": "apply_patch", "exit_code": 0},
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m pytest -q"},
+                "exit_code": 0,
+            },
+            {"tool_name": "update_plan", "exit_code": 0},
+        ],
+    )
+
+    assert controller.has_review_evidence(state, {}) is True
+    state.tool_executions.append({"tool_name": "apply_patch", "exit_code": 0})
+    assert controller.has_review_evidence(state, {}) is False
 
 
 def test_repeated_successful_inspection_marks_executor_stalled(
