@@ -574,6 +574,7 @@ async def test_local_review_escalates_to_frontier_code_review(
         runtime_mode="orchestrated",
         request_class="explicit_orchestrated",
         roles_required=["reasoner", "executor"],
+        tool_results=[{"stdout": f"contract-{index}"} for index in range(10)],
     )
     request = {
         "model": "dgx-moa-orchestrated",
@@ -593,6 +594,16 @@ async def test_local_review_escalates_to_frontier_code_review(
         "approved" if clean_approval else "rejected"
     )
     assert frontier.calls[0][1]["tool_executions"] == []
+    assert [item["stdout"] for item in frontier.calls[0][1]["tool_results"]] == [
+        "contract-0",
+        "contract-1",
+        "contract-2",
+        "contract-3",
+        "contract-6",
+        "contract-7",
+        "contract-8",
+        "contract-9",
+    ]
     assert state.frontier_invocations == 1
     assert state.derived_confidence == "conflicted"
     assert state.review_status == "rejected_frontier"
@@ -3117,6 +3128,7 @@ def test_review_observation_is_bounded_redacted_and_complete(
         "original_objective": "fix api_key=[REDACTED]",
         "scope_evidence": ["gateway/src"],
         "tool_results": [
+            {"stdout": "result-0"},
             {"stdout": "result-1"},
             {"stdout": "result-2"},
             {"stdout": "result-3"},
