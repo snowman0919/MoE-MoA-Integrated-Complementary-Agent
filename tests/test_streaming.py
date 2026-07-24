@@ -191,7 +191,9 @@ async def test_responses_sse_translates_edit_alias_to_apply_patch() -> None:
         {
             "file": "/workspace/rate_limiter.py",
             "old_text": "if isinstance(value, int):\n    return value",
-            "new_text": "if isinstance(value, int) and not isinstance(value, bool):\n    return value",
+            "new_text": (
+                "if isinstance(value, int) and not isinstance(value, bool):\n    return value"
+            ),
         }
     )
 
