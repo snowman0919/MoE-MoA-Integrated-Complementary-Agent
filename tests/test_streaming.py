@@ -245,6 +245,38 @@ async def test_responses_sse_translates_edit_alias_to_apply_patch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_responses_sse_replaces_malformed_edit_alias_with_feedback() -> None:
+    async def upstream():
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call-edit","function":{"name":"edit",'
+            b'"arguments":"{\\"file\\":\\"/workspace/example.py\\"}"}}]},'
+            b'"finish_reason":"tool_calls"}]}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    emitted = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa-agent",
+            custom_tool_names={"apply_patch"},
+            function_tool_names={"exec_command"},
+        )
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+    done = next(
+        event
+        for event in emitted
+        if event["type"] == "response.output_item.done" and event["output_index"] == 1
+    )
+
+    assert done["item"]["name"] == "exec_command"
+    assert "Unsupported edit arguments" in done["item"]["arguments"]
+
+
+@pytest.mark.asyncio
 async def test_responses_sse_preserves_tool_progress_and_terminates_failures(caplog) -> None:  # type: ignore[no-untyped-def]
     async def tool_upstream():
         yield 'data: {"choices":[{"delta":{"content":"목표 파일을 확인합니다."}}]}\n\n'.encode()
@@ -522,7 +554,7 @@ async def test_responses_sse_replaces_invented_write_stdin_session_id() -> None:
         yield (
             b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
             b'"id":"call-write","function":{"name":"write_stdin",'
-            b'"arguments":"{\\"session_id\\":\\"54ebb8\\",\\"chars\\":\\"\\"}"}}]},'
+            b'"arguments":"{\\"session_id\\":1,\\"chars\\":\\"line 1\\\\nline 2\\"}"}}]},'
             b'"finish_reason":"tool_calls"}]}\n\n'
         )
         yield b"data: [DONE]\n\n"

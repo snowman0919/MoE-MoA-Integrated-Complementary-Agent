@@ -72,9 +72,13 @@ def compatible_edit_call(
         return name, raw_arguments
     try:
         arguments = json.loads(raw_arguments)
-        path = arguments.get("file", arguments.get("path"))
-        old_text = arguments.get("old_text", arguments.get("old_string"))
-        new_text = arguments.get("new_text", arguments.get("new_string"))
+        path = arguments.get("file", arguments.get("path", arguments.get("file_path")))
+        old_text = arguments.get(
+            "old_text", arguments.get("old_string", arguments.get("old"))
+        )
+        new_text = arguments.get(
+            "new_text", arguments.get("new_string", arguments.get("new"))
+        )
         if (
             not isinstance(path, str)
             or not path
@@ -595,11 +599,27 @@ async def responses_sse(
         yield event("response.output_item.done", output_index=0, item=completed_message)
         completed_output = [completed_message]
         for index, item in sorted(tool_calls.items()):
+            original_name = str(item["name"])
             item["name"], item["_arguments"] = compatible_edit_call(
-                str(item["name"]),
+                original_name,
                 str(item["_arguments"]),
                 custom_tool_names,
             )
+            if (
+                original_name in {"edit", "edit_file"}
+                and item["name"] == original_name
+                and "exec_command" in (function_tool_names or set())
+            ):
+                item["name"] = "exec_command"
+                item["_arguments"] = json.dumps(
+                    {
+                        "cmd": (
+                            "printf '%s\\n' 'Unsupported edit arguments; "
+                            "use apply_patch or exec_command.'"
+                        )
+                    },
+                    separators=(",", ":"),
+                )
             if item["_compat_local_file"]:
                 try:
                     arguments = json.loads(str(item["_arguments"]))
@@ -682,6 +702,13 @@ async def responses_sse(
                 if isinstance(arguments, dict) and (
                     isinstance(arguments.get("session_id"), bool)
                     or not isinstance(arguments.get("session_id"), int)
+                    or (
+                        isinstance(arguments.get("chars"), str)
+                        and (
+                            "\n" in arguments["chars"]
+                            or len(arguments["chars"]) > 256
+                        )
+                    )
                 ):
                     if "exec_command" in (function_tool_names or set()):
                         item["name"] = "exec_command"

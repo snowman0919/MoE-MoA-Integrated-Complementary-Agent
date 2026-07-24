@@ -133,7 +133,7 @@ class FrontierConfig(BaseModel):
     protocol: str = "codex-exec-jsonl"
     model: str = "gpt-5.6-sol"
     reasoning_effort: Literal["high"] = "high"
-    max_invocations_per_task: int = 3
+    max_invocations_per_task: int = 4
     max_recursive_cycles: int = 3
     primary_profile: str = "default"
     secondary_profile: str | None = None

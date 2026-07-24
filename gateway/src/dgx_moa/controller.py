@@ -122,18 +122,19 @@ IMPLEMENTATION_QUALITY_CONTRACT = (
     "examples, not the complete specification. Before finalizing, derive and run at least one "
     "independent requirement-based check when applicable. Review type and boundary inputs, "
     "non-finite numeric values, invariants across every public operation, failure atomicity, "
-    "deterministic results, and synchronization of shared state. Do not claim completion merely "
-    "because the supplied tests pass."
+    "deterministic results, and synchronization of shared state. For numeric APIs, explicitly "
+    "test and reject booleans when they are not valid numbers, plus NaN and both infinities. "
+    "Do not claim completion merely because the supplied tests pass."
 )
 
 REVIEWER_QUALITY_CONTRACT = (
     "Review independently of the supplied tests. Check type and boundary inputs, non-finite "
     "numeric values, invariants across every public operation, failure atomicity, deterministic "
-    "results, and synchronization of shared state. Reject material correctness, security, "
-    "concurrency, or test gaps with a concrete required correction. Approve implementation work "
-    "only when bounded code, patch, or diff evidence is present; test results alone are "
-    "insufficient. Verify required corrections against newer implementation evidence before "
-    "clearing them."
+    "results, and synchronization of shared state. For numeric APIs, explicitly check booleans, "
+    "NaN, and both infinities. Reject material correctness, security, concurrency, or test gaps "
+    "with a concrete required correction. Approve implementation work only when bounded code, "
+    "patch, or diff evidence is present; test results alone are insufficient. Verify required "
+    "corrections against newer implementation evidence before clearing them."
 )
 
 

@@ -10,6 +10,6 @@ reasoning_effort: high
 primary_profile: primary
 secondary_profile: secondary
 allow_profile_failover: true
-max_invocations_per_task: 3
+max_invocations_per_task: 4
 max_recursive_cycles: 3
 profile_root: null
