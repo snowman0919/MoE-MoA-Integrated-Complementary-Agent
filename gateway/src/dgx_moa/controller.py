@@ -2492,7 +2492,14 @@ class Controller:
         review_error: Exception | None = None
         collaboration_context = ""
         progress_retry = bool(request.get("metadata", {}).get("responses_progress_retry"))
-        if progress_retry:
+        reuse_trigger = (
+            "responses_progress_retry"
+            if progress_retry
+            else "frontier_correction_required"
+            if state.frontier_correction_required
+            else None
+        )
+        if reuse_trigger is not None:
             reused_roles: set[str] = set()
             for artifact in reversed(state.agent_artifacts):
                 role = str(artifact.get("role", ""))
@@ -2507,7 +2514,7 @@ class Controller:
             self.store.event(
                 state.session_id,
                 "collaboration_artifacts_reused",
-                {"roles": sorted(reused_roles), "trigger": "responses_progress_retry"},
+                {"roles": sorted(reused_roles), "trigger": reuse_trigger},
             )
         if state.runtime_mode == "orchestrated" and reasoner_contribution is not None:
             orchestration = await self.orchestration_decision(
