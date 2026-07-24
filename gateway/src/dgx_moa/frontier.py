@@ -487,18 +487,26 @@ class CodexOAuthCollaboration:
         evidence: dict[str, Any],
         correlation_id: str,
     ) -> FrontierCollaborationResult:
-        now = time.monotonic()
-        if self.opened_at is not None:
-            if now - self.opened_at < self.config.circuit_cooldown_seconds:
-                raise RuntimeError("FRONTIER_CIRCUIT_OPEN")
-            self.opened_at = None
-            self.failures = 0
         schema_model = COLLABORATION_SCHEMAS[mode]
         paid_fallback_required = evidence.get("_paid_fallback_required") is True
         external_evidence = {
             key: value for key, value in evidence.items() if key != "_paid_fallback_required"
         }
         started = time.monotonic()
+        now = time.monotonic()
+        if self.opened_at is not None:
+            if now - self.opened_at < self.config.circuit_cooldown_seconds:
+                if paid_fallback_required and self.config.openrouter_fallback_enabled:
+                    return self._openrouter(
+                        mode,
+                        external_evidence,
+                        correlation_id,
+                        schema_model,
+                        started,
+                    )
+                raise RuntimeError("FRONTIER_CIRCUIT_OPEN")
+            self.opened_at = None
+            self.failures = 0
         if mode == "executor":
             executor_request = redact(external_evidence.get("executor_request", {}))
             evidence_json = json.dumps(

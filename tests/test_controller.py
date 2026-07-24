@@ -546,6 +546,7 @@ async def test_local_review_escalates_to_frontier_code_review(
     prepared = await controller.prepare_executor(state, request, ("reasoner", "executor"))
 
     assert [mode for mode, _ in frontier.calls] == ["code_review"]
+    assert frontier.calls[0][1]["_paid_fallback_required"] is True
     assert frontier.calls[0][1]["local_reviewer_findings"]["status"] == (
         "approved" if clean_approval else "rejected"
     )

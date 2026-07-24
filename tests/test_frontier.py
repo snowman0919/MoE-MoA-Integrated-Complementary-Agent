@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -512,6 +513,76 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
     assert sent["json"]["model"] == "anthropic/claude-sonnet-4.6"
     assert sent["json"]["reasoning"] == {"effort": "high", "exclude": True}
     assert "synthetic-openrouter-key" not in json.dumps(sent["json"])
+
+
+def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    key_path = tmp_path / "openrouter_api"
+    key_path.write_text("synthetic-openrouter-key")
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "verdict": "approve",
+                                    "critical": [],
+                                    "important": [],
+                                    "suggestions": [],
+                                    "missing_tests": [],
+                                    "confidence": 0.9,
+                                }
+                            )
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 10},
+            }
+
+    class FakeClient:
+        def __init__(self, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+        def post(self, _url, **_kwargs):  # type: ignore[no-untyped-def]
+            return FakeResponse()
+
+    monkeypatch.setattr("dgx_moa.frontier.httpx.Client", FakeClient)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(
+            enabled=True,
+            openrouter_fallback_enabled=True,
+            openrouter_api_key_file=key_path,
+        ),
+        tmp_path / "run",
+        tmp_path,
+    )
+    runner.opened_at = time.monotonic()
+
+    result = runner._run(
+        "code_review",
+        {
+            "bounded_diff": "bounded",
+            "_paid_fallback_required": True,
+        },
+        "required-review",
+    )
+
+    assert result.profile == "openrouter:anthropic/claude-sonnet-4.6"
+    assert result.output["verdict"] == "approve"
 
 
 @pytest.mark.parametrize(

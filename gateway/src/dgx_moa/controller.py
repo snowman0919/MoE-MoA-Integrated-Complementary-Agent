@@ -528,7 +528,14 @@ class Controller:
         assert self.frontier is not None
         self.admit_loop_action(state, "frontier_calls")
         state.frontier_invocations += 1
-        return await self.frontier.collaborate(mode, evidence, state.task_id or state.session_id)
+        scoped_evidence = (
+            {**evidence, "_paid_fallback_required": True}
+            if mode == "code_review"
+            else evidence
+        )
+        return await self.frontier.collaborate(
+            mode, scoped_evidence, state.task_id or state.session_id
+        )
 
     @staticmethod
     def safe_payload(state: SessionState, payload: Any) -> Any:
