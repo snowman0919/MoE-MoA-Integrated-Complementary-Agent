@@ -94,6 +94,7 @@ class SessionState(BaseModel):
     review_fail_closed: bool = False
     review_deferred: bool = False
     frontier_correction_required: bool = False
+    frontier_correction_pending_verification: bool = False
     finish_reasons: list[str] = Field(default_factory=list)
     truncated: bool = False
     timings_ms: dict[str, float] = Field(default_factory=dict)

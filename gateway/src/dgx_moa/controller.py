@@ -1296,12 +1296,16 @@ class Controller:
             changed_files = not failed and self.tool_execution_changes_files(execution)
             if changed_files and state.frontier_correction_required:
                 state.frontier_correction_required = False
+                state.frontier_correction_pending_verification = True
                 state.review_status = "deferred"
                 state.review_deferred = True
                 self.store.event(
                     state.session_id,
                     "frontier_correction_applied",
-                    {"reason": "implementation_changed_after_frontier_rejection"},
+                    {
+                        "reason": "implementation_changed_after_frontier_rejection",
+                        "verification": "pending",
+                    },
                 )
             elif changed_files and state.review_status == "approved":
                 state.review_status = "deferred"
@@ -2556,7 +2560,10 @@ class Controller:
                         "judge_adjudication_resumed",
                         {"status": state.judge_status},
                     )
-                elif state.frontier_invocations >= self.frontier.config.max_invocations_per_task:
+                elif (
+                    state.frontier_invocations >= self.frontier.config.max_invocations_per_task
+                    and not state.frontier_correction_pending_verification
+                ):
                     self.store.event(
                         state.session_id,
                         "frontier_unavailable",
@@ -2769,12 +2776,19 @@ class Controller:
                 material_review_issue = self.material_review_issue(pre_review_result)
                 review_assurance_needed = pre_review_result.get(
                     "status"
-                ) == "approved" and not pre_review_result.get("findings")
+                ) == "approved" and (
+                    not pre_review_result.get("findings")
+                    or state.frontier_correction_pending_verification
+                )
                 if material_review_issue or review_assurance_needed:
                     review_trigger = (
                         "material_reviewer_finding"
                         if material_review_issue
-                        else "insufficient_local_review_assurance"
+                        else (
+                            "frontier_correction_verification"
+                            if state.frontier_correction_pending_verification
+                            else "insufficient_local_review_assurance"
+                        )
                     )
                     if material_review_issue:
                         state.derived_confidence = "conflicted"
@@ -2796,6 +2810,7 @@ class Controller:
                         elif (
                             state.frontier_invocations
                             >= self.frontier.config.max_invocations_per_task
+                            and not state.frontier_correction_pending_verification
                         ):
                             self.store.event(
                                 state.session_id,
@@ -2934,6 +2949,7 @@ class Controller:
                     )
                 )
                 if material_frontier_review:
+                    state.frontier_correction_pending_verification = False
                     state.review_status = "rejected_frontier"
                     state.review_deferred = True
                     state.frontier_correction_required = True
@@ -2949,6 +2965,16 @@ class Controller:
                                 + len(frontier_result.output.get("important") or [])
                             ),
                         },
+                    )
+                elif (
+                    frontier_result.mode == "code_review"
+                    and state.frontier_correction_pending_verification
+                ):
+                    state.frontier_correction_pending_verification = False
+                    self.store.event(
+                        state.session_id,
+                        "frontier_correction_verified",
+                        {"verdict": frontier_result.output.get("verdict")},
                     )
                 if (
                     "judge" in roles
@@ -3192,13 +3218,17 @@ class Controller:
             for execution in state.tool_executions
         )
         validated = self.has_review_evidence(state, metadata)
-        review_ready = not state.frontier_correction_required and (
-            state.review_status == "approved"
-            or (
-                state.runtime_mode == "fast"
-                and "reviewer" not in state.roles_required
-                and state.review_status == "pending"
-                and not state.review_deferred
+        review_ready = (
+            not state.frontier_correction_required
+            and not state.frontier_correction_pending_verification
+            and (
+                state.review_status == "approved"
+                or (
+                    state.runtime_mode == "fast"
+                    and "reviewer" not in state.roles_required
+                    and state.review_status == "pending"
+                    and not state.review_deferred
+                )
             )
         )
         return not (changed and validated and review_ready)
