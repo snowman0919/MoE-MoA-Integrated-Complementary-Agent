@@ -228,7 +228,7 @@ def bounded_external_evidence(
         budget //= 2
 
 
-def openrouter_response_schema(schema_model: type[BaseModel]) -> dict[str, Any]:
+def openrouter_compatible_schema(value: Any) -> Any:
     """Remove numeric constraints Anthropic structured outputs do not accept."""
     unsupported = {"exclusiveMaximum", "exclusiveMinimum", "maximum", "minimum", "multipleOf"}
 
@@ -243,7 +243,11 @@ def openrouter_response_schema(schema_model: type[BaseModel]) -> dict[str, Any]:
             return [clean(item) for item in value]
         return value
 
-    return cast(dict[str, Any], clean(schema_model.model_json_schema()))
+    return clean(value)
+
+
+def openrouter_response_schema(schema_model: type[BaseModel]) -> dict[str, Any]:
+    return cast(dict[str, Any], openrouter_compatible_schema(schema_model.model_json_schema()))
 
 
 class FrontierArchitectureResult(BaseModel):
@@ -731,6 +735,7 @@ class CodexOAuthCollaboration:
                     "tools",
                     "tool_choice",
                     "parallel_tool_calls",
+                    "response_format",
                     "max_tokens",
                     "temperature",
                     "top_p",
@@ -741,6 +746,8 @@ class CodexOAuthCollaboration:
             if not isinstance(messages, list):
                 raise RuntimeError("FRONTIER_OPENROUTER_FAILURE")
             body.pop("parallel_tool_calls", None)
+            if isinstance(body.get("response_format"), dict):
+                body["response_format"] = openrouter_compatible_schema(body["response_format"])
             body.update(
                 {
                     "model": self.config.openrouter_model,
