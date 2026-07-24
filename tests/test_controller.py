@@ -989,6 +989,13 @@ def test_successful_write_invalidates_approved_review(
     controller._observe(read_state, stderr_append)
     assert read_state.review_status == "approved"
 
+    mkdir = tool_messages("mkdir-existing", "")
+    mkdir[0]["tool_calls"][0]["function"]["arguments"] = json.dumps(
+        {"cmd": "mkdir -p existing-workspace"}
+    )
+    controller._observe(read_state, mkdir)
+    assert read_state.review_status == "approved"
+
 
 def test_frontier_correction_latch_requires_a_new_file_change(
     settings, stub_provider: StubProvider
@@ -2589,6 +2596,15 @@ def test_repeated_successful_inspection_marks_executor_stalled(
         ],
     )
 
+    assert controller.executor_stalled(state) is True
+    state.tool_executions.insert(
+        2,
+        {
+            "tool_name": "exec_command",
+            "normalized_arguments": {"cmd": "mkdir -p /workspace"},
+            "exit_code": 0,
+        },
+    )
     assert controller.executor_stalled(state) is True
     state.tool_executions.insert(2, {"tool_name": "apply_patch", "exit_code": 0})
     assert controller.executor_stalled(state) is False
