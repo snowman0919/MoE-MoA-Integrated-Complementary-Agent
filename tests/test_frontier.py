@@ -516,6 +516,7 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
         {
             "messages": [{"role": "user", "content": "한국어로 답해"}],
             "tools": [],
+            "parallel_tool_calls": True,
             "stream": True,
         },
         "busy-request",
@@ -530,6 +531,7 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
     assert sent["headers"]["Authorization"] == "Bearer synthetic-openrouter-key"
     assert sent["json"]["model"] == "anthropic/claude-sonnet-4.6"
     assert sent["json"]["reasoning"] == {"effort": "high", "exclude": True}
+    assert "parallel_tool_calls" not in sent["json"]
     assert "synthetic-openrouter-key" not in json.dumps(sent["json"])
 
 
