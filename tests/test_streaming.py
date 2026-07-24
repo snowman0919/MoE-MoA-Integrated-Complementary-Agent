@@ -454,6 +454,34 @@ async def test_responses_sse_keeps_exec_command_inside_current_sandbox() -> None
 
 
 @pytest.mark.asyncio
+async def test_responses_sse_replaces_invented_write_stdin_session_id() -> None:
+    async def upstream():  # type: ignore[no-untyped-def]
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call-write","function":{"name":"write_stdin",'
+            b'"arguments":"{\\"session_id\\":\\"54ebb8\\",\\"chars\\":\\"\\"}"}}]},'
+            b'"finish_reason":"tool_calls"}]}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa-agent",
+            function_tool_names={"write_stdin"},
+        )
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+
+    done = next(
+        event for event in events if event["type"] == "response.function_call_arguments.done"
+    )
+    assert json.loads(done["arguments"]) == {"session_id": 0, "chars": ""}
+
+
+@pytest.mark.asyncio
 async def test_responses_sse_suppresses_loaded_goal_reread() -> None:
     async def upstream():
         yield (

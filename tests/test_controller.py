@@ -761,6 +761,9 @@ def test_goal_file_wrapper_gets_full_completion_constraints(
     assert "reading or summarizing the objective is not completion" in prompt
     assert "when no goal exists, call create_goal first" in prompt
     assert "Never mark the goal complete" in prompt
+    assert "supplied tests are examples, not the complete specification" in prompt
+    assert "non-finite numeric values" in prompt
+    assert "synchronization of shared state" in prompt
 
 
 def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
@@ -1136,6 +1139,76 @@ async def test_reasoner_budget_is_admitted_before_provider_call(
     assert state.phase == Phase.BLOCKED
     assert state.engineering_loop is not None
     assert state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
+
+
+@pytest.mark.asyncio
+async def test_reasoner_provider_failure_uses_bounded_frontier_fallback(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    original = stub_provider.complete
+
+    async def fail_local_reasoner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reasoner":
+            raise httpx.ConnectError("busy")
+        return await original(role, model, request, **kwargs)
+
+    remote_calls: list[str] = []
+
+    async def remote_reasoner(request, stage):  # type: ignore[no-untyped-def]
+        remote_calls.append(stage)
+        return {
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "codex_oauth"},
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps(
+                            {
+                                "assumptions": [],
+                                "constraints": [],
+                                "conclusions": ["Use the verified remote fallback."],
+                                "hypotheses": [],
+                                "evidence_references": [],
+                                "recommended_actions": ["Continue with the Executor."],
+                                "additional_agents": [],
+                                "confidence_category": "high",
+                            }
+                        ),
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+
+    stub_provider.complete = fail_local_reasoner  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session("reasoner-frontier", [{"role": "user", "content": "work"}])
+    controller.select_route(state, {})
+
+    prepared = await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-orchestrated",
+            "messages": [{"role": "user", "content": "work"}],
+            "metadata": {},
+        },
+        ("reasoner", "executor"),
+        reasoner_complete=remote_reasoner,
+    )
+    events = store.events(state.session_id)
+    completed = next(event for event in events if event["event_type"] == "reasoner_completed")
+
+    assert remote_calls == ["reasoner_fallback"]
+    assert "Use the verified remote fallback." in json.dumps(prepared["messages"])
+    assert state.engineering_loop is not None
+    assert state.engineering_loop.remaining_budget.frontier_calls == 2
+    assert completed["payload"]["provider"] == "codex_oauth"
+    assert completed["payload"]["model"] == "gpt-5.6-sol"
+    assert any(event["event_type"] == "reasoner_unavailable" for event in events)
+    assert any(event["event_type"] == "reasoner_fallback_completed" for event in events)
 
 
 def test_title_state_is_recovered_for_work_messages(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

@@ -117,6 +117,15 @@ GOAL_PREREQUISITE_DOCUMENTS = (
     "docs/TRACE_SCHEMA.md",
 )
 
+EXECUTOR_QUALITY_CONTRACT = (
+    "Treat the written contract and surrounding code as authoritative; supplied tests are "
+    "examples, not the complete specification. Before finalizing, derive and run at least one "
+    "independent requirement-based check when applicable. Review type and boundary inputs, "
+    "non-finite numeric values, invariants across every public operation, failure atomicity, "
+    "deterministic results, and synchronization of shared state. Do not claim completion merely "
+    "because the supplied tests pass."
+)
+
 
 def fingerprint(call: dict[str, Any]) -> str:
     normalized_call = call.get("function", call)
@@ -531,20 +540,33 @@ class Controller:
         *,
         mode: str = "default",
         provider: str | None = None,
+        fallback_reason: str | None = None,
     ) -> None:
         raw_usage = response.get("usage")
         usage = cast(dict[str, Any], raw_usage) if isinstance(raw_usage, dict) else {}
+        provenance = response.get("provider_provenance")
+        provenance = cast(dict[str, Any], provenance) if isinstance(provenance, dict) else {}
         self.record_observed_invocation(
             state,
             {
                 "role": role,
                 "mode": mode,
+                "model": response.get("model"),
                 "latency_ms": round((time.monotonic() - started) * 1000, 3),
                 "prompt_tokens": usage.get("prompt_tokens"),
                 "completion_tokens": usage.get("completion_tokens"),
                 "total_tokens": usage.get("total_tokens"),
                 "status": "completed",
-                **({"provider": provider} if provider else {}),
+                **(
+                    {"provider": provider or provenance.get("provider")}
+                    if provider or provenance
+                    else {}
+                ),
+                **(
+                    {"fallback_reason": fallback_reason or "executor_remote"}
+                    if fallback_reason or (role == "executor" and provenance)
+                    else {}
+                ),
             },
         )
 
@@ -567,7 +589,9 @@ class Controller:
             return
         role = str(invocation["role"])
         model = (
-            self.frontier.config.model
+            str(invocation["model"])
+            if invocation.get("model")
+            else self.frontier.config.model
             if role == "frontier" and self.frontier is not None
             else self.settings.remote_judge.model
             if role == "judge" and invocation.get("provider") == "opencode_go"
@@ -580,6 +604,12 @@ class Controller:
                 state.current_request_id or state.session_id,
                 role=role,
                 model=model,
+                provider=str(invocation.get("provider", "local")),
+                fallback_reason=(
+                    str(invocation["fallback_reason"])
+                    if invocation.get("fallback_reason")
+                    else None
+                ),
                 mode=str(invocation.get("mode", "default")),
                 status=str(invocation.get("status", "failed")),
                 latency_ms=float(invocation.get("latency_ms", 0)),
@@ -1728,6 +1758,7 @@ class Controller:
             if role == "executor"
             else ""
         )
+        quality_constraint = EXECUTOR_QUALITY_CONTRACT if role == "executor" else ""
         workspace_constraint = (
             "No repository identity was supplied. Inspect the current directory once; if it is "
             "writable, use it as the isolated workspace. Do not scan filesystem roots or search "
@@ -1781,6 +1812,8 @@ class Controller:
                 + tool_batching
                 + " "
                 + progress_constraint
+                + " "
+                + quality_constraint
                 + " "
                 + workspace_constraint
                 + " "
@@ -2078,6 +2111,7 @@ class Controller:
         *,
         tool_continuation: bool = False,
         executor_complete: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]] | None = None,
+        reasoner_complete: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]] | None = None,
     ) -> dict[str, Any]:
         body = request.copy()
         metadata = dict(request.get("metadata", {}))
@@ -2186,6 +2220,9 @@ class Controller:
                 {"role": "reasoner", "provider": "local", "model": reasoner.served_name},
             )
             reasoner_started = time.monotonic()
+            reasoner_record_started = reasoner_started
+            reasoner_provider = "local"
+            reasoner_model = reasoner.served_name
             try:
                 for attempt in range(2):
                     try:
@@ -2225,8 +2262,54 @@ class Controller:
                         "status_code": status_code,
                     },
                 )
-                raise ReasonerUnavailable("required Reasoner unavailable") from error
-            self.record_invocation(state, "reasoner", reasoner_response, reasoner_started)
+                if reasoner_complete is None:
+                    raise ReasonerUnavailable("required Reasoner unavailable") from error
+                self.admit_loop_action(state, "frontier_calls")
+                reasoner_record_started = time.monotonic()
+                self.store.event(
+                    state.session_id,
+                    "reasoner_fallback_started",
+                    {"provider": "frontier", "trigger": type(error).__name__},
+                )
+                try:
+                    reasoner_response = await reasoner_complete(
+                        reasoner_request, "reasoner_fallback"
+                    )
+                    contribution = ReasonerContribution.model_validate(
+                        parse_json_content(reasoner_response)
+                    )
+                except LoopAdmissionError:
+                    raise
+                except Exception as fallback_error:
+                    self.record_provider_failure(state, "reasoner", fallback_error)
+                    self.store.event(
+                        state.session_id,
+                        "reasoner_fallback_failed",
+                        {
+                            "provider": "frontier",
+                            "failure_class": type(fallback_error).__name__,
+                        },
+                    )
+                    raise ReasonerUnavailable(
+                        "required Reasoner and Frontier fallback unavailable"
+                    ) from fallback_error
+                provenance = reasoner_response.get("provider_provenance", {})
+                reasoner_provider = (
+                    str(provenance.get("provider", "frontier"))
+                    if isinstance(provenance, dict)
+                    else "frontier"
+                )
+                reasoner_model = str(reasoner_response.get("model", "frontier"))
+                self.store.event(
+                    state.session_id,
+                    "reasoner_fallback_completed",
+                    {
+                        "provider": reasoner_provider,
+                        "model": reasoner_model,
+                        "latency_ms": round((time.monotonic() - reasoner_record_started) * 1000, 3),
+                    },
+                )
+            self.record_invocation(state, "reasoner", reasoner_response, reasoner_record_started)
             reasoner_contribution = contribution
             contribution_data = contribution.model_dump()
             reasoner_advice = compress_text(
@@ -2259,8 +2342,8 @@ class Controller:
                 {
                     "decision_id": decision_id,
                     "role": "reasoner",
-                    "provider": "local",
-                    "model": reasoner.served_name,
+                    "provider": reasoner_provider,
+                    "model": reasoner_model,
                     "confidence_category": contribution.confidence_category,
                     "recommended_agents": [
                         item.role for item in contribution.additional_agents if item.needed
@@ -2499,6 +2582,11 @@ class Controller:
                     planner,
                     planner_started,
                     provider=str(planner_routing.get("selected_provider", "local")),
+                    fallback_reason=(
+                        str(planner_routing.get("routing_reason"))
+                        if planner_routing.get("selected_provider") == "remote"
+                        else None
+                    ),
                 )
                 policy_planner = {
                     key: value for key, value in parsed.items() if key != "ordered_steps"
@@ -3049,6 +3137,11 @@ class Controller:
                     response,
                     reviewer_started,
                     provider=str(reviewer_routing.get("selected_provider", "local")),
+                    fallback_reason=(
+                        str(reviewer_routing.get("routing_reason"))
+                        if reviewer_routing.get("selected_provider") == "remote"
+                        else None
+                    ),
                 )
                 try:
                     result = ReviewResult.model_validate(parse_json_content(response)).model_dump()
@@ -3101,6 +3194,11 @@ class Controller:
                         retry_started,
                         mode="review_retry",
                         provider=str(reviewer_routing.get("selected_provider", "local")),
+                        fallback_reason=(
+                            str(reviewer_routing.get("routing_reason"))
+                            if reviewer_routing.get("selected_provider") == "remote"
+                            else None
+                        ),
                     )
                     result = ReviewResult.model_validate(parse_json_content(response)).model_dump()
             finally:
