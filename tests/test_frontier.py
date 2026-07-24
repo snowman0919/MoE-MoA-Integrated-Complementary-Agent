@@ -162,15 +162,35 @@ def test_remote_executor_tool_paths_stay_in_client_workspace() -> None:
                         "arguments": json.dumps({"cmd": "pwd", "cwd": "tests"}),
                     },
                 },
+                {
+                    "id": "patch",
+                    "type": "function",
+                    "function": {
+                        "name": "patch",
+                        "arguments": json.dumps(
+                            {
+                                "patch": (
+                                    "*** Begin Patch\n"
+                                    "*** Update File: /gateway/production/src/app.py\n"
+                                    "@@\n-old\n+new\n"
+                                    "*** End Patch\n"
+                                )
+                            }
+                        ),
+                    },
+                },
             ],
         }
     )
 
-    sanitized, count = sanitize_executor_tool_paths(message)
+    sanitized, count = sanitize_executor_tool_paths(message, "/gateway/production")
 
-    assert count == 1
+    assert count == 2
     assert json.loads(sanitized.tool_calls[0].function.arguments) == {"cmd": "python -m unittest"}
     assert json.loads(sanitized.tool_calls[1].function.arguments)["cwd"] == "tests"
+    patch = json.loads(sanitized.tool_calls[2].function.arguments)["patch"]
+    assert "*** Update File: src/app.py" in patch
+    assert "/gateway/production" not in patch
 
 
 def test_codex_oauth_environment_excludes_gateway_secrets(

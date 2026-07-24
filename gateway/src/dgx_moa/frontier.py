@@ -303,9 +303,11 @@ class FrontierExecutorResult(BaseModel):
 
 def sanitize_executor_tool_paths(
     message: FrontierExecutorResult,
+    workspace_root: str | Path | None = None,
 ) -> tuple[FrontierExecutorResult, int]:
     """Keep remote tool calls inside the client's own working directory."""
     sanitized = 0
+    root = Path(workspace_root).resolve() if workspace_root else None
     tool_calls: list[FrontierExecutorToolCall] = []
     for call in message.tool_calls:
         arguments = json.loads(call.function.arguments)
@@ -314,6 +316,25 @@ def sanitize_executor_tool_paths(
             if isinstance(value, str) and Path(value).is_absolute():
                 arguments.pop(key)
                 sanitized += 1
+        if root is not None:
+            for key in ("patch", "input"):
+                value = arguments.get(key)
+                if not isinstance(value, str):
+                    continue
+                lines: list[str] = []
+                for line in value.splitlines(keepends=True):
+                    match = re.match(r"(\*\*\* (?:Add|Delete|Update) File: )(.+?)(\r?\n)?$", line)
+                    if match is None or not Path(match.group(2)).is_absolute():
+                        lines.append(line)
+                        continue
+                    try:
+                        relative = Path(match.group(2)).resolve().relative_to(root)
+                    except ValueError:
+                        lines.append(line)
+                        continue
+                    lines.append(f"{match.group(1)}{relative}{match.group(3) or ''}")
+                    sanitized += 1
+                arguments[key] = "".join(lines)
         tool_calls.append(
             call.model_copy(
                 update={
@@ -798,6 +819,7 @@ class CodexOAuthCollaboration:
         correlation_id: str,
     ) -> dict[str, Any]:
         """Run one remote logical-Executor turn without granting host tool authority."""
+        workspace_root = request.get("_client_workspace_path")
         result = await asyncio.to_thread(
             self._run,
             "executor",
@@ -805,14 +827,15 @@ class CodexOAuthCollaboration:
                 "executor_request": {
                     key: value
                     for key, value in request.items()
-                    if key != "metadata" and key != "stream"
+                    if key not in {"metadata", "stream", "_client_workspace_path"}
                 },
                 "_paid_fallback_required": True,
             },
             correlation_id,
         )
         message, sanitized_paths = sanitize_executor_tool_paths(
-            FrontierExecutorResult.model_validate(result.output)
+            FrontierExecutorResult.model_validate(result.output),
+            workspace_root,
         )
         usage = {
             key: value

@@ -2405,8 +2405,12 @@ def create_app(
                 frontier_provider = request.app.state.frontier
                 if frontier_provider is None:
                     raise FrontierRequiredUnavailable("remote Frontier fallback is unavailable")
+                scoped_request = {
+                    **executor_request,
+                    "_client_workspace_path": state.repository.get("workspace_path"),
+                }
                 response = await frontier_provider.execute(
-                    executor_request,
+                    scoped_request,
                     f"{usage_request_id}:{stage}",
                 )
                 request.app.state.store.event(
