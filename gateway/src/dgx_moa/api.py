@@ -2417,6 +2417,74 @@ def create_app(
                 )
                 return cast(dict[str, Any], response)
 
+            async def remote_executor_correction(
+                executor_request: dict[str, Any], stage: str
+            ) -> dict[str, Any]:
+                response = await remote_executor_complete(executor_request, stage)
+                if not state.frontier_correction_required:
+                    return response
+                message = (response.get("choices") or [{}])[0].get("message", {})
+                if message.get("tool_calls"):
+                    return response
+                tools = executor_request.get("tools")
+                if not isinstance(tools, list) or not tools:
+                    request.app.state.store.event(
+                        state_session_id,
+                        "frontier_correction_tool_unavailable",
+                        {"reason": "client_tools_unavailable"},
+                    )
+                    raise FrontierRequiredUnavailable(
+                        "required Frontier correction cannot run without client tools"
+                    )
+                tool_names = sorted(
+                    {
+                        str(tool.get("name") or tool.get("function", {}).get("name"))
+                        for tool in tools
+                        if isinstance(tool, dict)
+                        and (tool.get("name") or tool.get("function", {}).get("name"))
+                    }
+                )
+                retry_request = dict(executor_request)
+                retry_request["stream"] = False
+                retry_request["messages"] = [
+                    *executor_request.get("messages", []),
+                    message,
+                    {
+                        "role": "system",
+                        "content": (
+                            "A required code correction remains unresolved. The prior response "
+                            "did not call a tool and cannot complete this request. Call exactly "
+                            "one available client tool now to apply or inspect the correction; "
+                            "return a native tool call, not prose. Available tools: "
+                            + ", ".join(tool_names)
+                        ),
+                    },
+                ]
+                request.app.state.store.event(
+                    state_session_id,
+                    "frontier_correction_tool_retry_requested",
+                    {"provider": "frontier", "tools": tool_names},
+                )
+                response = await remote_executor_complete(
+                    retry_request, f"{stage}_correction_tool_retry"
+                )
+                retry_message = (response.get("choices") or [{}])[0].get("message", {})
+                if not retry_message.get("tool_calls"):
+                    request.app.state.store.event(
+                        state_session_id,
+                        "frontier_correction_tool_retry_failed",
+                        {"provider": "frontier", "reason": "tool_call_missing"},
+                    )
+                    raise FrontierRequiredUnavailable(
+                        "required Frontier correction did not produce a client tool call"
+                    )
+                request.app.state.store.event(
+                    state_session_id,
+                    "frontier_correction_tool_retry_completed",
+                    {"provider": "frontier"},
+                )
+                return response
+
             async def remote_reasoner_complete(
                 reasoner_request: dict[str, Any], stage: str
             ) -> dict[str, Any]:
@@ -2573,7 +2641,7 @@ def create_app(
 
                     async def remote_upstream() -> AsyncIterator[bytes]:
                         try:
-                            remote_response = await remote_executor_complete(
+                            remote_response = await remote_executor_correction(
                                 prepared, "executor_first_byte"
                             )
                         except Exception as error:
@@ -2854,7 +2922,7 @@ def create_app(
                     headers={"X-Session-ID": session_id},
                 )
             response = (
-                await remote_executor_complete(prepared, "executor_total")
+                await remote_executor_correction(prepared, "executor_total")
                 if executor_remote
                 else await request.app.state.provider.complete(
                     "executor",

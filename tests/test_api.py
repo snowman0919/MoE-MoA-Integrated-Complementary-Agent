@@ -225,6 +225,32 @@ def test_repeated_inspection_routes_executor_to_frontier(
     async def remote_execute(
         _remote_request: dict[str, object], _correlation_id: str
     ) -> dict[str, object]:
+        if _correlation_id.endswith("correction_tool_retry"):
+            return {
+                "id": "chatcmpl-frontier-correction-tool",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-frontier-correction",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "apply_patch",
+                                        "arguments": '{"patch":"bounded correction"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"total_tokens": 9},
+                "model": "gpt-5.6-sol",
+                "provider_provenance": {"provider": "primary", "cost_usd": None},
+            }
         return {
             "id": "chatcmpl-frontier-stalled",
             "choices": [
@@ -306,6 +332,18 @@ def test_repeated_inspection_routes_executor_to_frontier(
             }
         )
         app.state.store.save(rejected)
+        correction_tool = {
+            "type": "function",
+            "function": {
+                "name": "apply_patch",
+                "description": "Apply a bounded patch.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"patch": {"type": "string"}},
+                    "required": ["patch"],
+                },
+            },
+        }
         reviewer_calls_before_correction = stub_provider.calls.count("reviewer")
         correction_response = client.post(
             "/v1/chat/completions",
@@ -313,6 +351,7 @@ def test_repeated_inspection_routes_executor_to_frontier(
             json={
                 "model": "dgx-moa-fast",
                 "messages": [{"role": "user", "content": rejected.objective}],
+                "tools": [correction_tool],
             },
         )
         correction_events = app.state.store.events(rejected_id)
@@ -344,6 +383,7 @@ def test_repeated_inspection_routes_executor_to_frontier(
             json={
                 "model": "dgx-moa-fast",
                 "messages": [{"role": "user", "content": newly_rejected.objective}],
+                "tools": [correction_tool],
             },
         )
         newly_rejected_events = app.state.store.events(newly_rejected_id)
@@ -376,6 +416,18 @@ def test_repeated_inspection_routes_executor_to_frontier(
             },
         )
         corrected_events = app.state.store.events(corrected_id)
+        tool_less_id = "frontier-correction-without-client-tools"
+        tool_less = rejected.model_copy(update={"session_id": tool_less_id})
+        app.state.store.save(tool_less)
+        tool_less_response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": tool_less_id},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": tool_less.objective}],
+            },
+        )
+        tool_less_events = app.state.store.events(tool_less_id)
 
     assert response.status_code == 200, response.text
     assert response.json()["choices"][0]["message"]["content"] == "원격 진행 복구"
@@ -387,12 +439,18 @@ def test_repeated_inspection_routes_executor_to_frontier(
     )
     assert completion_selected["payload"]["routing_reason"] == "local_completion_stalled"
     assert correction_response.status_code == 200, correction_response.text
+    assert correction_response.json()["choices"][0]["finish_reason"] == "tool_calls"
     correction_selected = next(
         event for event in correction_events if event["event_type"] == "executor_remote_selected"
     )
     assert correction_selected["payload"]["routing_reason"] == "frontier_correction_required"
     assert reviewer_calls_after_correction == reviewer_calls_before_correction
+    assert any(
+        event["event_type"] == "frontier_correction_tool_retry_completed"
+        for event in correction_events
+    )
     assert newly_rejected_response.status_code == 200, newly_rejected_response.text
+    assert newly_rejected_response.json()["choices"][0]["finish_reason"] == "tool_calls"
     newly_rejected_selected = next(
         event
         for event in newly_rejected_events
@@ -401,6 +459,12 @@ def test_repeated_inspection_routes_executor_to_frontier(
     assert newly_rejected_selected["payload"]["routing_reason"] == ("frontier_correction_required")
     assert corrected_response.status_code == 200, corrected_response.text
     assert not any(event["event_type"] == "executor_remote_selected" for event in corrected_events)
+    assert tool_less_response.status_code == 503
+    assert "frontier_required_unavailable" in tool_less_response.text
+    assert any(
+        event["event_type"] == "frontier_correction_tool_unavailable"
+        for event in tool_less_events
+    )
 
 
 @pytest.fixture(autouse=True)
