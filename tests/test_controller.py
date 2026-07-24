@@ -1078,6 +1078,50 @@ def test_frontier_correction_latch_requires_a_new_file_change(
         for event in store.events(state.session_id)
     )
 
+    python_state = SessionState(
+        session_id="frontier-python-correction",
+        review_status="rejected_frontier",
+        review_deferred=True,
+        frontier_correction_required=True,
+    )
+    python_messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "frontier-python-fix",
+                    "type": "function",
+                    "function": {
+                        "name": "exec_command",
+                        "arguments": json.dumps(
+                            {
+                                "command": (
+                                    "python - <<'PY'\n"
+                                    "from pathlib import Path\n"
+                                    "Path('app.py').write_text('value = 3\\n')\n"
+                                    "PY"
+                                )
+                            }
+                        ),
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "frontier-python-fix",
+            "content": '{"exit_code":0}',
+        },
+    ]
+    controller._observe(python_state, python_messages)
+
+    assert python_state.frontier_correction_required is False
+    assert python_state.review_status == "deferred"
+    assert any(
+        event["event_type"] == "frontier_correction_applied"
+        for event in store.events(python_state.session_id)
+    )
+
 
 def test_successful_output_can_describe_failures(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     state = SessionState(session_id="failure-doc")

@@ -3270,17 +3270,24 @@ class Controller:
             if isinstance(arguments, dict)
             else None
         )
-        return isinstance(command, str) and bool(
-            re.search(
-                r"(?:^|&&|\|\||;|\n)\s*(?:"
-                r"(?:cat|echo|printf)\b[^\n;]*(?<![\d>])(?:1?>|>>)|tee\b|"
-                r"sed\b[^\n;]*\s-i(?:\s|$)|perl\b[^\n;]*\s-(?:pi|ip)\b|"
-                r"apply_patch\b|"
-                r"touch\b|cp\b|mv\b|rm\b|truncate\b|install\b|"
-                r"git\s+(?:apply|checkout|restore|reset|clean)\b)",
-                command,
-            )
+        if not isinstance(command, str):
+            return False
+        direct_mutation = re.search(
+            r"(?:^|&&|\|\||;|\n)\s*(?:"
+            r"(?:cat|echo|printf)\b[^\n;]*(?<![\d>])(?:1?>|>>)|tee\b|"
+            r"sed\b[^\n;]*\s-i(?:\s|$)|perl\b[^\n;]*\s-(?:pi|ip)\b|"
+            r"apply_patch\b|"
+            r"touch\b|cp\b|mv\b|rm\b|truncate\b|install\b|"
+            r"git\s+(?:apply|checkout|restore|reset|clean)\b)",
+            command,
         )
+        python_mutation = re.search(
+            r"(?:^|&&|\|\||;|\n)\s*python(?:3(?:\.\d+)?)?\b[\s\S]*"
+            r"(?:\.write_(?:text|bytes)\s*\(|"
+            r"\bopen\s*\([^,\n]+,\s*[\"'][wax](?:[bt+])?[\"'])",
+            command,
+        )
+        return bool(direct_mutation or python_mutation)
 
     @staticmethod
     def material_review_issue(result: dict[str, Any]) -> bool:
