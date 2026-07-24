@@ -170,6 +170,7 @@ class SessionState(BaseModel):
     evidence_edges: list[dict[str, str]] = Field(default_factory=list)
     derived_confidence: Literal["high", "medium", "low", "conflicted"] = "medium"
     tool_executions: list[dict[str, Any]] = Field(default_factory=list)
+    implementation_evidence: list[dict[str, Any]] = Field(default_factory=list)
     evaluations: list[dict[str, Any]] = Field(default_factory=list)
     failures: list[dict[str, Any]] = Field(default_factory=list)
     ending_repository: dict[str, str] = Field(default_factory=dict)

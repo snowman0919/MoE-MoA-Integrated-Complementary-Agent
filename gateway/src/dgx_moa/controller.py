@@ -268,10 +268,28 @@ def pending_goal_prerequisites(state: SessionState) -> tuple[str, ...]:
 
 def argument_paths(arguments: Any) -> set[str]:
     text = arguments if isinstance(arguments, str) else json.dumps(arguments, sort_keys=True)
-    return {
+    paths = {
         match.removeprefix("file://").rstrip(",.);]")
         for match in re.findall(r"(?:file://)?/[^\s\"'\\]+", text)
     }
+    if isinstance(arguments, dict):
+        for key, value in arguments.items():
+            normalized = key.lower().replace("_", "")
+            if (
+                normalized in {"path", "file", "filepath", "filename", "target", "targetpath"}
+                and isinstance(value, str)
+                and value
+                and "\n" not in value
+            ):
+                paths.add(value.removeprefix("file://"))
+    paths.update(
+        match.strip()
+        for match in re.findall(
+            r"(?<![\w./-])(?:[\w.-]+/)*[\w.-]+\.(?:py|js|ts|json|toml|yaml|yml|md)\b",
+            text,
+        )
+    )
+    return paths
 
 
 def clean_tool_output(value: object) -> str:
@@ -1378,6 +1396,26 @@ class Controller:
             changed_files = not failed and self.tool_execution_changes_files(execution)
             if changed_files:
                 state.frontier_review_verified = False
+                change_arguments = arguments
+                if isinstance(change_arguments, str):
+                    try:
+                        change_arguments = json.loads(change_arguments)
+                    except ValueError:
+                        change_arguments = arguments
+                change_arguments = self.safe_payload(state, change_arguments)
+                serialized_arguments = json.dumps(
+                    change_arguments, ensure_ascii=False, sort_keys=True
+                )
+                if len(serialized_arguments) > 5_000:
+                    change_arguments = serialized_arguments[:4_985] + "...[truncated]"
+                state.implementation_evidence.append(
+                    {
+                        "tool_name": execution["tool_name"],
+                        "target_paths": sorted(argument_paths(arguments)),
+                        "change_arguments": change_arguments,
+                    }
+                )
+                state.implementation_evidence = state.implementation_evidence[-3:]
             if changed_files and state.frontier_correction_required:
                 state.frontier_correction_required = False
                 state.frontier_correction_pending_verification = True
@@ -3572,9 +3610,21 @@ class Controller:
         evidence = {
             "original_objective": effective_objective(state),
             "acceptance_criteria": state.acceptance_criteria,
-            "changed_paths": metadata.get("changed_paths", []),
+            "changed_paths": list(
+                dict.fromkeys(
+                    [
+                        *metadata.get("changed_paths", []),
+                        *[
+                            path
+                            for item in state.implementation_evidence
+                            for path in item.get("target_paths", [])
+                        ],
+                    ]
+                )
+            ),
             "diff_summary": metadata.get("diff_summary", ""),
             "contract_evidence": self.review_contract_evidence(state),
+            "implementation_evidence": state.implementation_evidence,
             "tool_results": self.review_tool_results(state),
             "tool_executions": self.review_tool_executions(state),
             "validation_results": metadata.get("validation_results", []),
