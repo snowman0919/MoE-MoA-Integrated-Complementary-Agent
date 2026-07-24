@@ -1791,8 +1791,11 @@ class Controller:
         )
         progress_constraint = (
             "When work remains, call the required tool in the same response; never return only a "
-            "progress marker. Do not expose hidden reasoning. Never request elevated permissions "
-            "or install missing system dependencies; use available tools or report the blocker."
+            "progress marker. Once recorded file changes, successful validation, and every "
+            "required review are complete, return the final response immediately without more "
+            "inspection or validation calls. Do not expose hidden reasoning. Never request "
+            "elevated permissions or install missing system dependencies; use available tools or "
+            "report the blocker."
             if role == "executor"
             else ""
         )
@@ -3010,6 +3013,12 @@ class Controller:
                 {"tools": list(available_tools)},
             )
         messages = compress_messages(body["messages"], self.settings.limits)
+        implementation_complete = any(
+            execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
+            for execution in state.tool_executions
+        ) and not self.requires_implementation_tool_action(
+            state, dict(request.get("metadata", {}))
+        )
         messages.insert(
             0,
             {
@@ -3029,7 +3038,12 @@ class Controller:
                         "parallel tool calls or one bounded shell command: "
                         + ", ".join(pending_prerequisites)
                         if pending_prerequisites
-                        else "Take one useful step"
+                        else (
+                            "Implementation, validation, and required review evidence are complete. "
+                            "Return the concise final result now; do not call more tools."
+                            if implementation_complete
+                            else "Take one useful step"
+                        )
                     ),
                     available_tools=available_tools,
                 ),
@@ -3164,7 +3178,7 @@ class Controller:
         return isinstance(command, str) and bool(
             re.search(
                 r"(?:^|&&|\|\||;|\n)\s*(?:"
-                r"(?:cat|echo|printf)\b[^\n;]*(?:>>|>)|tee\b|"
+                r"(?:cat|echo|printf)\b[^\n;]*(?<![\d>])(?:1?>|>>)|tee\b|"
                 r"sed\b[^\n;]*\s-i(?:\s|$)|perl\b[^\n;]*\s-(?:pi|ip)\b|"
                 r"touch\b|mkdir\b|cp\b|mv\b|rm\b|truncate\b|install\b|"
                 r"git\s+(?:apply|checkout|restore|reset|clean)\b)",
