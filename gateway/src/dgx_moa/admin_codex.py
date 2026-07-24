@@ -180,11 +180,12 @@ class AdminCodexRunner:
     async def start(self, body: AdminCodexRequest) -> AsyncIterator[bytes]:
         if not body.prompt.strip():
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "prompt must not be blank")
+        run_dir = self.settings.run_dir.resolve()
         if body.mode == "agent":
             workspace_name, workspace = self.workspace(body.workspace)
         else:
             workspace_name = ""
-            workspace = self.settings.run_dir / "admin-codex-chat"
+            workspace = run_dir / "admin-codex-chat"
             workspace.mkdir(parents=True, exist_ok=True, mode=0o700)
         if body.session_id is not None and self.sessions.get(body.session_id) != (
             body.mode,
@@ -196,7 +197,7 @@ class AdminCodexRunner:
         await self.lock.acquire()
         try:
             token = self.provider_key()
-            codex_home = self.settings.run_dir / "admin-codex-home"
+            codex_home = run_dir / "admin-codex-home"
             codex_home.mkdir(parents=True, exist_ok=True, mode=0o700)
             codex_home.chmod(0o700)
             command = self.command(body, workspace)
