@@ -1312,7 +1312,10 @@ async def test_reasoner_provider_failure_uses_bounded_frontier_fallback(
     assert remote_calls == ["reasoner_fallback"]
     assert "Use the verified remote fallback." in json.dumps(prepared["messages"])
     assert state.engineering_loop is not None
-    assert state.engineering_loop.remaining_budget.frontier_calls == 2
+    assert (
+        state.engineering_loop.remaining_budget.frontier_calls
+        == settings.loop_engineering.defaults["frontier_calls"] - 1
+    )
     assert completed["payload"]["provider"] == "codex_oauth"
     assert completed["payload"]["model"] == "gpt-5.6-sol"
     assert any(event["event_type"] == "reasoner_unavailable" for event in events)

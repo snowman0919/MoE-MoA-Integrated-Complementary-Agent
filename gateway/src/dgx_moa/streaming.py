@@ -683,12 +683,24 @@ async def responses_sse(
                     isinstance(arguments.get("session_id"), bool)
                     or not isinstance(arguments.get("session_id"), int)
                 ):
-                    arguments["session_id"] = 0
-                    item["_arguments"] = json.dumps(
-                        arguments,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
+                    if "exec_command" in (function_tool_names or set()):
+                        item["name"] = "exec_command"
+                        item["_arguments"] = json.dumps(
+                            {
+                                "cmd": (
+                                    "printf '%s\\n' 'No active process session; "
+                                    "use exec_command or apply_patch.'"
+                                )
+                            },
+                            separators=(",", ":"),
+                        )
+                    else:
+                        arguments["session_id"] = 0
+                        item["_arguments"] = json.dumps(
+                            arguments,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
                     LOGGER.info(
                         "responses_invalid_session_id_suppressed session_id=%s",
                         _log_token(session_id),
