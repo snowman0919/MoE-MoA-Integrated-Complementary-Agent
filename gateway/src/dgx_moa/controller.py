@@ -3242,6 +3242,7 @@ class Controller:
                 r"(?:^|&&|\|\||;|\n)\s*(?:"
                 r"(?:cat|echo|printf)\b[^\n;]*(?<![\d>])(?:1?>|>>)|tee\b|"
                 r"sed\b[^\n;]*\s-i(?:\s|$)|perl\b[^\n;]*\s-(?:pi|ip)\b|"
+                r"apply_patch\b|"
                 r"touch\b|mkdir\b|cp\b|mv\b|rm\b|truncate\b|install\b|"
                 r"git\s+(?:apply|checkout|restore|reset|clean)\b)",
                 command,

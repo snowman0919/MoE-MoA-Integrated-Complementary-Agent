@@ -1015,7 +1015,15 @@ def test_frontier_correction_latch_requires_a_new_file_change(
                     "type": "function",
                     "function": {
                         "name": "shell",
-                        "arguments": json.dumps({"cmd": "cat > app.py <<'EOF'\nvalue = 2\nEOF"}),
+                        "arguments": json.dumps(
+                            {
+                                "cmd": (
+                                    "apply_patch <<'PATCH'\n*** Begin Patch\n"
+                                    "*** Update File: app.py\n@@\n-value = 1\n"
+                                    "+value = 2\n*** End Patch\nPATCH"
+                                )
+                            }
+                        ),
                     },
                 }
             ],
