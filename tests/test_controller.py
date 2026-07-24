@@ -2484,6 +2484,27 @@ def test_implementation_completion_requires_change_validation_and_review(
     assert controller.requires_implementation_tool_action(question, {}) is False
 
 
+def test_repeated_successful_inspection_marks_executor_stalled(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="repeated-inspection",
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": f"cat /workspace/app.py | head -{lines}"},
+                "exit_code": 0,
+            }
+            for lines in (20, 40, 80)
+        ],
+    )
+
+    assert controller.executor_stalled(state) is True
+    state.tool_executions.insert(2, {"tool_name": "apply_patch", "exit_code": 0})
+    assert controller.executor_stalled(state) is False
+
+
 @pytest.mark.asyncio
 async def test_completed_implementation_is_told_to_return_final(
     settings, stub_provider: StubProvider

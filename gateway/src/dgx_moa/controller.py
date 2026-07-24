@@ -3146,6 +3146,37 @@ class Controller:
         )
         return not (changed and validated and review_ready)
 
+    def executor_stalled(self, state: SessionState) -> bool:
+        """Detect repeated successful inspection since the latest file change."""
+        counts: dict[str, int] = {}
+        for execution in reversed(state.tool_executions):
+            if execution.get("exit_code") != 0:
+                continue
+            if self.tool_execution_changes_files(execution):
+                break
+            arguments = execution.get("normalized_arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except ValueError:
+                    arguments = {}
+            command = arguments.get("cmd") if isinstance(arguments, dict) else None
+            if not isinstance(command, str) or not re.search(
+                r"(?:^|&&|\|\||;|\n)\s*(?:cat|head|tail|ls|find|rg|sed\s+-n)\b",
+                command,
+            ):
+                continue
+            targets = argument_paths(command)
+            if not targets and "No active process session" in str(
+                execution.get("stdout_summary", "")
+            ):
+                targets = {"invalid-process-session"}
+            for target in targets:
+                counts[target] = counts.get(target, 0) + 1
+                if counts[target] >= 3:
+                    return True
+        return False
+
     @staticmethod
     def review_tool_executions(state: SessionState) -> list[dict[str, Any]]:
         return [
