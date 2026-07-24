@@ -3306,6 +3306,7 @@ class Controller:
     def tool_execution_changes_files(execution: dict[str, Any]) -> bool:
         if execution.get("tool_name") in {
             "apply_patch",
+            "patch",
             "delete",
             "edit_file",
             "edit",

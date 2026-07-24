@@ -2798,6 +2798,23 @@ def test_frontier_missing_tests_block_approval(
     )
 
 
+def test_patch_tool_counts_as_a_file_change(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    assert controller.tool_execution_changes_files(
+        {
+            "tool_name": "patch",
+            "normalized_arguments": {
+                "path": "atomic_store.py",
+                "mode": "replace",
+            },
+            "exit_code": 0,
+        }
+    )
+
+
 def test_review_evidence_survives_non_file_tools_but_not_a_new_change(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
