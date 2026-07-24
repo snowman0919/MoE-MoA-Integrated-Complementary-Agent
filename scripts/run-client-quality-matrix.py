@@ -745,7 +745,12 @@ def sha256(path: Path) -> str:
 
 
 def workspace_name(run_id: str, harness: str, task: Task) -> str:
-    safe_run = re.sub(r"[^a-z0-9-]", "-", run_id.lower())[:24]
+    normalized = re.sub(r"[^a-z0-9-]", "-", run_id.lower()).strip("-") or "run"
+    safe_run = (
+        normalized
+        if len(normalized) <= 24
+        else f"{normalized[:24]}-{hashlib.sha256(normalized.encode()).hexdigest()[:8]}"
+    )
     return f"moa-qm-{safe_run}-{harness}-{task.slug}"
 
 
