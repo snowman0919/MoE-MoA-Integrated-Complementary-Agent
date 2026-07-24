@@ -192,6 +192,21 @@ def effective_objective(state: SessionState) -> str:
     return state.resolved_objective or state.objective
 
 
+def reasoner_context_fingerprint(state: SessionState, messages: list[dict[str, Any]]) -> str:
+    user_messages = [
+        text_content(message.get("content"))
+        for message in messages
+        if message.get("role") == "user"
+    ]
+    payload = {
+        "objective": effective_objective(state),
+        "user_messages": user_messages[-8:],
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
+    ).hexdigest()
+
+
 def pending_goal_prerequisites(state: SessionState) -> tuple[str, ...]:
     required = {path for path in GOAL_PREREQUISITE_DOCUMENTS if path in state.resolved_objective}
     completed: set[str] = set()
@@ -2181,6 +2196,25 @@ class Controller:
         body["max_tokens"] = self.executor_tokens(body)
         if state.phase == Phase.BLOCKED:
             raise ValueError("session blocked after no progress")
+        context_fingerprint = reasoner_context_fingerprint(
+            state, cast(list[dict[str, Any]], body.get("messages", []))
+        )
+        reentry_reasons: list[str] = []
+        if tool_continuation and "reasoner" in roles:
+            if (
+                state.reasoner_context_fingerprint
+                and state.reasoner_context_fingerprint != context_fingerprint
+            ):
+                reentry_reasons.append("user_context_changed")
+            if metadata.get("no_progress"):
+                reentry_reasons.append("no_progress")
+        if reentry_reasons:
+            tool_continuation = False
+            self.store.event(
+                state.session_id,
+                "reasoner_reentry",
+                {"reasons": reentry_reasons},
+            )
         if not tool_continuation:
             self.admit_loop_iteration(state)
         reasoner = (
@@ -2391,6 +2425,7 @@ class Controller:
                     ),
                 },
             )
+            state.reasoner_context_fingerprint = context_fingerprint
         orchestration: OrchestrationDecision | None = None
         frontier_task: asyncio.Task[FrontierCollaborationResult] | None = None
         frontier_pending: (
@@ -3012,6 +3047,67 @@ class Controller:
             ):
                 return True
         return False
+
+    def requires_implementation_tool_action(
+        self, state: SessionState, metadata: dict[str, Any]
+    ) -> bool:
+        if not state.plan:
+            return False
+        work = (
+            effective_objective(state)
+            + "\n"
+            + json.dumps(state.plan, ensure_ascii=False, sort_keys=True)
+        ).lower()
+        requests_change = any(
+            marker in work
+            for marker in (
+                "implement",
+                "modify",
+                "fix ",
+                "create",
+                "write ",
+                "add ",
+                "refactor",
+                "구현",
+                "수정",
+                "생성",
+                "작성",
+                "추가",
+                "고쳐",
+                "만들",
+            )
+        )
+        targets_repository = any(
+            marker in work
+            for marker in (
+                "repository",
+                "repo",
+                "codebase",
+                "project",
+                " file",
+                "module",
+                " test",
+                ".py",
+                ".js",
+                ".ts",
+                "저장소",
+                "코드",
+                "파일",
+                "모듈",
+                "테스트",
+            )
+        )
+        if not (requests_change and targets_repository):
+            return False
+        changed = any(
+            execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
+            for execution in state.tool_executions
+        )
+        validated = self.has_review_evidence(state, metadata)
+        review_ready = (
+            "reviewer" not in state.roles_required or state.review_status == "approved"
+        )
+        return not (changed and validated and review_ready)
 
     @staticmethod
     def review_tool_executions(state: SessionState) -> list[dict[str, Any]]:

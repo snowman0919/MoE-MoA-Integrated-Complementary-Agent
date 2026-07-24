@@ -3523,6 +3523,9 @@ def create_app(
                                 and state.review_deferred
                                 and state.review_status != "approved"
                             )
+                            or request.app.state.controller.requires_implementation_tool_action(
+                                state, current_body.metadata
+                            )
                         )
                     )
 
@@ -3642,10 +3645,12 @@ def create_app(
                                             ChatMessage(
                                                 role="developer",
                                                 content=(
-                                                    "The previous answer was only a progress "
-                                                    "marker. Call the next required tool, or "
-                                                    "return a concrete final result with evidence "
-                                                    "only if the objective is complete."
+                                                    "The previous answer did not prove completion. "
+                                                    "A code block in the answer does not modify the "
+                                                    "workspace. Call the next required tool to apply "
+                                                    "the implementation and run validation. Return a "
+                                                    "final result only after recorded change, test, "
+                                                    "and required review evidence exists."
                                                 ),
                                             ),
                                         ]

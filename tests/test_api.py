@@ -6043,7 +6043,64 @@ def test_responses_retries_stop_while_planned_work_is_pending(  # type: ignore[n
     assert any(event["event_type"] == "progress_only_response_retried" for event in events)
 
 
-def test_responses_accepts_concrete_final_with_stale_deferred_review(
+def test_responses_retries_code_block_without_workspace_change(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    calls = 0
+    session_id = "responses-code-block-retry"
+    test_client: TestClient | None = None
+
+    async def stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        stub_provider.calls.append(role)
+        stub_provider.requests.append(request)
+        assert test_client is not None
+        if calls == 1:
+            state = test_client.app.state.store.get(session_id)
+            assert state is not None
+            state.plan = [{"step": "Implement rate_limiter.py and run tests"}]
+            state.roles_required = ["reasoner", "executor"]
+            test_client.app.state.store.save(state)
+
+        async def chunks():  # type: ignore[no-untyped-def]
+            if calls == 1:
+                yield (
+                    b'data: {"choices":[{"delta":{"content":'
+                    b'"```python\\\\nclass RateLimiter:\\\\n    pass\\\\n```"}},'
+                    b'"finish_reason":"stop"}]}\n\n'
+                )
+            else:
+                yield (
+                    b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                    b'"id":"call-apply","function":{"name":"exec_command",'
+                    b'"arguments":"{\\"cmd\\":\\"python -m pytest -q\\"}"}}]},'
+                    b'"finish_reason":"tool_calls"}]}\n\n'
+                )
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    stub_provider.stream = stream  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        test_client = client
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-agent",
+                "input": "이 저장소에 rate_limiter.py를 구현하고 테스트해.",
+                "stream": True,
+            },
+        )
+
+    assert calls == 2
+    assert "class RateLimiter" not in response.text
+    assert '"name":"exec_command"' in response.text
+    assert "does not modify the workspace" in str(stub_provider.requests[-1]["messages"])
+
+
+def test_responses_accepts_concrete_final_with_recorded_implementation_evidence(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
     calls = 0
@@ -6064,6 +6121,18 @@ def test_responses_accepts_concrete_final_with_stale_deferred_review(
         state.roles_required = ["reasoner", "executor"]
         state.review_deferred = True
         state.review_status = "deferred"
+        state.tool_executions = [
+            {
+                "tool_name": "apply_patch",
+                "exit_code": 0,
+                "normalized_arguments": {"patch": "*** Begin Patch"},
+            },
+            {
+                "tool_name": "exec_command",
+                "exit_code": 0,
+                "normalized_arguments": {"cmd": "python -m pytest -q"},
+            },
+        ]
         test_client.app.state.store.save(state)
 
         async def chunks():  # type: ignore[no-untyped-def]
