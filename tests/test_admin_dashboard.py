@@ -184,6 +184,7 @@ def test_admin_dashboard_runs_bounded_custom_provider_codex(
     first_args, first_kwargs, first_input = calls[0]
     assert first_args[:2] == ("codex", "exec")
     assert 'model_providers.dgx_moa_admin.wire_api="responses"' in first_args
+    assert not any("model_supports_reasoning_summaries" in str(arg) for arg in first_args)
     assert 'sandbox_mode="workspace-write"' in first_args
     assert "sandbox_workspace_write.network_access=false" in first_args
     assert 'shell_environment_policy.inherit="core"' in first_args

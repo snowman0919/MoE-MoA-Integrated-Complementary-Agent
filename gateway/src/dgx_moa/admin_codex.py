@@ -104,8 +104,6 @@ class AdminCodexRunner:
             "-c",
             'model_verbosity="low"',
             "-c",
-            "model_supports_reasoning_summaries=false",
-            "-c",
             f"model_provider={json.dumps(provider)}",
             "-c",
             f"model_providers.{provider}.name={json.dumps('DGX MoA admin')}",
