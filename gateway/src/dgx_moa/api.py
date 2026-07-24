@@ -2502,6 +2502,11 @@ def create_app(
                     state, raw["metadata"]
                 )
             )
+            frontier_correction = (
+                not executor_remote
+                and request.app.state.frontier is not None
+                and state.frontier_correction_required
+            )
             correction_stalled = (
                 not executor_remote
                 and request.app.state.frontier is not None
@@ -2513,11 +2518,19 @@ def create_app(
                     for execution in state.tool_executions
                 )
             )
-            if context_exceeded or stalled or completion_stalled or correction_stalled:
+            if (
+                context_exceeded
+                or stalled
+                or completion_stalled
+                or frontier_correction
+                or correction_stalled
+            ):
                 executor_remote = True
                 executor_routing_reason = (
                     "local_context_exceeded"
                     if context_exceeded
+                    else "frontier_correction_required"
+                    if frontier_correction
                     else "local_correction_stalled"
                     if correction_stalled
                     else "local_completion_stalled"

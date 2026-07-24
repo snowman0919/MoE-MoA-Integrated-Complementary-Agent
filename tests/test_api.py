@@ -317,6 +317,36 @@ def test_repeated_inspection_routes_executor_to_frontier(
         )
         correction_events = app.state.store.events(rejected_id)
         reviewer_calls_after_correction = stub_provider.calls.count("reviewer")
+        newly_rejected_id = "newly-rejected-executor"
+        newly_rejected = SessionState(
+            session_id=newly_rejected_id,
+            objective="Implement app.py in this repository.",
+        )
+        app.state.store.save(newly_rejected)
+        original_prepare = app.state.controller.prepare_executor
+
+        async def prepare_then_require_frontier(*args, **kwargs):  # type: ignore[no-untyped-def]
+            prepared = await original_prepare(*args, **kwargs)
+            prepared_state = args[0]
+            if prepared_state.session_id == newly_rejected_id:
+                prepared_state.review_status = "rejected_frontier"
+                prepared_state.review_deferred = True
+                prepared_state.frontier_correction_required = True
+            return prepared
+
+        app.state.controller.prepare_executor = prepare_then_require_frontier
+        newly_rejected_response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": newly_rejected_id,
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": newly_rejected.objective}],
+            },
+        )
+        newly_rejected_events = app.state.store.events(newly_rejected_id)
 
     assert response.status_code == 200, response.text
     assert response.json()["choices"][0]["message"]["content"] == "원격 진행 복구"
@@ -333,6 +363,13 @@ def test_repeated_inspection_routes_executor_to_frontier(
     )
     assert correction_selected["payload"]["routing_reason"] == "frontier_correction_required"
     assert reviewer_calls_after_correction == reviewer_calls_before_correction
+    assert newly_rejected_response.status_code == 200, newly_rejected_response.text
+    newly_rejected_selected = next(
+        event
+        for event in newly_rejected_events
+        if event["event_type"] == "executor_remote_selected"
+    )
+    assert newly_rejected_selected["payload"]["routing_reason"] == ("frontier_correction_required")
 
 
 @pytest.fixture(autouse=True)
