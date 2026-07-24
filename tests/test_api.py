@@ -3029,6 +3029,11 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             in model["base_instructions"]
             for model in models["models"]
         )
+        assert all(
+            "bool is a subclass of int" in model["base_instructions"]
+            and "optional argv-style entry points" in model["base_instructions"]
+            for model in models["models"]
+        )
         assert all(model["comp_hash"] == "dgx-moa-65536-v1" for model in models["models"])
         response = client.post(
             "/v1/chat/completions",
