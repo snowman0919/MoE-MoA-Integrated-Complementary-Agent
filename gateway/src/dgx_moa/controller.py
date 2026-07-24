@@ -2969,6 +2969,11 @@ class Controller:
             ):
                 return True
             arguments = execution.get("normalized_arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except ValueError:
+                    arguments = {}
             command = arguments.get("cmd") if isinstance(arguments, dict) else None
             if (
                 execution.get("exit_code") == 0
@@ -2976,7 +2981,7 @@ class Controller:
                 and (
                     re.search(
                         r"(?:^|&&|\|\||;)\s*(?:uv run )?(?:python -m )?"
-                        r"(?:pytest|ruff(?: check| format --check)|mypy)\b",
+                        r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
                         command,
                     )
                     or re.search(r"(?:^|&&|\|\||;)\s*git\s+diff\b", command)

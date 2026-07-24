@@ -2105,6 +2105,25 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
         )
         is True
     )
+    assert (
+        controller.has_review_evidence(
+            SessionState(
+                session_id="unittest",
+                tool_executions=[
+                    {
+                        "tool_name": "exec_command",
+                        "normalized_arguments": json.dumps(
+                            {"cmd": "python -m unittest discover -s tests -v"}
+                        ),
+                        "exit_code": 0,
+                        "filesystem_effect": {"unknown_effect": True},
+                    }
+                ],
+            ),
+            {},
+        )
+        is True
+    )
 
 
 def test_review_observation_is_bounded_redacted_and_complete(
