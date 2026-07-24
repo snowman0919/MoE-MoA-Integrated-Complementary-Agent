@@ -3206,7 +3206,6 @@ class Controller:
                     ]
                     retry_request["max_tokens"] = min(self.settings.limits.reviewer_tokens, 1024)
                     retry_started = time.monotonic()
-                    self.admit_loop_action(state, "reviewer_calls")
                     response, reviewer_routing = await self.complete_specialist(
                         state,
                         "reviewer",
