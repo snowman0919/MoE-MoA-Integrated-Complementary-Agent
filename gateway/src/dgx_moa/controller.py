@@ -3013,13 +3013,10 @@ class Controller:
                 {"tools": list(available_tools)},
             )
         messages = compress_messages(body["messages"], self.settings.limits)
-        implementation_complete = any(
-            execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
-            for execution in state.tool_executions
-        ) and not self.requires_implementation_tool_action(
+        implementation_complete = self.implementation_completion_ready(
             state, dict(request.get("metadata", {}))
         )
-        if implementation_complete and tool_continuation:
+        if implementation_complete and (tool_continuation or progress_retry):
             body.pop("tools", None)
             body.pop("tool_choice", None)
             available_tools = ()
@@ -3145,6 +3142,14 @@ class Controller:
             "reviewer" not in state.roles_required or state.review_status == "approved"
         )
         return not (changed and validated and review_ready)
+
+    def implementation_completion_ready(
+        self, state: SessionState, metadata: dict[str, Any]
+    ) -> bool:
+        return any(
+            execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
+            for execution in state.tool_executions
+        ) and not self.requires_implementation_tool_action(state, metadata)
 
     def executor_stalled(self, state: SessionState) -> bool:
         """Detect repeated successful inspection since the latest file change."""

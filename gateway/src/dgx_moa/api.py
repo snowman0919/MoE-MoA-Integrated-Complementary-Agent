@@ -2471,10 +2471,22 @@ def create_app(
                 and request.app.state.frontier is not None
                 and request.app.state.controller.executor_stalled(state)
             )
-            if context_exceeded or stalled:
+            completion_stalled = (
+                not executor_remote
+                and request.app.state.frontier is not None
+                and bool(raw["metadata"].get("responses_progress_retry"))
+                and request.app.state.controller.implementation_completion_ready(
+                    state, raw["metadata"]
+                )
+            )
+            if context_exceeded or stalled or completion_stalled:
                 executor_remote = True
                 executor_routing_reason = (
-                    "local_context_exceeded" if context_exceeded else "local_no_progress"
+                    "local_context_exceeded"
+                    if context_exceeded
+                    else "local_completion_stalled"
+                    if completion_stalled
+                    else "local_no_progress"
                 )
                 executor_lease_id = str(
                     uuid.uuid5(uuid.UUID(usage_request_id), "active_request:executor")

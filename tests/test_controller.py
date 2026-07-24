@@ -2469,12 +2469,15 @@ def test_implementation_completion_requires_change_validation_and_review(
         }
     )
     assert controller.requires_implementation_tool_action(state, {}) is False
+    assert controller.implementation_completion_ready(state, {}) is True
 
     state.roles_required.append("reviewer")
     state.review_status = "rejected"
     assert controller.requires_implementation_tool_action(state, {}) is True
+    assert controller.implementation_completion_ready(state, {}) is False
     state.review_status = "approved"
     assert controller.requires_implementation_tool_action(state, {}) is False
+    assert controller.implementation_completion_ready(state, {}) is True
 
     question = SessionState(
         session_id="question",

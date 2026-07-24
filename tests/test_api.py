@@ -266,11 +266,46 @@ def test_repeated_inspection_routes_executor_to_frontier(
             },
         )
         events = app.state.store.events(session_id)
+        completed_id = "completed-executor"
+        completed = SessionState(
+            session_id=completed_id,
+            objective="Implement app.py in this repository.",
+            review_status="approved",
+            tool_executions=[
+                {
+                    "tool_name": "apply_patch",
+                    "exit_code": 0,
+                    "filesystem_effect": {"changed_paths": ["app.py"]},
+                },
+                {
+                    "tool_name": "exec_command",
+                    "normalized_arguments": {"cmd": "python -m pytest -q"},
+                    "exit_code": 0,
+                    "filesystem_effect": {"unknown_effect": True},
+                },
+            ],
+        )
+        app.state.store.save(completed)
+        completion_response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": completed_id},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": completed.objective}],
+                "metadata": {"responses_progress_retry": True},
+            },
+        )
+        completion_events = app.state.store.events(completed_id)
 
     assert response.status_code == 200, response.text
     assert response.json()["choices"][0]["message"]["content"] == "원격 진행 복구"
     selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
     assert selected["payload"]["routing_reason"] == "local_no_progress"
+    assert completion_response.status_code == 200, completion_response.text
+    completion_selected = next(
+        event for event in completion_events if event["event_type"] == "executor_remote_selected"
+    )
+    assert completion_selected["payload"]["routing_reason"] == "local_completion_stalled"
 
 
 @pytest.fixture(autouse=True)
