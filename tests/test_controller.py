@@ -996,6 +996,37 @@ def test_successful_write_invalidates_approved_review(
     controller._observe(read_state, mkdir)
     assert read_state.review_status == "approved"
 
+    opencode_write = SessionState(session_id="opencode-write", review_status="approved")
+    controller._observe(
+        opencode_write,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "opencode-write",
+                        "type": "function",
+                        "function": {
+                            "name": "write",
+                            "arguments": json.dumps(
+                                {
+                                    "filePath": "/workspace/app.py",
+                                    "content": "value = 2\n",
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "opencode-write",
+                "content": '{"exit_code":0}',
+            },
+        ],
+    )
+    assert opencode_write.review_status == "deferred"
+
 
 def test_frontier_correction_latch_requires_a_new_file_change(
     settings, stub_provider: StubProvider
@@ -2593,8 +2624,8 @@ def test_review_evidence_survives_non_file_tools_but_not_a_new_change(
         tool_executions=[
             {"tool_name": "apply_patch", "exit_code": 0},
             {
-                "tool_name": "exec_command",
-                "normalized_arguments": {"cmd": "python -m pytest -q"},
+                "tool_name": "bash",
+                "normalized_arguments": json.dumps({"command": "python -m pytest -q"}),
                 "exit_code": 0,
             },
             {"tool_name": "update_plan", "exit_code": 0},
@@ -2634,6 +2665,19 @@ def test_repeated_successful_inspection_marks_executor_stalled(
     assert controller.executor_stalled(state) is True
     state.tool_executions.insert(2, {"tool_name": "apply_patch", "exit_code": 0})
     assert controller.executor_stalled(state) is False
+
+    structured = SessionState(
+        session_id="structured-inspection",
+        tool_executions=[
+            {
+                "tool_name": "read",
+                "normalized_arguments": json.dumps({"filePath": "/workspace/app.py"}),
+                "exit_code": 0,
+            }
+            for _ in range(3)
+        ],
+    )
+    assert controller.executor_stalled(structured) is True
 
 
 @pytest.mark.asyncio
