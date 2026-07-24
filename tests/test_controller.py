@@ -553,6 +553,8 @@ async def test_local_review_escalates_to_frontier_code_review(
     assert state.frontier_invocations == 1
     assert state.derived_confidence == "conflicted"
     assert state.review_status == "rejected_frontier"
+    assert state.review_deferred is True
+    assert state.frontier_correction_required is True
     assert state.phase == Phase.CORRECTION
     assert "Frontier contribution" in json.dumps(prepared["messages"])
     assert any(
@@ -986,6 +988,49 @@ def test_successful_write_invalidates_approved_review(
     )
     controller._observe(read_state, stderr_append)
     assert read_state.review_status == "approved"
+
+
+def test_frontier_correction_latch_requires_a_new_file_change(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="frontier-correction",
+        review_status="rejected_frontier",
+        review_deferred=True,
+        frontier_correction_required=True,
+    )
+
+    controller._observe(state, tool_messages("read-after-frontier", "source"))
+    assert state.frontier_correction_required is True
+    assert state.review_status == "rejected_frontier"
+
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "frontier-fix",
+                    "type": "function",
+                    "function": {
+                        "name": "shell",
+                        "arguments": json.dumps({"cmd": "cat > app.py <<'EOF'\nvalue = 2\nEOF"}),
+                    },
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "frontier-fix", "content": '{"exit_code":0}'},
+    ]
+    controller._observe(state, messages)
+
+    assert state.frontier_correction_required is False
+    assert state.review_status == "deferred"
+    assert state.review_deferred is True
+    assert any(
+        event["event_type"] == "frontier_correction_applied"
+        for event in store.events(state.session_id)
+    )
 
 
 def test_successful_output_can_describe_failures(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -2022,6 +2067,32 @@ async def test_reviewer_required_correction_cannot_be_approved(
 
 
 @pytest.mark.asyncio
+async def test_reviewer_cannot_approve_an_unapplied_frontier_correction(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    state = SessionState(
+        session_id="frontier-review-latch",
+        review_status="rejected_frontier",
+        review_deferred=True,
+        frontier_correction_required=True,
+    )
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+
+    result = await controller.review(state, "unchanged implementation evidence")
+
+    assert result["status"] == "rejected"
+    assert state.review_status == "rejected"
+    assert state.review_deferred is True
+    assert state.frontier_correction_required is True
+    assert any(
+        event["event_type"] == "review_status_normalized"
+        and event["payload"]["reason"] == "frontier_correction_not_applied"
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
 async def test_strict_judge_verdict_allows_completion(  # type: ignore[no-untyped-def]
     settings, stub_provider: StubProvider
 ) -> None:
@@ -2482,6 +2553,9 @@ def test_implementation_completion_requires_change_validation_and_review(
     state.review_status = "approved"
     assert controller.requires_implementation_tool_action(state, {}) is False
     assert controller.implementation_completion_ready(state, {}) is True
+    state.frontier_correction_required = True
+    assert controller.requires_implementation_tool_action(state, {}) is True
+    assert controller.implementation_completion_ready(state, {}) is False
 
     question = SessionState(
         session_id="question",
@@ -2535,9 +2609,7 @@ async def test_completed_implementation_is_told_to_return_final(
         "model": "dgx-moa",
         "messages": [{"role": "user", "content": state.objective}],
         "metadata": {},
-        "tools": [
-            {"type": "function", "function": {"name": "exec_command", "parameters": {}}}
-        ],
+        "tools": [{"type": "function", "function": {"name": "exec_command", "parameters": {}}}],
         "tool_choice": "auto",
     }
 
