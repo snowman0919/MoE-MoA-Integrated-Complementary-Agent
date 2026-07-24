@@ -764,6 +764,8 @@ def test_goal_file_wrapper_gets_full_completion_constraints(
     assert "supplied tests are examples, not the complete specification" in prompt
     assert "non-finite numeric values" in prompt
     assert "synchronization of shared state" in prompt
+    reviewer_prompt = controller.prompt_sandwich("reviewer", state, "evidence", "review")
+    assert "test results alone are insufficient" in reviewer_prompt
 
 
 def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
@@ -2181,6 +2183,14 @@ def test_review_observation_is_bounded_redacted_and_complete(
         objective="fix api_key=sk-1234567890123456",
         acceptance_criteria=["tests pass"],
         tool_results=[{"stdout": f"result-{index}"} for index in range(5)],
+        tool_executions=[
+            {
+                "tool_name": "apply_patch",
+                "normalized_arguments": {"patch": "+ value = validate(raw)"},
+                "exit_code": 0,
+                "stdout_summary": "Done!",
+            }
+        ],
         approved_scope=["gateway/src"],
         completion_evidence={"tests": "exit 0"},
         failures=[{"root_cause_summary": f"failure-{index}"} for index in range(5)],
@@ -2232,6 +2242,14 @@ def test_review_observation_is_bounded_redacted_and_complete(
             {"stdout": "result-2"},
             {"stdout": "result-3"},
             {"stdout": "result-4"},
+        ],
+        "tool_executions": [
+            {
+                "tool_name": "apply_patch",
+                "normalized_arguments": {"patch": "+ value = validate(raw)"},
+                "exit_code": 0,
+                "stdout_summary": "Done!",
+            }
         ],
         "validation_results": ["pytest: pass"],
     }

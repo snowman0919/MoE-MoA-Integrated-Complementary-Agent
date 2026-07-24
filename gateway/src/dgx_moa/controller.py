@@ -130,7 +130,10 @@ REVIEWER_QUALITY_CONTRACT = (
     "Review independently of the supplied tests. Check type and boundary inputs, non-finite "
     "numeric values, invariants across every public operation, failure atomicity, deterministic "
     "results, and synchronization of shared state. Reject material correctness, security, "
-    "concurrency, or test gaps with a concrete required correction."
+    "concurrency, or test gaps with a concrete required correction. Approve implementation work "
+    "only when bounded code, patch, or diff evidence is present; test results alone are "
+    "insufficient. Verify required corrections against newer implementation evidence before "
+    "clearing them."
 )
 
 
@@ -2503,10 +2506,12 @@ class Controller:
                         "diff_summary": metadata.get("diff_summary", ""),
                         "validation_results": metadata.get("validation_results", []),
                         "tool_results": state.tool_results[-4:],
+                        "tool_executions": self.review_tool_executions(state),
                     },
                 ),
                 ensure_ascii=False,
             )
+            review_evidence = compress_text(review_evidence, self.settings.limits)
             pre_review_task = asyncio.create_task(self.review(state, review_evidence))
         if reasoner_contribution is not None:
             state.derived_confidence = self.derived_confidence(
@@ -2972,6 +2977,23 @@ class Controller:
         return False
 
     @staticmethod
+    def review_tool_executions(state: SessionState) -> list[dict[str, Any]]:
+        return [
+            {
+                key: execution[key]
+                for key in (
+                    "tool_name",
+                    "normalized_arguments",
+                    "exit_code",
+                    "stdout_summary",
+                    "stderr_summary",
+                )
+                if key in execution
+            }
+            for execution in state.tool_executions[-6:]
+        ]
+
+    @staticmethod
     def material_review_issue(result: dict[str, Any]) -> bool:
         if result.get("status") == "rejected":
             return True
@@ -3041,6 +3063,7 @@ class Controller:
             "changed_paths": metadata.get("changed_paths", []),
             "diff_summary": metadata.get("diff_summary", ""),
             "tool_results": state.tool_results[-4:],
+            "tool_executions": self.review_tool_executions(state),
             "validation_results": metadata.get("validation_results", []),
             "scope_evidence": state.approved_scope,
             "completion_evidence": state.completion_evidence

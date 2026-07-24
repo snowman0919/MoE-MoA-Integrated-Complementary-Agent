@@ -15,6 +15,11 @@ separate GLM-5.2 `JudgeProvider` is never used as their fallback. Provider choic
 is pinned after dispatch; race-to-first is disabled and local and remote partial
 outputs are never combined.
 
+The default 60-second local preference margin keeps a READY, healthy local
+Planner or Reviewer selected. Cold, loading, busy, degraded, or materially
+queued specialists route immediately to their remote fallback while one local
+warm-up generation continues independently.
+
 Checked-in defaults are disabled. Enable with a protected runtime environment:
 
 ```text
