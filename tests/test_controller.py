@@ -91,6 +91,19 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
     assert warned["stdout"] == (
         "FAILED\n\n[Tool loop warning: inspect before retrying.]"
     )
+    codex = normalize_tool_result(
+        {
+            "role": "tool",
+            "name": "exec_command",
+            "content": (
+                "Chunk ID: abc123\nWall time: 0.1 seconds\n"
+                "Process exited with code 1\nFinal output:\n"
+                "FAILED (failures=1)"
+            ),
+        }
+    )
+    assert codex["exit_code"] == 1
+    assert codex["stdout"].endswith("FAILED (failures=1)")
 
 
 def test_role_schemas_discard_hidden_reasoning_and_require_structured_findings() -> None:

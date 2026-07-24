@@ -705,7 +705,7 @@ HIDDEN_CHECKS = {
         dashed_raw = b"1000." + dashed_nonce.encode() + b".x"
         dashed = "v1=" + hmac.new(secret, dashed_raw, hashlib.sha256).hexdigest()
         assert verifier.verify(b"x", "1000", dashed_nonce, dashed)
-        newline_nonce = "valid_nonce\n"
+        newline_nonce = "valid_nonce\\n"
         newline_raw = b"1000." + newline_nonce.encode() + b".x"
         newline_signature = (
             "v1=" + hmac.new(secret, newline_raw, hashlib.sha256).hexdigest()
@@ -718,7 +718,7 @@ HIDDEN_CHECKS = {
         upper = "v1=" + hmac.new(secret, upper_raw, hashlib.sha256).hexdigest().upper()
         assert not verifier.verify(b"x", "1000", upper_nonce, upper)
         for index, bad_timestamp in enumerate(
-            ("1000.0", "+1000", "nan", "", "1000\n")
+            ("1000.0", "+1000", "nan", "", "1000\\n")
         ):
             bad_nonce = f"bad_timestamp_{index}"
             bad_raw = (

@@ -280,6 +280,11 @@ def clean_tool_output(value: object) -> str:
     )
 
 
+def embedded_tool_exit_code(value: object) -> int:
+    match = re.search(r"(?m)^Process exited with code (-?\d+)\s*$", str(value))
+    return int(match.group(1)) if match else 0
+
+
 def compact_resolved_goal_history(
     messages: list[dict[str, Any]],
     goal_paths: set[str],
@@ -369,7 +374,11 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
         "arguments": parsed.get("arguments", {}),
         "stdout": clean_tool_output("" if stdout is None else stdout),
         "stderr": clean_tool_output("" if stderr is None else stderr),
-        "exit_code": int(parsed.get("exit_code", 0)),
+        "exit_code": int(
+            parsed["exit_code"]
+            if parsed.get("exit_code") is not None
+            else embedded_tool_exit_code(stdout)
+        ),
         "duration_ms": int(parsed.get("duration_ms", 0)),
         "truncated": bool(parsed.get("truncated", False)),
     }
