@@ -126,6 +126,9 @@ IMPLEMENTATION_QUALITY_CONTRACT = (
     "test and reject booleans when they are not valid numbers, plus NaN and both infinities. "
     "In Python, bool is a subclass of int, so a comparison such as value < 0 is not a sufficient "
     "type check; use an explicit boolean guard or an exact integer type check. Preserve every "
+    "documented container type before calling methods such as items(), and reject invalid "
+    "containers without mutating durable state. For strict JSON storage, reject NaN and both "
+    "infinities with allow_nan=False before any write. Preserve every "
     "documented public function signature, including optional argv-style entry points. "
     "Classify numeric bounds by their contract semantics instead of applying one rule to every "
     "limit. Security or resource capacities and timeouts must be strictly positive unless zero "
@@ -143,6 +146,8 @@ REVIEWER_QUALITY_CONTRACT = (
     "value < 0 does not reject booleans. Before approving, inspect every documented public "
     "function signature and every public numeric parameter in the bounded code evidence; reject "
     "missing explicit type or boundary checks and changed optional argv-style entry points. "
+    "Check documented container types before methods such as items() are called. For strict JSON "
+    "storage, require allow_nan=False validation before any durable write. "
     "Classify numeric bounds by their contract semantics. Security or resource capacities and "
     "timeouts must be strictly positive unless zero explicitly disables them. Collection, "
     "sample, and selection counts may be zero when zero naturally means none; reject negative "
@@ -528,13 +533,16 @@ class Controller:
         assert self.frontier is not None
         self.admit_loop_action(state, "frontier_calls")
         state.frontier_invocations += 1
+        invocation_id = (
+            f"{state.task_id or state.session_id}:frontier:{state.frontier_invocations}"
+        )
         scoped_evidence = (
             {**evidence, "_paid_fallback_required": True}
             if mode == "code_review"
             else evidence
         )
         return await self.frontier.collaborate(
-            mode, scoped_evidence, state.task_id or state.session_id
+            mode, scoped_evidence, invocation_id
         )
 
     @staticmethod
@@ -2942,11 +2950,7 @@ class Controller:
                 )
                 material_frontier_review = (
                     frontier_result.mode == "code_review"
-                    and (
-                        frontier_result.output.get("verdict") in {"revise", "reject"}
-                        or bool(frontier_result.output.get("critical"))
-                        or bool(frontier_result.output.get("important"))
-                    )
+                    and self.material_frontier_review(frontier_result.output)
                 )
                 if material_frontier_review:
                     state.frontier_correction_pending_verification = False
@@ -2963,6 +2967,7 @@ class Controller:
                             "material_findings": (
                                 len(frontier_result.output.get("critical") or [])
                                 + len(frontier_result.output.get("important") or [])
+                                + len(frontier_result.output.get("missing_tests") or [])
                             ),
                         },
                     )
@@ -3360,6 +3365,15 @@ class Controller:
             if isinstance(finding, str) and finding.lower().startswith(("critical:", "important:")):
                 return True
         return False
+
+    @staticmethod
+    def material_frontier_review(result: dict[str, Any]) -> bool:
+        return bool(
+            result.get("verdict") in {"revise", "reject"}
+            or result.get("critical")
+            or result.get("important")
+            or result.get("missing_tests")
+        )
 
     def remote_judge_invocation_reasons(
         self,

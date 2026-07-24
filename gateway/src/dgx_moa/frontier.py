@@ -420,7 +420,11 @@ COLLABORATION_MODE_INSTRUCTIONS = {
         "time, window, size, or capacity semantics require finite values. Treat failure to reject "
         "NaN or either infinity for a parameter used in timestamp, duration, window, size, or "
         "capacity arithmetic as an important correctness finding even when supplied tests omit "
-        "those cases."
+        "those cases. Validate documented container types before methods such as items() are "
+        "called. For strict JSON storage, require allow_nan=False validation before any durable "
+        "write. Put a test in missing_tests only when the gap blocks approval; when missing_tests "
+        "is non-empty, use revise and include the underlying defect in important. Put optional "
+        "additional tests in suggestions instead."
     ),
     "architecture": (
         "For architecture, distinguish required decisions from optional future hardening."
