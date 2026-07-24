@@ -3653,7 +3653,11 @@ def create_app(
                                                     "and required review evidence exists."
                                                 ),
                                             ),
-                                        ]
+                                        ],
+                                        "metadata": {
+                                            **current_body.metadata,
+                                            "responses_progress_retry": True,
+                                        },
                                     }
                                 )
                                 continue

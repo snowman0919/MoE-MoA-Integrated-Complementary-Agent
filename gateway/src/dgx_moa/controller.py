@@ -2436,6 +2436,25 @@ class Controller:
         planner_error: Exception | None = None
         review_error: Exception | None = None
         collaboration_context = ""
+        progress_retry = bool(request.get("metadata", {}).get("responses_progress_retry"))
+        if progress_retry:
+            reused_roles: set[str] = set()
+            for artifact in reversed(state.agent_artifacts):
+                role = str(artifact.get("role", ""))
+                if role not in {"reviewer", "frontier"} or role in reused_roles:
+                    continue
+                reused_roles.add(role)
+                collaboration_context += (
+                    f"\nPrior {role.title()} contribution:\n"
+                    + json.dumps(artifact.get("output", {}), ensure_ascii=False)
+                )
+                if reused_roles == {"reviewer", "frontier"}:
+                    break
+            self.store.event(
+                state.session_id,
+                "collaboration_artifacts_reused",
+                {"roles": sorted(reused_roles), "trigger": "responses_progress_retry"},
+            )
         if state.runtime_mode == "orchestrated" and reasoner_contribution is not None:
             orchestration = await self.orchestration_decision(
                 state,
@@ -2533,7 +2552,9 @@ class Controller:
                         frontier_pending = (mode, evidence)
         metadata = dict(request.get("metadata", {}))
         review_evidence_available = self.has_review_evidence(state, metadata)
-        if needs_reviewer(state, tool_continuation, review_evidence_available):
+        if not progress_retry and needs_reviewer(
+            state, tool_continuation, review_evidence_available
+        ):
             roles = tuple(dict.fromkeys((*roles, "reviewer")))
             state.roles_required = list(roles)
             if ensure_roles is not None:
