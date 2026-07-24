@@ -27,6 +27,12 @@ class SpecialistUnavailable(RuntimeError):
 class SpecialistProvider(ABC):
     name: str
 
+    async def context_fits(
+        self, request: dict[str, Any], *, timeout_seconds: float
+    ) -> bool | None:
+        del request, timeout_seconds
+        return None
+
     @abstractmethod
     async def complete(
         self, request: dict[str, Any], *, timeout_seconds: float
@@ -56,6 +62,16 @@ class _LocalProvider:
             request,
             timeout_seconds=timeout_seconds,
             stage=self.role,
+        )
+
+    async def context_fits(
+        self, request: dict[str, Any], *, timeout_seconds: float
+    ) -> bool | None:
+        return await self.provider.context_fits(
+            self.model,
+            request,
+            role=self.role,
+            timeout_seconds=timeout_seconds,
         )
 
 
@@ -384,10 +400,20 @@ class SpecialistRouter:
             and predicted_local
             <= cost_adjusted_remote + self.config.local_preference_margin_seconds
         )
+        local_context_fits: bool | None = None
+        if use_local or (local_only and local_available):
+            local_context_fits = await self.local[role].context_fits(
+                request,
+                timeout_seconds=min(timeout_seconds, 10),
+            )
+            if local_context_fits is False:
+                use_local = False
         if local_only:
             if not local_available:
                 self._schedule_warmup(role, revision, request_id, "local_only_cold_miss")
                 raise SpecialistUnavailable(f"required local {role} is not ready")
+            if local_context_fits is False:
+                raise SpecialistUnavailable(f"required local {role} context is insufficient")
             use_local = True
         lease_ids: tuple[str, ...] = ()
         if use_local and self.acquire_local is not None:
@@ -408,6 +434,8 @@ class SpecialistRouter:
         reason = (
             "local_only_policy"
             if local_only
+            else "local_context_exceeded"
+            if local_context_fits is False
             else "local_ready"
             if use_local
             else "local_busy"

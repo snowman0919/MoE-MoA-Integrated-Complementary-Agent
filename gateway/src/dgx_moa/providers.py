@@ -135,10 +135,11 @@ class ModelProvider:
         model: ModelConfig,
         request: dict[str, Any],
         *,
+        role: str = "executor",
         timeout_seconds: float = 10,
     ) -> bool | None:
         """Return measured local context fit, or None when the tokenizer is unavailable."""
-        body = ModelProvider.body("executor", model, request)
+        body = ModelProvider.body(role, model, request)
         try:
             async with asyncio.timeout(timeout_seconds):
                 async with httpx.AsyncClient(timeout=None) as client:
@@ -148,6 +149,7 @@ class ModelProvider:
                             "model": model.served_name,
                             "messages": body.get("messages", []),
                             "tools": body.get("tools"),
+                            "chat_template_kwargs": body.get("chat_template_kwargs"),
                         },
                     )
                     response.raise_for_status()

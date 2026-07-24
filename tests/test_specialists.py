@@ -41,6 +41,20 @@ def config() -> SpecialistRoutingConfig:
     )
 
 
+class ContextAwarePlannerProvider(MockPlannerProvider):
+    def __init__(self, fits: bool | None) -> None:
+        super().__init__({"provider": "local"})
+        self.fits = fits
+        self.context_requests: list[dict[str, Any]] = []
+
+    async def context_fits(
+        self, request: dict[str, Any], *, timeout_seconds: float
+    ) -> bool | None:
+        del timeout_seconds
+        self.context_requests.append(request)
+        return self.fits
+
+
 @pytest.mark.asyncio
 async def test_cold_misses_run_remotely_and_share_one_background_warmup() -> None:
     records = Records(planner=record("cold"))
@@ -137,6 +151,61 @@ async def test_busy_local_specialist_immediately_uses_remote_provider() -> None:
     assert decision["selected_provider"] == "remote"
     assert decision["routing_reason"] == "local_busy"
     assert not local.requests
+
+
+@pytest.mark.asyncio
+async def test_ready_local_context_overflow_routes_remote_before_dispatch() -> None:
+    local = ContextAwarePlannerProvider(False)
+    remote = MockPlannerProvider({"provider": "remote"})
+    router = SpecialistRouter(
+        config(),
+        local={"planner": local, "reviewer": MockReviewerProvider({})},
+        remote={"planner": remote, "reviewer": MockReviewerProvider({})},
+        lifecycle_store=Records(planner=record("ready")),
+    )
+
+    response, decision = await router.complete(
+        "planner",
+        {"messages": [{"role": "user", "content": "large"}]},
+        request_id="large",
+        revision="rev",
+        timeout_seconds=5,
+    )
+
+    assert response == {"provider": "remote"}
+    assert decision["selected_provider"] == "remote"
+    assert decision["routing_reason"] == "local_context_exceeded"
+    assert len(local.context_requests) == 1
+    assert not local.requests
+    assert len(remote.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_local_only_context_overflow_fails_closed() -> None:
+    local = ContextAwarePlannerProvider(False)
+    remote = MockPlannerProvider({"provider": "remote"})
+    routing = config()
+    routing.local_latency_seconds = {"planner": 100.0, "reviewer": 100.0}
+    routing.remote_latency_seconds = {"planner": 1.0, "reviewer": 1.0}
+    router = SpecialistRouter(
+        routing,
+        local={"planner": local, "reviewer": MockReviewerProvider({})},
+        remote={"planner": remote, "reviewer": MockReviewerProvider({})},
+        lifecycle_store=Records(planner=record("ready")),
+    )
+
+    with pytest.raises(SpecialistUnavailable, match="local planner context is insufficient"):
+        await router.complete(
+            "planner",
+            {"messages": [{"role": "user", "content": "large"}]},
+            request_id="large-local-only",
+            revision="rev",
+            timeout_seconds=5,
+            local_only=True,
+        )
+
+    assert not local.requests
+    assert not remote.requests
 
 
 def test_predictive_prewarm_skips_ready_specialist() -> None:

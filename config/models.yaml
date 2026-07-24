@@ -185,7 +185,7 @@ gateway:
     judge_tokens: 2500
     max_stream_capture_bytes: 1000000
     max_sse_event_bytes: 1000000
-    max_review_evidence_characters: 16000
+    max_review_evidence_characters: 10000
     planner_timeout_seconds: 120
     reasoner_timeout_seconds: 120
     executor_first_byte_timeout_seconds: 120
