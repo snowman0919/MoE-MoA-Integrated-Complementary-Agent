@@ -27,6 +27,15 @@ CODEX_BINARY = Path(
     "/home/kotori9/.codex/packages/standalone/releases/0.145.0-aarch64-unknown-linux-musl/bin/codex"
 )
 OPENCODE_BINARY = Path("/home/kotori9/.opencode/bin/opencode")
+OPENCODE_ISOLATION_ENV = {
+    "OPENCODE_DISABLE_AUTOUPDATE": "1",
+    "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
+    "OPENCODE_DISABLE_EXTERNAL_SKILLS": "1",
+    "OPENCODE_DISABLE_LSP_DOWNLOAD": "1",
+    "OPENCODE_DISABLE_MODELS_FETCH": "1",
+    "OPENCODE_DISABLE_SHARE": "1",
+    "OPENCODE_DISABLE_TERMINAL_TITLE": "1",
+}
 HERMES_ROOT = Path("/home/kotori9/.hermes/hermes-agent")
 HERMES_PYTHON_ROOT = Path("/home/kotori9/.pyenv/versions/3.11.14")
 BAD_TERMINALS = (
@@ -1043,6 +1052,7 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
                 "XDG_CONFIG_HOME": str(state / "config"),
                 "XDG_DATA_HOME": str(state / "data"),
                 "XDG_STATE_HOME": str(state / "state"),
+                **OPENCODE_ISOLATION_ENV,
             }
         )
         inner = [
@@ -1052,6 +1062,8 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             "json",
             "--pure",
             "--auto",
+            "--title",
+            f"quality-{task.slug}",
             "--dir",
             str(workspace),
             "--model",
@@ -1064,6 +1076,9 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
                 state,
                 inner,
                 environment_names=("DGX_MOA_API_KEY",),
+                extra_environment=tuple(
+                    f"{name}={value}" for name, value in OPENCODE_ISOLATION_ENV.items()
+                ),
                 read_only_mounts=((OPENCODE_BINARY, "/tools/opencode"),),
             )
             if args.runtime == "docker"
