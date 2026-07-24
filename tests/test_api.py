@@ -347,6 +347,35 @@ def test_repeated_inspection_routes_executor_to_frontier(
             },
         )
         newly_rejected_events = app.state.store.events(newly_rejected_id)
+        corrected_id = "frontier-correction-applied"
+        corrected = SessionState(
+            session_id=corrected_id,
+            objective="Implement app.py in this repository.",
+            review_status="deferred",
+            review_deferred=True,
+            frontier_correction_required=False,
+            tool_executions=[
+                {
+                    "tool_name": "apply_patch",
+                    "exit_code": 0,
+                    "filesystem_effect": {"changed_paths": ["app.py"]},
+                }
+            ],
+        )
+        app.state.store.save(corrected)
+        corrected_response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": corrected_id,
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": corrected.objective}],
+                "metadata": {"responses_progress_retry": True},
+            },
+        )
+        corrected_events = app.state.store.events(corrected_id)
 
     assert response.status_code == 200, response.text
     assert response.json()["choices"][0]["message"]["content"] == "원격 진행 복구"
@@ -370,6 +399,8 @@ def test_repeated_inspection_routes_executor_to_frontier(
         if event["event_type"] == "executor_remote_selected"
     )
     assert newly_rejected_selected["payload"]["routing_reason"] == ("frontier_correction_required")
+    assert corrected_response.status_code == 200, corrected_response.text
+    assert not any(event["event_type"] == "executor_remote_selected" for event in corrected_events)
 
 
 @pytest.fixture(autouse=True)
