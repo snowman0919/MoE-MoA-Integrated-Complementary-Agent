@@ -1183,6 +1183,13 @@ def test_successful_write_invalidates_approved_review(
 
     assert state.review_status == "deferred"
     assert state.review_deferred is True
+    assert state.implementation_evidence == [
+        {
+            "tool_name": "shell",
+            "target_paths": ["app.py"],
+            "change_arguments": {"cmd": "cat > app.py <<'EOF'\nvalue = 1\nEOF"},
+        }
+    ]
     assert any(
         event["event_type"] == "review_invalidated" for event in store.events(state.session_id)
     )
@@ -3235,6 +3242,7 @@ def test_review_observation_is_bounded_redacted_and_complete(
         "contract_evidence": [],
         "diff_summary": "one focused change",
         "finish_reason": "stop",
+        "implementation_evidence": [],
         "known_failures": [
             {"root_cause_summary": "failure-1"},
             {"root_cause_summary": "failure-2"},
@@ -3302,3 +3310,60 @@ def test_review_observation_retains_bounded_contract_document(
         }
     ]
     assert all("non-empty bytes" not in str(result) for result in state.tool_results)
+
+
+def test_review_observation_retains_relative_write_evidence(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="implementation-evidence")
+    controller._observe(
+        state,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "write-source",
+                        "type": "function",
+                        "function": {
+                            "name": "write",
+                            "arguments": json.dumps(
+                                {
+                                    "filePath": "rate_limiter.py",
+                                    "content": "value = validate(raw)",
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "write-source",
+                "content": '{"exit_code":0,"output":"written"}',
+            },
+        ],
+    )
+    for index in range(15):
+        controller._observe(state, tool_messages(f"later-{index}", f"result-{index}"))
+
+    evidence = json.loads(
+        controller.review_observation(
+            state,
+            {"choices": [{"message": {"role": "assistant"}, "finish_reason": "stop"}]},
+            {},
+        )
+    )
+
+    assert evidence["changed_paths"] == ["rate_limiter.py"]
+    assert evidence["implementation_evidence"] == [
+        {
+            "tool_name": "write",
+            "target_paths": ["rate_limiter.py"],
+            "change_arguments": {
+                "filePath": "rate_limiter.py",
+                "content": "value = validate(raw)",
+            },
+        }
+    ]
