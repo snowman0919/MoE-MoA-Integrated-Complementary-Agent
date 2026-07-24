@@ -371,6 +371,32 @@ def sanitize_executor_tool_paths(
     return message.model_copy(update={"tool_calls": tool_calls}), sanitized
 
 
+def normalize_openrouter_tool_calls(value: Any) -> list[dict[str, Any]]:
+    """Keep only OpenAI-compatible fields from provider-specific tool calls."""
+    if not isinstance(value, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for call in value:
+        function = call.get("function") if isinstance(call, dict) else None
+        if not isinstance(function, dict):
+            normalized.append({})
+            continue
+        arguments = function.get("arguments")
+        if isinstance(arguments, dict):
+            arguments = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+        normalized.append(
+            {
+                "id": call.get("id"),
+                "type": call.get("type", "function"),
+                "function": {
+                    "name": function.get("name"),
+                    "arguments": arguments,
+                },
+            }
+        )
+    return normalized
+
+
 COLLABORATION_SCHEMAS: dict[str, type[BaseModel]] = {
     "architecture": FrontierArchitectureResult,
     "code_review": FrontierReviewResult,
@@ -783,14 +809,15 @@ class CodexOAuthCollaboration:
                 choice = payload["choices"][0]
                 message = choice["message"]
                 if mode == "executor":
+                    tool_calls = normalize_openrouter_tool_calls(message.get("tool_calls"))
                     result = schema_model.model_validate(
                         {
                             "role": "assistant",
                             "content": message.get("content"),
-                            "tool_calls": message.get("tool_calls") or [],
+                            "tool_calls": tool_calls,
                             "finish_reason": choice.get(
                                 "finish_reason",
-                                "tool_calls" if message.get("tool_calls") else "stop",
+                                "tool_calls" if tool_calls else "stop",
                             ),
                         }
                     ).model_dump()
