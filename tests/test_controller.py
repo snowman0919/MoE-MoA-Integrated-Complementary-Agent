@@ -2475,6 +2475,8 @@ def test_implementation_completion_requires_change_validation_and_review(
     state.review_status = "rejected"
     assert controller.requires_implementation_tool_action(state, {}) is True
     assert controller.implementation_completion_ready(state, {}) is False
+    state.roles_required = ["executor"]
+    assert controller.requires_implementation_tool_action(state, {}) is True
     state.review_status = "approved"
     assert controller.requires_implementation_tool_action(state, {}) is False
     assert controller.implementation_completion_ready(state, {}) is True

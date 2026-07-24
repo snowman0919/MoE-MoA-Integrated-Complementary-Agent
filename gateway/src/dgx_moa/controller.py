@@ -3138,8 +3138,10 @@ class Controller:
             for execution in state.tool_executions
         )
         validated = self.has_review_evidence(state, metadata)
-        review_ready = (
-            "reviewer" not in state.roles_required or state.review_status == "approved"
+        review_ready = state.review_status == "approved" or (
+            "reviewer" not in state.roles_required
+            and state.review_status == "pending"
+            and not state.review_deferred
         )
         return not (changed and validated and review_ready)
 
