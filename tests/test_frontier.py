@@ -24,6 +24,7 @@ from dgx_moa.frontier import (
     frontier_eligible,
     load_frontier_config,
     normalize_openrouter_tool_calls,
+    openrouter_compatible_schema,
     openrouter_response_schema,
     profile_lock,
     profile_status,
@@ -204,6 +205,23 @@ def test_openrouter_schema_removes_unsupported_numeric_constraints() -> None:
     assert '"minimum"' not in encoded
     assert '"maximum"' not in encoded
     assert '"confidence"' in encoded
+
+
+def test_openrouter_compatible_schema_preserves_structure() -> None:
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "schema": {
+                "type": "object",
+                "properties": {"count": {"type": "integer", "minimum": 0}},
+            }
+        },
+    }
+
+    compatible = openrouter_compatible_schema(response_format)
+
+    assert compatible["type"] == "json_schema"
+    assert compatible["json_schema"]["schema"]["properties"]["count"] == {"type": "integer"}
 
 
 def test_openrouter_tool_calls_drop_provider_metadata() -> None:
@@ -542,6 +560,16 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
             "messages": [{"role": "user", "content": "한국어로 답해"}],
             "tools": [],
             "parallel_tool_calls": True,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "answer",
+                    "schema": {
+                        "type": "object",
+                        "properties": {"confidence": {"type": "number", "minimum": 0}},
+                    },
+                },
+            },
             "stream": True,
         },
         "busy-request",
@@ -557,6 +585,7 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
     assert sent["json"]["model"] == "anthropic/claude-sonnet-4.6"
     assert sent["json"]["reasoning"] == {"effort": "high", "exclude": True}
     assert "parallel_tool_calls" not in sent["json"]
+    assert "minimum" not in json.dumps(sent["json"]["response_format"])
     assert "synthetic-openrouter-key" not in json.dumps(sent["json"])
 
 
