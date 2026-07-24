@@ -384,17 +384,19 @@ TASKS = (
             Implement `WebhookVerifier(secret, tolerance_seconds=300, clock=time.time,
             max_body_bytes=1_000_000)`.
 
-            `secret` must be non-empty bytes. `tolerance_seconds` and
-            `max_body_bytes` must be positive integers. Reject invalid constructor
-            arguments with `TypeError` or `ValueError`.
+            `secret` must be a non-empty exact `bytes` instance (not `bytearray`).
+            `tolerance_seconds` and `max_body_bytes` must be positive integers.
+            Reject invalid constructor arguments with `TypeError` or `ValueError`.
 
             `verify(body, timestamp, nonce, signature)` signs the exact bytes
             `timestamp + b"." + nonce + b"." + body` with HMAC-SHA256. The supplied
-            signature format is `v1=<lowercase hex>`.
+            signature format is `v1=<lowercase hex>`. `timestamp` must be a
+            non-empty ASCII decimal digit string without a sign or decimal point.
 
             Reject malformed input, oversized bodies, timestamps outside tolerance,
             invalid signatures, and replayed valid nonces. Nonces match
-            `[A-Za-z0-9_-]{8,128}`. Invalid signatures must not consume a nonce.
+            the entire `[A-Za-z0-9_-]{8,128}` pattern; a trailing newline is invalid.
+            Invalid signatures must not consume a nonce.
             Concurrent verification of one valid nonce permits exactly one success.
             Use constant-time comparison and only the standard library.
             """
@@ -703,13 +705,41 @@ HIDDEN_CHECKS = {
         dashed_raw = b"1000." + dashed_nonce.encode() + b".x"
         dashed = "v1=" + hmac.new(secret, dashed_raw, hashlib.sha256).hexdigest()
         assert verifier.verify(b"x", "1000", dashed_nonce, dashed)
+        newline_nonce = "valid_nonce\n"
+        newline_raw = b"1000." + newline_nonce.encode() + b".x"
+        newline_signature = (
+            "v1=" + hmac.new(secret, newline_raw, hashlib.sha256).hexdigest()
+        )
+        assert not verifier.verify(
+            b"x", "1000", newline_nonce, newline_signature
+        )
         upper_nonce = "uppercase_nonce"
         upper_raw = b"1000." + upper_nonce.encode() + b".x"
         upper = "v1=" + hmac.new(secret, upper_raw, hashlib.sha256).hexdigest().upper()
         assert not verifier.verify(b"x", "1000", upper_nonce, upper)
-        for bad_timestamp in ("1000.0", "+1000", "nan", ""):
-            assert not verifier.verify(b"x", bad_timestamp, "malformed_nonce", signature)
-        for args in ((secret, -1, 10), (secret, 1, 0), ("secret", 1, 10)):
+        for index, bad_timestamp in enumerate(
+            ("1000.0", "+1000", "nan", "", "1000\n")
+        ):
+            bad_nonce = f"bad_timestamp_{index}"
+            bad_raw = (
+                bad_timestamp.encode() + b"." + bad_nonce.encode() + b".x"
+            )
+            bad_signature = (
+                "v1=" + hmac.new(secret, bad_raw, hashlib.sha256).hexdigest()
+            )
+            assert not verifier.verify(
+                b"x", bad_timestamp, bad_nonce, bad_signature
+            )
+        for args in (
+            (secret, -1, 10),
+            (secret, True, 10),
+            (secret, 1.0, 10),
+            (secret, 1, 0),
+            (secret, 1, True),
+            ("secret", 1, 10),
+            (b"", 1, 10),
+            (bytearray(b"secret"), 1, 10),
+        ):
             try:
                 WebhookVerifier(args[0], tolerance_seconds=args[1], max_body_bytes=args[2])
             except (TypeError, ValueError):
