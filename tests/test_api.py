@@ -3024,6 +3024,11 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             in model["base_instructions"]
             for model in models["models"]
         )
+        assert all(
+            "strictly positive unless the contract explicitly permits zero"
+            in model["base_instructions"]
+            for model in models["models"]
+        )
         assert all(model["comp_hash"] == "dgx-moa-65536-v1" for model in models["models"])
         response = client.post(
             "/v1/chat/completions",
