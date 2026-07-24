@@ -3273,7 +3273,7 @@ def test_review_observation_is_bounded_redacted_and_complete(
     )
     bounded_evidence = json.loads(bounded_observation)
 
-    assert len(bounded_observation) <= 16_000
+    assert len(bounded_observation) <= 10_000
     assert set(bounded_evidence) == set(evidence)
     assert bounded_evidence["original_objective"] == "fix api_key=[REDACTED]"
     assert bounded_evidence["finish_reason"] == "stop"
