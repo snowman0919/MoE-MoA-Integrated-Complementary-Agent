@@ -2457,9 +2457,11 @@ def create_app(
                         "content": (
                             "A required code correction remains unresolved. The prior response "
                             "did not call a tool and cannot complete this request. Call exactly "
-                            "one available client tool now to apply or inspect the correction; "
-                            "return a native tool call, not prose. Available tools: "
-                            + ", ".join(tool_names)
+                            "one available client tool now to apply the concrete correction "
+                            "listed in the prior Frontier contribution. Do not repeat an "
+                            "inspection or validation that already succeeded unless the prior "
+                            "finding explicitly requires that evidence. Return a native tool "
+                            "call, not prose. Available tools: " + ", ".join(tool_names)
                         ),
                     },
                 ]
