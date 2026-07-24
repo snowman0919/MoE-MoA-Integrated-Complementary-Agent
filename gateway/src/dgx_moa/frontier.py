@@ -346,7 +346,9 @@ COLLABORATION_MODE_INSTRUCTIONS = {
         "multi-process/distributed support, or stronger durability than the stated contract "
         "into required work. Use approve when the stated contract is met, even if suggestions "
         "remain. Use revise only for a concrete contract violation or material regression, and "
-        "use reject only for an unsafe or fundamentally invalid implementation."
+        "use reject only for an unsafe or fundamentally invalid implementation. Inspect every "
+        "public numeric parameter for boolean confusion, NaN, and both infinities when arithmetic, "
+        "time, window, size, or capacity semantics require finite values."
     ),
     "architecture": (
         "For architecture, distinguish required decisions from optional future hardening."

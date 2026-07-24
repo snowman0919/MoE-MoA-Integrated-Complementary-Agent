@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import textwrap
@@ -1218,6 +1219,53 @@ def log_text(evidence: Path) -> str:
     return "\n".join(values)
 
 
+def hermes_test_evidence(args: argparse.Namespace, task: Task, evidence: Path) -> bool:
+    profile = args.output_root / args.run_id / "profiles" / f"hermes-{task.slug}"
+    usage_path = profile / "usage.json"
+    state_path = profile / "state.db"
+    if not usage_path.is_file() or not state_path.is_file():
+        return False
+    try:
+        session_id = str(json.loads(usage_path.read_text())["session_id"])
+        connection = sqlite3.connect(state_path)
+        rows = connection.execute(
+            """
+            SELECT role, tool_name, content, tool_calls
+            FROM messages
+            WHERE session_id = ?
+              AND (tool_name = 'terminal' OR tool_calls LIKE '%unittest%')
+            ORDER BY id
+            """,
+            (session_id,),
+        ).fetchall()
+    except (KeyError, OSError, sqlite3.Error, ValueError):
+        return False
+    finally:
+        if "connection" in locals():
+            connection.close()
+    calls = sum("unittest" in str(row[3] or "") for row in rows)
+    successful_results = sum(
+        row[0] == "tool"
+        and row[1] == "terminal"
+        and '"exit_code": 0' in str(row[2] or "")
+        and ("Ran " in str(row[2] or "") or "OK" in str(row[2] or ""))
+        for row in rows
+    )
+    (evidence / "hermes-tool-evidence.json").write_text(
+        json.dumps(
+            {
+                "session_sha256": hashlib.sha256(session_id.encode()).hexdigest(),
+                "unittest_tool_calls": calls,
+                "successful_unittest_results": successful_results,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    return calls > 0 and successful_results > 0
+
+
 def score_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any]:
     workspace, evidence = paths(args, harness, task)
     manifest = json.loads((evidence / "manifest.json").read_text())
@@ -1280,7 +1328,9 @@ def score_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, A
     }[harness]
     terminal_ok = bool(stdout.strip()) if not terminal else terminal in raw_log
     korean_final = bool(re.search(r"[가-힣]", stdout[-8_000:]))
-    tool_evidence = "unittest" in raw_log
+    tool_evidence = (
+        hermes_test_evidence(args, task, evidence) if harness == "hermes" else "unittest" in raw_log
+    )
     no_bad_terminal = not any(marker.lower() in raw_log.lower() for marker in BAD_TERMINALS)
     checks = {
         "harness_exit": run["return_code"] == 0,
