@@ -10,6 +10,7 @@ from dgx_moa.frontier import (
     CodexOAuthCollaboration,
     CodexOAuthProvider,
     FrontierConfig,
+    FrontierExecutorResult,
     FrontierResult,
     FrontierTask,
     bounded_external_evidence,
@@ -23,6 +24,7 @@ from dgx_moa.frontier import (
     profile_lock,
     profile_status,
     record_frontier_run,
+    sanitize_executor_tool_paths,
     select_frontier_profile,
     validate_isolated_worktree,
     validate_profile_name,
@@ -133,6 +135,42 @@ def test_frontier_code_review_keeps_bounded_tool_executions() -> None:
 
     assert evidence == {"tool_executions": [{"tool_name": "apply_patch", "exit_code": 0}]}
     assert "CODEX_HOME" not in CodexOAuthProvider("default").environment()
+
+
+def test_remote_executor_tool_paths_stay_in_client_workspace() -> None:
+    message = FrontierExecutorResult.model_validate(
+        {
+            "role": "assistant",
+            "content": None,
+            "finish_reason": "tool_calls",
+            "tool_calls": [
+                {
+                    "id": "absolute",
+                    "type": "function",
+                    "function": {
+                        "name": "exec_command",
+                        "arguments": json.dumps(
+                            {"cmd": "python -m unittest", "workdir": "/gateway/production"}
+                        ),
+                    },
+                },
+                {
+                    "id": "relative",
+                    "type": "function",
+                    "function": {
+                        "name": "exec_command",
+                        "arguments": json.dumps({"cmd": "pwd", "cwd": "tests"}),
+                    },
+                },
+            ],
+        }
+    )
+
+    sanitized, count = sanitize_executor_tool_paths(message)
+
+    assert count == 1
+    assert json.loads(sanitized.tool_calls[0].function.arguments) == {"cmd": "python -m unittest"}
+    assert json.loads(sanitized.tool_calls[1].function.arguments)["cwd"] == "tests"
 
 
 def test_codex_oauth_environment_excludes_gateway_secrets(

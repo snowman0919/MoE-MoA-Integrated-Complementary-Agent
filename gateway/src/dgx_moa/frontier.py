@@ -301,6 +301,37 @@ class FrontierExecutorResult(BaseModel):
         return self
 
 
+def sanitize_executor_tool_paths(
+    message: FrontierExecutorResult,
+) -> tuple[FrontierExecutorResult, int]:
+    """Keep remote tool calls inside the client's own working directory."""
+    sanitized = 0
+    tool_calls: list[FrontierExecutorToolCall] = []
+    for call in message.tool_calls:
+        arguments = json.loads(call.function.arguments)
+        for key in ("workdir", "cwd"):
+            value = arguments.get(key)
+            if isinstance(value, str) and Path(value).is_absolute():
+                arguments.pop(key)
+                sanitized += 1
+        tool_calls.append(
+            call.model_copy(
+                update={
+                    "function": call.function.model_copy(
+                        update={
+                            "arguments": json.dumps(
+                                arguments,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                        }
+                    )
+                }
+            )
+        )
+    return message.model_copy(update={"tool_calls": tool_calls}), sanitized
+
+
 COLLABORATION_SCHEMAS: dict[str, type[BaseModel]] = {
     "architecture": FrontierArchitectureResult,
     "code_review": FrontierReviewResult,
@@ -776,7 +807,9 @@ class CodexOAuthCollaboration:
             },
             correlation_id,
         )
-        message = FrontierExecutorResult.model_validate(result.output)
+        message, sanitized_paths = sanitize_executor_tool_paths(
+            FrontierExecutorResult.model_validate(result.output)
+        )
         usage = {
             key: value
             for key, value in {
@@ -807,6 +840,7 @@ class CodexOAuthCollaboration:
                 "provider": result.profile,
                 "latency_ms": result.latency_ms,
                 "cost_usd": result.cost_usd,
+                "sanitized_absolute_workdirs": sanitized_paths,
             },
         }
 
