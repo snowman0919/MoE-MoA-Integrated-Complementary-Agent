@@ -2931,6 +2931,42 @@ async def test_completed_implementation_is_told_to_return_final(
 
 
 @pytest.mark.asyncio
+async def test_incomplete_implementation_requires_a_tool_action(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="implementation-incomplete",
+        objective="Implement atomic_store.py in this repository and test it.",
+        roles_required=["executor"],
+        frontier_correction_pending_verification=True,
+        review_status="deferred",
+        review_deferred=True,
+    )
+    request = {
+        "model": "dgx-moa",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {},
+        "tools": [
+            {
+                "type": "function",
+                "function": {"name": "exec_command", "parameters": {}},
+            }
+        ],
+        "tool_choice": "auto",
+    }
+
+    prepared = await controller.prepare_executor(state, request, ("executor",))
+
+    assert prepared["tool_choice"] == "required"
+    assert any(
+        event["event_type"] == "implementation_tool_action_required"
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
 async def test_progress_retry_rechecks_deferred_review(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

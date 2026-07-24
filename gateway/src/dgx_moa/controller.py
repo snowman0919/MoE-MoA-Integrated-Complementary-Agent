@@ -3119,6 +3119,15 @@ class Controller:
                 "completed_implementation_tools_suppressed",
                 {"reason": "change_validation_and_review_complete"},
             )
+        elif available_tools and self.requires_implementation_tool_action(
+            state, dict(request.get("metadata", {}))
+        ):
+            body["tool_choice"] = "required"
+            self.store.event(
+                state.session_id,
+                "implementation_tool_action_required",
+                {"reason": "change_validation_or_review_incomplete"},
+            )
         messages.insert(
             0,
             {
