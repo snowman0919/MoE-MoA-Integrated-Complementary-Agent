@@ -3079,7 +3079,7 @@ class Controller:
             or metadata.get("validation_results")
         ):
             return True
-        for execution in state.tool_executions[-1:]:
+        for execution in reversed(state.tool_executions):
             arguments = execution.get("normalized_arguments")
             if isinstance(arguments, str):
                 try:
@@ -3100,6 +3100,8 @@ class Controller:
                 )
             ):
                 return True
+            if self.tool_execution_changes_files(execution):
+                break
         return False
 
     def requires_implementation_tool_action(
@@ -3153,7 +3155,8 @@ class Controller:
         review_ready = not state.frontier_correction_required and (
             state.review_status == "approved"
             or (
-                "reviewer" not in state.roles_required
+                state.runtime_mode == "fast"
+                and "reviewer" not in state.roles_required
                 and state.review_status == "pending"
                 and not state.review_deferred
             )
