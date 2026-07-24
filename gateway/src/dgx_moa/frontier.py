@@ -812,7 +812,10 @@ class CodexOAuthCollaboration:
                 if attempt < self.config.collaboration_retries:
                     continue
                 self._failed()
-                raise RuntimeError("FRONTIER_OPENROUTER_FAILURE") from error
+                detail = type(error).__name__.upper()
+                if isinstance(error, httpx.HTTPStatusError):
+                    detail = f"HTTP_{error.response.status_code}"
+                raise RuntimeError(f"FRONTIER_OPENROUTER_FAILURE_{detail}") from error
         self.failures = 0
         self.opened_at = None
         cost = (
