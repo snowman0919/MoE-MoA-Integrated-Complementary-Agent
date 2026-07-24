@@ -868,6 +868,42 @@ def test_tool_results_are_bounded_before_context_reuse(
     assert len(state.tool_results[0]["stdout"]) <= 80
 
 
+def test_successful_write_invalidates_approved_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="reviewed-write", review_status="approved")
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "write",
+                    "type": "function",
+                    "function": {
+                        "name": "shell",
+                        "arguments": json.dumps({"cmd": "cat > app.py <<'EOF'\nvalue = 1\nEOF"}),
+                    },
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "write", "content": '{"exit_code":0}'},
+    ]
+
+    controller._observe(state, messages)
+
+    assert state.review_status == "deferred"
+    assert state.review_deferred is True
+    assert any(
+        event["event_type"] == "review_invalidated" for event in store.events(state.session_id)
+    )
+
+    read_state = SessionState(session_id="reviewed-read", review_status="approved")
+    controller._observe(read_state, tool_messages("read", "source"))
+    assert read_state.review_status == "approved"
+
+
 def test_successful_output_can_describe_failures(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     state = SessionState(session_id="failure-doc")
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
@@ -1749,6 +1785,45 @@ async def test_reviewer_rejection_enters_correction(settings, stub_provider: Stu
     await controller.review(state, "diff")
     assert state.review_status == "rejected"
     assert state.phase == Phase.CORRECTION
+
+
+@pytest.mark.asyncio
+async def test_reviewer_required_correction_cannot_be_approved(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def inconsistent(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reviewer":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "status": "approved",
+                                    "findings": [reviewer_finding("info")],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+        return await original(role, model, request)
+
+    stub_provider.complete = inconsistent  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    state = SessionState(session_id="inconsistent-review")
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+
+    result = await controller.review(state, "bounded source and test evidence")
+
+    assert result["status"] == "rejected"
+    assert state.review_status == "rejected"
+    assert any(
+        event["event_type"] == "review_status_normalized"
+        for event in store.events(state.session_id)
+    )
 
 
 @pytest.mark.asyncio

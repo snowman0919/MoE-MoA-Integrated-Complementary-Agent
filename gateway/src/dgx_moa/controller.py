@@ -1253,6 +1253,18 @@ class Controller:
             state.tool_executions = state.tool_executions[-self.settings.limits.max_steps :]
             observed_tool_call_ids.add(tool_call_id)
             self.store.event(state.session_id, "tool_execution_recorded", execution)
+            if (
+                not failed
+                and state.review_status == "approved"
+                and self.tool_execution_changes_files(execution)
+            ):
+                state.review_status = "deferred"
+                state.review_deferred = True
+                self.store.event(
+                    state.session_id,
+                    "review_invalidated",
+                    {"reason": "implementation_changed_after_approval"},
+                )
             target_paths = argument_paths(arguments)
             actionable_failure = failed and not (
                 state.resolved_objective
@@ -2704,6 +2716,7 @@ class Controller:
                                 "test_results": request.get("metadata", {}).get(
                                     "validation_results", []
                                 ),
+                                "tool_executions": self.review_tool_executions(state),
                                 "local_reviewer_findings": pre_review_result,
                                 "known_limitations": request.get("metadata", {}).get(
                                     "known_limitations", []
@@ -2994,6 +3007,38 @@ class Controller:
         ]
 
     @staticmethod
+    def tool_execution_changes_files(execution: dict[str, Any]) -> bool:
+        if execution.get("tool_name") in {
+            "apply_patch",
+            "edit_file",
+            "write_file",
+            "delete_file",
+        }:
+            return True
+        effect = execution.get("filesystem_effect")
+        if isinstance(effect, dict) and any(
+            effect.get(key) for key in ("changed_paths", "created_paths", "deleted_paths")
+        ):
+            return True
+        arguments = execution.get("normalized_arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                arguments = {}
+        command = arguments.get("cmd") if isinstance(arguments, dict) else None
+        return isinstance(command, str) and bool(
+            re.search(
+                r"(?:^|&&|\|\||;|\n)\s*(?:"
+                r"(?:cat|echo|printf)\b[^\n;]*(?:>>|>)|tee\b|"
+                r"sed\b[^\n;]*\s-i(?:\s|$)|perl\b[^\n;]*\s-(?:pi|ip)\b|"
+                r"touch\b|mkdir\b|cp\b|mv\b|rm\b|truncate\b|install\b|"
+                r"git\s+(?:apply|checkout|restore|reset|clean)\b)",
+                command,
+            )
+        )
+
+    @staticmethod
     def material_review_issue(result: dict[str, Any]) -> bool:
         if result.get("status") == "rejected":
             return True
@@ -3243,6 +3288,16 @@ class Controller:
                 state.timings_ms["reviewer"] = round(
                     (time.monotonic() - reviewer_started) * 1000, 3
                 )
+        if result.get("status") == "approved" and any(
+            isinstance(finding, dict) and finding.get("required_correction")
+            for finding in result.get("findings", [])
+        ):
+            result["status"] = "rejected"
+            self.store.event(
+                state.session_id,
+                "review_status_normalized",
+                {"reason": "required_correction_present"},
+            )
         safe_result = cast(dict[str, Any], self.safe_payload(state, result))
         state.review_status = result.get("status", "rejected")
         state.phase = Phase.CORRECTION if state.review_status != "approved" else Phase.EXECUTING
