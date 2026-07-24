@@ -29,8 +29,10 @@ def test_admin_dashboard_runs_bounded_custom_provider_codex(
             },
             "admin_api_enabled": True,
             "admin_token_ids": ["operator"],
+            "run_dir": Path("data/run"),
         }
     )
+    monkeypatch.chdir(tmp_path)
     calls: list[tuple[tuple[object, ...], dict[str, Any], bytes]] = []
 
     class Input:
@@ -190,11 +192,13 @@ def test_admin_dashboard_runs_bounded_custom_provider_codex(
         "operator-secret-value",
         "general-secret-value",
     }
-    assert first_kwargs["env"]["CODEX_HOME"] == str(configured.run_dir / "admin-codex-home")
+    assert first_kwargs["env"]["CODEX_HOME"] == str(
+        tmp_path / configured.run_dir / "admin-codex-home"
+    )
     assert first_input == "파일을 수정해".encode()
     assert calls[1][0][:3] == ("codex", "exec", "resume")
     chat_args, chat_kwargs, chat_input = calls[2]
     assert 'sandbox_mode="read-only"' in chat_args
     assert "--skip-git-repo-check" in chat_args
-    assert chat_kwargs["cwd"] == configured.run_dir / "admin-codex-chat"
+    assert chat_kwargs["cwd"] == tmp_path / configured.run_dir / "admin-codex-chat"
     assert chat_input == "상태를 설명해".encode()
