@@ -1564,6 +1564,64 @@ async def test_tool_continuation_promotes_reviewer_for_implementation_evidence(
 
 
 @pytest.mark.asyncio
+async def test_progress_retry_reuses_review_without_spending_review_budget(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="progress-review-reuse",
+        objective="Implement rate_limiter.py in this repository.",
+        runtime_mode="orchestrated",
+        roles_required=["reasoner", "executor"],
+        review_status="rejected_frontier",
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m unittest discover -s tests -v"},
+                "exit_code": 0,
+            }
+        ],
+        agent_artifacts=[
+            {
+                "role": "reviewer",
+                "output": {"status": "approved", "findings": []},
+            },
+            {
+                "role": "frontier",
+                "output": {"verdict": "revise", "important": ["Reject empty keys."]},
+            },
+        ],
+    )
+
+    prepared = await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-orchestrated",
+            "messages": [{"role": "user", "content": state.objective}],
+            "metadata": {"responses_progress_retry": True},
+        },
+        ("reasoner", "executor"),
+        tool_continuation=True,
+    )
+
+    assert "reviewer" not in stub_provider.calls
+    assert "Prior Reviewer contribution" in prepared["messages"][0]["content"]
+    assert "Prior Frontier contribution" in prepared["messages"][0]["content"]
+    reused = [
+        event["payload"]
+        for event in store.events(state.session_id)
+        if event["event_type"] == "collaboration_artifacts_reused"
+    ]
+    assert reused == [
+        {
+            "roles": ["frontier", "reviewer"],
+            "trigger": "responses_progress_retry",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_resolved_goal_batches_prerequisites_before_orchestration(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

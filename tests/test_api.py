@@ -6093,11 +6093,13 @@ def test_responses_retries_code_block_without_workspace_change(
                 "stream": True,
             },
         )
+        events = client.app.state.store.events(session_id)
 
     assert calls == 2
     assert "class RateLimiter" not in response.text
     assert '"name":"exec_command"' in response.text
     assert "does not modify the workspace" in str(stub_provider.requests[-1]["messages"])
+    assert any(event["event_type"] == "collaboration_artifacts_reused" for event in events)
 
 
 def test_responses_accepts_concrete_final_with_recorded_implementation_evidence(
