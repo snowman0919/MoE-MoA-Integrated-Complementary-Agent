@@ -573,6 +573,118 @@ async def test_local_review_escalates_to_frontier_code_review(
 
 
 @pytest.mark.asyncio
+async def test_frontier_correction_is_reverified_past_invocation_limit(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class CleanReviewFrontier:
+        config = FrontierConfig(enabled=True, max_invocations_per_task=1)
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            return FrontierCollaborationResult(
+                mode="code_review",
+                output={
+                    "verdict": "approve",
+                    "critical": [],
+                    "important": [],
+                    "suggestions": [],
+                    "missing_tests": [],
+                    "confidence": 0.95,
+                },
+                latency_ms=1,
+                transmitted_categories=sorted(evidence),
+            )
+
+    frontier = CleanReviewFrontier()
+    original = stub_provider.complete
+
+    async def clean_review(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        schema_name = request.get("response_format", {}).get("json_schema", {}).get("name")
+        if role == "executor" and schema_name == "orchestration_decision":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "action": "invoke_agents",
+                                    "required_agents": ["reviewer"],
+                                    "optional_agents": [],
+                                    "reason": {"reviewer": "verify the correction"},
+                                    "parallelizable": False,
+                                    "continue_after": "synthesize",
+                                    "confidence": 0.9,
+                                }
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        if role == "reviewer":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "approved",
+                                    "findings": [],
+                                }
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = clean_review  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider, frontier)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="frontier-correction-verification",
+        objective="Implement and verify the bounded repository change",
+        runtime_mode="orchestrated",
+        request_class="explicit_orchestrated",
+        roles_required=["reasoner", "executor"],
+        frontier_invocations=frontier.config.max_invocations_per_task,
+        frontier_correction_pending_verification=True,
+        review_status="deferred",
+        review_deferred=True,
+    )
+    request = {
+        "model": "dgx-moa-orchestrated",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {
+            "changed_paths": ["gateway/src/example.py"],
+            "diff_summary": "corrected implementation diff",
+            "validation_results": [{"name": "unit", "passed": True}],
+        },
+    }
+
+    await controller.prepare_executor(state, request, ("reasoner", "executor"))
+
+    assert frontier.calls == 1
+    assert state.frontier_invocations == 2
+    assert state.frontier_correction_pending_verification is False
+    assert any(
+        event["event_type"] == "frontier_collaboration_started"
+        and event["payload"].get("trigger") == "frontier_correction_verification"
+        for event in store.events(state.session_id)
+    )
+    assert any(
+        event["event_type"] == "frontier_correction_verified"
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
 async def test_executor_rejects_unsupported_reasoner_agent_recommendation(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1072,6 +1184,7 @@ def test_frontier_correction_latch_requires_a_new_file_change(
     controller._observe(state, messages)
 
     assert state.frontier_correction_required is False
+    assert state.frontier_correction_pending_verification is True
     assert state.review_status == "deferred"
     assert state.review_deferred is True
     assert any(
@@ -1117,6 +1230,7 @@ def test_frontier_correction_latch_requires_a_new_file_change(
     controller._observe(python_state, python_messages)
 
     assert python_state.frontier_correction_required is False
+    assert python_state.frontier_correction_pending_verification is True
     assert python_state.review_status == "deferred"
     assert any(
         event["event_type"] == "frontier_correction_applied"
@@ -2649,6 +2763,10 @@ def test_implementation_completion_requires_change_validation_and_review(
     assert controller.requires_implementation_tool_action(state, {}) is False
     assert controller.implementation_completion_ready(state, {}) is True
     state.frontier_correction_required = True
+    assert controller.requires_implementation_tool_action(state, {}) is True
+    assert controller.implementation_completion_ready(state, {}) is False
+    state.frontier_correction_required = False
+    state.frontier_correction_pending_verification = True
     assert controller.requires_implementation_tool_action(state, {}) is True
     assert controller.implementation_completion_ready(state, {}) is False
 
