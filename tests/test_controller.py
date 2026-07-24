@@ -2540,7 +2540,7 @@ async def test_completed_implementation_is_told_to_return_final(
 
     prompt = prepared["messages"][0]["content"]
     assert "Return the concise final result now; do not call more tools." in prompt
-    assert prepared["tools"] == []
+    assert "tools" not in prepared
     assert "tool_choice" not in prepared
 
 

@@ -3020,7 +3020,7 @@ class Controller:
             state, dict(request.get("metadata", {}))
         )
         if implementation_complete and tool_continuation:
-            body["tools"] = []
+            body.pop("tools", None)
             body.pop("tool_choice", None)
             available_tools = ()
             self.store.event(
