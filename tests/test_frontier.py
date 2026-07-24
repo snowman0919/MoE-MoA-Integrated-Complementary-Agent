@@ -12,6 +12,7 @@ from dgx_moa.frontier import (
     FrontierConfig,
     FrontierResult,
     FrontierTask,
+    bounded_external_evidence,
     build_frontier_task,
     classify_frontier_failure,
     codex_command,
@@ -119,6 +120,18 @@ def test_frontier_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert CodexOAuthProvider("primary", tmp_path).environment()["CODEX_HOME"] == str(
         tmp_path / "primary"
     )
+
+
+def test_frontier_code_review_keeps_bounded_tool_executions() -> None:
+    evidence, _ = bounded_external_evidence(
+        {
+            "tool_executions": [{"tool_name": "apply_patch", "exit_code": 0}],
+            "private_payload": "drop-me",
+        },
+        FrontierConfig(),
+    )
+
+    assert evidence == {"tool_executions": [{"tool_name": "apply_patch", "exit_code": 0}]}
     assert "CODEX_HOME" not in CodexOAuthProvider("default").environment()
 
 
