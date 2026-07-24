@@ -296,6 +296,21 @@ def test_repeated_inspection_routes_executor_to_frontier(
             },
         )
         completion_events = app.state.store.events(completed_id)
+        rejected_id = "rejected-executor"
+        rejected = completed.model_copy(
+            update={"session_id": rejected_id, "review_status": "rejected_frontier"}
+        )
+        app.state.store.save(rejected)
+        correction_response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": rejected_id},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": rejected.objective}],
+                "metadata": {"responses_progress_retry": True},
+            },
+        )
+        correction_events = app.state.store.events(rejected_id)
 
     assert response.status_code == 200, response.text
     assert response.json()["choices"][0]["message"]["content"] == "원격 진행 복구"
@@ -306,6 +321,11 @@ def test_repeated_inspection_routes_executor_to_frontier(
         event for event in completion_events if event["event_type"] == "executor_remote_selected"
     )
     assert completion_selected["payload"]["routing_reason"] == "local_completion_stalled"
+    assert correction_response.status_code == 200, correction_response.text
+    correction_selected = next(
+        event for event in correction_events if event["event_type"] == "executor_remote_selected"
+    )
+    assert correction_selected["payload"]["routing_reason"] == "local_correction_stalled"
 
 
 @pytest.fixture(autouse=True)
