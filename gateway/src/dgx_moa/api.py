@@ -2665,6 +2665,7 @@ def create_app(
                                 {
                                     "provider": "frontier",
                                     "failure_class": type(error).__name__,
+                                    "failure_code": str(error)[:128],
                                     "routing_reason": executor_routing_reason,
                                 },
                             )
