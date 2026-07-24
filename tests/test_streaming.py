@@ -186,6 +186,65 @@ async def test_responses_sse_defers_custom_kind_and_rejects_non_string_input() -
 
 
 @pytest.mark.asyncio
+async def test_responses_sse_translates_edit_alias_to_apply_patch() -> None:
+    arguments = json.dumps(
+        {
+            "file": "/workspace/rate_limiter.py",
+            "old_text": "if isinstance(value, int):\n    return value",
+            "new_text": "if isinstance(value, int) and not isinstance(value, bool):\n    return value",
+        }
+    )
+
+    async def upstream():
+        yield (
+            "data: "
+            + json.dumps(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call-edit",
+                                        "function": {
+                                            "name": "edit",
+                                            "arguments": arguments,
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ]
+                }
+            )
+            + "\n\n"
+        ).encode()
+        yield b"data: [DONE]\n\n"
+
+    emitted = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(
+            upstream(), "dgx-moa-agent", custom_tool_names={"apply_patch"}
+        )
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+    done = next(
+        event
+        for event in emitted
+        if event["type"] == "response.output_item.done" and event["output_index"] == 1
+    )
+
+    assert done["item"]["type"] == "custom_tool_call"
+    assert done["item"]["name"] == "apply_patch"
+    assert "*** Update File: /workspace/rate_limiter.py" in done["item"]["input"]
+    assert "-if isinstance(value, int):" in done["item"]["input"]
+    assert "+if isinstance(value, int) and not isinstance(value, bool):" in done["item"]["input"]
+
+
+@pytest.mark.asyncio
 async def test_responses_sse_preserves_tool_progress_and_terminates_failures(caplog) -> None:  # type: ignore[no-untyped-def]
     async def tool_upstream():
         yield 'data: {"choices":[{"delta":{"content":"목표 파일을 확인합니다."}}]}\n\n'.encode()

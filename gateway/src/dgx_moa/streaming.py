@@ -63,6 +63,44 @@ class ProgressOnlyResponse(Exception):
     """The model stopped after emitting only a progress marker."""
 
 
+def compatible_edit_call(
+    name: str, raw_arguments: str, custom_tool_names: set[str] | None
+) -> tuple[str, str]:
+    if name not in {"edit", "edit_file"} or "apply_patch" not in (
+        custom_tool_names or set()
+    ):
+        return name, raw_arguments
+    try:
+        arguments = json.loads(raw_arguments)
+        path = arguments.get("file", arguments.get("path"))
+        old_text = arguments.get("old_text", arguments.get("old_string"))
+        new_text = arguments.get("new_text", arguments.get("new_string"))
+        if (
+            not isinstance(path, str)
+            or not path
+            or "\n" in path
+            or not isinstance(old_text, str)
+            or not old_text
+            or not isinstance(new_text, str)
+        ):
+            raise TypeError
+    except (TypeError, ValueError):
+        return name, raw_arguments
+    patch = "\n".join(
+        (
+            "*** Begin Patch",
+            f"*** Update File: {path}",
+            "@@",
+            *(f"-{line}" for line in old_text.splitlines()),
+            *(f"+{line}" for line in new_text.splitlines()),
+            "*** End Patch",
+        )
+    )
+    return "apply_patch", json.dumps(
+        {"input": patch}, ensure_ascii=False, separators=(",", ":")
+    )
+
+
 def is_progress_only(text: str) -> bool:
     stripped = text.strip()
     return stripped in PROGRESS_ONLY_TEXT or (
@@ -557,6 +595,11 @@ async def responses_sse(
         yield event("response.output_item.done", output_index=0, item=completed_message)
         completed_output = [completed_message]
         for index, item in sorted(tool_calls.items()):
+            item["name"], item["_arguments"] = compatible_edit_call(
+                str(item["name"]),
+                str(item["_arguments"]),
+                custom_tool_names,
+            )
             if item["_compat_local_file"]:
                 try:
                     arguments = json.loads(str(item["_arguments"]))

@@ -104,6 +104,7 @@ from .state import Phase, SessionState, StateStore
 from .streaming import (
     ProgressOnlyResponse,
     StreamObservation,
+    compatible_edit_call,
     completed_chat_sse,
     forward_sse,
     keepalive_sse,
@@ -347,15 +348,19 @@ def _responses_payload(
             ]
         for tool_call in message.get("tool_calls") or []:
             function = tool_call.get("function") or {}
-            name = function.get("name")
+            name, arguments = compatible_edit_call(
+                str(function.get("name", "")),
+                str(function.get("arguments", "")),
+                custom_tool_names,
+            )
             if name in (custom_tool_names or set()):
                 try:
-                    parsed_arguments = json.loads(function.get("arguments", ""))
+                    parsed_arguments = json.loads(arguments)
                     custom_input = parsed_arguments["input"]
                     if not isinstance(custom_input, str):
                         raise TypeError
                 except (KeyError, TypeError, ValueError):
-                    custom_input = function.get("arguments", "")
+                    custom_input = arguments
                 payload["output"].append(
                     {
                         "type": "custom_tool_call",
@@ -371,8 +376,8 @@ def _responses_payload(
                     "type": "function_call",
                     "id": f"fc_{uuid.uuid4().hex}",
                     "call_id": tool_call.get("id"),
-                    "name": function.get("name"),
-                    "arguments": function.get("arguments", ""),
+                    "name": name,
+                    "arguments": arguments,
                     "status": "completed",
                 }
             )
