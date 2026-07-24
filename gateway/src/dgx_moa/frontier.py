@@ -387,7 +387,10 @@ COLLABORATION_MODE_INSTRUCTIONS = {
         "remain. Use revise only for a concrete contract violation or material regression, and "
         "use reject only for an unsafe or fundamentally invalid implementation. Inspect every "
         "public numeric parameter for boolean confusion, NaN, and both infinities when arithmetic, "
-        "time, window, size, or capacity semantics require finite values."
+        "time, window, size, or capacity semantics require finite values. Treat failure to reject "
+        "NaN or either infinity for a parameter used in timestamp, duration, window, size, or "
+        "capacity arithmetic as an important correctness finding even when supplied tests omit "
+        "those cases."
     ),
     "architecture": (
         "For architecture, distinguish required decisions from optional future hardening."
