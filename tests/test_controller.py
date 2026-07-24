@@ -1372,10 +1372,10 @@ async def test_tool_continuation_promotes_reviewer_for_implementation_evidence(
         objective="Implement and test the limiter",
         runtime_mode="orchestrated",
         roles_required=["reasoner", "executor"],
-        tool_results=[
+        tool_executions=[
             {
-                "tool_name": "apply_patch",
-                "changed_paths": ["rate_limiter.py"],
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m unittest discover -s tests -v"},
                 "exit_code": 0,
             }
         ],
@@ -2082,7 +2082,7 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
         controller.has_review_evidence(
             SessionState(session_id="edit", tool_results=[{"changed_paths": ["a.py"]}]), {}
         )
-        is True
+        is False
     )
     assert (
         controller.has_review_evidence(
@@ -2112,7 +2112,7 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
             ),
             {},
         )
-        is True
+        is False
     )
     assert (
         controller.has_review_evidence(
@@ -2132,6 +2132,43 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
             {},
         )
         is True
+    )
+    assert (
+        controller.has_review_evidence(
+            SessionState(
+                session_id="failed-unittest",
+                tool_executions=[
+                    {
+                        "tool_name": "exec_command",
+                        "normalized_arguments": {"cmd": "python -m unittest discover -s tests -v"},
+                        "exit_code": 1,
+                    }
+                ],
+            ),
+            {},
+        )
+        is False
+    )
+    assert (
+        controller.has_review_evidence(
+            SessionState(
+                session_id="stale-unittest",
+                tool_executions=[
+                    {
+                        "tool_name": "exec_command",
+                        "normalized_arguments": {"cmd": "python -m unittest discover -s tests -v"},
+                        "exit_code": 0,
+                    },
+                    {
+                        "tool_name": "apply_patch",
+                        "normalized_arguments": {},
+                        "exit_code": 0,
+                    },
+                ],
+            ),
+            {},
+        )
+        is False
     )
 
 

@@ -2942,32 +2942,13 @@ class Controller:
     def has_review_evidence(self, state: SessionState, metadata: dict[str, Any]) -> bool:
         completion_evidence = metadata.get("completion_evidence")
         if (
-            state.completion_evidence
-            or (isinstance(completion_evidence, dict) and completion_evidence)
+            (isinstance(completion_evidence, dict) and completion_evidence)
             or metadata.get("changed_paths")
             or metadata.get("diff_summary")
             or metadata.get("validation_results")
         ):
             return True
-        if any(
-            isinstance(result, dict)
-            and any(result.get(key) for key in ("changed_paths", "created_paths", "deleted_paths"))
-            for result in state.tool_results
-        ):
-            return True
-        for execution in state.tool_executions:
-            if execution.get("tool_name") in {
-                "apply_patch",
-                "edit_file",
-                "write_file",
-                "delete_file",
-            }:
-                return True
-            effect = execution.get("filesystem_effect")
-            if isinstance(effect, dict) and any(
-                effect.get(key) for key in ("changed_paths", "created_paths", "deleted_paths")
-            ):
-                return True
+        for execution in state.tool_executions[-1:]:
             arguments = execution.get("normalized_arguments")
             if isinstance(arguments, str):
                 try:
