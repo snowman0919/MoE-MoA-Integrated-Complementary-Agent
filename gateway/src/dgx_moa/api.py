@@ -2455,7 +2455,7 @@ def create_app(
                 ),
             )
             context_fits = getattr(request.app.state.provider, "context_fits", None)
-            if (
+            context_exceeded = (
                 not executor_remote
                 and request.app.state.frontier is not None
                 and callable(context_fits)
@@ -2465,9 +2465,17 @@ def create_app(
                     timeout_seconds=10,
                 )
                 is False
-            ):
+            )
+            stalled = (
+                not executor_remote
+                and request.app.state.frontier is not None
+                and request.app.state.controller.executor_stalled(state)
+            )
+            if context_exceeded or stalled:
                 executor_remote = True
-                executor_routing_reason = "local_context_exceeded"
+                executor_routing_reason = (
+                    "local_context_exceeded" if context_exceeded else "local_no_progress"
+                )
                 executor_lease_id = str(
                     uuid.uuid5(uuid.UUID(usage_request_id), "active_request:executor")
                 )
@@ -2479,7 +2487,7 @@ def create_app(
                     state_session_id,
                     "executor_remote_selected",
                     {
-                        "routing_reason": "local_context_exceeded",
+                        "routing_reason": executor_routing_reason,
                         "provider": "frontier",
                     },
                 )

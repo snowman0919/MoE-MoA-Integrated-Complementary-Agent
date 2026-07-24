@@ -210,6 +210,69 @@ def test_oversized_executor_context_routes_to_frontier_before_dispatch(
     assert selected["payload"]["routing_reason"] == "local_context_exceeded"
 
 
+def test_repeated_inspection_routes_executor_to_frontier(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "stalled-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    controlled = settings.model_copy(
+        update={"frontier_enabled": True, "frontier_config": frontier_config}
+    )
+    app = create_app(controlled)
+
+    async def remote_execute(
+        _remote_request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        return {
+            "id": "chatcmpl-frontier-stalled",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "원격 진행 복구"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 8},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "primary", "cost_usd": None},
+        }
+
+    session_id = "stalled-executor"
+    state = SessionState(
+        session_id=session_id,
+        objective="Implement app.py in this repository.",
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": f"cat /workspace/app.py | head -{lines}"},
+                "exit_code": 0,
+                "filesystem_effect": {"unknown_effect": True},
+            }
+            for lines in (20, 40, 80)
+        ],
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        app.state.store.save(state)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": state.objective}],
+            },
+        )
+        events = app.state.store.events(session_id)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["choices"][0]["message"]["content"] == "원격 진행 복구"
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
+    assert selected["payload"]["routing_reason"] == "local_no_progress"
+
+
 @pytest.fixture(autouse=True)
 def block_real_lifecycle_and_profile_commands(monkeypatch: pytest.MonkeyPatch) -> None:
     def tripwire(*args: object, **kwargs: object) -> None:
