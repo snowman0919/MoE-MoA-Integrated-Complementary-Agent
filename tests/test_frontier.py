@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from dgx_moa.frontier import (
+    COLLABORATION_MODE_INSTRUCTIONS,
     COLLABORATION_SCHEMAS,
     CodexOAuthCollaboration,
     CodexOAuthProvider,
@@ -202,6 +203,13 @@ def test_openrouter_schema_removes_unsupported_numeric_constraints() -> None:
     assert '"minimum"' not in encoded
     assert '"maximum"' not in encoded
     assert '"confidence"' in encoded
+
+
+def test_frontier_review_requires_finite_arithmetic_parameters() -> None:
+    prompt = COLLABORATION_MODE_INSTRUCTIONS["code_review"]
+
+    assert "even when supplied tests omit those cases" in prompt
+    assert "timestamp, duration, window, size, or capacity arithmetic" in prompt
 
 
 def test_codex_oauth_environment_excludes_gateway_secrets(
