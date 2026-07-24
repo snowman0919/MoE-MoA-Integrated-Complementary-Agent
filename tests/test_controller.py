@@ -2287,6 +2287,7 @@ def test_executor_prompt_does_not_force_json(settings, stub_provider: StubProvid
     assert "Return one JSON object only" not in prompt
     assert "Use native OpenAI tool calls" in prompt
     assert "Be concise by default" in prompt
+    assert "NaN and both infinities" in prompt
     assert "output formatting in the current objective exactly" in prompt
 
 
