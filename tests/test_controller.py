@@ -1867,6 +1867,7 @@ async def test_planner_and_reviewer_routing(settings, stub_provider: StubProvide
     result = await controller.review(state, "diff")
     assert result["status"] == "approved"
     assert state.review_status == "approved"
+    assert state.review_deferred is False
 
 
 @pytest.mark.asyncio
@@ -1977,6 +1978,7 @@ async def test_reviewer_rejection_enters_correction(settings, stub_provider: Stu
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
     await controller.review(state, "diff")
     assert state.review_status == "rejected"
+    assert state.review_deferred is True
     assert state.phase == Phase.CORRECTION
 
 
@@ -2547,6 +2549,39 @@ async def test_completed_implementation_is_told_to_return_final(
     assert "Return the concise final result now; do not call more tools." in prompt
     assert "tools" not in prepared
     assert "tool_choice" not in prepared
+
+
+@pytest.mark.asyncio
+async def test_progress_retry_rechecks_deferred_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="deferred-review-retry",
+        objective="Implement app.py in this repository and test it.",
+        roles_required=["executor"],
+        review_status="deferred",
+        review_deferred=True,
+        tool_executions=[
+            {"tool_name": "apply_patch", "exit_code": 0},
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m pytest -q"},
+                "exit_code": 0,
+            },
+        ],
+    )
+    request = {
+        "model": "dgx-moa",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {"responses_progress_retry": True},
+    }
+
+    await controller.prepare_executor(state, request, ("executor",))
+
+    assert "reviewer" in stub_provider.calls
+    assert state.review_status == "approved"
+    assert state.review_deferred is False
 
 
 def test_review_observation_is_bounded_redacted_and_complete(

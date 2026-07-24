@@ -2556,8 +2556,8 @@ class Controller:
                         frontier_pending = (mode, evidence)
         metadata = dict(request.get("metadata", {}))
         review_evidence_available = self.has_review_evidence(state, metadata)
-        if not progress_retry and needs_reviewer(
-            state, tool_continuation, review_evidence_available
+        if (not progress_retry or state.review_deferred) and needs_reviewer(
+            state, tool_continuation or state.review_deferred, review_evidence_available
         ):
             roles = tuple(dict.fromkeys((*roles, "reviewer")))
             state.roles_required = list(roles)
@@ -3495,6 +3495,7 @@ class Controller:
             )
         safe_result = cast(dict[str, Any], self.safe_payload(state, result))
         state.review_status = result.get("status", "rejected")
+        state.review_deferred = state.review_status != "approved"
         state.phase = Phase.CORRECTION if state.review_status != "approved" else Phase.EXECUTING
         state.agent_artifacts.append(
             {
