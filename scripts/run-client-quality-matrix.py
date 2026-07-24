@@ -42,6 +42,8 @@ HERMES_PYTHON_ROOT = Path("/home/kotori9/.pyenv/versions/3.11.14")
 BAD_TERMINALS = (
     "stream disconnected before completion",
     "reconnecting 5/5",
+    "api call failed",
+    "remote executor fallback unavailable",
     '"type":"turn.failed"',
     '"type":"response.failed"',
     "다음 도구 작업을 준비합니다.",
