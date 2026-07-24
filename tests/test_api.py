@@ -2452,9 +2452,10 @@ def test_external_cold_reasoner_uses_frontier_fallback_without_blocking(
         return await original(role, model, request, **kwargs)
 
     async def remote_execute(
-        _remote_request: dict[str, object], correlation_id: str
+        remote_request: dict[str, object], correlation_id: str
     ) -> dict[str, object]:
         assert correlation_id.endswith(":reasoner_fallback")
+        assert remote_request["max_tokens"] == controlled.limits.executor_tokens
         return {
             "id": "chatcmpl-reasoner-frontier",
             "choices": [

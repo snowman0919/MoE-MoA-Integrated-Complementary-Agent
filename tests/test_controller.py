@@ -10,6 +10,7 @@ from dgx_moa.controller import (
     DuplicateFailedCall,
     JudgeRequired,
     LoopAdmissionError,
+    ReasonerUnavailable,
     active_failures,
     classify_failure,
     compact_resolved_goal_history,
@@ -1655,6 +1656,48 @@ async def test_reasoner_provider_failure_uses_bounded_frontier_fallback(
     assert completed["payload"]["model"] == "gpt-5.6-sol"
     assert any(event["event_type"] == "reasoner_unavailable" for event in events)
     assert any(event["event_type"] == "reasoner_fallback_completed" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_reasoner_fallback_failure_records_safe_code(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def fail_local_reasoner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reasoner":
+            raise httpx.ConnectError("busy")
+        return await original(role, model, request, **kwargs)
+
+    async def fail_remote_reasoner(request, stage):  # type: ignore[no-untyped-def]
+        raise RuntimeError("FRONTIER_OPENROUTER_FAILURE_VALUEERROR")
+
+    stub_provider.complete = fail_local_reasoner  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session(
+        "reasoner-fallback-failed", [{"role": "user", "content": "work"}]
+    )
+    controller.select_route(state, {})
+
+    with pytest.raises(ReasonerUnavailable):
+        await controller.prepare_executor(
+            state,
+            {
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "work"}],
+                "metadata": {},
+            },
+            ("reasoner", "executor"),
+            reasoner_complete=fail_remote_reasoner,
+        )
+
+    failed = next(
+        event
+        for event in store.events(state.session_id)
+        if event["event_type"] == "reasoner_fallback_failed"
+    )
+    assert failed["payload"]["failure_code"] == "FRONTIER_OPENROUTER_FAILURE_VALUEERROR"
 
 
 def test_title_state_is_recovered_for_work_messages(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

@@ -2511,8 +2511,13 @@ def create_app(
                 frontier_provider = request.app.state.frontier
                 if frontier_provider is None:
                     raise FrontierRequiredUnavailable("remote Reasoner fallback is unavailable")
+                remote_request = dict(reasoner_request)
+                remote_request["max_tokens"] = max(
+                    int(remote_request.get("max_tokens") or 0),
+                    configured.limits.executor_tokens,
+                )
                 response = await frontier_provider.execute(
-                    reasoner_request,
+                    remote_request,
                     f"{usage_request_id}:{stage}",
                 )
                 request.app.state.store.event(

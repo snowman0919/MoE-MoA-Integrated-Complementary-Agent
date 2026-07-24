@@ -2429,12 +2429,18 @@ class Controller:
                     raise
                 except Exception as fallback_error:
                     self.record_provider_failure(state, "reasoner", fallback_error)
+                    failure_code = str(fallback_error)
                     self.store.event(
                         state.session_id,
                         "reasoner_fallback_failed",
                         {
                             "provider": "frontier",
                             "failure_class": type(fallback_error).__name__,
+                            **(
+                                {"failure_code": failure_code}
+                                if re.fullmatch(r"FRONTIER_[A-Z0-9_]{1,120}", failure_code)
+                                else {}
+                            ),
                         },
                     )
                     raise ReasonerUnavailable(
