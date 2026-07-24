@@ -269,6 +269,7 @@ def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
     if mode == "code_review":
         assert "Do not turn optional hardening" in str(observed["task"])
         assert "Use approve when the stated contract is met" in str(observed["task"])
+        assert "NaN, and both infinities" in str(observed["task"])
     assert COLLABORATION_SCHEMAS[mode].model_validate(result.output)
     assert result.total_tokens == 16
     assert result.cost_usd == 0.000021
