@@ -1047,9 +1047,13 @@ def test_goal_file_wrapper_gets_full_completion_constraints(
     assert "expected_version" in prompt
     assert "fully merged object" in prompt
     assert "synchronization of shared state" in prompt
+    assert "memory that grows with total historical requests" in prompt
+    assert "monotonicity restrictions" in prompt
     reviewer_prompt = controller.prompt_sandwich("reviewer", state, "evidence", "review")
     assert "test results alone are insufficient" in reviewer_prompt
     assert "expected_version" in reviewer_prompt
+    assert "unused auxiliary state" in reviewer_prompt
+    assert "total historical requests" in reviewer_prompt
 
 
 def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
