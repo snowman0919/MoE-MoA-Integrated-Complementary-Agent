@@ -1849,8 +1849,19 @@ async def test_tool_continuation_promotes_reviewer_for_implementation_evidence(
 
 
 @pytest.mark.asyncio
-async def test_progress_retry_reuses_review_without_spending_review_budget(
-    settings, stub_provider: StubProvider
+@pytest.mark.parametrize(
+    ("progress_retry", "correction_required", "reuse_trigger"),
+    [
+        (True, False, "responses_progress_retry"),
+        (False, True, "frontier_correction_required"),
+    ],
+)
+async def test_continuation_reuses_review_without_spending_review_budget(
+    settings,
+    stub_provider: StubProvider,
+    progress_retry: bool,
+    correction_required: bool,
+    reuse_trigger: str,
 ) -> None:  # type: ignore[no-untyped-def]
     store = StateStore(settings.state_db)
     controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
@@ -1860,6 +1871,7 @@ async def test_progress_retry_reuses_review_without_spending_review_budget(
         runtime_mode="orchestrated",
         roles_required=["reasoner", "executor"],
         review_status="rejected_frontier",
+        frontier_correction_required=correction_required,
         tool_executions=[
             {
                 "tool_name": "exec_command",
@@ -1884,7 +1896,7 @@ async def test_progress_retry_reuses_review_without_spending_review_budget(
         {
             "model": "dgx-moa-orchestrated",
             "messages": [{"role": "user", "content": state.objective}],
-            "metadata": {"responses_progress_retry": True},
+            "metadata": {"responses_progress_retry": True} if progress_retry else {},
         },
         ("reasoner", "executor"),
         tool_continuation=True,
@@ -1901,7 +1913,7 @@ async def test_progress_retry_reuses_review_without_spending_review_budget(
     assert reused == [
         {
             "roles": ["frontier", "reviewer"],
-            "trigger": "responses_progress_retry",
+            "trigger": reuse_trigger,
         }
     ]
 
