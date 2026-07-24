@@ -25,7 +25,22 @@ PROGRESS_ONLY_TEXT = {
 }
 KOREAN_PROGRESS_ENDINGS = tuple(
     f"{verb}{suffix}"
-    for verb in ("확인", "점검", "검토", "분석", "준비", "설계", "실행", "수정", "구현")
+    for verb in (
+        "확인",
+        "점검",
+        "검토",
+        "분석",
+        "준비",
+        "설계",
+        "실행",
+        "수정",
+        "구현",
+        "작성",
+        "생성",
+        "추가",
+        "적용",
+        "진행",
+    )
     for suffix in ("합니다.", "하겠습니다.")
 )
 ENGLISH_PROGRESS_PREFIXES = (

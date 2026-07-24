@@ -63,6 +63,7 @@ async def test_responses_sse_translates_chat_text_and_usage() -> None:
         "Planner 역할이 구조와 구현 순서를 설계합니다.",
         "테스트 코드를 확인합니다.",
         "동시성 테스트를 실행하겠습니다.",
+        "구현을 위한 설계를 마친 후, `rate_limiter.py`를 작성합니다.",
         "Inspecting the tests.",
     ],
 )
