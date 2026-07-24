@@ -23,6 +23,21 @@ PROGRESS_ONLY_TEXT = {
     "다음 작업에 필요한 증거를 확인합니다.",
     "Planner 역할이 구조와 구현 순서를 설계합니다.",
 }
+KOREAN_PROGRESS_ENDINGS = tuple(
+    f"{verb}{suffix}"
+    for verb in ("확인", "점검", "검토", "분석", "준비", "설계", "실행", "수정", "구현")
+    for suffix in ("합니다.", "하겠습니다.")
+)
+ENGLISH_PROGRESS_PREFIXES = (
+    "checking ",
+    "inspecting ",
+    "reviewing ",
+    "analyzing ",
+    "preparing ",
+    "planning ",
+    "running ",
+    "reading ",
+)
 
 
 class ProgressOnlyResponse(Exception):
@@ -32,10 +47,15 @@ class ProgressOnlyResponse(Exception):
 def is_progress_only(text: str) -> bool:
     stripped = text.strip()
     return stripped in PROGRESS_ONLY_TEXT or (
-        len(stripped) <= 128
+        "\n" not in stripped
+        and len(stripped) <= 256
         and (
             stripped.endswith(" 도구를 실행합니다.")
-            or (stripped.startswith("Running ") and stripped.endswith("."))
+            or stripped.endswith(KOREAN_PROGRESS_ENDINGS)
+            or (
+                stripped.lower().startswith(ENGLISH_PROGRESS_PREFIXES)
+                and stripped.endswith((".", "…"))
+            )
         )
     )
 

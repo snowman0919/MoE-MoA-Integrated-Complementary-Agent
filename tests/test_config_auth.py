@@ -80,7 +80,7 @@ def test_loop_engineering_environment_is_strict_and_disabled_by_default(
 
     assert settings.loop_engineering.enabled is True
     assert settings.loop_engineering.defaults["iterations"] == 2
-    assert settings.loop_engineering.defaults["tool_calls"] == 30
+    assert settings.loop_engineering.defaults["tool_calls"] == 100
     assert settings.loop_engineering.defaults["frontier_calls"] == 3
     assert Settings(auth_enabled=False).loop_engineering.enabled is False
 
@@ -98,7 +98,7 @@ def test_loop_budget_overrides_merge_request_class_then_risk() -> None:
 
     assert budget["iterations"] == 2
     assert budget["frontier_calls"] == 1
-    assert budget["tool_calls"] == 30
+    assert budget["tool_calls"] == 100
 
 
 def test_default_loop_budget_covers_frontier_task_limit() -> None:

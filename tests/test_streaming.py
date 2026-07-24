@@ -11,6 +11,7 @@ from dgx_moa.streaming import (
     ProgressOnlyResponse,
     StreamObservation,
     forward_sse,
+    is_progress_only,
     keepalive_sse,
     reported_usage,
     response_usage,
@@ -60,6 +61,9 @@ async def test_responses_sse_translates_chat_text_and_usage() -> None:
         "다음 도구 작업을 준비합니다.",
         "exec_command 도구를 실행합니다.",
         "Planner 역할이 구조와 구현 순서를 설계합니다.",
+        "테스트 코드를 확인합니다.",
+        "동시성 테스트를 실행하겠습니다.",
+        "Inspecting the tests.",
     ],
 )
 async def test_responses_sse_rejects_progress_only_stop(text: str) -> None:
@@ -70,6 +74,18 @@ async def test_responses_sse_rejects_progress_only_stop(text: str) -> None:
 
     with pytest.raises(ProgressOnlyResponse):
         _ = [chunk async for chunk in responses_sse(upstream(), "dgx-moa")]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "구현을 완료했고 테스트 6개가 통과했습니다.",
+        "Inspection complete: 6 tests passed.",
+        "수정 파일: rate_limiter.py\n테스트: 4개 통과",
+    ],
+)
+def test_progress_only_detection_preserves_concrete_results(text: str) -> None:
+    assert not is_progress_only(text)
 
 
 @pytest.mark.asyncio

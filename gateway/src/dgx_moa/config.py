@@ -185,7 +185,7 @@ class LifecyclePolicy(BaseModel):
 def default_loop_budgets() -> dict[str, int | float]:
     return {
         "iterations": 4,
-        "tool_calls": 30,
+        "tool_calls": 100,
         "reasoner_reentries": 4,
         "planner_calls": 2,
         "reviewer_calls": 2,
