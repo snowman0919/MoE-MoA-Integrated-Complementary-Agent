@@ -2457,7 +2457,7 @@ def create_app(
                     *executor_request.get("messages", []),
                     message,
                     {
-                        "role": "system",
+                        "role": "user",
                         "content": (
                             "A required code correction remains unresolved. The prior response "
                             "did not call a tool and cannot complete this request. Call exactly "
