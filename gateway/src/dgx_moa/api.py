@@ -2600,7 +2600,18 @@ def create_app(
                 and request.app.state.frontier is not None
                 and state.frontier_correction_required
             )
-            if context_exceeded or stalled or completion_stalled or frontier_correction:
+            repeated_failure = (
+                not executor_remote
+                and request.app.state.frontier is not None
+                and any(count >= 2 for count in state.failure_families.values())
+            )
+            if (
+                context_exceeded
+                or stalled
+                or completion_stalled
+                or frontier_correction
+                or repeated_failure
+            ):
                 executor_remote = True
                 executor_routing_reason = (
                     "local_context_exceeded"
@@ -2609,6 +2620,8 @@ def create_app(
                     if frontier_correction
                     else "local_completion_stalled"
                     if completion_stalled
+                    else "local_repeated_failure"
+                    if repeated_failure
                     else "local_no_progress"
                 )
                 executor_lease_id = str(
