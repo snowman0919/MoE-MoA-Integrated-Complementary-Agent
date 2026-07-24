@@ -803,6 +803,45 @@ def test_selective_remote_judge_rejects_unbuffered_high_risk_stream(
     assert remote.packages == []
 
 
+def test_repeated_test_failure_does_not_block_streamed_correction(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    app = create_app(settings)
+    remote = MockJudgeProvider(remote_verdict())
+    session_id = "streamed-test-correction"
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.remote_judge = remote
+        app.state.remote_judge_available = True
+        app.state.controller.remote_judge = remote
+        app.state.store.save(
+            SessionState(
+                session_id=session_id,
+                objective="fix the test failure",
+                failure_families={"test-family": 2},
+            )
+        )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": session_id,
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "stream": True,
+                "messages": [{"role": "user", "content": "continue the correction"}],
+            },
+        )
+        events = app.state.store.events(session_id)
+
+    assert response.status_code == 200
+    assert stub_provider.calls
+    assert remote.packages == []
+    assert any(event["event_type"] == "remote_judge_stream_deferred" for event in events)
+
+
 async def direct_chat(app, session_id: str, *, stream: bool = False):  # type: ignore[no-untyped-def]
     return await chat_endpoint(app)(
         ChatRequest(

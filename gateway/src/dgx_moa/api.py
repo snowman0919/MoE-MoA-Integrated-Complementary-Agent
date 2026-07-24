@@ -2382,6 +2382,16 @@ def create_app(
                 if body.stream
                 else []
             )
+            if stream_judge_reasons == ["repeated_failure_fingerprint"]:
+                request.app.state.store.event(
+                    state_session_id,
+                    "remote_judge_stream_deferred",
+                    {
+                        "reasons": stream_judge_reasons,
+                        "until": "non_streaming_completion_or_high_risk_trigger",
+                    },
+                )
+                stream_judge_reasons = []
             if stream_judge_reasons:
                 request.app.state.store.event(
                     state_session_id,
