@@ -608,6 +608,25 @@ async def responses_sse(
                         "responses_goal_reread_suppressed session_id=%s",
                         _log_token(session_id),
                     )
+            if item["name"] == "write_stdin":
+                try:
+                    arguments = json.loads(str(item["_arguments"]))
+                except ValueError:
+                    arguments = None
+                if isinstance(arguments, dict) and (
+                    isinstance(arguments.get("session_id"), bool)
+                    or not isinstance(arguments.get("session_id"), int)
+                ):
+                    arguments["session_id"] = 0
+                    item["_arguments"] = json.dumps(
+                        arguments,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    LOGGER.info(
+                        "responses_invalid_session_id_suppressed session_id=%s",
+                        _log_token(session_id),
+                    )
             if not item["_added"]:
                 is_custom = item["name"] in (custom_tool_names or set())
                 item["id"] = f"{'ctc' if is_custom else 'fc'}_{uuid.uuid4().hex}"

@@ -336,6 +336,8 @@ class UsageStore:
                     request_id TEXT NOT NULL,
                     role TEXT NOT NULL,
                     model TEXT NOT NULL,
+                    provider TEXT NOT NULL DEFAULT 'local',
+                    fallback_reason TEXT,
                     mode TEXT NOT NULL,
                     invoked_at REAL NOT NULL,
                     status TEXT NOT NULL,
@@ -354,6 +356,18 @@ class UsageStore:
                     "ALTER TABLE request_usage ADD COLUMN api_token_id "
                     "TEXT NOT NULL DEFAULT 'legacy'"
                 )
+            invocation_columns = {
+                row[1] for row in database.execute("PRAGMA table_info(model_invocation_usage)")
+            }
+            if "provider" not in invocation_columns:
+                database.execute(
+                    "ALTER TABLE model_invocation_usage ADD COLUMN provider "
+                    "TEXT NOT NULL DEFAULT 'local'"
+                )
+            if "fallback_reason" not in invocation_columns:
+                database.execute(
+                    "ALTER TABLE model_invocation_usage ADD COLUMN fallback_reason TEXT"
+                )
         self.write_model_invocation_rates()
 
     def record_model_invocation(
@@ -362,6 +376,8 @@ class UsageStore:
         *,
         role: str,
         model: str,
+        provider: str = "local",
+        fallback_reason: str | None = None,
         mode: str,
         status: str,
         latency_ms: float,
@@ -374,14 +390,16 @@ class UsageStore:
         with self._connect() as database:
             database.execute(
                 "INSERT INTO model_invocation_usage "
-                "(invocation_id, request_id, role, model, mode, invoked_at, status, latency_ms, "
-                "prompt_tokens, completion_tokens, total_tokens) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(invocation_id, request_id, role, model, provider, fallback_reason, mode, "
+                "invoked_at, status, latency_ms, prompt_tokens, completion_tokens, total_tokens) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     str(uuid.uuid4()),
                     request_id,
                     role,
                     model,
+                    provider,
+                    fallback_reason,
                     mode,
                     time.time(),
                     status,
@@ -908,10 +926,10 @@ class UsageStore:
                 request_parameters,
             ).fetchall()
             models = database.execute(
-                "SELECT r.api_token_id, m.role, m.model, COUNT(*), "
+                "SELECT r.api_token_id, m.role, m.model, m.provider, COUNT(*), "
                 "COALESCE(SUM(m.total_tokens), 0) FROM model_invocation_usage m "
                 f"JOIN request_usage r ON r.request_id = m.request_id{model_where} "
-                "GROUP BY r.api_token_id, m.role, m.model "
+                "GROUP BY r.api_token_id, m.role, m.model, m.provider "
                 "ORDER BY r.api_token_id, COUNT(*) DESC",
                 model_parameters,
             ).fetchall()
@@ -923,10 +941,34 @@ class UsageStore:
             ).fetchall()
             daily_models = database.execute(
                 "SELECT r.api_token_id, date(r.accepted_at, 'unixepoch'), m.model, "
-                "COUNT(*), COALESCE(SUM(m.total_tokens), 0) FROM model_invocation_usage m "
+                "COUNT(*), COALESCE(SUM(m.prompt_tokens), 0), "
+                "COALESCE(SUM(m.completion_tokens), 0), COALESCE(SUM(m.total_tokens), 0) "
+                "FROM model_invocation_usage m "
                 f"JOIN request_usage r ON r.request_id = m.request_id{model_where} "
                 "GROUP BY r.api_token_id, date(r.accepted_at, 'unixepoch'), m.model "
                 "ORDER BY 2, 3",
+                model_parameters,
+            ).fetchall()
+            fallback_where = (
+                f"{model_where} AND m.fallback_reason IS NOT NULL"
+                if model_where
+                else " WHERE m.fallback_reason IS NOT NULL"
+            )
+            fallback_summary = database.execute(
+                "SELECT r.api_token_id, COUNT(DISTINCT r.request_id), "
+                "COUNT(DISTINCT CASE WHEN m.fallback_reason IS NOT NULL "
+                "THEN r.request_id END) FROM request_usage r "
+                "LEFT JOIN model_invocation_usage m ON r.request_id = m.request_id"
+                f"{model_where} "
+                "GROUP BY r.api_token_id ORDER BY r.api_token_id",
+                model_parameters,
+            ).fetchall()
+            fallbacks = database.execute(
+                "SELECT r.api_token_id, m.role, m.model, m.provider, m.fallback_reason, "
+                "COUNT(*), COALESCE(SUM(m.total_tokens), 0) FROM model_invocation_usage m "
+                f"JOIN request_usage r ON r.request_id = m.request_id{fallback_where} "
+                "GROUP BY r.api_token_id, m.role, m.model, m.provider, m.fallback_reason "
+                "ORDER BY r.api_token_id, COUNT(*) DESC",
                 model_parameters,
             ).fetchall()
         return {
@@ -956,8 +998,9 @@ class UsageStore:
                     "name": row[0],
                     "role": row[1],
                     "model": row[2],
-                    "invocations": int(row[3]),
-                    "total_tokens": int(row[4]),
+                    "provider": row[3],
+                    "invocations": int(row[4]),
+                    "total_tokens": int(row[5]),
                 }
                 for row in models
             ],
@@ -968,9 +1011,32 @@ class UsageStore:
                     "day": row[1],
                     "model": row[2],
                     "invocations": int(row[3]),
-                    "total_tokens": int(row[4]),
+                    "prompt_tokens": int(row[4]),
+                    "completion_tokens": int(row[5]),
+                    "total_tokens": int(row[6]),
                 }
                 for row in daily_models
+            ],
+            "fallback_summary": [
+                {
+                    "name": row[0],
+                    "requests": int(row[1]),
+                    "fallbacks": int(row[2] or 0),
+                    "rate": round(int(row[2] or 0) / int(row[1]) * 100, 2),
+                }
+                for row in fallback_summary
+            ],
+            "fallbacks": [
+                {
+                    "name": row[0],
+                    "role": row[1],
+                    "model": row[2],
+                    "provider": row[3],
+                    "reason": row[4],
+                    "invocations": int(row[5]),
+                    "total_tokens": int(row[6]),
+                }
+                for row in fallbacks
             ],
         }
 

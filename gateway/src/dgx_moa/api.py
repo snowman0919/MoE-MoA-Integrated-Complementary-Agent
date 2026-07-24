@@ -24,6 +24,7 @@ from .admin_codex import AdminCodexRequest, AdminCodexRunner
 from .admin_dashboard import ADMIN_DASHBOARD
 from .config import Settings, get_settings
 from .controller import (
+    EXECUTOR_QUALITY_CONTRACT,
     Controller,
     DuplicateFailedCall,
     FrontierRequiredUnavailable,
@@ -1747,6 +1748,7 @@ def create_app(
                         "returned by exec_command with write_stdin; never invent one. Call "
                         "read_mcp_resource only with an exact server and URI returned by MCP "
                         "resource discovery; integration display names are not MCP server IDs."
+                        f" {EXECUTOR_QUALITY_CONTRACT}"
                     ),
                     "model_messages": None,
                     "include_skills_usage_instructions": False,
@@ -2410,6 +2412,26 @@ def create_app(
                 )
                 return cast(dict[str, Any], response)
 
+            async def remote_reasoner_complete(
+                reasoner_request: dict[str, Any], stage: str
+            ) -> dict[str, Any]:
+                frontier_provider = request.app.state.frontier
+                if frontier_provider is None:
+                    raise FrontierRequiredUnavailable("remote Reasoner fallback is unavailable")
+                response = await frontier_provider.execute(
+                    reasoner_request,
+                    f"{usage_request_id}:{stage}",
+                )
+                request.app.state.store.event(
+                    state_session_id,
+                    "reasoner_remote_completed",
+                    {
+                        "provider": response.get("provider_provenance", {}).get("provider"),
+                        "model": response.get("model"),
+                    },
+                )
+                return cast(dict[str, Any], response)
+
             active_stage = "planner" if "planner" in roles else "request"
             tool_continuation = (
                 recovered_tool_owner
@@ -2423,6 +2445,9 @@ def create_app(
                 ensure_dynamic_roles,
                 tool_continuation=tool_continuation,
                 executor_complete=remote_executor_complete if executor_remote else None,
+                reasoner_complete=(
+                    remote_reasoner_complete if request.app.state.frontier is not None else None
+                ),
             )
             context_fits = getattr(request.app.state.provider, "context_fits", None)
             if (
@@ -2584,6 +2609,17 @@ def create_app(
                                 state,
                                 {
                                     "role": "executor",
+                                    "provider": "frontier" if executor_remote else "local",
+                                    "model": (
+                                        request.app.state.frontier.config.model
+                                        if executor_remote
+                                        else configured.models["executor"].served_name
+                                    ),
+                                    **(
+                                        {"fallback_reason": executor_routing_reason}
+                                        if executor_remote
+                                        else {}
+                                    ),
                                     "mode": "final_synthesis",
                                     "latency_ms": state.timings_ms["executor_total"],
                                     "prompt_tokens": observation.usage.get("prompt_tokens"),
@@ -2769,6 +2805,7 @@ def create_app(
                 response,
                 executor_started,
                 mode="final_synthesis",
+                fallback_reason=executor_routing_reason if executor_remote else None,
             )
             validate_assistant_response(response)
             assistant_message = response.get("choices", [{}])[0].get("message", {})
@@ -2956,6 +2993,7 @@ def create_app(
                             response,
                             correction_started,
                             mode="judge_correction",
+                            fallback_reason=executor_routing_reason if executor_remote else None,
                         )
                         validate_assistant_response(response)
                         assistant_message = response.get("choices", [{}])[0].get("message", {})
@@ -3448,7 +3486,7 @@ def create_app(
                 chat_task: asyncio.Task[Response] | None = None
                 loading_deadline = time.monotonic() + configured.limits.model_load_timeout_seconds
                 initial_heartbeat_sent = False
-                progress_only_retried = False
+                progress_only_retries = 0
                 judge_non_stream_retried = False
                 current_body = chat_body
 
@@ -3563,7 +3601,7 @@ def create_app(
                                     else:
                                         translated.append(chunk)
                             except ProgressOnlyResponse:
-                                if progress_only_retried:
+                                if progress_only_retries >= 3:
                                     async for chunk in responses_error_sse(
                                         response_model,
                                         session_id=response_session_id,
@@ -3574,11 +3612,11 @@ def create_app(
                                     ):
                                         yield chunk
                                     return
-                                progress_only_retried = True
+                                progress_only_retries += 1
                                 request.app.state.store.event(
                                     response_session_id,
                                     "progress_only_response_retried",
-                                    {},
+                                    {"attempt": progress_only_retries},
                                 )
                                 current_body = current_body.model_copy(
                                     update={

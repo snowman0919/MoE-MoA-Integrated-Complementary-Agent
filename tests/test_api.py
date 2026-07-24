@@ -2775,6 +2775,11 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             "integer session_id returned by exec_command" in model["base_instructions"]
             for model in models["models"]
         )
+        assert all(
+            "supplied tests are examples, not the complete specification"
+            in model["base_instructions"]
+            for model in models["models"]
+        )
         assert all(model["comp_hash"] == "dgx-moa-65536-v1" for model in models["models"])
         response = client.post(
             "/v1/chat/completions",
@@ -5849,6 +5854,52 @@ def test_responses_retries_progress_only_stop(  # type: ignore[no-untyped-def]
     assert "event: response.completed" in response.text
     assert any(event["event_type"] == "progress_only_response_retried" for event in events)
     assert stub_provider.requests[-1]["messages"][-1]["role"] == "developer"
+
+
+def test_responses_retries_consecutive_progress_only_stops(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider
+) -> None:
+    calls = 0
+
+    async def stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        text = (
+            "테스트 코드를 확인합니다."
+            if calls == 1
+            else "테스트를 실행하겠습니다."
+            if calls == 2
+            else "구현 완료, 테스트 4개가 통과했습니다."
+        )
+
+        async def chunks():  # type: ignore[no-untyped-def]
+            yield f'data: {{"choices":[{{"delta":{{"content":"{text}"}}}}]}}\n\n'.encode()
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    stub_provider.stream = stream  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "responses-consecutive-progress",
+            },
+            json={"model": "dgx-moa-fast", "input": "작업을 완료해", "stream": True},
+        )
+        retries = [
+            event["payload"]["attempt"]
+            for event in client.app.state.store.events("responses-consecutive-progress")
+            if event["event_type"] == "progress_only_response_retried"
+        ]
+
+    assert calls == 3
+    assert retries == [1, 2]
+    assert response.text.count("event: response.created") == 1
+    assert "구현 완료, 테스트 4개가 통과했습니다." in response.text
+    assert "event: response.completed" in response.text
 
 
 def test_responses_retries_stop_while_planned_work_is_pending(  # type: ignore[no-untyped-def]

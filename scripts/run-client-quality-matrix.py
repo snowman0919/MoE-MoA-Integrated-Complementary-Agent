@@ -589,6 +589,155 @@ TASKS = (
     ),
 )
 TASK_BY_SLUG = {task.slug: task for task in TASKS}
+HIDDEN_CHECKS = {
+    "rate-limiter": block(
+        """
+        from rate_limiter import SlidingWindowLimiter
+
+        limiter = SlidingWindowLimiter(2, 2.5, clock=lambda: 99)
+        assert limiter.allow("a", 1.0)
+        assert limiter.remaining("a", 1.0) == 1
+        assert limiter.remaining("a", 1.0) == 1
+        assert limiter.allow("a", 3.5)
+        assert limiter.remaining("a", 3.5) == 1
+        for key in (None, "", 1):
+            try:
+                limiter.remaining(key, 4)
+            except (TypeError, ValueError):
+                pass
+            else:
+                raise AssertionError("invalid key accepted")
+        for args in ((1, True), (1, float("nan")), (True, 1)):
+            try:
+                SlidingWindowLimiter(*args)
+            except (TypeError, ValueError):
+                pass
+            else:
+                raise AssertionError("invalid constructor input accepted")
+        print("hidden checks passed")
+        """
+    ),
+    "atomic-store": block(
+        """
+        import math
+        import tempfile
+        from pathlib import Path
+        from atomic_store import AtomicJSONStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.json"
+            store = AtomicJSONStore(path)
+            assert store.update(0, {"nested": {"ok": True}}) == 1
+            before = path.read_bytes()
+            for version, changes in ((True, {"x": 1}), (1, []), (1, {"x": math.nan})):
+                try:
+                    store.update(version, changes)
+                except (TypeError, ValueError):
+                    pass
+                else:
+                    raise AssertionError("invalid update accepted")
+                assert path.read_bytes() == before
+            assert [item for item in path.parent.iterdir() if item != path] == []
+        print("hidden checks passed")
+        """
+    ),
+    "dag-runner": block(
+        """
+        import time
+        from dag_runner import execution_layers, run_dag
+
+        assert execution_layers({}) == []
+        result = run_dag(
+            {"z": set(), "a": set(), "done": {"z", "a"}},
+            {
+                "z": lambda: (time.sleep(0.01), "z")[1],
+                "a": lambda: (time.sleep(0.03), "a")[1],
+                "done": lambda: "done",
+            },
+            max_workers=2,
+        )
+        assert list(result) == ["a", "z", "done"]
+        for dependencies, functions, workers in (
+            ({"a": "bad"}, {"a": lambda: 1}, 1),
+            ({"a": set()}, {"a": lambda: 1, "b": lambda: 2}, 1),
+            ({"a": set()}, {"a": lambda: 1}, True),
+        ):
+            try:
+                run_dag(dependencies, functions, max_workers=workers)
+            except (TypeError, ValueError):
+                pass
+            else:
+                raise AssertionError("invalid DAG input accepted")
+        print("hidden checks passed")
+        """
+    ),
+    "webhook-verifier": block(
+        """
+        import hashlib
+        import hmac
+        from webhook import WebhookVerifier
+
+        secret = b"hidden-secret"
+        verifier = WebhookVerifier(secret, tolerance_seconds=300, clock=lambda: 1000)
+        body, timestamp, nonce = b"x", "700", "boundary_nonce"
+        raw = timestamp.encode() + b"." + nonce.encode() + b"." + body
+        signature = "v1=" + hmac.new(secret, raw, hashlib.sha256).hexdigest()
+        assert verifier.verify(body, timestamp, nonce, signature)
+        upper_nonce = "uppercase_nonce"
+        upper_raw = b"1000." + upper_nonce.encode() + b".x"
+        upper = "v1=" + hmac.new(secret, upper_raw, hashlib.sha256).hexdigest().upper()
+        assert not verifier.verify(b"x", "1000", upper_nonce, upper)
+        for bad_timestamp in ("1000.0", "+1000", "nan", ""):
+            assert not verifier.verify(b"x", bad_timestamp, "malformed_nonce", signature)
+        for args in ((secret, -1, 10), (secret, 1, 0), ("secret", 1, 10)):
+            try:
+                WebhookVerifier(args[0], tolerance_seconds=args[1], max_body_bytes=args[2])
+            except (TypeError, ValueError):
+                pass
+            else:
+                raise AssertionError("invalid verifier configuration accepted")
+        print("hidden checks passed")
+        """
+    ),
+    "log-report": block(
+        """
+        import json
+        from log_report import summarize
+
+        source = [
+            "",
+            json.dumps({
+                "level": "INFO",
+                "event": "ok",
+                "outer": [{"myTokenSuffix": "secret"}, {"AUTHORIZATION_value": "private"}],
+            }),
+        ]
+        report = summarize(source, sample_limit=0)
+        assert report["samples"] == []
+        assert report["levels"] == {"INFO": 1}
+        redacted = summarize(source, sample_limit=1)
+        encoded = json.dumps(redacted)
+        assert "secret" not in encoded and "private" not in encoded
+        for lines, marker in (
+            (["", '{"level":1,"event":"x"}'], "line 2"),
+            (['{"level":"INFO","event":null}'], "line 1"),
+        ):
+            try:
+                summarize(lines)
+            except ValueError as error:
+                assert marker in str(error)
+            else:
+                raise AssertionError("invalid record accepted")
+        try:
+            summarize([], sample_limit=True)
+        except (TypeError, ValueError):
+            pass
+        else:
+            raise AssertionError("boolean sample limit accepted")
+        print("hidden checks passed")
+        """
+    ),
+}
 
 
 def sha256(path: Path) -> str:
@@ -757,7 +906,9 @@ def docker_command(
     *,
     environment_names: tuple[str, ...] = (),
     extra_environment: tuple[str, ...] = (),
+    network: str = "host",
     read_only_mounts: tuple[tuple[Path, str], ...] = (),
+    workspace_mode: str = "rw",
 ) -> list[str]:
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     command = [
@@ -766,7 +917,7 @@ def docker_command(
         "--rm",
         "--init",
         "--network",
-        "host",
+        network,
         "--read-only",
         "--cap-drop",
         "ALL",
@@ -787,7 +938,7 @@ def docker_command(
         "--workdir",
         str(workspace),
         "--volume",
-        f"{workspace}:{workspace}:rw",
+        f"{workspace}:{workspace}:{workspace_mode}",
         "--volume",
         f"{state}:/state:rw",
         "--env",
@@ -1051,11 +1202,48 @@ def score_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, A
     workspace, evidence = paths(args, harness, task)
     manifest = json.loads((evidence / "manifest.json").read_text())
     run = json.loads((evidence / "run.json").read_text())
-    validation = subprocess.run(
-        TEST_COMMAND, cwd=workspace, text=True, capture_output=True, check=False
+    validator_state = evidence / "validator-state"
+    public_inner = ["python", "-m", "unittest", "discover", "-s", "tests", "-v"]
+    public_command = (
+        docker_command(
+            workspace,
+            validator_state,
+            public_inner,
+            extra_environment=("PYTHONDONTWRITEBYTECODE=1",),
+            network="none",
+            workspace_mode="ro",
+        )
+        if args.runtime == "docker"
+        else list(TEST_COMMAND)
+    )
+    validation = run_process(
+        public_command,
+        cwd=workspace,
+        environment=filtered_env(),
+        timeout=120,
+    )
+    hidden_command = (
+        docker_command(
+            workspace,
+            validator_state,
+            ["python", "-c", HIDDEN_CHECKS[task.slug]],
+            extra_environment=("PYTHONDONTWRITEBYTECODE=1",),
+            network="none",
+            workspace_mode="ro",
+        )
+        if args.runtime == "docker"
+        else [sys.executable, "-c", HIDDEN_CHECKS[task.slug]]
+    )
+    hidden = run_process(
+        hidden_command,
+        cwd=workspace,
+        environment=filtered_env(),
+        timeout=120,
     )
     (evidence / "validation.stdout.log").write_text(validation.stdout)
     (evidence / "validation.stderr.log").write_text(validation.stderr)
+    (evidence / "hidden-validation.stdout.log").write_text(hidden.stdout)
+    (evidence / "hidden-validation.stderr.log").write_text(hidden.stderr)
     tests_unchanged = sha256(workspace / "tests/test_task.py") == manifest["tests_sha256"]
     changed = [
         line
@@ -1077,6 +1265,7 @@ def score_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, A
     checks = {
         "harness_exit": run["return_code"] == 0,
         "validation_exit": validation.returncode == 0,
+        "hidden_validation_exit": hidden.returncode == 0,
         "tests_unchanged": tests_unchanged,
         "source_changed_only": changed == [task.source_name],
         "terminal": terminal_ok,
@@ -1091,6 +1280,7 @@ def score_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, A
         "checks": checks,
         "changed_paths": changed,
         "validation_exit": validation.returncode,
+        "hidden_validation_exit": hidden.returncode,
     }
     (evidence / "score.json").write_text(json.dumps(score, indent=2, sort_keys=True) + "\n")
     return score
