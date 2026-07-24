@@ -1678,6 +1678,7 @@ async def test_planner_retries_one_malformed_structured_response(  # type: ignor
 async def test_reviewer_retries_one_malformed_structured_response(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
     original = stub_provider.complete
     calls = 0
 
@@ -1695,12 +1696,20 @@ async def test_reviewer_retries_one_malformed_structured_response(
     stub_provider.complete = malformed_then_valid  # type: ignore[method-assign]
     store = StateStore(settings.state_db)
     controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
-    state = SessionState(session_id="retry-review")
+    state = controller.session(
+        "retry-review", [{"role": "user", "content": "review bounded evidence"}]
+    )
+    controller.select_route(state, {})
 
     result = await controller.review(state, "bounded evidence")
 
     assert calls == 2
     assert result == {"status": "approved", "findings": []}
+    assert state.engineering_loop is not None
+    assert (
+        state.engineering_loop.remaining_budget.reviewer_calls
+        == settings.loop_engineering.defaults["reviewer_calls"] - 1
+    )
     assert stub_provider.requests[-1]["max_tokens"] == 1024
     assert "bounded evidence" in stub_provider.requests[-1]["messages"][0]["content"]
     assert [
