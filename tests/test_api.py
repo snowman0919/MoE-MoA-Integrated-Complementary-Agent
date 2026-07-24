@@ -460,6 +460,9 @@ def test_repeated_inspection_routes_executor_to_frontier(
     assert "Do not repeat an inspection or validation that already succeeded" in str(
         correction_retry["messages"][-1]["content"]
     )
+    assert "Never invoke a tool name as a shell command" in str(
+        correction_retry["messages"][-1]["content"]
+    )
     assert newly_rejected_response.status_code == 200, newly_rejected_response.text
     assert newly_rejected_response.json()["choices"][0]["finish_reason"] == "tool_calls"
     newly_rejected_selected = next(

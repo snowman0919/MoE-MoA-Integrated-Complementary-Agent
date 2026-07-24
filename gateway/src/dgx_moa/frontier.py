@@ -356,7 +356,9 @@ COLLABORATION_MODE_INSTRUCTIONS = {
     ),
     "executor": (
         "For executor, reason privately in English, answer in the last user's language, and "
-        "represent any client tool use only as tool_calls from the supplied definitions."
+        "represent any client tool use only as tool_calls from the supplied definitions. Never "
+        "invoke a tool name as a shell command. If apply_patch is not one of the supplied tools, "
+        "use an available command tool with a shell-native heredoc or language-native file write."
     ),
 }
 

@@ -2460,8 +2460,10 @@ def create_app(
                             "one available client tool now to apply the concrete correction "
                             "listed in the prior Frontier contribution. Do not repeat an "
                             "inspection or validation that already succeeded unless the prior "
-                            "finding explicitly requires that evidence. Return a native tool "
-                            "call, not prose. Available tools: " + ", ".join(tool_names)
+                            "finding explicitly requires that evidence. Never invoke a tool name "
+                            "as a shell command; when apply_patch is unavailable, write through "
+                            "an available command tool instead. Return a native tool call, not "
+                            "prose. Available tools: " + ", ".join(tool_names)
                         ),
                     },
                 ]
