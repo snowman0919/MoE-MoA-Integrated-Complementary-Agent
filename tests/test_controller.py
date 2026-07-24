@@ -3028,6 +3028,19 @@ def test_repeated_successful_inspection_marks_executor_stalled(
     )
     assert controller.executor_stalled(hermes) is True
 
+    codex = SessionState(
+        session_id="codex-image-inspection",
+        tool_executions=[
+            {
+                "tool_name": "view_image",
+                "normalized_arguments": {"path": "/workspace/README.md"},
+                "exit_code": 0,
+            }
+            for _ in range(3)
+        ],
+    )
+    assert controller.executor_stalled(codex) is True
+
 
 @pytest.mark.asyncio
 async def test_completed_implementation_is_told_to_return_final(
@@ -3188,6 +3201,7 @@ def test_review_observation_is_bounded_redacted_and_complete(
         },
         "changed_paths": ["gateway/src/dgx_moa/api.py"],
         "completion_evidence": {"lint": "exit 0", "tests": "exit 0"},
+        "contract_evidence": [],
         "diff_summary": "one focused change",
         "finish_reason": "stop",
         "known_failures": [
@@ -3224,3 +3238,36 @@ def test_review_observation_is_bounded_redacted_and_complete(
     assert set(bounded_evidence) == set(evidence)
     assert bounded_evidence["original_objective"] == "fix api_key=[REDACTED]"
     assert bounded_evidence["finish_reason"] == "stop"
+
+
+def test_review_observation_retains_bounded_contract_document(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="contract-evidence")
+    contract = tool_messages(
+        "read-contract",
+        "secret must be non-empty bytes; api_key=sk-1234567890123456",
+    )
+    contract[0]["tool_calls"][0]["function"] = {
+        "name": "read_file",
+        "arguments": json.dumps({"path": "/workspace/README.md"}),
+    }
+    controller._observe(state, contract)
+    for index in range(15):
+        controller._observe(state, tool_messages(f"later-{index}", f"result-{index}"))
+
+    observation = controller.review_observation(
+        state,
+        {"choices": [{"message": {"role": "assistant"}, "finish_reason": "stop"}]},
+        {},
+    )
+    evidence = json.loads(observation)
+
+    assert evidence["contract_evidence"] == [
+        {
+            "document": "README.md",
+            "content": "secret must be non-empty bytes; api_key=[REDACTED]",
+        }
+    ]
+    assert all("non-empty bytes" not in str(result) for result in state.tool_results)

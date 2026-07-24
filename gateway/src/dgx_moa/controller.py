@@ -116,6 +116,12 @@ GOAL_PREREQUISITE_DOCUMENTS = (
     "docs/VALIDATION.md",
     "docs/TRACE_SCHEMA.md",
 )
+REVIEW_CONTRACT_DOCUMENTS = {
+    "agents.md",
+    "readme.md",
+    "requirements.md",
+    "spec.md",
+}
 
 IMPLEMENTATION_QUALITY_CONTRACT = (
     "Treat the written contract and surrounding code as authoritative; supplied tests are "
@@ -1426,7 +1432,7 @@ class Controller:
                 state,
                 "tool_failure" if failed else "tool_observed_fact",
                 "tool",
-                result,
+                {**result, "target_paths": sorted(target_paths)},
                 generated_from=state.last_decision_id,
             )
             state.no_progress_count = 0
@@ -3355,6 +3361,7 @@ class Controller:
             if not command_inspection and tool_name not in {
                 "read",
                 "read_file",
+                "view_image",
                 "list",
                 "glob",
                 "grep",
@@ -3393,6 +3400,31 @@ class Controller:
             }
             for execution in state.tool_executions[-6:]
         ]
+
+    @staticmethod
+    def review_contract_evidence(state: SessionState) -> list[dict[str, str]]:
+        evidence: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for node in reversed(state.evidence_nodes):
+            if node.get("kind") != "tool_observed_fact":
+                continue
+            payload = node.get("payload")
+            if not isinstance(payload, dict) or payload.get("exit_code") != 0:
+                continue
+            stdout = payload.get("stdout")
+            paths = payload.get("target_paths")
+            if not isinstance(stdout, str) or not isinstance(paths, list):
+                continue
+            for path in paths:
+                name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
+                normalized = name.lower()
+                if normalized not in REVIEW_CONTRACT_DOCUMENTS or normalized in seen:
+                    continue
+                evidence.append({"document": name, "content": stdout[:4_000]})
+                seen.add(normalized)
+                if len(evidence) == 4:
+                    return list(reversed(evidence))
+        return list(reversed(evidence))
 
     @staticmethod
     def tool_execution_changes_files(execution: dict[str, Any]) -> bool:
@@ -3520,6 +3552,7 @@ class Controller:
             "acceptance_criteria": state.acceptance_criteria,
             "changed_paths": metadata.get("changed_paths", []),
             "diff_summary": metadata.get("diff_summary", ""),
+            "contract_evidence": self.review_contract_evidence(state),
             "tool_results": self.review_tool_results(state),
             "tool_executions": self.review_tool_executions(state),
             "validation_results": metadata.get("validation_results", []),
