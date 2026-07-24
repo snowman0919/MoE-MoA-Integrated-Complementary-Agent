@@ -1470,6 +1470,54 @@ async def test_resolved_goal_continuation_runs_orchestration_once(
 
 
 @pytest.mark.asyncio
+async def test_tool_continuation_reenters_reasoner_for_changed_context_or_no_progress(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="reasoner-reentry",
+        runtime_mode="agent",
+        roles_required=["reasoner", "executor"],
+        objective="Implement the change",
+    )
+    initial = {
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {},
+    }
+    await controller.prepare_executor(state, initial, ("reasoner", "executor"))
+    await controller.prepare_executor(
+        state, initial, ("reasoner", "executor"), tool_continuation=True
+    )
+    changed = {
+        "messages": [
+            *initial["messages"],
+            {"role": "user", "content": "Also preserve backwards compatibility"},
+        ],
+        "metadata": {},
+    }
+    await controller.prepare_executor(
+        state, changed, ("reasoner", "executor"), tool_continuation=True
+    )
+    await controller.prepare_executor(
+        state,
+        {**changed, "metadata": {"no_progress": True}},
+        ("reasoner", "executor"),
+        tool_continuation=True,
+    )
+
+    assert stub_provider.calls.count("reasoner") == 3
+    reentries = [
+        event["payload"]
+        for event in controller.store.events(state.session_id)
+        if event["event_type"] == "reasoner_reentry"
+    ]
+    assert reentries == [
+        {"reasons": ["user_context_changed"]},
+        {"reasons": ["no_progress"]},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tool_continuation_promotes_reviewer_for_implementation_evidence(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -2317,6 +2365,48 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
         )
         is False
     )
+
+
+def test_implementation_completion_requires_change_validation_and_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="implementation-gate",
+        objective="Implement rate_limiter.py in this repository and test it.",
+        plan=[{"step": "Implement the module and run tests"}],
+    )
+
+    assert controller.requires_implementation_tool_action(state, {}) is True
+    state.tool_executions.append(
+        {
+            "tool_name": "apply_patch",
+            "normalized_arguments": {"patch": "*** Begin Patch"},
+            "exit_code": 0,
+        }
+    )
+    assert controller.requires_implementation_tool_action(state, {}) is True
+    state.tool_executions.append(
+        {
+            "tool_name": "exec_command",
+            "normalized_arguments": {"cmd": "python -m pytest -q"},
+            "exit_code": 0,
+        }
+    )
+    assert controller.requires_implementation_tool_action(state, {}) is False
+
+    state.roles_required.append("reviewer")
+    state.review_status = "rejected"
+    assert controller.requires_implementation_tool_action(state, {}) is True
+    state.review_status = "approved"
+    assert controller.requires_implementation_tool_action(state, {}) is False
+
+    question = SessionState(
+        session_id="question",
+        objective="Explain how a Python rate limiter works.",
+        plan=[{"step": "Explain the concept"}],
+    )
+    assert controller.requires_implementation_tool_action(question, {}) is False
 
 
 def test_review_observation_is_bounded_redacted_and_complete(
