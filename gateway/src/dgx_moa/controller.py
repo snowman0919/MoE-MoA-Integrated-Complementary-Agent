@@ -313,7 +313,29 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
     except ValueError:
         parsed = {"stdout": str(content)}
     parsed = parsed if isinstance(parsed, dict) else {"stdout": str(parsed)}
-    stdout = parsed.get("stdout", parsed.get("output", ""))
+    if "stdout" in parsed:
+        stdout = parsed["stdout"]
+    elif "output" in parsed:
+        stdout = parsed["output"]
+    elif "content" in parsed:
+        stdout = parsed["content"]
+    else:
+        evidence = {
+            key: value
+            for key, value in parsed.items()
+            if key
+            not in {
+                "arguments",
+                "duration_ms",
+                "error",
+                "exit_code",
+                "name",
+                "stderr",
+                "tool_name",
+                "truncated",
+            }
+        }
+        stdout = json.dumps(evidence, ensure_ascii=False, sort_keys=True) if evidence else ""
     stderr = parsed.get("stderr", parsed.get("error", ""))
     result = {
         "tool_name": str(
