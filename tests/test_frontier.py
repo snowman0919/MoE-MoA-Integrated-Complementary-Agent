@@ -530,29 +530,37 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
 ) -> None:  # type: ignore[no-untyped-def]
     key_path = tmp_path / "openrouter_api"
     key_path.write_text("synthetic-openrouter-key")
+    requests = 0
 
     class FakeResponse:
+        def __init__(self, valid: bool) -> None:
+            self.valid = valid
+
         def raise_for_status(self) -> None:
             return None
 
         def json(self) -> dict[str, object]:
             return {
                 "choices": [
-                    {
-                        "message": {
-                            "content": json.dumps(
-                                {
-                                    "verdict": "approve",
-                                    "critical": [],
-                                    "important": [],
-                                    "suggestions": [],
-                                    "missing_tests": [],
-                                    "confidence": 0.9,
-                                }
-                            )
-                        },
-                        "finish_reason": "stop",
-                    }
+                        {
+                            "message": {
+                                "content": (
+                                    json.dumps(
+                                        {
+                                            "verdict": "approve",
+                                            "critical": [],
+                                            "important": [],
+                                            "suggestions": [],
+                                            "missing_tests": [],
+                                            "confidence": 0.9,
+                                        }
+                                    )
+                                    if self.valid
+                                    else "{}"
+                                )
+                            },
+                            "finish_reason": "stop",
+                        }
                 ],
                 "usage": {"prompt_tokens": 10, "completion_tokens": 10},
             }
@@ -568,7 +576,9 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
             return None
 
         def post(self, _url, **_kwargs):  # type: ignore[no-untyped-def]
-            return FakeResponse()
+            nonlocal requests
+            requests += 1
+            return FakeResponse(valid=requests > 1)
 
     monkeypatch.setattr("dgx_moa.frontier.httpx.Client", FakeClient)
     runner = CodexOAuthCollaboration(
@@ -593,6 +603,7 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
 
     assert result.profile == "openrouter:anthropic/claude-sonnet-4.6"
     assert result.output["verdict"] == "approve"
+    assert requests == 2
 
 
 @pytest.mark.parametrize(

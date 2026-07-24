@@ -742,7 +742,8 @@ class CodexOAuthCollaboration:
                         "content": (
                             f"Return only the requested {mode} JSON. Use only the supplied "
                             "redacted evidence. Do not use tools, expose hidden reasoning, or "
-                            "invent facts."
+                            "invent facts. Any confidence value must be a number from 0 to 1. "
+                            f"{COLLABORATION_MODE_INSTRUCTIONS[mode]}"
                         ),
                     },
                     {"role": "user", "content": evidence_json},
@@ -761,46 +762,53 @@ class CodexOAuthCollaboration:
                     },
                 },
             }
-        try:
-            with httpx.Client(timeout=self.config.openrouter_timeout_seconds) as client:
-                response = client.post(
-                    f"{self.config.openrouter_endpoint.rstrip('/')}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {key}",
-                        "Content-Type": "application/json",
-                        "X-OpenRouter-Title": "DGX MoA Frontier Fallback",
-                    },
-                    json=body,
+        for attempt in range(self.config.collaboration_retries + 1):
+            try:
+                with httpx.Client(timeout=self.config.openrouter_timeout_seconds) as client:
+                    response = client.post(
+                        f"{self.config.openrouter_endpoint.rstrip('/')}/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {key}",
+                            "Content-Type": "application/json",
+                            "X-OpenRouter-Title": "DGX MoA Frontier Fallback",
+                        },
+                        json=body,
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                choice = payload["choices"][0]
+                message = choice["message"]
+                if mode == "executor":
+                    result = schema_model.model_validate(
+                        {
+                            "role": "assistant",
+                            "content": message.get("content"),
+                            "tool_calls": message.get("tool_calls") or [],
+                            "finish_reason": choice.get(
+                                "finish_reason",
+                                "tool_calls" if message.get("tool_calls") else "stop",
+                            ),
+                        }
+                    ).model_dump()
+                else:
+                    result = schema_model.model_validate_json(message["content"]).model_dump()
+                usage = payload.get("usage", {})
+                prompt = usage.get("prompt_tokens")
+                completion = usage.get("completion_tokens")
+                prompt = (
+                    prompt if isinstance(prompt, int) and not isinstance(prompt, bool) else None
                 )
-                response.raise_for_status()
-                payload = response.json()
-            choice = payload["choices"][0]
-            message = choice["message"]
-            if mode == "executor":
-                result = schema_model.model_validate(
-                    {
-                        "role": "assistant",
-                        "content": message.get("content"),
-                        "tool_calls": message.get("tool_calls") or [],
-                        "finish_reason": choice.get(
-                            "finish_reason", "tool_calls" if message.get("tool_calls") else "stop"
-                        ),
-                    }
-                ).model_dump()
-            else:
-                result = schema_model.model_validate_json(message["content"]).model_dump()
-            usage = payload.get("usage", {})
-            prompt = usage.get("prompt_tokens")
-            completion = usage.get("completion_tokens")
-            prompt = prompt if isinstance(prompt, int) and not isinstance(prompt, bool) else None
-            completion = (
-                completion
-                if isinstance(completion, int) and not isinstance(completion, bool)
-                else None
-            )
-        except (httpx.HTTPError, KeyError, TypeError, ValueError) as error:
-            self._failed()
-            raise RuntimeError("FRONTIER_OPENROUTER_FAILURE") from error
+                completion = (
+                    completion
+                    if isinstance(completion, int) and not isinstance(completion, bool)
+                    else None
+                )
+                break
+            except (httpx.HTTPError, KeyError, TypeError, ValueError) as error:
+                if attempt < self.config.collaboration_retries:
+                    continue
+                self._failed()
+                raise RuntimeError("FRONTIER_OPENROUTER_FAILURE") from error
         self.failures = 0
         self.opened_at = None
         cost = (
