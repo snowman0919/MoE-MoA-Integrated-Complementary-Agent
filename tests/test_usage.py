@@ -126,6 +126,9 @@ def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
         lifecycle_columns = {
             row[1] for row in database.execute("PRAGMA table_info(lifecycle_samples)")
         }
+        invocation_columns = {
+            row[1] for row in database.execute("PRAGMA table_info(model_invocation_usage)")
+        }
 
     assert tables == {
         "request_usage",
@@ -163,6 +166,7 @@ def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
         "memory_before_bytes",
         "memory_after_bytes",
     }
+    assert {"provider", "fallback_reason"} <= invocation_columns
 
 
 def test_legacy_chat_runtime_mode_reads_as_fast(tmp_path: Path) -> None:
@@ -588,6 +592,70 @@ def test_model_invocation_rates_are_written_to_runtime_csv(tmp_path: Path) -> No
     assert retired["invocation_count"] == "1"
     assert retired["failure_count"] == "1"
     assert frontier["invocation_rate_percent"] == "0.0"
+
+
+def test_api_token_dashboard_tracks_fallback_provenance(tmp_path: Path) -> None:
+    module = usage_module()
+    store = module.UsageStore(
+        tmp_path / "usage.db",
+        model_catalog={"executor": "executor-model", "frontier": "gpt-5.6-sol"},
+    )
+    for request_id in ("local", "remote"):
+        record = start_record(module, request_id, 100.0)
+        record.api_token_id = "client"
+        store.start(record)
+    store.record_model_invocation(
+        "local",
+        role="executor",
+        model="executor-model",
+        provider="local",
+        mode="final_synthesis",
+        status="completed",
+        latency_ms=10,
+        prompt_tokens=2,
+        completion_tokens=3,
+        total_tokens=5,
+    )
+    store.record_model_invocation(
+        "remote",
+        role="executor",
+        model="gpt-5.6-sol",
+        provider="frontier",
+        fallback_reason="local_busy",
+        mode="final_synthesis",
+        status="completed",
+        latency_ms=20,
+        prompt_tokens=7,
+        completion_tokens=11,
+        total_tokens=18,
+    )
+
+    dashboard = store.api_token_dashboard(name="client")
+
+    assert dashboard["fallback_summary"] == [
+        {"name": "client", "requests": 2, "fallbacks": 1, "rate": 50.0}
+    ]
+    assert dashboard["fallbacks"] == [
+        {
+            "name": "client",
+            "role": "executor",
+            "model": "gpt-5.6-sol",
+            "provider": "frontier",
+            "reason": "local_busy",
+            "invocations": 1,
+            "total_tokens": 18,
+        }
+    ]
+    remote = next(row for row in dashboard["daily_models"] if row["model"] == "gpt-5.6-sol")
+    assert remote | {"day": "1970-01-01"} == {
+        "name": "client",
+        "day": "1970-01-01",
+        "model": "gpt-5.6-sol",
+        "invocations": 1,
+        "prompt_tokens": 7,
+        "completion_tokens": 11,
+        "total_tokens": 18,
+    }
 
 
 def test_zero_inter_arrival_gaps_are_preserved_in_statistics(tmp_path: Path) -> None:

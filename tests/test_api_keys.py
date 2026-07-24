@@ -114,10 +114,13 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert "navigator.clipboard" in dashboard.text
         assert "payload.error?.message" in dashboard.text
         assert "JSON.parse(text)" in dashboard.text
-        assert "공란=무제한" in dashboard.text
+        assert 'placeholder="무제한"' in dashboard.text
         assert ".value.toLowerCase()" in dashboard.text
         assert "정확한 토큰" in dashboard.text
         assert "선택 기간 합계" in dashboard.text
+        assert "Fallback 경로" in dashboard.text
+        assert "kpi-fallback" in dashboard.text
+        assert 'class="tooltip"' in dashboard.text
         assert all(
             name in dashboard.text for name in ("Qwen3-Next", "Nemotron-30B", "North-Mini-30B")
         )
