@@ -64,6 +64,7 @@ async def test_responses_sse_translates_chat_text_and_usage() -> None:
         "테스트 코드를 확인합니다.",
         "동시성 테스트를 실행하겠습니다.",
         "구현을 위한 설계를 마친 후, `rate_limiter.py`를 작성합니다.",
+        "이제 테스트 파일을 검토하여 구현 요구사항을 정확히 이해합니다.",
         "Inspecting the tests.",
     ],
 )

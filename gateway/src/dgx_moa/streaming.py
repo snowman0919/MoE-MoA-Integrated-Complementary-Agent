@@ -43,6 +43,7 @@ KOREAN_PROGRESS_ENDINGS = tuple(
     )
     for suffix in ("합니다.", "하겠습니다.")
 )
+KOREAN_PROGRESS_PREFIXES = ("이제 ", "다음 ", "먼저 ", "이후 ", "계속 ", "곧 ")
 ENGLISH_PROGRESS_PREFIXES = (
     "checking ",
     "inspecting ",
@@ -67,6 +68,10 @@ def is_progress_only(text: str) -> bool:
         and (
             stripped.endswith(" 도구를 실행합니다.")
             or stripped.endswith(KOREAN_PROGRESS_ENDINGS)
+            or (
+                stripped.startswith(KOREAN_PROGRESS_PREFIXES)
+                and stripped.endswith(("합니다.", "하겠습니다."))
+            )
             or (
                 stripped.lower().startswith(ENGLISH_PROGRESS_PREFIXES)
                 and stripped.endswith((".", "…"))
