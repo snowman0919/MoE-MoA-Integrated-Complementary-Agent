@@ -714,6 +714,7 @@ class CodexOAuthCollaboration:
             messages = body.get("messages")
             if not isinstance(messages, list):
                 raise RuntimeError("FRONTIER_OPENROUTER_FAILURE")
+            body.pop("parallel_tool_calls", None)
             body.update(
                 {
                     "model": self.config.openrouter_model,
