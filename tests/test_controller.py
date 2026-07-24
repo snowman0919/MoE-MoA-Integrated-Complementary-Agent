@@ -449,8 +449,9 @@ async def test_optional_frontier_unavailable_keeps_derived_confidence_low(
 
 
 @pytest.mark.asyncio
-async def test_material_local_review_escalates_to_frontier_code_review(
-    settings, stub_provider: StubProvider
+@pytest.mark.parametrize("clean_approval", [False, True])
+async def test_local_review_escalates_to_frontier_code_review(
+    settings, stub_provider: StubProvider, clean_approval: bool
 ) -> None:  # type: ignore[no-untyped-def]
     class ReviewFrontier:
         config = FrontierConfig(enabled=True, max_invocations_per_task=3)
@@ -511,8 +512,8 @@ async def test_material_local_review_escalates_to_frontier_code_review(
                             "role": "assistant",
                             "content": json.dumps(
                                 {
-                                    "status": "rejected",
-                                    "findings": [reviewer_finding()],
+                                    "status": "approved" if clean_approval else "rejected",
+                                    "findings": [] if clean_approval else [reviewer_finding()],
                                 }
                             ),
                         },
@@ -545,13 +546,25 @@ async def test_material_local_review_escalates_to_frontier_code_review(
     prepared = await controller.prepare_executor(state, request, ("reasoner", "executor"))
 
     assert [mode for mode, _ in frontier.calls] == ["code_review"]
-    assert frontier.calls[0][1]["local_reviewer_findings"]["status"] == "rejected"
+    assert frontier.calls[0][1]["local_reviewer_findings"]["status"] == (
+        "approved" if clean_approval else "rejected"
+    )
+    assert frontier.calls[0][1]["tool_executions"] == []
     assert state.frontier_invocations == 1
     assert state.derived_confidence == "conflicted"
+    assert state.review_status == "rejected_frontier"
+    assert state.phase == Phase.CORRECTION
     assert "Frontier contribution" in json.dumps(prepared["messages"])
     assert any(
         event["event_type"] == "frontier_collaboration_started"
-        and event["payload"].get("trigger") == "material_reviewer_finding"
+        and event["payload"].get("trigger")
+        == (
+            "insufficient_local_review_assurance" if clean_approval else "material_reviewer_finding"
+        )
+        for event in store.events(state.session_id)
+    )
+    assert any(
+        event["event_type"] == "frontier_review_rejected"
         for event in store.events(state.session_id)
     )
 
@@ -624,6 +637,63 @@ async def test_executor_rejects_unsupported_reasoner_agent_recommendation(
         }
     ]
     assert "unsupported recommendations must be rejected" in json.dumps(prepared["messages"])
+
+
+@pytest.mark.asyncio
+async def test_low_confidence_reasoner_uses_planner_not_frontier(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def low_confidence(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reasoner":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "assumptions": [],
+                                    "constraints": [],
+                                    "conclusions": ["Inspect before editing."],
+                                    "hypotheses": [],
+                                    "evidence_references": [],
+                                    "recommended_actions": ["Use the local Planner."],
+                                    "additional_agents": [],
+                                    "confidence_category": "low",
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = low_confidence  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="low-confidence-planner",
+        objective="Implement the focused change",
+        runtime_mode="orchestrated",
+        roles_required=["reasoner", "executor"],
+    )
+
+    await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-orchestrated",
+            "messages": [{"role": "user", "content": state.objective}],
+            "metadata": {},
+        },
+        ("reasoner", "executor"),
+    )
+
+    assert "planner" in state.roles_required
+    assert not any(
+        event["event_type"] == "frontier_collaboration_started"
+        for event in store.events(state.session_id)
+    )
 
 
 def tool_messages(call_id: str, observation: str):  # type: ignore[no-untyped-def]

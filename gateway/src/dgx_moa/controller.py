@@ -1926,10 +1926,11 @@ class Controller:
             architecture
             or code_review
             or state.request_class == "high_risk_task"
-            or reasoner.confidence_category == "low"
             or any(item.needed and item.role == "frontier" for item in reasoner.additional_agents)
             or len(active_failures(state)) >= 2
         )
+        if reasoner.confidence_category == "low" and "planner" not in mandatory:
+            mandatory.append("planner")
         if architecture and "planner" not in mandatory:
             mandatory.append("planner")
         if code_review and "reviewer" not in mandatory:
@@ -2672,8 +2673,18 @@ class Controller:
                 collaboration_context += "\nLocal Reviewer contribution:\n" + json.dumps(
                     safe_reviewer["output"], ensure_ascii=False
                 )
-                if self.material_review_issue(pre_review_result):
-                    state.derived_confidence = "conflicted"
+                material_review_issue = self.material_review_issue(pre_review_result)
+                review_assurance_needed = pre_review_result.get(
+                    "status"
+                ) == "approved" and not pre_review_result.get("findings")
+                if material_review_issue or review_assurance_needed:
+                    review_trigger = (
+                        "material_reviewer_finding"
+                        if material_review_issue
+                        else "insufficient_local_review_assurance"
+                    )
+                    if material_review_issue:
+                        state.derived_confidence = "conflicted"
                     if frontier_task is None and frontier_pending is None:
                         if self.frontier is None:
                             self.store.event(
@@ -2684,7 +2695,7 @@ class Controller:
                                     "required": bool(
                                         request.get("metadata", {}).get("frontier_required")
                                     ),
-                                    "trigger": "material_reviewer_finding",
+                                    "trigger": review_trigger,
                                 },
                             )
                             if request.get("metadata", {}).get("frontier_required"):
@@ -2699,7 +2710,7 @@ class Controller:
                                 {
                                     "failure_class": "FRONTIER_INVOCATION_LIMIT",
                                     "required": False,
-                                    "trigger": "material_reviewer_finding",
+                                    "trigger": review_trigger,
                                 },
                             )
                         else:
@@ -2733,7 +2744,7 @@ class Controller:
                                 {
                                     "mode": "code_review",
                                     "parallel": False,
-                                    "trigger": "material_reviewer_finding",
+                                    "trigger": review_trigger,
                                 },
                             )
         if frontier_pending is not None and self.frontier is not None:
@@ -2821,6 +2832,17 @@ class Controller:
                         "transmitted_categories": frontier_result.transmitted_categories,
                     },
                 )
+                if frontier_result.mode == "code_review" and frontier_result.output.get(
+                    "verdict"
+                ) in {"revise", "reject"}:
+                    state.review_status = "rejected_frontier"
+                    state.phase = Phase.CORRECTION
+                    state.derived_confidence = "conflicted"
+                    self.store.event(
+                        state.session_id,
+                        "frontier_review_rejected",
+                        {"verdict": frontier_result.output.get("verdict")},
+                    )
                 if (
                     "judge" in roles
                     and frontier_result.mode == "disagreement"
@@ -2858,7 +2880,9 @@ class Controller:
             if isinstance(review_error, (StageTimeout, httpx.TimeoutException)):
                 raise review_error
             raise ValueError(f"review failed: {review_error}") from review_error
-        state.phase = Phase.EXECUTING
+        state.phase = (
+            Phase.CORRECTION if state.review_status.startswith("rejected") else Phase.EXECUTING
+        )
         state.final_status = None
         state.step_count += 1
         self.select_executor_knowledge(state, dict(request.get("metadata", {})))

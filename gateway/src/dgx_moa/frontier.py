@@ -163,6 +163,7 @@ class FrontierConfig(BaseModel):
             "local_reviewer_findings",
             "known_limitations",
             "tool_results",
+            "tool_executions",
             "reasoner_position",
             "executor_position",
             "planner_position",
