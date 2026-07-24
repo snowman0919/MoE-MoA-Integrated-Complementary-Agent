@@ -2585,7 +2585,7 @@ class Controller:
                             "diff_summary", request.get("metadata", {}).get("relevant_diff", "")
                         ),
                         "tests": request.get("metadata", {}).get("validation_results", []),
-                        "tool_results": state.tool_results[-4:],
+                        "tool_results": self.review_tool_results(state),
                     },
                     "specific_questions": request.get("metadata", {}).get("frontier_questions", []),
                 }
@@ -2671,7 +2671,7 @@ class Controller:
                         "changed_paths": metadata.get("changed_paths", []),
                         "diff_summary": metadata.get("diff_summary", ""),
                         "validation_results": metadata.get("validation_results", []),
-                        "tool_results": state.tool_results[-4:],
+                        "tool_results": self.review_tool_results(state),
                         "tool_executions": self.review_tool_executions(state),
                     },
                 ),
@@ -2891,6 +2891,7 @@ class Controller:
                                 "test_results": request.get("metadata", {}).get(
                                     "validation_results", []
                                 ),
+                                "tool_results": self.review_tool_results(state),
                                 "tool_executions": self.review_tool_executions(state),
                                 "local_reviewer_findings": pre_review_result,
                                 "known_limitations": request.get("metadata", {}).get(
@@ -3347,6 +3348,11 @@ class Controller:
         return False
 
     @staticmethod
+    def review_tool_results(state: SessionState) -> list[dict[str, Any]]:
+        results = state.tool_results
+        return list(results) if len(results) <= 8 else [*results[:4], *results[-4:]]
+
+    @staticmethod
     def review_tool_executions(state: SessionState) -> list[dict[str, Any]]:
         return [
             {
@@ -3489,7 +3495,7 @@ class Controller:
             "acceptance_criteria": state.acceptance_criteria,
             "changed_paths": metadata.get("changed_paths", []),
             "diff_summary": metadata.get("diff_summary", ""),
-            "tool_results": state.tool_results[-4:],
+            "tool_results": self.review_tool_results(state),
             "tool_executions": self.review_tool_executions(state),
             "validation_results": metadata.get("validation_results", []),
             "scope_evidence": state.approved_scope,
