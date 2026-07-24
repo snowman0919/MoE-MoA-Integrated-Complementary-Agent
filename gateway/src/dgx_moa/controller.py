@@ -3047,6 +3047,11 @@ class Controller:
                     state,
                     {
                         "role": "frontier",
+                        "provider": (
+                            "openrouter"
+                            if frontier_result.profile.startswith("openrouter:")
+                            else "codex"
+                        ),
                         "mode": frontier_result.mode,
                         "latency_ms": frontier_result.latency_ms,
                         "prompt_tokens": frontier_result.prompt_tokens,
@@ -3307,11 +3312,11 @@ class Controller:
                 and isinstance(command, str)
                 and (
                     re.search(
-                        r"(?:^|&&|\|\||;)\s*(?:uv run )?(?:python -m )?"
+                        r"(?:^|&&|\|\||;|\n|[\"'])\s*(?:uv run )?(?:python -m )?"
                         r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
                         command,
                     )
-                    or re.search(r"(?:^|&&|\|\||;)\s*git\s+diff\b", command)
+                    or re.search(r"(?:^|&&|\|\||;|\n|[\"'])\s*git\s+diff\b", command)
                 )
             ):
                 return True

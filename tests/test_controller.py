@@ -3367,3 +3367,26 @@ def test_review_observation_retains_relative_write_evidence(
             },
         }
     ]
+
+
+def test_shell_wrapped_validation_allows_deferred_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="wrapped-validation",
+        review_status="deferred",
+        review_deferred=True,
+        frontier_correction_pending_verification=True,
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {
+                    "cmd": "/usr/bin/bash -lc 'python -m unittest discover -s tests -v'"
+                },
+                "exit_code": 0,
+            }
+        ],
+    )
+
+    assert controller.has_review_evidence(state, {})
