@@ -14,6 +14,7 @@ from dgx_moa.controller import (
     classify_failure,
     compact_resolved_goal_history,
     fingerprint,
+    normalize_tool_result,
 )
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
 from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
@@ -32,6 +33,28 @@ def reviewer_finding(severity: str = "important") -> dict[str, object]:
         "impact": "The boundary is not verified.",
         "required_correction": "Add the missing boundary validation.",
         "optional_recommendation": None,
+    }
+
+
+def test_normalize_tool_result_preserves_hermes_output() -> None:
+    result = normalize_tool_result(
+        {
+            "role": "tool",
+            "name": "terminal",
+            "content": json.dumps(
+                {"output": "tests timed out", "exit_code": 124, "error": None}
+            ),
+        }
+    )
+
+    assert result == {
+        "tool_name": "terminal",
+        "arguments": {},
+        "stdout": "tests timed out",
+        "stderr": "",
+        "exit_code": 124,
+        "duration_ms": 0,
+        "truncated": False,
     }
 
 

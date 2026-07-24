@@ -313,11 +313,18 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
     except ValueError:
         parsed = {"stdout": str(content)}
     parsed = parsed if isinstance(parsed, dict) else {"stdout": str(parsed)}
+    stdout = parsed.get("stdout", parsed.get("output", ""))
+    stderr = parsed.get("stderr", parsed.get("error", ""))
     result = {
-        "tool_name": str(parsed.get("tool_name", parsed.get("name", "shell"))),
+        "tool_name": str(
+            parsed.get(
+                "tool_name",
+                parsed.get("name", message.get("tool_name", message.get("name", "shell"))),
+            )
+        ),
         "arguments": parsed.get("arguments", {}),
-        "stdout": clean_tool_output(parsed.get("stdout", "")),
-        "stderr": clean_tool_output(parsed.get("stderr", parsed.get("error", ""))),
+        "stdout": clean_tool_output("" if stdout is None else stdout),
+        "stderr": clean_tool_output("" if stderr is None else stderr),
         "exit_code": int(parsed.get("exit_code", 0)),
         "duration_ms": int(parsed.get("duration_ms", 0)),
         "truncated": bool(parsed.get("truncated", False)),
