@@ -973,6 +973,20 @@ def test_successful_write_invalidates_approved_review(
     controller._observe(read_state, tool_messages("read", "source"))
     assert read_state.review_status == "approved"
 
+    stderr_redirect = tool_messages("cat-stderr", "source")
+    stderr_redirect[0]["tool_calls"][0]["function"]["arguments"] = json.dumps(
+        {"cmd": "cat app.py 2>/dev/null || echo FILE_NOT_FOUND"}
+    )
+    controller._observe(read_state, stderr_redirect)
+    assert read_state.review_status == "approved"
+
+    stderr_append = tool_messages("cat-stderr-append", "source")
+    stderr_append[0]["tool_calls"][0]["function"]["arguments"] = json.dumps(
+        {"cmd": "cat app.py 2>>errors.log"}
+    )
+    controller._observe(read_state, stderr_append)
+    assert read_state.review_status == "approved"
+
 
 def test_successful_output_can_describe_failures(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     state = SessionState(session_id="failure-doc")
@@ -2468,6 +2482,37 @@ def test_implementation_completion_requires_change_validation_and_review(
         plan=[{"step": "Explain the concept"}],
     )
     assert controller.requires_implementation_tool_action(question, {}) is False
+
+
+@pytest.mark.asyncio
+async def test_completed_implementation_is_told_to_return_final(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="implementation-final",
+        objective="Implement rate_limiter.py in this repository and test it.",
+        roles_required=["executor", "reviewer"],
+        review_status="approved",
+        tool_executions=[
+            {"tool_name": "apply_patch", "exit_code": 0},
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m pytest -q"},
+                "exit_code": 0,
+            },
+        ],
+    )
+    request = {
+        "model": "dgx-moa",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {},
+    }
+
+    prepared = await controller.prepare_executor(state, request, ("executor", "reviewer"))
+
+    prompt = prepared["messages"][0]["content"]
+    assert "Return the concise final result now; do not call more tools." in prompt
 
 
 def test_review_observation_is_bounded_redacted_and_complete(
