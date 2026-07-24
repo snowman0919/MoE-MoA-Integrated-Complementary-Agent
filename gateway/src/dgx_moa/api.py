@@ -2507,32 +2507,13 @@ def create_app(
                 and request.app.state.frontier is not None
                 and state.frontier_correction_required
             )
-            correction_stalled = (
-                not executor_remote
-                and request.app.state.frontier is not None
-                and bool(raw["metadata"].get("responses_progress_retry"))
-                and state.review_status not in {"pending", "approved"}
-                and any(
-                    execution.get("exit_code") == 0
-                    and request.app.state.controller.tool_execution_changes_files(execution)
-                    for execution in state.tool_executions
-                )
-            )
-            if (
-                context_exceeded
-                or stalled
-                or completion_stalled
-                or frontier_correction
-                or correction_stalled
-            ):
+            if context_exceeded or stalled or completion_stalled or frontier_correction:
                 executor_remote = True
                 executor_routing_reason = (
                     "local_context_exceeded"
                     if context_exceeded
                     else "frontier_correction_required"
                     if frontier_correction
-                    else "local_correction_stalled"
-                    if correction_stalled
                     else "local_completion_stalled"
                     if completion_stalled
                     else "local_no_progress"
