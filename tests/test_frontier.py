@@ -22,6 +22,7 @@ from dgx_moa.frontier import (
     evaluate_frontier_candidate,
     frontier_eligible,
     load_frontier_config,
+    openrouter_response_schema,
     profile_lock,
     profile_status,
     record_frontier_run,
@@ -192,6 +193,15 @@ def test_remote_executor_tool_paths_stay_in_client_workspace() -> None:
     patch = json.loads(sanitized.tool_calls[2].function.arguments)["patch"]
     assert "*** Update File: src/app.py" in patch
     assert "/gateway/production" not in patch
+
+
+def test_openrouter_schema_removes_unsupported_numeric_constraints() -> None:
+    schema = openrouter_response_schema(COLLABORATION_SCHEMAS["code_review"])
+    encoded = json.dumps(schema)
+
+    assert '"minimum"' not in encoded
+    assert '"maximum"' not in encoded
+    assert '"confidence"' in encoded
 
 
 def test_codex_oauth_environment_excludes_gateway_secrets(

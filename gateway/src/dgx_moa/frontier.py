@@ -15,7 +15,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 import httpx
 import yaml
@@ -226,6 +226,24 @@ def bounded_external_evidence(
         if len(serialized) <= config.max_evidence_characters or budget <= 16:
             return bounded, serialized
         budget //= 2
+
+
+def openrouter_response_schema(schema_model: type[BaseModel]) -> dict[str, Any]:
+    """Remove numeric constraints Anthropic structured outputs do not accept."""
+    unsupported = {"exclusiveMaximum", "exclusiveMinimum", "maximum", "minimum", "multipleOf"}
+
+    def clean(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: clean(item)
+                for key, item in value.items()
+                if key not in unsupported
+            }
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        return value
+
+    return cast(dict[str, Any], clean(schema_model.model_json_schema()))
 
 
 class FrontierArchitectureResult(BaseModel):
@@ -739,7 +757,7 @@ class CodexOAuthCollaboration:
                     "json_schema": {
                         "name": f"frontier_{mode}",
                         "strict": True,
-                        "schema": schema_model.model_json_schema(),
+                        "schema": openrouter_response_schema(schema_model),
                     },
                 },
             }
