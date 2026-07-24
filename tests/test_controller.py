@@ -76,6 +76,21 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
         "files": ["tests/test_task.py"],
         "total_count": 1,
     }
+    warned = normalize_tool_result(
+        {
+            "role": "tool",
+            "name": "terminal",
+            "content": (
+                json.dumps({"output": "FAILED", "exit_code": 1, "error": None})
+                + "\n\n[Tool loop warning: inspect before retrying.]"
+            ),
+        }
+    )
+    assert warned["exit_code"] == 1
+    assert warned["stderr"] == ""
+    assert warned["stdout"] == (
+        "FAILED\n\n[Tool loop warning: inspect before retrying.]"
+    )
 
 
 def test_role_schemas_discard_hidden_reasoning_and_require_structured_findings() -> None:
