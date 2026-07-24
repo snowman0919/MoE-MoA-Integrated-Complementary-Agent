@@ -2007,7 +2007,9 @@ def create_app(
                     role_states[role] = "warm" if healthy else "cold"
                     role_ready_at[role] = external_record.ready_at
                     if not healthy:
-                        if is_optional:
+                        if role == "reasoner" and request.app.state.frontier is not None:
+                            degraded_roles[role] = "local_not_ready_remote_fallback"
+                        elif is_optional:
                             degraded_roles[role] = f"{role}_unavailable"
                         elif loading_record is None and unavailable_record is None:
                             unavailable_record = external_record
@@ -2213,6 +2215,7 @@ def create_app(
                     if not (
                         configured.specialist_routing.enabled and role in {"planner", "reviewer"}
                     )
+                    and role not in degraded_roles
                     and not (executor_remote and role == "executor")
                 )
                 active_lease_ids = tuple(

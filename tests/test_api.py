@@ -462,8 +462,7 @@ def test_repeated_inspection_routes_executor_to_frontier(
     assert tool_less_response.status_code == 503
     assert "frontier_required_unavailable" in tool_less_response.text
     assert any(
-        event["event_type"] == "frontier_correction_tool_unavailable"
-        for event in tool_less_events
+        event["event_type"] == "frontier_correction_tool_unavailable" for event in tool_less_events
     )
 
 
@@ -2361,6 +2360,102 @@ def test_explicit_reasoner_policy_is_required_when_cold(
     assert response.headers["X-DGX-MOA-Model-Role"] == "reasoner"
     assert role_usage[0].failure_class == "model_loading"
     assert "reasoner" not in stub_provider.calls
+
+
+def test_external_cold_reasoner_uses_frontier_fallback_without_blocking(
+    settings,
+    stub_provider: StubProvider,
+) -> None:  # type: ignore[no-untyped-def]
+    frontier_config = settings.state_db.parent / "reasoner-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    models = dict(settings.models)
+    models["reasoner"] = models["reasoner"].model_copy(
+        update={"provider": "ollama", "lifecycle_control": "external"}
+    )
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "models": models,
+            "frontier_enabled": True,
+            "frontier_config": frontier_config,
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    driver = FakeLifecycleDriver({"executor": "active"})
+
+    async def health_probe(role: str) -> bool:
+        return role == "executor"
+
+    original = stub_provider.complete
+
+    async def fail_local_reasoner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reasoner":
+            raise httpx.ConnectError("cold")
+        return await original(role, model, request, **kwargs)
+
+    async def remote_execute(
+        _remote_request: dict[str, object], correlation_id: str
+    ) -> dict[str, object]:
+        assert correlation_id.endswith(":reasoner_fallback")
+        return {
+            "id": "chatcmpl-reasoner-frontier",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps(
+                            {
+                                "assumptions": [],
+                                "constraints": [],
+                                "conclusions": ["Remote reasoning is available."],
+                                "hypotheses": [],
+                                "evidence_references": [],
+                                "recommended_actions": ["Continue with the Executor."],
+                                "additional_agents": [],
+                                "confidence_category": "high",
+                            }
+                        ),
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 11},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "primary", "cost_usd": None},
+        }
+
+    stub_provider.complete = fail_local_reasoner  # type: ignore[method-assign]
+    app = create_app(
+        controlled,
+        lifecycle_driver=driver,
+        lifecycle_health_probe=health_probe,
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "external-cold-reasoner",
+            },
+            json={
+                "model": "dgx-moa",
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        events = app.state.store.events("external-cold-reasoner")
+
+    assert response.status_code == 200, response.text
+    assert any(event["event_type"] == "reasoner_fallback_completed" for event in events)
+    assert not any(event["event_type"] == "model_unavailable" for event in events)
+    role_usage = app.state.usage.recent_role_requests("reasoner")
+    assert len(role_usage) == 1
+    assert role_usage[0].cold_or_warm == "cold"
 
 
 def test_explicit_ready_reasoner_is_used_only_when_selected(
