@@ -1259,6 +1259,29 @@ def log_text(evidence: Path) -> str:
     return "\n".join(values)
 
 
+def successful_hermes_test_result(role: str, tool_name: str | None, content: str) -> bool:
+    if role != "tool":
+        return False
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return False
+    if tool_name == "terminal":
+        return payload.get("exit_code") == 0 and any(
+            marker in str(payload.get("output", "")) for marker in ("Ran ", "OK")
+        )
+    if tool_name != "execute_code" or payload.get("status") != "success":
+        return False
+    try:
+        execution = json.loads(payload.get("output", ""))
+    except (TypeError, ValueError):
+        return False
+    unittest = execution.get("unittest", {})
+    return (unittest.get("success") is True or unittest.get("exit_code") == 0) and any(
+        marker in str(unittest.get("output", "")) for marker in ("Ran ", "OK")
+    )
+
+
 def hermes_test_evidence(args: argparse.Namespace, task: Task, evidence: Path) -> bool:
     profile = args.output_root / args.run_id / "profiles" / f"hermes-{task.slug}"
     usage_path = profile / "usage.json"
@@ -1273,7 +1296,7 @@ def hermes_test_evidence(args: argparse.Namespace, task: Task, evidence: Path) -
             SELECT role, tool_name, content, tool_calls
             FROM messages
             WHERE session_id = ?
-              AND (tool_name = 'terminal' OR tool_calls LIKE '%unittest%')
+              AND (tool_name IN ('terminal', 'execute_code') OR tool_calls LIKE '%unittest%')
             ORDER BY id
             """,
             (session_id,),
@@ -1285,11 +1308,7 @@ def hermes_test_evidence(args: argparse.Namespace, task: Task, evidence: Path) -
             connection.close()
     calls = sum("unittest" in str(row[3] or "") for row in rows)
     successful_results = sum(
-        row[0] == "tool"
-        and row[1] == "terminal"
-        and '"exit_code": 0' in str(row[2] or "")
-        and ("Ran " in str(row[2] or "") or "OK" in str(row[2] or ""))
-        for row in rows
+        successful_hermes_test_result(row[0], row[1], str(row[2] or "")) for row in rows
     )
     (evidence / "hermes-tool-evidence.json").write_text(
         json.dumps(
