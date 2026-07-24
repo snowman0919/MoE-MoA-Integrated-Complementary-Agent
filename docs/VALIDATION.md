@@ -5027,7 +5027,8 @@ results, two completed reviews with no review failure, Codex OAuth Frontier
 correction, final local Reviewer approval, `finish_reason=stop`, and completed
 session termination. The final local Reviewer invocation used
 `dgx-moa-reviewer`, 5,869 total tokens, and 3.845 seconds. The full repository
-suite passed `981 passed` with one third-party Starlette warning; Ruff passed.
+integration worktree passed `981 passed`; the clean production checkout passed
+`980 passed`. Both had one third-party Starlette warning and passed Ruff.
 Production merge `970fbfc` deployed commit `749e77f`, and `/readyz` reported
 Executor, Planner, Reviewer, and Reasoner ready with Judge stopped.
 
