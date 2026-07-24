@@ -2925,9 +2925,15 @@ class Controller:
                         "transmitted_categories": frontier_result.transmitted_categories,
                     },
                 )
-                if frontier_result.mode == "code_review" and frontier_result.output.get(
-                    "verdict"
-                ) in {"revise", "reject"}:
+                material_frontier_review = (
+                    frontier_result.mode == "code_review"
+                    and (
+                        frontier_result.output.get("verdict") in {"revise", "reject"}
+                        or bool(frontier_result.output.get("critical"))
+                        or bool(frontier_result.output.get("important"))
+                    )
+                )
+                if material_frontier_review:
                     state.review_status = "rejected_frontier"
                     state.review_deferred = True
                     state.frontier_correction_required = True
@@ -2936,7 +2942,13 @@ class Controller:
                     self.store.event(
                         state.session_id,
                         "frontier_review_rejected",
-                        {"verdict": frontier_result.output.get("verdict")},
+                        {
+                            "verdict": frontier_result.output.get("verdict"),
+                            "material_findings": (
+                                len(frontier_result.output.get("critical") or [])
+                                + len(frontier_result.output.get("important") or [])
+                            ),
+                        },
                     )
                 if (
                     "judge" in roles
