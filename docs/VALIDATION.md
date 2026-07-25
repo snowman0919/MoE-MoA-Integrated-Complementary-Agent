@@ -5190,3 +5190,28 @@ authenticated continuation on that exact OpenCode session returned HTTP 200,
 `finish_reason=stop`, and exact Korean content `연결 복구 확인`. A second
 streaming continuation returned HTTP 200, content `스트림 정상`,
 `finish_reason=stop`, and the terminal SSE `[DONE]` marker.
+
+## Responses pending-review retry deadlock — 2026-07-26
+
+An isolated Codex quality run completed its requested file write and all four
+tests, but the production gateway emitted repeated `incomplete_response`
+terminals classified as `progress_only_response`. The affected session had 42
+recorded tool results, successful mutation and validation executions, no
+Reviewer artifact, and `review_status=pending`. The Responses client did not
+present the completed tool turn in the legacy continuation shape, so dynamic
+Reviewer promotion never occurred. The completion gate correctly refused an
+unreviewed result, while progress retries kept asking the Executor for another
+tool call and eventually produced the client-visible 502.
+
+The Controller now promotes the Reviewer from recorded implementation evidence
+even when the client continuation marker is absent. During a progress retry,
+this recovery is limited to sessions with implementation evidence and no prior
+Reviewer artifact. Existing Reviewer artifacts are still reused without
+another paid or local call; rejected, deferred, Frontier-correction, and
+Reviewer-required paths remain fail-closed.
+
+Focused deadlock, deferred-review, review-reuse, and completion-gate tests
+passed 6/6. Controller plus streaming tests passed 151/151 after preserving the
+existing artifact-reuse behavior. The complete suite passed 985/985 in 26.08
+seconds with only the existing Starlette deprecation warning. Ruff and
+`git diff --check` passed. The code fix is commit `24a3cc9`.
