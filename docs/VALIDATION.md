@@ -5055,3 +5055,45 @@ one-sequence, memory, tool-calling, quality, and rollback gates. Until then,
 bounded specialist evidence, compressed tool history, context-aware remote
 routing, and concurrent independent-role work are the approved throughput
 controls; no speculative SGLang migration is deployed.
+## Isolated Qwen3-Next + Gemma 4 SGLang preparation — 2026-07-26
+
+This is a prepared experiment, not physical validation or production approval.
+Branch `auto/runtime/sglang-gemma4-v1` adds
+`scripts/isolated-sglang-topology.sh`; it refuses to start while the production
+Executor, Planner, or Reviewer unit is active and never stops or edits those
+units. Candidate ports are loopback-only `18101` and `18102`.
+
+The fixed runtime image is
+`lmsysorg/sglang:dev-cu13@sha256:26f620b13e49900cc6ab59ed693f9ce8f9ea4f3531074c1e39a3bf9db06ab8f0`.
+Its installed SGLang build exposes `compressed-tensors`, `modelopt_fp4`,
+`gemma4` reasoning and tool parsers, streaming, and cache reporting.
+
+The Executor remains `RedHatAI/Qwen3-Coder-Next-NVFP4` revision
+`27a8f16f463b9a13c91c332c40cf93e09717347e`. Its isolated command fixes
+context and total tokens at `65536`, one request, Mamba cache size `5`,
+Radix cache enabled, `mem-fraction-static=0.54`, disabled prefill/decode CUDA
+graphs, and the `qwen3_coder` tool parser.
+
+`nvidia/Gemma-4-31B-IT-NVFP4` revision
+`4135a98a9b728a548947683219633b25682223ac` was downloaded to an experimental
+model path. Top-level files total `32666144105` bytes. All download metadata
+records the fixed revision, and the four shards passed direct SHA-256 checks:
+
+- `4d955de1f740f16dcf3e9206a42082102cbf2d1b0c42adf1fc39190e186e3ae8`
+- `f8418783fa27ab2a3a92baaebe6c65c762bfe236fe0f7ec1e3c05b5617a1e6e4`
+- `5cfe8ee0f73c48536a21680d87257e5d7d93fc6706a236dc6a909f86e0ec578a`
+- `4dbb1ed31e5954cd9722a4789087f797417de40fc66a90ed5b46bfecfb7d3091`
+
+The Gemma command fixes context and total tokens at `65536`, one request,
+`mem-fraction-static=0.34`, ModelOpt FP4, FP8 KV, language-only loading,
+disabled prefill/decode CUDA graphs, and both `gemma4` parsers. Executor server
+startup is serialized before Specialist loading to avoid overlapping weight
+load peaks. `/v1/models` availability is only a start-order gate; later real
+inference must establish readiness.
+
+The new command-safety regression passed `1/1`. An initial full-suite run had
+one pre-existing 10 ms streaming-deadline timing failure; that exact test then
+passed `10/10`, and a fresh complete suite passed `981/981` in `68.75` seconds.
+No candidate container was started, no production service or configuration
+changed, and simultaneous residency, inference, quality, load, long-duration,
+and rollback gates remain unproven.
