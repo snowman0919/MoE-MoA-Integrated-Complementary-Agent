@@ -5110,3 +5110,11 @@ used 0.86 GB, and FP8 KV allocated all 65,536 tokens. `/healthz` returned
 `status=ok`, `/readyz` reported Executor, Planner, Reviewer, and Reasoner
 `ready`, and a post-deployment structured Planner inference returned one valid
 step with `finish_reason=stop` and no public reasoning in 31.86 seconds.
+
+The post-promotion audit restored the common unit environment-file hardening
+contract and reran `uv run pytest -q`: 981 tests passed with one existing
+Starlette deprecation warning. A live non-thinking Planner request returned
+public structured JSON with `finish_reason=stop`, zero reasoning tokens, and
+166 completion tokens in 14.078 seconds. The running container remained
+loopback-only with a 45 GiB hard memory/no-extra-swap limit, while measured GPU
+allocation was 25,655 MiB.
