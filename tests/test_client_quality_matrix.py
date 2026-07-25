@@ -7,6 +7,8 @@ from argparse import Namespace
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 SCRIPT = Path(__file__).parents[1] / "scripts/run-client-quality-matrix.py"
 GLOBALS = runpy.run_path(str(SCRIPT))
 SUCCESS = GLOBALS["successful_hermes_test_result"]
@@ -108,3 +110,49 @@ def test_timed_out_docker_run_removes_exact_container(tmp_path: Path) -> None:
 
     assert result.returncode == 124
     assert run.call_args_list[1].args[0] == ["docker", "rm", "-f", "moa-qm-test"]
+
+
+def matrix_args(tmp_path: Path, *, gateway: str = "http://gateway.invalid:9000") -> Namespace:
+    return Namespace(
+        run_id="preregistered",
+        workspace_root=tmp_path / "workspaces",
+        output_root=tmp_path / "evidence",
+        gateway=gateway,
+        timeout=30,
+        runtime="docker",
+    )
+
+
+def test_fixture_manifest_pins_gateway_runner_and_prompt(tmp_path: Path) -> None:
+    args = matrix_args(tmp_path)
+    task = GLOBALS["TASKS"][0]
+
+    manifest = GLOBALS["prepare_one"](args, "codex", task)
+
+    assert manifest["gateway"] == args.gateway
+    assert manifest["harness_sha256"] == GLOBALS["sha256"](SCRIPT)
+    assert manifest["prompt_sha256"] == GLOBALS["text_sha256"](GLOBALS["prompt"](task))
+
+    changed = matrix_args(tmp_path, gateway="http://other.invalid:9000")
+    with pytest.raises(RuntimeError, match="fixture manifest mismatch: gateway"):
+        GLOBALS["run_one"](changed, "codex", task)
+
+
+def test_partial_summary_does_not_claim_noninferiority(tmp_path: Path) -> None:
+    args = matrix_args(tmp_path)
+    task = GLOBALS["TASKS"][0]
+    _, evidence = GLOBALS["paths"](args, "baseline", task)
+    evidence.mkdir(parents=True)
+    (evidence / "score.json").write_text(
+        json.dumps({"harness": "baseline", "task": task.slug, "status": "passed"})
+    )
+
+    result = GLOBALS["summary"](args)
+
+    assert result["matrix_complete"] is False
+    assert result["complete"] is False
+    assert result["usability_not_below_baseline"] == {
+        "opencode": None,
+        "codex": None,
+        "hermes": None,
+    }

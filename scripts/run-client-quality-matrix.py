@@ -794,6 +794,10 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def text_sha256(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
 def workspace_name(run_id: str, harness: str, task: Task) -> str:
     normalized = re.sub(r"[^a-z0-9-]", "-", run_id.lower()).strip("-") or "run"
     safe_run = (
@@ -855,6 +859,9 @@ def prepare_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str,
         "run_id": args.run_id,
         "harness": harness,
         "task": task.slug,
+        "gateway": args.gateway.rstrip("/"),
+        "harness_sha256": sha256(Path(__file__)),
+        "prompt_sha256": text_sha256(prompt(task)),
         "workspace": str(workspace),
         "source_name": task.source_name,
         "initial_commit": git(workspace, "rev-parse", "HEAD").stdout.strip(),
@@ -1108,8 +1115,18 @@ def run_codex_admin(args: argparse.Namespace, workspace: Path, task: Task) -> tu
 
 def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any]:
     workspace, evidence = paths(args, harness, task)
-    if not (evidence / "manifest.json").exists():
+    manifest_path = evidence / "manifest.json"
+    if not manifest_path.exists():
         raise RuntimeError(f"prepare first: {harness}/{task.slug}")
+    manifest = json.loads(manifest_path.read_text())
+    expected = {
+        "gateway": args.gateway.rstrip("/"),
+        "harness_sha256": sha256(Path(__file__)),
+        "prompt_sha256": text_sha256(prompt(task)),
+    }
+    mismatches = [name for name, value in expected.items() if manifest.get(name) != value]
+    if mismatches:
+        raise RuntimeError("fixture manifest mismatch: " + ", ".join(mismatches))
     started_at = time.time()
     started = time.monotonic()
     if harness == "opencode":
@@ -1469,16 +1486,19 @@ def summary(args: argparse.Namespace) -> dict[str, Any]:
         for harness in HARNESSES
     }
     baseline_passed = counts["baseline"]["passed"]
+    matrix_complete = all(counts[harness]["total"] == len(TASKS) for harness in HARNESSES)
     usability_not_below_baseline = {
-        harness: counts[harness]["passed"] >= baseline_passed
+        harness: counts[harness]["passed"] >= baseline_passed if matrix_complete else None
         for harness in ("opencode", "codex", "hermes")
     }
     result = {
         "run_id": args.run_id,
         "counts": counts,
+        "matrix_complete": matrix_complete,
         "usability_not_below_baseline": usability_not_below_baseline,
         "complete": (
-            baseline_passed == len(TASKS)
+            matrix_complete
+            and baseline_passed == len(TASKS)
             and all(counts[harness]["passed"] == len(TASKS) for harness in HARNESSES[1:])
         ),
         "rows": rows,
