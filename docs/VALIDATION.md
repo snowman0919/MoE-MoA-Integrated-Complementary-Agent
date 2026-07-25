@@ -5158,3 +5158,35 @@ Reasoner ready. The affected live session then changed from
 `replanning/no termination/43,200 seconds`, with recovery count one. A fresh
 authenticated `dgx-moa-fast` inference returned HTTP 200, exact public content
 `OK`, `finish_reason=stop`, 1,047 prompt tokens, and two completion tokens.
+
+## Engineering-loop expanded-call-budget recovery — 2026-07-25
+
+The same production session failed again after wall-clock recovery. Its local
+Planner completed normally, but the loop then rejected the action because the
+serialized legacy budget still had zero Planner and Frontier calls. The
+gateway returned repeated 502 responses without another role-model request.
+This was a second migration defect: only wall-clock and zero-token limits were
+eligible for the increased checked-in defaults.
+
+On `BUDGET_EXHAUSTED`, the Controller now counts durable successful
+`engineering_loop_budget_consumed` events for the current loop and derives
+each bounded call remainder as the configured limit minus actual consumption.
+Iterations use the loop's persisted iteration count and tokens retain the
+existing invocation-usage calculation. A value is changed only when this
+calculation yields more than the persisted remainder. A session that has
+already consumed the configured limit therefore remains fail-closed.
+
+Controller and loop tests passed 106/106. The full suite passed 984/984 in
+27.30 seconds with only the existing Starlette deprecation warning. A SQLite
+backup of the exact failed session recovered iterations `4 -> 28`, tool calls
+`97 -> 497`, Reasoner calls `3 -> 27`, Planner calls `0 -> 6`, Reviewer calls
+`8 -> 32`, Frontier calls `0 -> 12`, Judge calls `2 -> 4`, and tokens
+`757,501 -> 4,753,667`; termination cleared to `replanning`.
+
+Production `main` was fast-forwarded to `b7c4f91` and pushed. Only the gateway
+was restarted. The same migration was applied to the affected live session
+without changing prompts, tool results, or model services. A non-streaming
+authenticated continuation on that exact OpenCode session returned HTTP 200,
+`finish_reason=stop`, and exact Korean content `연결 복구 확인`. A second
+streaming continuation returned HTTP 200, content `스트림 정상`,
+`finish_reason=stop`, and the terminal SSE `[DONE]` marker.
