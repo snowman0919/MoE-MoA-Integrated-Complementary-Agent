@@ -5103,3 +5103,10 @@ The installed unit uses `mem-fraction-static=0.68`, rather than the isolated
 40.49 GB to SGLang. The higher fraction reserves about 27.5 GB of that visible
 memory and must pass the same 65K allocation and inference probe before the
 service is considered ready.
+
+The installed cold start then physically passed with Executor and Reviewer
+already resident: weight load took 102.80 seconds and 19.80 GB, Mamba state
+used 0.86 GB, and FP8 KV allocated all 65,536 tokens. `/healthz` returned
+`status=ok`, `/readyz` reported Executor, Planner, Reviewer, and Reasoner
+`ready`, and a post-deployment structured Planner inference returned one valid
+step with `finish_reason=stop` and no public reasoning in 31.86 seconds.
