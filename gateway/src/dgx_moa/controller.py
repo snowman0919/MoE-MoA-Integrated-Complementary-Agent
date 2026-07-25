@@ -1005,6 +1005,29 @@ class Controller:
                 )
             elif (
                 state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
+                and state.engineering_loop.remaining_budget.wall_clock_seconds == 0
+                and state.engineering_loop.wall_clock_recovery_count == 0
+            ):
+                state.engineering_loop.remaining_budget.wall_clock_seconds = (
+                    configured_budget.wall_clock_seconds
+                )
+                state.engineering_loop.wall_clock_recovery_count = 1
+                state.engineering_loop.termination_reason = None
+                state.engineering_loop.progress_state = "progressing"
+                state.engineering_loop.started_at_epoch = time.time()
+                state.phase = Phase.REPLANNING
+                state.final_status = None
+                self.store.event(
+                    state.session_id,
+                    "engineering_loop_wall_clock_recovered",
+                    {
+                        "remaining_wall_clock_seconds": (
+                            state.engineering_loop.remaining_budget.wall_clock_seconds
+                        )
+                    },
+                )
+            elif (
+                state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
                 and state.engineering_loop.remaining_budget.tokens == 0
             ):
                 used_tokens = sum(

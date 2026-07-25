@@ -19,16 +19,16 @@ gateway:
   loop_engineering:
     enabled: false
     defaults:
-      iterations: 8
-      tool_calls: 100
-      reasoner_reentries: 8
-      planner_calls: 2
-      reviewer_calls: 8
-      frontier_calls: 4
-      judge_calls: 2
-      tokens: 1000000
+      iterations: 32
+      tool_calls: 500
+      reasoner_reentries: 32
+      planner_calls: 8
+      reviewer_calls: 32
+      frontier_calls: 16
+      judge_calls: 4
+      tokens: 5000000
       external_cost_usd: 10
-      wall_clock_seconds: 1800
+      wall_clock_seconds: 43200
     duplicate_fingerprint_limit: 2
     no_progress_iteration_limit: 2
     local_failures_before_frontier: 2
@@ -205,7 +205,7 @@ gateway:
     optional_idle_minimum_seconds: 300
     optional_idle_maximum_seconds: 2700
     optional_minimum_ready_residency_seconds: 300
-    max_steps: 100
+    max_steps: 1000
 
 models:
   executor:

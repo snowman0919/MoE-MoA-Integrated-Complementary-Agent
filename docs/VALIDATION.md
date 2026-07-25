@@ -5118,3 +5118,34 @@ public structured JSON with `finish_reason=stop`, zero reasoning tokens, and
 166 completion tokens in 14.078 seconds. The running container remained
 loopback-only with a 45 GiB hard memory/no-extra-swap limit, while measured GPU
 allocation was 25,655 MiB.
+
+## Engineering-loop wall-budget 502 recovery — 2026-07-25
+
+Production access logs showed one `409 Conflict` at 19:56 KST followed by
+repeated `502 Bad Gateway` responses at roughly 60-second client retry
+intervals. The gateway process and `/v1/models` remained healthy. Content-free
+state inspection found the affected loop terminated as `BUDGET_EXHAUSTED`
+with five iterations, 765,889 tokens, and zero wall-clock seconds still
+available. The deployed configuration allowed only 1,800 wall-clock seconds,
+so the repeated 502s were a loop-admission failure rather than a model or
+network outage.
+
+The checked-in defaults now allow 43,200 wall-clock seconds, 32 iterations,
+500 tool calls, 5,000,000 tokens, and 1,000 retained controller steps.
+Wall-clock exhaustion may recover once per loop using a persisted
+`wall_clock_recovery_count` latch; a second exhaustion remains fail-closed.
+This prevents an automatic retry from creating an unbounded budget reset while
+allowing the previously stranded production session to continue after the
+approved limit expansion.
+
+Validation used the production Python environment against the isolated hotfix
+worktree. Focused controller, loop, and configuration tests passed 135/135.
+The complete suite then passed 982/982 in 24.70 seconds with only the existing
+Starlette deprecation warning. No role endpoint, model, authentication, or
+systemd topology changed in this hotfix.
+
+A SQLite backup of the live state database was opened with the hotfix code.
+The affected serialized state loaded with the new field default, recovered
+from zero to 43,200 wall-clock seconds, cleared `BUDGET_EXHAUSTED`, and then
+refused a second recovery after the latch reached one. The live database was
+not modified by this pre-deployment check.

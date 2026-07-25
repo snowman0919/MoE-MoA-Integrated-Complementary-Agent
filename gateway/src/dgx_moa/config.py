@@ -71,7 +71,7 @@ class Limits(BaseModel):
     optional_idle_minimum_seconds: float = Field(default=300, gt=0, allow_inf_nan=False)
     optional_idle_maximum_seconds: float = Field(default=2_700, gt=0, allow_inf_nan=False)
     optional_minimum_ready_residency_seconds: float = Field(default=300, gt=0, allow_inf_nan=False)
-    max_steps: int = 100
+    max_steps: int = 1_000
 
     @model_validator(mode="after")
     def validate_idle_threshold_order(self) -> Limits:
@@ -184,16 +184,16 @@ class LifecyclePolicy(BaseModel):
 
 def default_loop_budgets() -> dict[str, int | float]:
     return {
-        "iterations": 8,
-        "tool_calls": 100,
-        "reasoner_reentries": 8,
-        "planner_calls": 2,
-        "reviewer_calls": 8,
-        "frontier_calls": 4,
-        "judge_calls": 2,
-        "tokens": 1_000_000,
+        "iterations": 32,
+        "tool_calls": 500,
+        "reasoner_reentries": 32,
+        "planner_calls": 8,
+        "reviewer_calls": 32,
+        "frontier_calls": 16,
+        "judge_calls": 4,
+        "tokens": 5_000_000,
         "external_cost_usd": 10,
-        "wall_clock_seconds": 1_800,
+        "wall_clock_seconds": 43_200,
     }
 
 

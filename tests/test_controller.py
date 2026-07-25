@@ -1547,7 +1547,7 @@ def test_enabled_loop_uses_configured_no_progress_limit(
     assert state.engineering_loop.termination_reason == "NO_PROGRESS"
 
 
-@pytest.mark.parametrize(("used_tokens", "recovered"), [(250_000, True), (1_000_000, False)])
+@pytest.mark.parametrize(("used_tokens", "recovered"), [(250_000, True), (5_000_000, False)])
 def test_expanded_token_budget_recovers_only_eligible_blocked_sessions(
     settings, stub_provider: StubProvider, used_tokens: int, recovered: bool
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1567,7 +1567,7 @@ def test_expanded_token_budget_recovers_only_eligible_blocked_sessions(
     controller.select_route(state, {})
 
     if recovered:
-        assert state.engineering_loop.remaining_budget.tokens == 750_000
+        assert state.engineering_loop.remaining_budget.tokens == 4_750_000
         assert state.engineering_loop.termination_reason is None
         assert state.phase == Phase.REPLANNING
         assert state.final_status is None
@@ -1579,6 +1579,43 @@ def test_expanded_token_budget_recovers_only_eligible_blocked_sessions(
         assert state.engineering_loop.remaining_budget.tokens == 0
         assert state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
         assert state.phase == Phase.BLOCKED
+
+
+def test_wall_clock_budget_recovers_once(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    settings.loop_engineering.defaults["wall_clock_seconds"] = 43_200
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session("wall-clock-recovery", [{"role": "user", "content": "continue"}])
+    controller.select_route(state, {})
+    assert state.engineering_loop is not None
+    state.engineering_loop.remaining_budget.wall_clock_seconds = 0
+    state.engineering_loop.termination_reason = "BUDGET_EXHAUSTED"
+    state.engineering_loop.progress_state = "terminated"
+    state.phase = Phase.BLOCKED
+    state.final_status = "blocked"
+
+    controller.select_route(state, {})
+
+    assert state.engineering_loop.remaining_budget.wall_clock_seconds == 43_200
+    assert state.engineering_loop.wall_clock_recovery_count == 1
+    assert state.engineering_loop.termination_reason is None
+    assert state.phase == Phase.REPLANNING
+    assert state.final_status is None
+    assert any(
+        event["event_type"] == "engineering_loop_wall_clock_recovered"
+        for event in store.events(state.session_id)
+    )
+
+    state.engineering_loop.remaining_budget.wall_clock_seconds = 0
+    state.engineering_loop.termination_reason = "BUDGET_EXHAUSTED"
+    state.engineering_loop.progress_state = "terminated"
+    controller.select_route(state, {})
+
+    assert state.engineering_loop.remaining_budget.wall_clock_seconds == 0
+    assert state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
 
 
 @pytest.mark.asyncio
