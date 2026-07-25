@@ -5097,3 +5097,20 @@ passed `10/10`, and a fresh complete suite passed `981/981` in `68.75` seconds.
 No candidate container was started, no production service or configuration
 changed, and simultaneous residency, inference, quality, load, long-duration,
 and rollback gates remain unproven.
+
+## Isolated SGLang runtime validator (candidate only)
+
+- `scripts/validate-isolated-sglang-runtime.py` performs real inference readiness,
+  native Executor and Gemma tool parsing, Gemma reasoning separation, gateway
+  `PlannerPlan`/`ReviewResult` structured output, SSE completion, and measured
+  Radix prefix reuse against the two loopback-only candidate endpoints.
+- Its JSON evidence retains provider/model provenance, fixed container
+  image/revision/settings, latency, token/cache counts, and memory snapshots. It
+  does not retain prompts, reasoning, model output, credentials, or repository
+  identifiers.
+- This is validation automation, not physical evidence. Simultaneous 65K
+  residency and every runtime check remain pending until an approved maintenance
+  window stops the production model services and starts the isolated topology.
+- Static/fake-response coverage passed `9/9`; the complete branch suite passed
+  `989/989` in `68.01` seconds. The isolated preflight still refused to run while
+  production model services were active, as required.
