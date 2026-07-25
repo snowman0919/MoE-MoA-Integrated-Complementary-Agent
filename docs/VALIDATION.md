@@ -5231,3 +5231,14 @@ environment assignments before the existing bounded validation command.
 Against the exact persisted canary state, the hotfix changed both
 `has_review_evidence` and `needs_reviewer` from false to true. Focused checks
 passed 4/4 and the complete suite passed 985/985 in 25.25 seconds.
+
+Production `main` was fast-forwarded to `3131e04` and pushed. Only the gateway
+was restarted; startup completed in 11 seconds and `/healthz` plus `/readyz`
+returned HTTP 200. The exact failed canary session was resumed with its pinned
+runtime provenance and stored tool evidence. It emitted
+`reviewer_required(trigger=implementation_evidence)`, completed an independent
+Reviewer pass, recovered from one invalid structured Reviewer output, and
+finished with `review_status=approved`, `stream_completed`, and
+`session_ended=completed`. The client observed HTTP 200, one
+`response.completed`, zero `response.failed`, and 6,092 SSE bytes. No
+post-deployment 5xx terminal was logged.
