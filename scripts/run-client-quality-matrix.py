@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -798,6 +799,39 @@ def text_sha256(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+@functools.cache
+def runtime_fingerprint(harness: str) -> dict[str, str]:
+    if harness in {"baseline", "codex"}:
+        return {
+            "client": "codex",
+            "version": subprocess.run(
+                [str(CODEX_BINARY), "--version"],
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip(),
+            "binary_sha256": sha256(CODEX_BINARY),
+        }
+    if harness == "opencode":
+        return {
+            "client": "opencode",
+            "version": subprocess.run(
+                [str(OPENCODE_BINARY), "--version"],
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip(),
+            "binary_sha256": sha256(OPENCODE_BINARY),
+        }
+    if harness == "hermes":
+        return {
+            "client": "hermes",
+            "revision": git(HERMES_ROOT, "rev-parse", "HEAD").stdout.strip(),
+            "config_sha256": sha256(Path("/home/kotori9/.hermes/config.yaml")),
+        }
+    raise ValueError(f"unknown harness: {harness}")
+
+
 def workspace_name(run_id: str, harness: str, task: Task) -> str:
     normalized = re.sub(r"[^a-z0-9-]", "-", run_id.lower()).strip("-") or "run"
     safe_run = (
@@ -862,6 +896,7 @@ def prepare_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str,
         "gateway": args.gateway.rstrip("/"),
         "harness_sha256": sha256(Path(__file__)),
         "prompt_sha256": text_sha256(prompt(task)),
+        "runtime_fingerprint": runtime_fingerprint(harness),
         "workspace": str(workspace),
         "source_name": task.source_name,
         "initial_commit": git(workspace, "rev-parse", "HEAD").stdout.strip(),
@@ -1082,8 +1117,7 @@ def write_codex_model_catalog(gateway: str, key: str, path: Path) -> None:
         payload = json.loads(response.read())
     models = payload.get("models")
     if not isinstance(models, list) or not any(
-        isinstance(model, dict) and model.get("slug") == "dgx-moa-orchestrated"
-        for model in models
+        isinstance(model, dict) and model.get("slug") == "dgx-moa-orchestrated" for model in models
     ):
         raise RuntimeError("gateway model catalog is missing dgx-moa-orchestrated")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1119,6 +1153,7 @@ def validated_manifest(args: argparse.Namespace, task: Task, path: Path) -> dict
         "gateway": args.gateway.rstrip("/"),
         "harness_sha256": sha256(Path(__file__)),
         "prompt_sha256": text_sha256(prompt(task)),
+        "runtime_fingerprint": runtime_fingerprint(str(manifest.get("harness"))),
     }
     mismatches = [name for name, value in expected.items() if manifest.get(name) != value]
     if mismatches:

@@ -114,9 +114,7 @@ def test_docker_command_has_stable_unique_name(tmp_path: Path) -> None:
 def test_timed_out_docker_run_removes_exact_container(tmp_path: Path) -> None:
     command = ["docker", "run", "--rm", "--name", "moa-qm-test", "image"]
     timeout = subprocess.TimeoutExpired(command, 1, output="partial", stderr="")
-    cleanup = subprocess.CompletedProcess(
-        ["docker", "rm", "-f", "moa-qm-test"], 0, "", ""
-    )
+    cleanup = subprocess.CompletedProcess(["docker", "rm", "-f", "moa-qm-test"], 0, "", "")
 
     with mock.patch("subprocess.run", side_effect=(timeout, cleanup)) as run:
         result = GLOBALS["run_process"](
@@ -152,10 +150,18 @@ def test_fixture_manifest_pins_gateway_runner_and_prompt(tmp_path: Path) -> None
     assert manifest["gateway"] == args.gateway
     assert manifest["harness_sha256"] == GLOBALS["sha256"](SCRIPT)
     assert manifest["prompt_sha256"] == GLOBALS["text_sha256"](GLOBALS["prompt"](task))
+    assert manifest["runtime_fingerprint"] == GLOBALS["runtime_fingerprint"]("codex")
 
     changed = matrix_args(tmp_path, gateway="http://other.invalid:9000")
     with pytest.raises(RuntimeError, match="fixture manifest mismatch: gateway"):
         GLOBALS["run_one"](changed, "codex", task)
+
+    manifest_path = args.output_root / args.run_id / "codex" / task.slug / "manifest.json"
+    stored = json.loads(manifest_path.read_text())
+    stored["runtime_fingerprint"]["version"] = "changed"
+    manifest_path.write_text(json.dumps(stored))
+    with pytest.raises(RuntimeError, match="fixture manifest mismatch: runtime_fingerprint"):
+        GLOBALS["run_one"](args, "codex", task)
 
 
 def test_partial_summary_does_not_claim_noninferiority(tmp_path: Path) -> None:
