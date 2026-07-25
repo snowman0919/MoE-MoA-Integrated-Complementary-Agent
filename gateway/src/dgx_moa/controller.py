@@ -939,18 +939,40 @@ class Controller:
                 argument_paths(state.objective),
                 state.resolved_objective,
             )
+        new_user_input = False
         if state.engineering_loop is not None:
             for message in messages:
                 if message.get("role") != "user":
                     continue
                 content = text_content(message.get("content"))
                 if fingerprint := register_user_input(state.engineering_loop, content):
+                    new_user_input = True
                     self.record_evidence(
                         state,
                         "user_feedback",
                         "user",
                         {"content_sha256": fingerprint},
                     )
+            loop = state.engineering_loop
+            new_progress = len(loop.observed_evidence_ids) > loop.last_iteration_evidence_count
+            if (
+                loop.termination_reason == "NO_PROGRESS"
+                and state.control_state == "running"
+                and (new_user_input or new_progress)
+            ):
+                loop.termination_reason = None
+                loop.progress_state = "progressing"
+                loop.no_progress_iterations = 0
+                loop.started_at_epoch = time.time()
+                state.no_progress_count = 0
+                state.final_status = None
+                if state.phase == Phase.BLOCKED:
+                    state.phase = Phase.REPLANNING
+                self.store.event(
+                    session_id,
+                    "engineering_loop_resumed",
+                    {"reason": "new_user_evidence"},
+                )
         self._observe(state, messages)
         if state.step_count >= self.settings.limits.max_steps:
             state.phase = Phase.BLOCKED
@@ -2397,6 +2419,12 @@ class Controller:
         if state.control_state != "running":
             raise PolicyBlocked(f"request control state is {state.control_state}")
         body["max_tokens"] = self.executor_tokens(body)
+        if (
+            state.phase == Phase.BLOCKED
+            and state.engineering_loop is not None
+            and state.engineering_loop.termination_reason == "NO_PROGRESS"
+        ):
+            raise LoopAdmissionError("new evidence required")
         if state.phase == Phase.BLOCKED:
             raise ValueError("session blocked after no progress")
         context_fingerprint = reasoner_context_fingerprint(

@@ -7513,6 +7513,49 @@ def test_duplicate_failed_call_records_one_timing_and_trace(
     assert usage.retryable_failure_class is None
 
 
+def test_opencode_session_resumes_only_after_new_user_evidence(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    settings.loop_engineering.no_progress_iteration_limit = 1
+    session_id = "opencode-no-progress"
+    initial = [{"role": "user", "content": "implement the feature"}]
+    headers = {
+        "Authorization": "Bearer test-secret",
+        "X-Session-ID": session_id,
+        "User-Agent": "opencode/1.0",
+    }
+    with client_with_stub(settings, stub_provider) as client:
+        state = client.app.state.controller.session(session_id, initial)
+        client.app.state.controller.select_route(state, {})
+        client.app.state.controller.note_no_progress(state)
+
+        repeated = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={"model": "dgx-moa-fast", "messages": initial},
+        )
+        continued = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [
+                    *initial,
+                    {"role": "user", "content": "continue with the new validation evidence"},
+                ],
+            },
+        )
+        resumed = client.app.state.store.get(session_id)
+
+    assert repeated.status_code == 409
+    assert repeated.json()["error"]["code"] == "loop_new_evidence_required"
+    assert continued.status_code == 200
+    assert resumed is not None and resumed.engineering_loop is not None
+    assert resumed.engineering_loop.termination_reason is None
+    assert resumed.phase != Phase.BLOCKED
+
+
 def test_step_budget_failure_finalizes_one_usage_row(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     settings.limits.max_steps = 1
     session_id = "usage-step-budget"

@@ -1093,6 +1093,55 @@ def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
     assert not_resumed.engineering_loop.termination_reason == "CLIENT_CANCELLED"
 
 
+@pytest.mark.asyncio
+async def test_new_user_evidence_resumes_no_progress_loop(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    settings.loop_engineering.no_progress_iteration_limit = 1
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    initial = [{"role": "user", "content": "implement the feature"}]
+    state = controller.session("user-resume", initial)
+    controller.select_route(state, {})
+    controller.note_no_progress(state)
+
+    assert state.engineering_loop is not None
+    assert state.engineering_loop.termination_reason == "NO_PROGRESS"
+    assert state.phase == Phase.BLOCKED
+
+    repeated = controller.session("user-resume", initial)
+    with pytest.raises(LoopAdmissionError, match="new evidence required"):
+        await controller.prepare_executor(
+            repeated,
+            {"model": "dgx-moa-agent", "messages": initial},
+            ("executor",),
+        )
+
+    continued_messages = [
+        *initial,
+        {"role": "user", "content": "continue with the failing validation evidence"},
+    ]
+    resumed = controller.session("user-resume", continued_messages)
+
+    assert resumed.engineering_loop is not None
+    assert resumed.engineering_loop.termination_reason is None
+    assert resumed.engineering_loop.no_progress_iterations == 0
+    assert resumed.phase == Phase.REPLANNING
+    assert resumed.final_status is None
+    assert any(
+        event["event_type"] == "engineering_loop_resumed"
+        and event["payload"]["reason"] == "new_user_evidence"
+        for event in store.events(resumed.session_id)
+    )
+
+    await controller.prepare_executor(
+        resumed,
+        {"model": "dgx-moa-agent", "messages": continued_messages},
+        ("executor",),
+    )
+
+
 def test_loop_duplicate_failure_policy_persists_across_retries(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
