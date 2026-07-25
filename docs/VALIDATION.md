@@ -5292,3 +5292,33 @@ itself establish GPT-5.6 Sol quality parity: earlier local turns still made
 avoidable text-file `view_image` calls, invalid `write_stdin` calls, and
 redundant patch attempts. Those remain quality and efficiency work for the
 preregistered multi-harness evaluation.
+
+## OpenCode no-progress session recovery — 2026-07-26
+
+The production OpenCode session failed four immediate requests at
+01:19:50–01:20:06 KST as HTTP 409, 409, 502, and 502. Persisted events showed
+that the engineering loop had terminated with `NO_PROGRESS`; exact retries
+were correctly rejected for missing new evidence, but the blocked state then
+raised a generic `ValueError`, which was exposed as a misleading 502. More
+importantly, novel user input was recorded as evidence without clearing the
+recoverable `NO_PROGRESS` termination.
+
+Commit `e680cef` reopens only a running `NO_PROGRESS` loop after novel user
+evidence. Exact retries remain rejected, and operator, policy, provider,
+duplicate-failure, and budget terminations remain closed. A terminated
+no-progress state now uses the existing structured loop-admission error
+instead of the generic backend-error path.
+
+Focused Controller and API checks passed 8/8. Ruff and `git diff --check`
+passed, and the complete suite passed 993/993 in 23.19 seconds with only the
+existing Starlette deprecation warning. Production `main` was fast-forwarded
+and the gateway alone was restarted. `/healthz` and `/readyz` returned HTTP
+200.
+
+The live OpenCode-compatible canary used the production API key, User-Agent,
+session header, and `/v1/chat/completions` route without exposing the key.
+Its sequence was HTTP 200 for the initial turn, HTTP 409 with
+`loop_new_evidence_required` for the exact retry, and HTTP 200 after a novel
+user message. The final request recorded
+`engineering_loop_resumed(reason=new_user_evidence)` and completed in 1.805
+seconds. No 502 occurred.
