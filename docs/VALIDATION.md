@@ -5111,6 +5111,9 @@ and rollback gates remain unproven.
 - This is validation automation, not physical evidence. Simultaneous 65K
   residency and every runtime check remain pending until an approved maintenance
   window stops the production model services and starts the isolated topology.
+- When invoked through `sudo`, the topology preflight resolves `SUDO_USER` and
+  that user's D-Bus session before checking production model units. It cannot
+  mistake root's empty user manager for an idle production runtime.
 - Static/fake-response coverage passed `9/9`; the complete branch suite passed
   `989/989` in `68.01` seconds. The isolated preflight still refused to run while
   production model services were active, as required.
@@ -5132,7 +5135,7 @@ and rollback gates remain unproven.
   been granted. Its fail-closed no-approval check and its read-only approved
   preflight both behaved as designed. After the cold-state restoration fix,
   focused candidate/rollback/soak coverage passed `13/13`, and the complete
-  branch suite passed `993/993` in `24.79` seconds.
+  branch suite passed `993/993` in `24.91` seconds.
 
 ## Isolated 10-hour soak automation (candidate only)
 

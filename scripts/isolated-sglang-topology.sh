@@ -8,6 +8,27 @@ executor_revision="27a8f16f463b9a13c91c332c40cf93e09717347e"
 specialist_revision="4135a98a9b728a548947683219633b25682223ac"
 executor_container="dgx-moa-exp-sglang-executor"
 specialist_container="dgx-moa-exp-sglang-specialist"
+runtime_user="${SUDO_USER:-$(id -un)}"
+runtime_uid="${SUDO_UID:-$(id -u)}"
+runtime_home="$(getent passwd "$runtime_user" | cut -d: -f6)"
+runtime_dir="/run/user/$runtime_uid"
+runtime_bus="unix:path=$runtime_dir/bus"
+
+run_as_runtime_user() {
+  if [[ "$(id -u)" == "$runtime_uid" ]]; then
+    env \
+      HOME="$runtime_home" \
+      XDG_RUNTIME_DIR="$runtime_dir" \
+      DBUS_SESSION_BUS_ADDRESS="$runtime_bus" \
+      "$@"
+  else
+    runuser -u "$runtime_user" -- env \
+      HOME="$runtime_home" \
+      XDG_RUNTIME_DIR="$runtime_dir" \
+      DBUS_SESSION_BUS_ADDRESS="$runtime_bus" \
+      "$@"
+  fi
+}
 
 executor_command=(
   docker run -d --rm --name "$executor_container" --pull never
@@ -72,9 +93,13 @@ preflight() {
     printf 'set DGX_MOA_ISOLATED_ACK=1 for an approved maintenance window\n' >&2
     return 1
   }
+  [[ -S "$runtime_dir/bus" ]] || {
+    printf 'user systemd bus is unavailable: %s\n' "$runtime_dir/bus" >&2
+    return 1
+  }
   local unit
   for unit in dgx-moa-executor dgx-moa-planner dgx-moa-reviewer; do
-    if systemctl --user is-active --quiet "$unit"; then
+    if run_as_runtime_user systemctl --user is-active --quiet "$unit"; then
       printf 'production model service is active: %s\n' "$unit" >&2
       return 1
     fi
