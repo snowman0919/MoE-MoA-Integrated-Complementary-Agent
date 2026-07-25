@@ -5361,3 +5361,36 @@ seconds. Gateway logs contained the two HTTP 200 requests and no post-deploy
 5xx, `stream_aborted`, `responses_stream_terminal`, or
 `executor_remote_failed`. The OpenCode connection block is closed; the
 preregistered cross-client quality comparison remains a separate active gate.
+
+## Oversized local Executor tool-turn routing — 2026-07-26
+
+The second preregistered Hermes attempt stayed connected but made no
+implementation progress. Content-free session evidence showed the Planner
+completed remotely in 24.510 seconds while its local warm-up continued
+independently. The request then dispatched the resident Qwen3-Next Executor
+locally. vLLM generated continuously for more than eight minutes at roughly
+13–35 tokens per second without returning a tool call or stop; the client
+cancelled after 535.388 seconds.
+
+The prepared Hermes profile had no explicit model output limit, so its custom
+provider requested 65,536 tokens and the gateway accepted its compatible
+32,768 maximum. A controlled diagnostic set Hermes to the gateway's 4,096
+default. This bounded the local turn to 115.899 seconds, but it consumed
+exactly 4,096 completion tokens and ended with `finish_reason=length`, zero
+tool calls, and no implementation. A simple output clamp therefore improved
+latency but failed the quality contract.
+
+Commit `d12af21` extends the existing pre-dispatch Frontier policy. When a
+request includes client tools and asks for more than the validated 4,096-token
+local turn budget, it is pinned to Frontier before local inference starts and
+records `routing_reason=local_output_budget_exceeded`. Tool-free long answers,
+the 32,768 compatibility ceiling, local requests at or below 4,096, busy
+routing, and context routing remain unchanged. The selected provider is never
+switched after dispatch.
+
+Focused busy, context, repeated-failure, and oversized-tool routing tests
+passed 4/4. The new regression proves a 16,384-token tool request invokes no
+local Executor, preserves its requested budget for Frontier, and records the
+new reason. Ruff and `git diff --check` passed; the complete suite passed
+999/999 in 27.84 seconds with only the existing Starlette deprecation warning.
+Production deployment and a fresh Hermes canary are still required.
