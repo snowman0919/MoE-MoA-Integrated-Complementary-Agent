@@ -39,7 +39,44 @@ def test_codex_command_uses_explicit_model_catalog(tmp_path: Path) -> None:
         GLOBALS["TASKS"][0],
     )
 
-    assert 'model_catalog_json="/tools/dgx-moa-model-catalog.json"' in command
+    assert 'model_catalog_json="/state/model-catalog.json"' in command
+
+
+def test_codex_catalog_is_pinned_from_authenticated_gateway(tmp_path: Path) -> None:
+    class Response:
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *args):  # type: ignore[no-untyped-def]
+            return None
+
+        @staticmethod
+        def read() -> bytes:
+            return json.dumps(
+                {
+                    "models": [
+                        {
+                            "slug": "dgx-moa-orchestrated",
+                            "tool_mode": "direct",
+                            "context_window": 65536,
+                        }
+                    ]
+                }
+            ).encode()
+
+    path = tmp_path / "model-catalog.json"
+    with mock.patch("urllib.request.urlopen", return_value=Response()) as urlopen:
+        GLOBALS["write_codex_model_catalog"](
+            "http://127.0.0.1:9000",
+            "test-secret",
+            path,
+        )
+
+    request = urlopen.call_args.args[0]
+    assert request.full_url == "http://127.0.0.1:9000/v1/models"
+    assert request.get_header("Authorization") == "Bearer test-secret"
+    assert json.loads(path.read_text())["models"][0]["tool_mode"] == "direct"
+    assert "test-secret" not in path.read_text()
 
 
 def test_docker_command_has_stable_unique_name(tmp_path: Path) -> None:

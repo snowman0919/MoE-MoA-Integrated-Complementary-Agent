@@ -27,7 +27,6 @@ DOCKER_IMAGE = "python:3.11-slim"
 CODEX_BINARY = Path(
     "/home/kotori9/.codex/packages/standalone/releases/0.145.0-aarch64-unknown-linux-musl/bin/codex"
 )
-CODEX_MODEL_CATALOG = Path(__file__).parents[1] / "config/codex-model-catalog.json"
 OPENCODE_BINARY = Path("/home/kotori9/.opencode/bin/opencode")
 OPENCODE_ISOLATION_ENV = {
     "OPENCODE_DISABLE_AUTOUPDATE": "1",
@@ -1045,7 +1044,7 @@ def codex_moa_command(args: argparse.Namespace, workspace: Path, task: Task) -> 
         "-c",
         "model_context_window=65536",
         "-c",
-        'model_catalog_json="/tools/dgx-moa-model-catalog.json"',
+        'model_catalog_json="/state/model-catalog.json"',
         "-c",
         'model_reasoning_effort="high"',
         "-c",
@@ -1064,6 +1063,25 @@ def codex_moa_command(args: argparse.Namespace, workspace: Path, task: Task) -> 
         str(workspace),
         prompt(task),
     ]
+
+
+def write_codex_model_catalog(gateway: str, key: str, path: Path) -> None:
+    request = urllib.request.Request(
+        gateway.rstrip("/") + "/v1/models",
+        headers={"Authorization": f"Bearer {key}"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read())
+    models = payload.get("models")
+    if not isinstance(models, list) or not any(
+        isinstance(model, dict) and model.get("slug") == "dgx-moa-orchestrated"
+        for model in models
+    ):
+        raise RuntimeError("gateway model catalog is missing dgx-moa-orchestrated")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.write_text(json.dumps({"models": models}, indent=2) + "\n")
+    path.chmod(0o600)
 
 
 def run_codex_admin(args: argparse.Namespace, workspace: Path, task: Task) -> tuple[int, str, str]:
@@ -1148,16 +1166,18 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             if not key:
                 raise RuntimeError("DGX_MOA_OPENCODE_KEY is required")
             state = args.output_root / args.run_id / "profiles" / f"codex-{task.slug}"
+            write_codex_model_catalog(
+                args.gateway,
+                key,
+                state / "model-catalog.json",
+            )
             command = docker_command(
                 workspace,
                 state,
                 codex_moa_command(args, workspace, task),
                 environment_names=("DGX_MOA_API_KEY",),
                 extra_environment=("CODEX_HOME=/state",),
-                read_only_mounts=(
-                    (CODEX_BINARY, "/tools/codex"),
-                    (CODEX_MODEL_CATALOG, "/tools/dgx-moa-model-catalog.json"),
-                ),
+                read_only_mounts=((CODEX_BINARY, "/tools/codex"),),
             )
             run = run_process(
                 command,
