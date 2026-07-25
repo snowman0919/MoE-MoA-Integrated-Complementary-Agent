@@ -2619,6 +2619,12 @@ def create_app(
                 )
                 is False
             )
+            output_budget_exceeded = (
+                not executor_remote
+                and request.app.state.frontier is not None
+                and bool(prepared.get("tools"))
+                and int(prepared.get("max_tokens") or 0) > configured.limits.executor_tokens
+            )
             stalled = (
                 not executor_remote
                 and request.app.state.frontier is not None
@@ -2644,6 +2650,7 @@ def create_app(
             )
             if (
                 context_exceeded
+                or output_budget_exceeded
                 or stalled
                 or completion_stalled
                 or frontier_correction
@@ -2653,6 +2660,8 @@ def create_app(
                 executor_routing_reason = (
                     "local_context_exceeded"
                     if context_exceeded
+                    else "local_output_budget_exceeded"
+                    if output_budget_exceeded
                     else "frontier_correction_required"
                     if frontier_correction
                     else "local_completion_stalled"

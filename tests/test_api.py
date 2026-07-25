@@ -211,6 +211,82 @@ def test_oversized_executor_context_routes_to_frontier_before_dispatch(
     assert selected["payload"]["routing_reason"] == "local_context_exceeded"
 
 
+def test_large_tool_turn_routes_to_frontier_before_dispatch(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "output-budget-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    controlled = settings.model_copy(
+        update={"frontier_enabled": True, "frontier_config": frontier_config}
+    )
+    app = create_app(controlled)
+    remote_requests: list[dict[str, object]] = []
+
+    async def remote_execute(
+        remote_request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        remote_requests.append(remote_request)
+        return {
+            "id": "chatcmpl-frontier-output-budget",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-frontier",
+                                "type": "function",
+                                "function": {
+                                    "name": "shell",
+                                    "arguments": '{"cmd":"pwd"}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"total_tokens": 9},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "default", "cost_usd": None},
+        }
+
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "shell",
+                "description": "Run a command",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "large-tool-turn"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "작업해"}],
+                "tools": tools,
+                "max_tokens": 16_384,
+            },
+        )
+        events = app.state.store.events("large-tool-turn")
+
+    assert response.status_code == 200
+    assert "executor" not in stub_provider.calls
+    assert remote_requests[0]["max_tokens"] == 16_384
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
+    assert selected["payload"]["routing_reason"] == "local_output_budget_exceeded"
+
+
 def test_repeated_failure_routes_executor_to_frontier(
     settings: Settings, stub_provider: StubProvider
 ) -> None:
