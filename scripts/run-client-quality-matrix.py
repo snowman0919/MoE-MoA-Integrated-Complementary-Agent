@@ -27,6 +27,7 @@ DOCKER_IMAGE = "python:3.11-slim"
 CODEX_BINARY = Path(
     "/home/kotori9/.codex/packages/standalone/releases/0.145.0-aarch64-unknown-linux-musl/bin/codex"
 )
+CODEX_MODEL_CATALOG = Path(__file__).parents[1] / "config/codex-model-catalog.json"
 OPENCODE_BINARY = Path("/home/kotori9/.opencode/bin/opencode")
 OPENCODE_ISOLATION_ENV = {
     "OPENCODE_DISABLE_AUTOUPDATE": "1",
@@ -949,6 +950,15 @@ def run_process(
             if isinstance(error.stderr, bytes)
             else error.stderr
         )
+        if command[:2] == ["docker", "run"] and "--name" in command:
+            container = command[command.index("--name") + 1]
+            subprocess.run(
+                ["docker", "rm", "-f", container],
+                text=True,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
         return subprocess.CompletedProcess(
             command, 124, stdout or "", (stderr or "") + "\ntimeout\n"
         )
@@ -966,10 +976,13 @@ def docker_command(
     workspace_mode: str = "rw",
 ) -> list[str]:
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
+    container = "moa-qm-" + hashlib.sha256(f"{workspace}\0{state}".encode()).hexdigest()[:20]
     command = [
         "docker",
         "run",
         "--rm",
+        "--name",
+        container,
         "--init",
         "--network",
         network,
@@ -1031,6 +1044,8 @@ def codex_moa_command(args: argparse.Namespace, workspace: Path, task: Task) -> 
         'model="dgx-moa-orchestrated"',
         "-c",
         "model_context_window=65536",
+        "-c",
+        'model_catalog_json="/tools/dgx-moa-model-catalog.json"',
         "-c",
         'model_reasoning_effort="high"',
         "-c",
@@ -1139,7 +1154,10 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
                 codex_moa_command(args, workspace, task),
                 environment_names=("DGX_MOA_API_KEY",),
                 extra_environment=("CODEX_HOME=/state",),
-                read_only_mounts=((CODEX_BINARY, "/tools/codex"),),
+                read_only_mounts=(
+                    (CODEX_BINARY, "/tools/codex"),
+                    (CODEX_MODEL_CATALOG, "/tools/dgx-moa-model-catalog.json"),
+                ),
             )
             run = run_process(
                 command,
