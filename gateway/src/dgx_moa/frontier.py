@@ -385,15 +385,40 @@ def normalize_openrouter_tool_calls(value: Any) -> list[dict[str, Any]]:
         if not isinstance(function, dict):
             normalized.append({})
             continue
+        name = function.get("name")
         arguments = function.get("arguments")
         if isinstance(arguments, dict):
             arguments = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+        elif isinstance(arguments, str):
+            try:
+                parsed = json.loads(arguments)
+            except ValueError:
+                argument_key = (
+                    "input"
+                    if name in {"apply_patch", "patch"}
+                    else "cmd"
+                    if name in {"exec_command", "shell"}
+                    else None
+                )
+                if argument_key is not None:
+                    arguments = json.dumps(
+                        {argument_key: arguments},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+            else:
+                if isinstance(parsed, dict):
+                    arguments = json.dumps(
+                        parsed,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
         normalized.append(
             {
                 "id": call.get("id"),
                 "type": call.get("type", "function"),
                 "function": {
-                    "name": function.get("name"),
+                    "name": name,
                     "arguments": arguments,
                 },
             }
@@ -915,8 +940,12 @@ class CodexOAuthCollaboration:
             },
             correlation_id,
         )
+        executor_output = {
+            **result.output,
+            "tool_calls": normalize_openrouter_tool_calls(result.output.get("tool_calls")),
+        }
         message, sanitized_paths = sanitize_executor_tool_paths(
-            FrontierExecutorResult.model_validate(result.output),
+            FrontierExecutorResult.model_validate(executor_output),
             workspace_root,
         )
         usage = {

@@ -11,6 +11,7 @@ from dgx_moa.frontier import (
     COLLABORATION_SCHEMAS,
     CodexOAuthCollaboration,
     CodexOAuthProvider,
+    FrontierCollaborationResult,
     FrontierConfig,
     FrontierExecutorResult,
     FrontierResult,
@@ -36,6 +37,7 @@ from dgx_moa.frontier import (
     validate_scope,
 )
 from dgx_moa.state import Phase, SessionState
+from pydantic import ValidationError
 
 
 def test_frontier_profile_and_selection(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -246,6 +248,80 @@ def test_openrouter_tool_calls_drop_provider_metadata() -> None:
             },
         }
     ]
+
+
+def test_executor_tool_calls_repair_only_known_freeform_arguments() -> None:
+    patch = "*** Begin Patch\n*** Add File: result.txt\n+ok\n*** End Patch"
+    calls = normalize_openrouter_tool_calls(
+        [
+            {
+                "id": "patch",
+                "type": "function",
+                "function": {"name": "apply_patch", "arguments": patch},
+            },
+            {
+                "id": "command",
+                "type": "function",
+                "function": {
+                    "name": "exec_command",
+                    "arguments": "python -m unittest",
+                },
+            },
+            {
+                "id": "unknown",
+                "type": "function",
+                "function": {"name": "unknown_tool", "arguments": "not-json"},
+            },
+        ]
+    )
+
+    assert json.loads(calls[0]["function"]["arguments"]) == {"input": patch}
+    assert json.loads(calls[1]["function"]["arguments"]) == {
+        "cmd": "python -m unittest"
+    }
+    assert calls[2]["function"]["arguments"] == "not-json"
+    with pytest.raises(ValidationError):
+        FrontierExecutorResult.model_validate(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [calls[2]],
+                "finish_reason": "tool_calls",
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_remote_executor_repairs_known_freeform_tool_arguments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    patch = "*** Begin Patch\n*** Add File: result.txt\n+ok\n*** End Patch"
+    runner = CodexOAuthCollaboration(FrontierConfig(), tmp_path / "run", tmp_path)
+    collaboration = FrontierCollaborationResult(
+        mode="executor",
+        output={
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "patch",
+                    "type": "function",
+                    "function": {"name": "apply_patch", "arguments": patch},
+                }
+            ],
+            "finish_reason": "tool_calls",
+        },
+        latency_ms=1,
+        transmitted_categories=["executor_request"],
+        profile="primary",
+    )
+    monkeypatch.setattr(runner, "_run", lambda *_args, **_kwargs: collaboration)
+
+    result = await runner.execute({"_client_workspace_path": str(tmp_path)}, "request")
+
+    call = result["choices"][0]["message"]["tool_calls"][0]
+    assert json.loads(call["function"]["arguments"]) == {"input": patch}
+    assert result["choices"][0]["finish_reason"] == "tool_calls"
 
 
 def test_frontier_review_requires_finite_arithmetic_parameters() -> None:
