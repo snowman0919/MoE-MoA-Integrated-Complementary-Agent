@@ -130,6 +130,22 @@ def test_nemotron_planner_keeps_bounded_reasoning(settings) -> None:  # type: ig
     }
 
 
+def test_qwen_planner_returns_public_structured_content(settings) -> None:  # type: ignore[no-untyped-def]
+    body = ModelProvider.body(
+        "planner",
+        settings.models["planner"].model_copy(update={"reasoning_parser": "qwen3"}),
+        {
+            "messages": [{"role": "system", "content": "Plan in English."}],
+            "chat_template_kwargs": {"truncate_history_thinking": False},
+        },
+    )
+
+    assert body["chat_template_kwargs"] == {
+        "truncate_history_thinking": False,
+        "enable_thinking": False,
+    }
+
+
 @pytest.mark.asyncio
 async def test_executor_context_fit_uses_served_tokenizer_limit(
     settings, monkeypatch: pytest.MonkeyPatch

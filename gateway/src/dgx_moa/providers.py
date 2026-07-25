@@ -87,6 +87,11 @@ class ModelProvider:
                 reasoning_budget=PLANNER_REASONING_TOKENS,
             )
             body["chat_template_kwargs"] = template_options
+        if role == "planner" and model.reasoning_parser == "qwen3":
+            body["chat_template_kwargs"] = {
+                **dict(body.get("chat_template_kwargs") or {}),
+                "enable_thinking": False,
+            }
         if role == "reviewer" and model.reasoning_parser == "cohere_command4":
             body["chat_template_kwargs"] = {
                 **dict(body.get("chat_template_kwargs") or {}),

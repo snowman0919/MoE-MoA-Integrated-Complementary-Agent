@@ -222,17 +222,17 @@ models:
     trust_remote_code: false
     required: true
   planner:
-    repository: cyankiwi/Nemotron-Cascade-2-30B-A3B-AWQ-4bit
-    revision: 49cee6bbed2edd4e2d305d948ac443714a2ab242
-    classification: community-maintained
+    repository: nvidia/Qwen3.6-27B-NVFP4
+    revision: 0893e1606ff3d5f97a441f405d5fc541a6bdf404
+    classification: vendor-provided
     base_url: http://127.0.0.1:8102
     served_name: dgx-moa-planner
-    destination: /home/kotori9/models/dgx-moa/planner
+    destination: /home/kotori9/models/specialist-unified-qwen36-27b-nvfp4
     context_length: 65536
     max_num_seqs: 1
-    quantization: compressed-tensors
-    reasoning_parser: nemotron_v3
-    trust_remote_code: true
+    quantization: modelopt
+    reasoning_parser: qwen3
+    trust_remote_code: false
     required: false
   reviewer:
     repository: CohereLabs/North-Mini-Code-1.0-w4a16

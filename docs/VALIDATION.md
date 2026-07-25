@@ -5055,3 +5055,45 @@ one-sequence, memory, tool-calling, quality, and rollback gates. Until then,
 bounded specialist evidence, compressed tool history, context-aware remote
 routing, and concurrent independent-role work are the approved throughput
 controls; no speculative SGLang migration is deployed.
+
+### SGLang Planner promotion with NVIDIA Qwen3.6-27B-NVFP4 — 2026-07-25
+
+The official Apache-2.0 `nvidia/Qwen3.6-27B-NVFP4` checkpoint at revision
+`0893e1606ff3d5f97a441f405d5fc541a6bdf404` was downloaded with all three
+indexed shards present. Indexed weights total 21,921,697,184 bytes. The
+isolated runtime used
+`lmsysorg/sglang:dev-cu13@sha256:26f620b13e49900cc6ab59ed693f9ce8f9ea4f3531074c1e39a3bf9db06ab8f0`,
+loopback-only port `8112`, a 45 GiB hard limit with no extra swap, one running
+request, context and total tokens `65536`, Mamba cache size `5`,
+`mem-fraction-static=0.45`, ModelOpt quantization, and disabled decode/prefill
+CUDA graphs.
+
+Initialization completed without OOM beside the protected Executor. SGLang
+measured 113.01 seconds to load 23.02 GB of model memory, 0.86 GB of Mamba
+state, and 2.00 GB of FP8 KV for exactly 65,536 tokens.
+
+The dense 27B candidate passed all three Planner promotion probes with valid
+`PlannerPlan` JSON and no public reasoning content:
+
+- mixed-version migration included late-writer final backfill, old-binary exit
+  gate, delayed cleanup, and pre-cleanup rollback; 132.87 seconds;
+- async cache repair included per-key singleflight, generation fencing,
+  cancellation safety, bounded eviction, and concurrency tests; 94.11 seconds;
+- cold routing included immediate remote dispatch, role+revision+runtime
+  singleflight, provider pinning, real inference readiness, and high-risk
+  fail-closed behavior; 94.96 seconds.
+
+A 35,993-token repeated request measured 31.493 seconds uncached and 1.118
+seconds with 35,968 cached prompt tokens, a 28.17x improvement. An independent
+62,999-prompt-token request returned public content in 61.111 seconds. With the
+vLLM Executor and North Reviewer simultaneously resident, real inference
+probes completed in 1.08, 0.78, and 1.06 seconds for Executor, SGLang Planner,
+and Reviewer; measured GPU allocations were 47,616, 25,659, and 21,235 MiB.
+
+The model was not promoted as Reviewer: recursive-secret review passed, but
+strict symlink review omitted a dirfd/openat component walk and did not fully
+close the TOCTOU race. Production keeps the independent North Reviewer. The
+Planner unit pins the tested image digest, model revision, loopback mapping,
+memory cap, and one-request/65K settings. Rollback is an exact Planner service
+stop, restoration of the previous unit and model entry, daemon reload, and
+start followed by the existing inference readiness probe.
