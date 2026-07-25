@@ -5436,3 +5436,25 @@ seconds with process exit `0`, changed only `rate_limiter.py`, and passed all
 current `unit_tests` parser found one unittest tool call and one successful
 result. This closes the earlier evaluator false negative with a fresh execution
 rather than rescoring stale evidence.
+
+## Dead local specialist readiness regression — 2026-07-26
+
+Preregistered run
+`20260726-sol-preregistered-v4-r1/codex/log-report` reproduced the apparent
+client block. The implementation, public tests, and hidden validation all
+passed, but the harness timed out after 1800.149 seconds with exit `124`.
+Runtime evidence showed that Reviewer inference had succeeded once before its
+vLLM EngineCore died at 05:05:34. The service exited, but lifecycle generation
+56 remained `READY`; 22 subsequent reviews were therefore pinned to the dead
+local endpoint and failed with `ConnectError`. The session reached 70 streamed
+turns and 203 tool results instead of returning the already-supported final
+answer.
+
+The specialist router now atomically transitions a failed local Planner or
+Reviewer from `ready` to `failed`. Provider pinning is unchanged: the failed
+call is not switched after dispatch, while the next specialist call observes
+the failed state, selects the configured remote provider, and may trigger the
+existing singleflight warm-up. A regression test proves the dead local
+provider is invoked once and the next call routes remotely. Specialist tests
+passed 10/10; the complete suite passed 1001/1001 in 28.91 seconds. Ruff and
+`git diff --check` passed.

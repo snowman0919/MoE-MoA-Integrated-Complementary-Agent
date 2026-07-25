@@ -7,6 +7,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from typing import Any, Literal, cast
 
 import httpx
@@ -232,6 +233,21 @@ class SpecialistRouter:
 
     def _record_for_role(self, role: SpecialistRole) -> Any | None:
         return self.lifecycle_store.get(role) if self.lifecycle_store is not None else None
+
+    def _mark_local_failed(self, role: SpecialistRole, error: Exception) -> None:
+        if self.lifecycle_store is None or not hasattr(self.lifecycle_store, "transition"):
+            return
+        record = self._record_for_role(role)
+        if record is None or record.state != "ready":
+            return
+        with suppress(Exception):
+            self.lifecycle_store.transition(
+                role,
+                "failed",
+                expected_transition_id=record.transition_id,
+                failure_class=type(error).__name__,
+                failure_detail="local specialist inference failed",
+            )
 
     def _schedule_warmup(
         self, role: SpecialistRole, revision: str, request_id: str, trigger: str
@@ -468,6 +484,8 @@ class SpecialistRouter:
         try:
             response = await provider.complete(request, timeout_seconds=provider_timeout)
         except Exception as error:
+            if use_local:
+                self._mark_local_failed(role, error)
             decision.update(
                 actual_completion_latency_seconds=time.monotonic() - started,
                 provider_error=type(error).__name__,

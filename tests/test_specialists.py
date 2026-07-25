@@ -23,12 +23,24 @@ class Records:
         return self.records.get(role)
 
 
+class TransitioningRecords(Records):
+    def transition(
+        self, role: str, state: str, *, expected_transition_id: str, **changes: Any
+    ) -> Any:
+        current = self.records[role]
+        assert current.transition_id == expected_transition_id
+        current.state = state
+        current.failure_class = changes.get("failure_class")
+        return current
+
+
 def record(state: str, *, generation: int = 1, active: int = 0) -> SimpleNamespace:
     return SimpleNamespace(
         state=state,
         generation=generation,
         active_request_count=active,
         failure_class=None,
+        transition_id="transition",
     )
 
 
@@ -263,6 +275,34 @@ async def test_provider_is_pinned_after_remote_dispatch_failure() -> None:
     failure = next(payload for event, payload in events if event == "specialist_provider_failed")
     assert failure["selected_provider"] == "remote"
     assert failure["provider_switch_prevented"] is True
+
+
+@pytest.mark.asyncio
+async def test_failed_local_provider_is_not_reselected_on_next_call() -> None:
+    records = TransitioningRecords(planner=record("ready"))
+    local = MockPlannerProvider(RuntimeError("local failed"))
+    remote = MockPlannerProvider({"provider": "remote"})
+    router = SpecialistRouter(
+        config(),
+        local={"planner": local, "reviewer": MockReviewerProvider({})},
+        remote={"planner": remote, "reviewer": MockReviewerProvider({})},
+        lifecycle_store=records,
+    )
+
+    with pytest.raises(RuntimeError, match="local failed"):
+        await router.complete(
+            "planner", {}, request_id="first", revision="rev", timeout_seconds=5
+        )
+    response, decision = await router.complete(
+        "planner", {}, request_id="second", revision="rev", timeout_seconds=5
+    )
+
+    assert records.records["planner"].state == "failed"
+    assert response == {"provider": "remote"}
+    assert decision["selected_provider"] == "remote"
+    assert decision["routing_reason"] == "local_not_ready"
+    assert len(local.requests) == 1
+    assert len(remote.requests) == 1
 
 
 @pytest.mark.asyncio
