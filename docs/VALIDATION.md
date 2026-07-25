@@ -5427,3 +5427,12 @@ from one model-generated unavailable `shell` tool name, and finished normally.
 A direct bounded OpenCode Go Planner request returned exact
 `OPENCODE_GO_OK` from `deepseek-v4-pro` in 2.479 seconds. No server-side
 OpenCode or OpenCode Go circuit block was present.
+
+Post-deployment canary
+`20260726-hermes-frontier-budget-canary-v2/hermes/rate-limiter` used the final
+runner SHA-256 and pinned Hermes runtime fingerprint. It completed in 362.499
+seconds with process exit `0`, changed only `rate_limiter.py`, and passed all
+10/10 functional checks. Public and hidden validation both exited `0`; the
+current `unit_tests` parser found one unittest tool call and one successful
+result. This closes the earlier evaluator false negative with a fresh execution
+rather than rescoring stale evidence.
