@@ -1113,12 +1113,8 @@ def run_codex_admin(args: argparse.Namespace, workspace: Path, task: Task) -> tu
         return 124, "", type(error).__name__
 
 
-def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any]:
-    workspace, evidence = paths(args, harness, task)
-    manifest_path = evidence / "manifest.json"
-    if not manifest_path.exists():
-        raise RuntimeError(f"prepare first: {harness}/{task.slug}")
-    manifest = json.loads(manifest_path.read_text())
+def validated_manifest(args: argparse.Namespace, task: Task, path: Path) -> dict[str, Any]:
+    manifest = json.loads(path.read_text())
     expected = {
         "gateway": args.gateway.rstrip("/"),
         "harness_sha256": sha256(Path(__file__)),
@@ -1127,6 +1123,15 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
     mismatches = [name for name, value in expected.items() if manifest.get(name) != value]
     if mismatches:
         raise RuntimeError("fixture manifest mismatch: " + ", ".join(mismatches))
+    return manifest
+
+
+def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any]:
+    workspace, evidence = paths(args, harness, task)
+    manifest_path = evidence / "manifest.json"
+    if not manifest_path.exists():
+        raise RuntimeError(f"prepare first: {harness}/{task.slug}")
+    validated_manifest(args, task, manifest_path)
     started_at = time.time()
     started = time.monotonic()
     if harness == "opencode":
@@ -1382,7 +1387,7 @@ def hermes_test_evidence(args: argparse.Namespace, task: Task, evidence: Path) -
 
 def score_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any]:
     workspace, evidence = paths(args, harness, task)
-    manifest = json.loads((evidence / "manifest.json").read_text())
+    manifest = validated_manifest(args, task, evidence / "manifest.json")
     run = json.loads((evidence / "run.json").read_text())
     validator_state = evidence / "validator-state"
     public_inner = ["python", "-m", "unittest", "discover", "-s", "tests", "-v"]
@@ -1508,9 +1513,46 @@ def summary(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def schedule(args: argparse.Namespace) -> dict[str, Any]:
+    entries = []
+    for harness, task in sorted(
+        selected(args),
+        key=lambda item: text_sha256(f"{args.run_id}\0{item[0]}\0{item[1].slug}"),
+    ):
+        _, evidence = paths(args, harness, task)
+        manifest_path = evidence / "manifest.json"
+        if not manifest_path.exists():
+            raise RuntimeError(f"prepare first: {harness}/{task.slug}")
+        entries.append(
+            {
+                "order": len(entries) + 1,
+                "harness": harness,
+                "task": task.slug,
+                "manifest_sha256": sha256(manifest_path),
+            }
+        )
+    result = {
+        "protocol_version": "client-quality-v2",
+        "run_id": args.run_id,
+        "order_seed_sha256": text_sha256(args.run_id),
+        "baseline": "gpt-5.6-sol",
+        "functional_gate": "all_checks_pass",
+        "entries": entries,
+    }
+    output = args.output_root / args.run_id / "schedule.json"
+    if output.exists():
+        existing = json.loads(output.read_text())
+        if existing != result:
+            raise RuntimeError("existing schedule does not match prepared manifests")
+        return existing
+    output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    output.chmod(0o444)
+    return result
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("prepare", "run", "score", "summary"))
+    parser.add_argument("action", choices=("prepare", "schedule", "run", "score", "summary"))
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--harness", choices=HARNESSES)
     parser.add_argument("--task", choices=tuple(TASK_BY_SLUG))
@@ -1534,6 +1576,8 @@ def main() -> int:
     if args.action == "prepare":
         for harness, task in selected(args):
             print(json.dumps(prepare_one(args, harness, task), sort_keys=True), flush=True)
+    elif args.action == "schedule":
+        print(json.dumps(schedule(args), sort_keys=True))
     elif args.action == "run":
         if not args.harness or not args.task:
             raise SystemExit("run requires --harness and --task")

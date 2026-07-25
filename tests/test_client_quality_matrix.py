@@ -120,6 +120,8 @@ def matrix_args(tmp_path: Path, *, gateway: str = "http://gateway.invalid:9000")
         gateway=gateway,
         timeout=30,
         runtime="docker",
+        harness=None,
+        task=None,
     )
 
 
@@ -156,3 +158,22 @@ def test_partial_summary_does_not_claim_noninferiority(tmp_path: Path) -> None:
         "codex": None,
         "hermes": None,
     }
+
+
+def test_schedule_is_complete_deterministic_and_manifest_bound(tmp_path: Path) -> None:
+    args = matrix_args(tmp_path)
+    for harness in GLOBALS["HARNESSES"]:
+        for task in GLOBALS["TASKS"]:
+            GLOBALS["prepare_one"](args, harness, task)
+
+    first = GLOBALS["schedule"](args)
+    second = GLOBALS["schedule"](args)
+
+    assert first == second
+    assert len(first["entries"]) == len(GLOBALS["HARNESSES"]) * len(GLOBALS["TASKS"])
+    assert len({row["order"] for row in first["entries"]}) == len(first["entries"])
+    for row in first["entries"]:
+        task = GLOBALS["TASK_BY_SLUG"][row["task"]]
+        _, evidence = GLOBALS["paths"](args, row["harness"], task)
+        assert row["manifest_sha256"] == GLOBALS["sha256"](evidence / "manifest.json")
+    assert (args.output_root / args.run_id / "schedule.json").stat().st_mode & 0o222 == 0
