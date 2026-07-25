@@ -5114,3 +5114,20 @@ and rollback gates remain unproven.
 - Static/fake-response coverage passed `9/9`; the complete branch suite passed
   `989/989` in `68.01` seconds. The isolated preflight still refused to run while
   production model services were active, as required.
+
+## Isolated candidate rollback preparation
+
+- `scripts/restore-production-baseline.sh` is a separately acknowledged recovery
+  path for the approved candidate window. It preserves the invoking user's
+  user-systemd bus when run through `sudo`, refuses to run while either candidate
+  container remains active, and changes no unit or drop-in.
+- Before starting anything it verifies the fixed Executor, Qwen planner, and
+  North Reviewer revisions plus the effective production units. It then restores
+  the existing vLLM Executor, SGLang planner, and North Reviewer sequentially and
+  requires a real inference marker from each. Executor verification includes the
+  Phase 3 `65536`, sequence `1`, `1700000000` KV bytes, utilization `0.50`, and
+  MARLIN baseline.
+- The recovery script has not been executed because no maintenance approval has
+  been granted. Its fail-closed no-approval check and its read-only approved
+  preflight both behaved as designed; focused candidate/rollback coverage passed
+  `10/10`, and the complete branch suite passed `990/990` in `30.35` seconds.
