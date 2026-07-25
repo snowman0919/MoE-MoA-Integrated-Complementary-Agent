@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+image="lmsysorg/sglang:dev-cu13@sha256:26f620b13e49900cc6ab59ed693f9ce8f9ea4f3531074c1e39a3bf9db06ab8f0"
+executor_model="${DGX_MOA_EXPERIMENT_EXECUTOR_MODEL:-/home/kotori9/models/dgx-moa/executor}"
+specialist_model="${DGX_MOA_EXPERIMENT_SPECIALIST_MODEL:-/home/kotori9/models/experimental/gemma-4-31b-it-nvfp4-4135a98a}"
+executor_revision="27a8f16f463b9a13c91c332c40cf93e09717347e"
+specialist_revision="4135a98a9b728a548947683219633b25682223ac"
+executor_container="dgx-moa-exp-sglang-executor"
+specialist_container="dgx-moa-exp-sglang-specialist"
+
+executor_command=(
+  docker run -d --rm --name "$executor_container" --pull never
+  --gpus all --network bridge -p 127.0.0.1:18101:18101
+  --memory 72g --memory-swap 72g --oom-score-adj 1000
+  -v "$executor_model:/model:ro"
+  -v dgx-moa-exp-sglang-executor-cache:/root/.cache
+  "$image"
+  python -m sglang.launch_server
+  --model-path /model --host 0.0.0.0 --port 18101
+  --served-model-name dgx-moa-executor-candidate
+  --context-length 65536 --mem-fraction-static 0.54
+  --max-running-requests 1 --max-total-tokens 65536
+  --max-mamba-cache-size 5 --quantization compressed-tensors
+  --language-only
+  --cuda-graph-backend-decode disabled
+  --cuda-graph-backend-prefill disabled
+  --tool-call-parser qwen3_coder
+  --enable-metrics --enable-cache-report --stream-output
+)
+
+specialist_command=(
+  docker run -d --rm --name "$specialist_container" --pull never
+  --gpus all --network bridge -p 127.0.0.1:18102:18102
+  --memory 48g --memory-swap 48g --oom-score-adj 1000
+  -v "$specialist_model:/model:ro"
+  -v dgx-moa-exp-sglang-specialist-cache:/root/.cache
+  "$image"
+  python -m sglang.launch_server
+  --model-path /model --host 0.0.0.0 --port 18102
+  --served-model-name dgx-moa-specialist-candidate
+  --context-length 65536 --mem-fraction-static 0.34
+  --max-running-requests 1 --max-total-tokens 65536
+  --quantization modelopt_fp4 --kv-cache-dtype fp8_e4m3
+  --language-only
+  --cuda-graph-backend-decode disabled
+  --cuda-graph-backend-prefill disabled
+  --reasoning-parser gemma4 --tool-call-parser gemma4
+  --enable-metrics --enable-cache-report --stream-output
+)
+
+print_command() {
+  printf '%q ' "$@"
+  printf '\n'
+}
+
+check_revision() {
+  local model_path=$1 expected=$2 metadata
+  metadata="$model_path/.cache/huggingface/download/config.json.metadata"
+  [[ -f "$metadata" ]] || {
+    printf 'missing revision metadata: %s\n' "$metadata" >&2
+    return 1
+  }
+  [[ "$(sed -n '1p' "$metadata")" == "$expected" ]] || {
+    printf 'unexpected model revision: %s\n' "$model_path" >&2
+    return 1
+  }
+}
+
+preflight() {
+  [[ "${DGX_MOA_ISOLATED_ACK:-}" == "1" ]] || {
+    printf 'set DGX_MOA_ISOLATED_ACK=1 for an approved maintenance window\n' >&2
+    return 1
+  }
+  local unit
+  for unit in dgx-moa-executor dgx-moa-planner dgx-moa-reviewer; do
+    if systemctl --user is-active --quiet "$unit"; then
+      printf 'production model service is active: %s\n' "$unit" >&2
+      return 1
+    fi
+  done
+  docker image inspect "$image" >/dev/null
+  check_revision "$executor_model" "$executor_revision"
+  check_revision "$specialist_model" "$specialist_revision"
+  [[ -z "$(ss -ltnH 'sport = :18101 or sport = :18102')" ]] || {
+    printf 'candidate port already in use\n' >&2
+    return 1
+  }
+  ! docker container inspect "$executor_container" >/dev/null 2>&1
+  ! docker container inspect "$specialist_container" >/dev/null 2>&1
+}
+
+wait_server() {
+  local container=$1 url=$2 deadline=$((SECONDS + 1800))
+  until curl -fsS "$url/v1/models" >/dev/null 2>&1; do
+    if ((SECONDS >= deadline)) || ! docker container inspect "$container" >/dev/null 2>&1; then
+      printf 'candidate server did not become available: %s\n' "$container" >&2
+      return 1
+    fi
+    sleep 5
+  done
+}
+
+case "${1:-}" in
+  print)
+    print_command "${executor_command[@]}"
+    print_command "${specialist_command[@]}"
+    ;;
+  preflight)
+    preflight
+    ;;
+  start)
+    preflight
+    "${executor_command[@]}"
+    if ! wait_server "$executor_container" "http://127.0.0.1:18101"; then
+      docker stop -t 180 "$executor_container" >/dev/null 2>&1 || true
+      exit 1
+    fi
+    if ! "${specialist_command[@]}"; then
+      docker stop -t 180 "$executor_container" >/dev/null
+      exit 1
+    fi
+    if ! wait_server "$specialist_container" "http://127.0.0.1:18102"; then
+      docker stop -t 180 "$specialist_container" "$executor_container" >/dev/null 2>&1 || true
+      exit 1
+    fi
+    ;;
+  stop)
+    for container in "$specialist_container" "$executor_container"; do
+      if docker container inspect "$container" >/dev/null 2>&1; then
+        docker stop -t 180 "$container" >/dev/null
+      fi
+    done
+    ;;
+  status)
+    docker ps --filter "name=dgx-moa-exp-sglang-" \
+      --format '{{.Names}} {{.Status}} {{.Ports}}'
+    ;;
+  *)
+    printf 'usage: %s {print|preflight|start|stop|status}\n' "$0" >&2
+    exit 64
+    ;;
+esac
