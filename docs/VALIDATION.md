@@ -5097,3 +5097,9 @@ Planner unit pins the tested image digest, model revision, loopback mapping,
 memory cap, and one-request/65K settings. Rollback is an exact Planner service
 stop, restoration of the previous unit and model entry, daemon reload, and
 start followed by the existing inference readiness probe.
+
+The installed unit uses `mem-fraction-static=0.68`, rather than the isolated
+`0.45`, because a cold start with the Reviewer already resident exposed only
+40.49 GB to SGLang. The higher fraction reserves about 27.5 GB of that visible
+memory and must pass the same 65K allocation and inference probe before the
+service is considered ready.
