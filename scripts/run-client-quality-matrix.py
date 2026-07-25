@@ -1336,7 +1336,7 @@ def successful_hermes_test_result(role: str, tool_name: str | None, content: str
         execution = json.loads(payload.get("output", ""))
     except (TypeError, ValueError):
         return False
-    unittest = execution.get("unittest", {})
+    unittest = execution.get("unittest") or execution.get("unit_tests", {})
     return (unittest.get("success") is True or unittest.get("exit_code") == 0) and any(
         marker in str(unittest.get("output", "")) for marker in ("Ran ", "OK")
     )

@@ -34,6 +34,24 @@ def test_installed_hermes_execute_code_is_valid_test_evidence() -> None:
     assert not SUCCESS("tool", "execute_code", content.replace("success", "error"))
 
 
+def test_current_hermes_unit_tests_key_is_valid_test_evidence() -> None:
+    content = json.dumps(
+        {
+            "status": "success",
+            "output": json.dumps(
+                {
+                    "unit_tests": {
+                        "output": "Ran 4 tests\n\nOK\n",
+                        "exit_code": 0,
+                    }
+                }
+            ),
+        }
+    )
+
+    assert SUCCESS("tool", "execute_code", content)
+
+
 def test_codex_command_uses_explicit_model_catalog(tmp_path: Path) -> None:
     command = GLOBALS["codex_moa_command"](
         Namespace(gateway="http://127.0.0.1:9000"),
