@@ -5458,3 +5458,16 @@ existing singleflight warm-up. A regression test proves the dead local
 provider is invoked once and the next call routes remotely. Specialist tests
 passed 10/10; the complete suite passed 1001/1001 in 28.91 seconds. Ruff and
 `git diff --check` passed.
+
+Production `main@5cf1fe4` deployed the fix with a gateway-only restart.
+`/healthz` and `/readyz` returned HTTP 200 on the third one-second probe.
+Startup reconciliation corrected the stopped Planner and Reviewer from stale
+`ready` to `cold` while preserving the resident Executor as `ready`.
+
+A fresh isolated OpenCode `1.17.18` canary then completed the previously
+timed-out `log-report` task in 178.010 seconds with process exit `0`. It changed
+only `log_report.py`; public and hidden validation both exited `0`, and all
+10/10 evaluator checks passed. While the Reviewer warm-up was `LOADING`, two
+required review calls selected remote `deepseek-v4-flash` with
+`routing_reason=local_not_ready` and both completed. The canary recorded no
+failed specialist call, bad terminal, stream abort, or gateway 5xx.
