@@ -5149,3 +5149,12 @@ The affected serialized state loaded with the new field default, recovered
 from zero to 43,200 wall-clock seconds, cleared `BUDGET_EXHAUSTED`, and then
 refused a second recovery after the latch reached one. The live database was
 not modified by this pre-deployment check.
+
+Production `main` was fast-forwarded to `92bcc7c` and pushed. Only the gateway
+service was restarted; role-model services and topology were unchanged.
+`/healthz` and `/readyz` returned HTTP 200, with Executor, Planner, and
+Reasoner ready. The affected live session then changed from
+`blocked/BUDGET_EXHAUSTED/0 seconds` to
+`replanning/no termination/43,200 seconds`, with recovery count one. A fresh
+authenticated `dgx-moa-fast` inference returned HTTP 200, exact public content
+`OK`, `finish_reason=stop`, 1,047 prompt tokens, and two completion tokens.
