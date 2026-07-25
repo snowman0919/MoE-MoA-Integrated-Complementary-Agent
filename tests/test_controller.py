@@ -2940,7 +2940,10 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
                     {
                         "tool_name": "exec_command",
                         "normalized_arguments": {
-                            "cmd": "set -eu\ntimeout 120s python -m unittest discover -s tests -v"
+                            "cmd": (
+                                "set -eu\nPYTHONDONTWRITEBYTECODE=1 "
+                                "timeout 120s python -m unittest discover -s tests -v"
+                            )
                         },
                         "exit_code": 0,
                     }

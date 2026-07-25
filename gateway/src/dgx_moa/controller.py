@@ -3370,6 +3370,7 @@ class Controller:
                 and (
                     re.search(
                         r"(?:^|&&|\|\||;|\n|[\"'])\s*"
+                        r"(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]+\s+)*"
                         r"(?:timeout\s+\d+(?:\.\d+)?[smh]?\s+)?"
                         r"(?:uv run )?(?:python -m )?"
                         r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
