@@ -5322,3 +5322,31 @@ Its sequence was HTTP 200 for the initial turn, HTTP 409 with
 user message. The final request recorded
 `engineering_loop_resumed(reason=new_user_evidence)` and completed in 1.805
 seconds. No 502 occurred.
+
+## Codex OAuth correction-result normalization — 2026-07-26
+
+The first preregistered quality-matrix attempt exposed a later instance of the
+same visible disconnect class. The gateway stayed healthy, but session
+`0a18c60b-5e1e-43e2-ae14-e8c78acd7dd7` recorded
+`executor_remote_failed` while dispatching a Frontier correction. The bounded
+failure was a Pydantic `ValidationError` for
+`FrontierExecutorResult.tool_calls[0].function`: Codex OAuth had returned a
+known tool with freeform arguments.
+
+The existing compatibility normalizer already repaired known
+`apply_patch`/`patch` and `exec_command`/`shell` arguments, but the Codex OAuth
+result file was schema-validated before reaching it. Commit `4c4d6c8` parses
+that result as JSON, applies the existing allowlisted normalization for
+Executor mode, and then performs the same strict schema validation. Unknown
+tools with malformed arguments remain fail-closed.
+
+Direct Codex OAuth regression coverage proves both the repaired known-tool
+case and the rejected unknown-tool case. Frontier plus usage focused tests
+passed 71/71. Two complete-suite attempts also exposed a pre-existing race in
+the test that enumerated transient SQLite WAL files: `usage.db-shm` could
+disappear between enumeration and reading. The test helper now ignores only a
+file that has already disappeared while continuing to scan every remaining DB
+and WAL file for forbidden sentinels. The final complete suite passed 998/998
+in 26.79 seconds; Ruff and `git diff --check` passed. Production deployment
+and a fresh, unobserved quality fixture remain required before this incident
+is closed.
