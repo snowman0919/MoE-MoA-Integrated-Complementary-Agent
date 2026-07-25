@@ -5055,3 +5055,18 @@ one-sequence, memory, tool-calling, quality, and rollback gates. Until then,
 bounded specialist evidence, compressed tool history, context-aware remote
 routing, and concurrent independent-role work are the approved throughput
 controls; no speculative SGLang migration is deployed.
+
+## Frozen ten-hour context-retention gate — 2026-07-26
+
+`scripts/analyze-long-horizon.py` now rejects incomplete or reordered
+checkpoints, schedule and stable-identity drift, a declared duration shorter
+than 36,000 actual seconds, unchanged or mismatched implementation commits,
+missing implementation/review/validation hashes, provider errors or switching,
+unjustified repeated reads, missing reconnect or cache reuse, premature
+completion, private fields, and any ordinary variable paid cost.
+
+Ruff formatting and lint passed. `tests/test_long_horizon.py` passed all 10
+acceptance and fail-closed cases, and the complete branch suite passed `991`
+tests with one third-party Starlette deprecation warning in 26.52 seconds.
+This proves the analyzer contract only. No real ten-hour client run or
+long-horizon pass is claimed.

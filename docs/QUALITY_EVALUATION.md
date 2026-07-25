@@ -180,6 +180,26 @@ checkpoint, secret persistence, or inability to resume. Completion requires
 an actual implementation, independent review, passing validation, and a
 terminal response after the ten-hour threshold.
 
+`scripts/analyze-long-horizon.py` freezes the machine-readable gate. Evidence
+contains one header, checkpoints `0` through `20` scheduled 1,800 seconds apart
+with a 60-second scheduling tolerance, and one final record. It requires stable
+SHA-256 identities for the session, objective, acceptance criteria, plan,
+repository, branch, and provider configuration; every checkpoint additionally
+requires a clean commit, next-action/context/evidence hashes, provider/model
+provenance and pinning, latency, context/cache tokens, tool/retry/provider-error
+counts, memory/swap, and variable cost.
+
+At least one intentional reconnect and one positive cache read are mandatory.
+Any provider error, unjustified repeated read, premature completion, identity
+drift, missing checkpoint, schedule drift, private/raw field, failed validation,
+unapproved review, unresolved critical finding, or missing final terminal fails
+the gate. The final record must be at least 36,000 actual seconds after the
+header, match the last clean implementation commit, differ from the baseline,
+and carry implementation, review, and validation evidence hashes. Any nonzero
+ordinary variable cost fails. The analyzer records no prompt, hidden reasoning,
+provider output, request ID, key, cookie, authorization value, or repository
+name.
+
 ## Change control
 
 Failures may be diagnosed from redacted logs, but fixes are allowed only in a
