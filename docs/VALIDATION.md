@@ -5350,3 +5350,14 @@ and WAL file for forbidden sentinels. The final complete suite passed 998/998
 in 26.79 seconds; Ruff and `git diff --check` passed. Production deployment
 and a fresh, unobserved quality fixture remain required before this incident
 is closed.
+
+Production `main` was fast-forwarded to `b07c565`, pushed, and only the gateway
+was restarted. Startup completed in 12 seconds; `/healthz` and `/readyz`
+returned HTTP 200 with Executor, Planner, Reviewer, and Reasoner ready. A fresh
+OpenCode-compatible non-streaming request returned HTTP 200 and a non-empty
+`stop` response in 5.836 seconds. A separate streaming request returned HTTP
+200, seven data chunks, a `[DONE]` terminator, and zero failed events in 6.395
+seconds. Gateway logs contained the two HTTP 200 requests and no post-deploy
+5xx, `stream_aborted`, `responses_stream_terminal`, or
+`executor_remote_failed`. The OpenCode connection block is closed; the
+preregistered cross-client quality comparison remains a separate active gate.
