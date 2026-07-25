@@ -3271,6 +3271,48 @@ async def test_progress_retry_rechecks_deferred_review(
     assert state.review_deferred is False
 
 
+@pytest.mark.asyncio
+async def test_progress_retry_promotes_reviewer_from_recorded_implementation(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="pending-review-retry",
+        objective="Implement app.py in this repository and test it.",
+        roles_required=["reasoner", "executor"],
+        implementation_evidence=[
+            {
+                "tool_name": "exec_command",
+                "target_paths": ["app.py"],
+                "change_arguments": {"cmd": "python - <<'PY'\nwrite_app()\nPY"},
+            }
+        ],
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m pytest -q"},
+                "exit_code": 0,
+            },
+        ],
+    )
+    request = {
+        "model": "dgx-moa",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {"responses_progress_retry": True},
+    }
+
+    await controller.prepare_executor(
+        state,
+        request,
+        ("reasoner", "executor"),
+        tool_continuation=False,
+    )
+
+    assert "reviewer" in state.roles_required
+    assert "reviewer" in stub_provider.calls
+    assert state.review_status == "approved"
+
+
 def test_review_observation_is_bounded_redacted_and_complete(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

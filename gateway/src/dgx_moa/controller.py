@@ -2772,9 +2772,23 @@ class Controller:
         review_evidence_available = self.has_review_evidence(state, metadata)
         if (
             not state.frontier_correction_required
-            and (not progress_retry or state.review_deferred)
+            and (
+                not progress_retry
+                or state.review_deferred
+                or (
+                    state.implementation_evidence
+                    and not any(
+                        artifact.get("role") == "reviewer"
+                        for artifact in state.agent_artifacts
+                    )
+                )
+            )
             and needs_reviewer(
-                state, tool_continuation or state.review_deferred, review_evidence_available
+                state,
+                tool_continuation
+                or state.review_deferred
+                or bool(state.implementation_evidence),
+                review_evidence_available,
             )
         ):
             roles = tuple(dict.fromkeys((*roles, "reviewer")))
