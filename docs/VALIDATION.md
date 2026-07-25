@@ -5242,3 +5242,53 @@ finished with `review_status=approved`, `stream_completed`, and
 `session_ended=completed`. The client observed HTTP 200, one
 `response.completed`, zero `response.failed`, and 6,092 SSE bytes. No
 post-deployment 5xx terminal was logged.
+
+## Codex remote-Executor stream recovery — 2026-07-26
+
+A fresh Docker Codex canary exposed two separate compatibility failures. The
+quality harness initially had no local metadata for `dgx-moa-orchestrated`.
+A static replacement incorrectly selected Codex `code_mode`, which added an
+`additional_tools` input item that the gateway does not support and produced
+HTTP 422. Commit `886a0bb` instead fetches the authenticated gateway
+`/v1/models` catalog before each isolated Codex run and pins that exact catalog
+inside the container. The runtime's reviewed `direct` tool mode is now used
+without duplicating model metadata or storing the API key in the catalog.
+Timeout cleanup also assigns a deterministic container name and removes that
+exact container after an expired run. The physical timeout check returned 124
+and left no container.
+
+The next canary completed its implementation and both public and hidden tests,
+but its client log still contained one `stream disconnected before
+completion`. Gateway evidence showed this was not a socket or process outage:
+the remote Frontier Executor returned an `apply_patch` call whose freeform
+patch was not wrapped in a JSON argument object. Validation emitted a
+structured failed response, Codex retried, and the run eventually returned
+zero after 555.899 seconds. The matrix correctly failed the run because
+`no_bad_terminal=false`.
+
+Commit `6ff0953` normalizes only the two known freeform client tools:
+`apply_patch`/`patch` become `{"input": ...}` and
+`exec_command`/`shell` become `{"cmd": ...}`. Unknown malformed tool arguments
+remain fail-closed. Unit and integration coverage proves both the successful
+normalization and the unknown-tool rejection. Focused tests passed 36/36,
+Ruff and `git diff --check` passed, and the complete suite passed 991/991 in
+24.59 seconds with only the existing Starlette deprecation warning.
+
+After production fast-forward and a gateway-only restart, `/healthz` and
+`/readyz` returned HTTP 200 with Executor, Planner, Reviewer, and Reasoner
+ready. A new isolated atomic-store canary exercised the same remote Frontier
+Executor path. The remote call remained open for 78 seconds, completed one
+normalized `apply_patch`, ran validation, completed Reviewer and Frontier
+review, and terminated in 164.360 seconds. Public and hidden validation both
+returned zero. The quality score passed every check, including
+`no_bad_terminal=true`; client logs contained zero metadata warnings,
+reconnections, stream disconnects, 422s, 502s, `turn.failed`, or
+`response.failed`. Runtime events contained one `executor_remote_completed`,
+one `review_completed`, one `frontier_review_verified`, nine
+`stream_completed`, and zero `executor_remote_failed` or `stream_aborted`.
+
+This canary closes the reproduced connection-failure path. It does not by
+itself establish GPT-5.6 Sol quality parity: earlier local turns still made
+avoidable text-file `view_image` calls, invalid `write_stdin` calls, and
+redundant patch attempts. Those remain quality and efficiency work for the
+preregistered multi-harness evaluation.
