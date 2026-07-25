@@ -138,8 +138,16 @@ restore() {
     "--reasoning-parser cohere_command4"
   probe 8103 dgx-moa-reviewer REVIEWER_ROLLBACK_READY
 
+  run_as_runtime_user systemctl --user stop \
+    dgx-moa-reviewer.service dgx-moa-planner.service
+  for role in reviewer planner; do
+    [[ "$(run_as_runtime_user systemctl --user is-active "dgx-moa-$role.service" || true)" == "inactive" ]] || {
+      printf 'optional baseline role did not return cold: %s\n' "$role" >&2
+      return 1
+    }
+  done
   curl -fsS --max-time 10 http://127.0.0.1:9000/readyz >/dev/null
-  printf 'production vLLM/North baseline restored and inference-ready\n'
+  printf 'production baseline restored: Executor ready; Planner/Reviewer cold\n'
 }
 
 case "${1:-}" in

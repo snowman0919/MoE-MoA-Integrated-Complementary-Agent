@@ -36,6 +36,7 @@ def test_restore_requires_approval_and_pins_exact_baseline() -> None:
         "EXECUTOR_ROLLBACK_READY",
         "PLANNER_ROLLBACK_READY",
         "REVIEWER_ROLLBACK_READY",
+        "optional baseline role did not return cold",
     ):
         assert required in source
 
@@ -46,5 +47,8 @@ def test_restore_requires_approval_and_pins_exact_baseline() -> None:
     assert restore.index("start dgx-moa-planner.service") < restore.index(
         "start dgx-moa-reviewer.service"
     )
-    assert "systemctl --user stop" not in restore
+    assert restore.index("REVIEWER_ROLLBACK_READY") < restore.index(
+        "systemctl --user stop"
+    )
+    assert "dgx-moa-reviewer.service dgx-moa-planner.service" in restore
     assert "docker rm" not in source

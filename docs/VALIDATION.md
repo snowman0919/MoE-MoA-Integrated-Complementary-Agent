@@ -5126,11 +5126,13 @@ and rollback gates remain unproven.
   the existing vLLM Executor, SGLang planner, and North Reviewer sequentially and
   requires a real inference marker from each. Executor verification includes the
   Phase 3 `65536`, sequence `1`, `1700000000` KV bytes, utilization `0.50`, and
-  MARLIN baseline.
+  MARLIN baseline. After the probes, Planner and Reviewer return to inactive
+  optional-role state while the verified Executor remains resident.
 - The recovery script has not been executed because no maintenance approval has
   been granted. Its fail-closed no-approval check and its read-only approved
-  preflight both behaved as designed; focused candidate/rollback coverage passed
-  `10/10`, and the complete branch suite passed `990/990` in `30.35` seconds.
+  preflight both behaved as designed. After the cold-state restoration fix,
+  focused candidate/rollback/soak coverage passed `13/13`, and the complete
+  branch suite passed `993/993` in `24.79` seconds.
 
 ## Isolated 10-hour soak automation (candidate only)
 
