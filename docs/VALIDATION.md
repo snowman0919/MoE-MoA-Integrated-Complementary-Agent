@@ -5224,3 +5224,10 @@ the successful retry still was not review evidence. Commit `8c16517` adds the
 bounded `timeout` prefix to the existing allowlist instead of adding another
 validation path. Its focused checks passed 4/4 and the complete suite again
 passed 985/985 in 25.59 seconds with the same warning.
+
+The canary's successful fallback also prefixed the bounded command with
+`PYTHONDONTWRITEBYTECODE=1`. Commit `b6db4b9` accepts standard shell
+environment assignments before the existing bounded validation command.
+Against the exact persisted canary state, the hotfix changed both
+`has_review_evidence` and `needs_reviewer` from false to true. Focused checks
+passed 4/4 and the complete suite passed 985/985 in 25.25 seconds.
