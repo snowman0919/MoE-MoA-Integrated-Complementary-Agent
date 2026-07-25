@@ -3,7 +3,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "isolated-sglang-topology.sh"
 
@@ -37,6 +36,13 @@ def test_candidate_commands_pin_safe_two_model_topology() -> None:
     assert "--tool-call-parser gemma4" in specialist
 
     source = SCRIPT.read_text()
+    for required in (
+        "SUDO_USER",
+        "SUDO_UID",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "run_as_runtime_user systemctl --user is-active",
+    ):
+        assert required in source
     assert "systemctl --user stop" not in source
     assert "docker rm -f" not in source
     start = source.split("  start)", 1)[1].split("  stop)", 1)[0]
