@@ -708,7 +708,12 @@ class CodexOAuthCollaboration:
                     )
                 self._failed()
                 raise RuntimeError(final_failure)
-            result = schema_model.model_validate_json(result_path.read_text()).model_dump()
+            raw_result = json.loads(result_path.read_text())
+            if mode == "executor" and isinstance(raw_result, dict):
+                raw_result["tool_calls"] = normalize_openrouter_tool_calls(
+                    raw_result.get("tool_calls")
+                )
+            result = schema_model.model_validate(raw_result).model_dump()
             prompt, completion = codex_usage(completed.stdout)
         self.failures = 0
         self.opened_at = None

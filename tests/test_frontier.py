@@ -324,6 +324,84 @@ async def test_remote_executor_repairs_known_freeform_tool_arguments(
     assert result["choices"][0]["finish_reason"] == "tool_calls"
 
 
+def test_codex_oauth_executor_repairs_freeform_before_schema_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    patch = "*** Begin Patch\n*** Add File: result.txt\n+ok\n*** End Patch"
+
+    def fake_run(command, **_kwargs):  # type: ignore[no-untyped-def]
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        result_path.write_text(
+            json.dumps(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "patch",
+                            "type": "function",
+                            "function": {
+                                "name": "apply_patch",
+                                "arguments": patch,
+                            },
+                        }
+                    ],
+                    "finish_reason": "tool_calls",
+                }
+            )
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(enabled=True, collaboration_retries=0),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    result = runner._run("executor", {"executor_request": {}}, "correlation")
+
+    arguments = result.output["tool_calls"][0]["function"]["arguments"]
+    assert json.loads(arguments) == {"input": patch}
+
+
+def test_codex_oauth_executor_rejects_unknown_freeform_arguments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(command, **_kwargs):  # type: ignore[no-untyped-def]
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        result_path.write_text(
+            json.dumps(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "unknown",
+                            "type": "function",
+                            "function": {
+                                "name": "unknown_tool",
+                                "arguments": "not-json",
+                            },
+                        }
+                    ],
+                    "finish_reason": "tool_calls",
+                }
+            )
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(enabled=True, collaboration_retries=0),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    with pytest.raises(ValidationError):
+        runner._run("executor", {"executor_request": {}}, "correlation")
+
+
 def test_frontier_review_requires_finite_arithmetic_parameters() -> None:
     prompt = COLLABORATION_MODE_INSTRUCTIONS["code_review"]
 

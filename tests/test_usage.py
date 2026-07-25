@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import sqlite3
+from contextlib import suppress
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,14 @@ from pydantic import ValidationError
 
 def usage_module() -> Any:
     return import_module("dgx_moa.usage")
+
+
+def read_sqlite_files(path: Path) -> bytes:
+    chunks: list[bytes] = []
+    for file in path.parent.glob(f"{path.name}*"):
+        with suppress(FileNotFoundError):
+            chunks.append(file.read_bytes())
+    return b"".join(chunks)
 
 
 @pytest.mark.parametrize(
@@ -802,7 +811,7 @@ def test_request_start_rejects_category_sentinels_before_persistence(
     with pytest.raises(ValidationError):
         store.start(module.RequestUsageStart.model_validate(raw))
 
-    sqlite_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("usage.db*"))
+    sqlite_bytes = read_sqlite_files(path)
     assert sentinel.encode() not in sqlite_bytes
     assert sentinel not in json.dumps(store.report(now=100.0), sort_keys=True)
 
@@ -828,7 +837,7 @@ def test_request_finalization_rejects_category_sentinels_before_persistence(
         store.finalize("safe-request", module.RequestUsageFinalization.model_validate(raw))
 
     assert store.get("safe-request").completed_at is None
-    sqlite_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("usage.db*"))
+    sqlite_bytes = read_sqlite_files(path)
     assert sentinel.encode() not in sqlite_bytes
     assert sentinel not in json.dumps(store.report(now=101.0), sort_keys=True)
 
@@ -851,7 +860,7 @@ def test_lifecycle_sample_rejects_category_sentinels_before_persistence(
     with pytest.raises(ValidationError):
         store.record_lifecycle_sample(module.LifecycleSample.model_validate(raw))
 
-    sqlite_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("usage.db*"))
+    sqlite_bytes = read_sqlite_files(path)
     assert sentinel.encode() not in sqlite_bytes
     assert sentinel not in json.dumps(store.report(now=100.0), sort_keys=True)
 
