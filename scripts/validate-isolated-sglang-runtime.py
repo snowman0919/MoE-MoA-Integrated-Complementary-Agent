@@ -397,7 +397,43 @@ def container_snapshot(name: str) -> dict[str, Any]:
         "image_id": item.get("Image"),
         "model_revision": revision,
         "settings": selected,
+        "memory": process_memory(int(item.get("State", {}).get("Pid", 0) or 0)),
     }
+
+
+def process_memory(
+    pid: int,
+    proc_root: Path = Path("/proc"),
+    cgroup_root: Path = Path("/sys/fs/cgroup"),
+) -> dict[str, int]:
+    if pid < 1:
+        return {}
+    result: dict[str, int] = {}
+    status = proc_root / str(pid) / "status"
+    if status.is_file():
+        for line in status.read_text().splitlines():
+            key, _, value = line.partition(":")
+            if key in {"VmRSS", "VmSwap"}:
+                result[f"process_{key.lower()}_kib"] = int(value.split()[0])
+    cgroup = proc_root / str(pid) / "cgroup"
+    if not cgroup.is_file():
+        return result
+    unified = next(
+        (
+            line.split("::", 1)[1]
+            for line in cgroup.read_text().splitlines()
+            if line.startswith("0::")
+        ),
+        None,
+    )
+    if unified is None:
+        return result
+    directory = cgroup_root / unified.lstrip("/")
+    for filename in ("memory.current", "memory.peak", "memory.swap.current"):
+        value = directory / filename
+        if value.is_file():
+            result[filename.replace(".", "_") + "_bytes"] = int(value.read_text().strip())
+    return result
 
 
 def _command_json(command: list[str]) -> Any:

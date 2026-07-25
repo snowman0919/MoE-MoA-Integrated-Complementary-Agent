@@ -209,3 +209,23 @@ def test_stream_validator_accepts_marker_split_across_sse_chunks(monkeypatch) ->
     assert result["marker"] is True
     assert result["done"] is True
     assert result["total_tokens"] == 6
+
+
+def test_process_memory_reads_cgroup_and_process_usage(tmp_path: Path) -> None:
+    proc = tmp_path / "proc"
+    cgroup = tmp_path / "cgroup"
+    (proc / "42").mkdir(parents=True)
+    (cgroup / "candidate").mkdir(parents=True)
+    (proc / "42" / "status").write_text("VmRSS: 123 kB\nVmSwap: 7 kB\n")
+    (proc / "42" / "cgroup").write_text("0::/candidate\n")
+    (cgroup / "candidate" / "memory.current").write_text("456")
+    (cgroup / "candidate" / "memory.peak").write_text("789")
+    (cgroup / "candidate" / "memory.swap.current").write_text("12")
+
+    assert MODULE.process_memory(42, proc, cgroup) == {
+        "process_vmrss_kib": 123,
+        "process_vmswap_kib": 7,
+        "memory_current_bytes": 456,
+        "memory_peak_bytes": 789,
+        "memory_swap_current_bytes": 12,
+    }

@@ -5131,3 +5131,25 @@ and rollback gates remain unproven.
   been granted. Its fail-closed no-approval check and its read-only approved
   preflight both behaved as designed; focused candidate/rollback coverage passed
   `10/10`, and the complete branch suite passed `990/990` in `30.35` seconds.
+
+## Isolated 10-hour soak automation (candidate only)
+
+- `scripts/soak-isolated-sglang.py run` first requires the complete real-inference
+  validator to pass, then defaults to a `36000`-second run with two concurrent
+  clients per role. The Executor and reasoning-enabled Gemma specialist receive
+  simultaneous requests while sharing a stable per-run prefix.
+- Each cycle appends and `fsync`s a mode-`0600` JSONL event containing only role,
+  client slot, pass/fail, latency, token/cache counts, container/image/revision
+  state, GPU memory, host memory, and swap. Prompt, marker, reasoning, output,
+  request ID, and repository name are not retained.
+- Up to two consecutive failed cycles remain observable for recovery evidence;
+  a third consecutive failure, a missing container, or any OOM ends the run
+  fail-closed. The summary requires the full requested duration, at least one
+  cycle, zero request failures, both containers continuously running, no OOM,
+  and no interrupt.
+- This automation does not itself prove 10-hour stability or long-horizon agent
+  plan retention. Both remain pending physical execution and the separate
+  Codex/OpenCode/Hermes long-task panel.
+- Focused runtime/soak coverage passed `11/11`, including cgroup memory parsing,
+  concurrent role requests, durable evidence, OOM rejection, and truncated-run
+  rejection. The complete branch suite passed `993/993` in `26.53` seconds.
