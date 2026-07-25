@@ -3369,7 +3369,9 @@ class Controller:
                 and isinstance(command, str)
                 and (
                     re.search(
-                        r"(?:^|&&|\|\||;|\n|[\"'])\s*(?:uv run )?(?:python -m )?"
+                        r"(?:^|&&|\|\||;|\n|[\"'])\s*"
+                        r"(?:timeout\s+\d+(?:\.\d+)?[smh]?\s+)?"
+                        r"(?:uv run )?(?:python -m )?"
                         r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
                         command,
                     )

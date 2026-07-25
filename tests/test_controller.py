@@ -2935,6 +2935,24 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
     assert (
         controller.has_review_evidence(
             SessionState(
+                session_id="timeout-unittest",
+                tool_executions=[
+                    {
+                        "tool_name": "exec_command",
+                        "normalized_arguments": {
+                            "cmd": "set -eu\ntimeout 120s python -m unittest discover -s tests -v"
+                        },
+                        "exit_code": 0,
+                    }
+                ],
+            ),
+            {},
+        )
+        is True
+    )
+    assert (
+        controller.has_review_evidence(
+            SessionState(
                 session_id="failed-unittest",
                 tool_executions=[
                     {
