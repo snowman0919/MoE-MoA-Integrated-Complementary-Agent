@@ -5393,4 +5393,37 @@ passed 4/4. The new regression proves a 16,384-token tool request invokes no
 local Executor, preserves its requested budget for Frontier, and records the
 new reason. Ruff and `git diff --check` passed; the complete suite passed
 999/999 in 27.84 seconds with only the existing Starlette deprecation warning.
-Production deployment and a fresh Hermes canary are still required.
+
+Production `main@95cb767` deployed the routing change and restored HTTP 200
+health/readiness with all required resident roles ready. A fresh installed
+Hermes canary then requested 16,384 output tokens and completed an actual
+rate-limiter implementation in 604.09 seconds with process exit `0`. Every
+large client-tool turn was pinned to Codex Frontier before dispatch with
+`routing_reason=local_output_budget_exceeded`; the local Executor performed
+only the bounded orchestration decisions. Gateway evidence contained no 5xx,
+provider failure, or stream abort during the completed tool turns.
+
+The implementation and both public and hidden tests passed, but the first
+quality score was 9/10 because the evaluator recognized the legacy Hermes
+`execute_code.output.unittest` field only. Installed Hermes records the same
+evidence under `execute_code.output.unit_tests`; the session had four unittest
+tool calls, final exit `0`, and independent checks with exit `0`. Commit
+`63c1edd` accepts both field names and adds a regression fixture containing
+`Ran 4 tests` and `OK`.
+
+Before sealing new repeated runs, the quality manifest was also extended to
+pin the actual client runtime: Codex and OpenCode record their version and
+binary SHA-256, while Hermes records revision
+`f67aae323010e32c592a185984d36b20e9fa474a` and the non-secret config SHA-256.
+The manifest validator rejects a changed runtime fingerprint before execution;
+Hermes `.env` is neither stored nor hashed. Focused evaluator tests passed 9/9,
+Ruff and `git diff --check` were clean, and the complete suite passed 1000/1000
+in 26.41 seconds with only the existing Starlette deprecation warning.
+
+An independent OpenCode availability check used installed OpenCode `1.17.18`
+through the production gateway. A text request and a five-turn file
+create/readback request both exited `0`; the latter created exact `OK`, recovered
+from one model-generated unavailable `shell` tool name, and finished normally.
+A direct bounded OpenCode Go Planner request returned exact
+`OPENCODE_GO_OK` from `deepseek-v4-pro` in 2.479 seconds. No server-side
+OpenCode or OpenCode Go circuit block was present.
