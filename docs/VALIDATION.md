@@ -5215,3 +5215,12 @@ passed 6/6. Controller plus streaming tests passed 151/151 after preserving the
 existing artifact-reuse behavior. The complete suite passed 985/985 in 26.08
 seconds with only the existing Starlette deprecation warning. Ruff and
 `git diff --check` passed. The code fix is commit `24a3cc9`.
+
+The first production canary exposed a second condition in the same gate. Its
+bounded command used the prompt-required
+`timeout 120s python -m unittest discover -s tests -v` form. All four tests
+passed, but the validation recognizer accepted only a bare Python prefix, so
+the successful retry still was not review evidence. Commit `8c16517` adds the
+bounded `timeout` prefix to the existing allowlist instead of adding another
+validation path. Its focused checks passed 4/4 and the complete suite again
+passed 985/985 in 25.59 seconds with the same warning.
