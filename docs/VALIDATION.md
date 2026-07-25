@@ -5100,6 +5100,17 @@ and rollback gates remain unproven.
 
 ## Isolated SGLang runtime validator (candidate only)
 
+- The candidate configuration uses the current tailnet Reasoner endpoint
+  `100.90.167.128:11434`. Older `192.168.0.197` entries below are retained only
+  as historical evidence and are not the candidate route. A live `/api/tags`
+  request on 2026-07-26 returned `Qwythos-v2-9B:Q4`.
+- `scripts/validate-live-client-matrix.py` can now attach its authenticated
+  loopback-only isolated Gateway to candidate ports `18101` and `18102`.
+  Planner and Reviewer share the pinned Gemma revision and served model while
+  retaining distinct gateway roles; either missing or non-loopback endpoint is
+  rejected before startup. Candidate Gateway/Reasoner tests and the complete
+  branch suite passed `998/998` in 24.64 seconds with one third-party Starlette
+  warning.
 - `scripts/validate-isolated-sglang-runtime.py` performs real inference readiness,
   native Executor and Gemma tool parsing, Gemma reasoning separation, gateway
   `PlannerPlan`/`ReviewResult` structured output, SSE completion, and measured
@@ -5135,7 +5146,7 @@ and rollback gates remain unproven.
   been granted. Its fail-closed no-approval check and its read-only approved
   preflight both behaved as designed. After the cold-state restoration fix,
   focused candidate/rollback/soak coverage passed `13/13`, and the complete
-  branch suite passed `993/993` in `24.91` seconds.
+  pre-Gateway-extension branch suite passed `993/993` in `24.91` seconds.
 
 ## Isolated 10-hour soak automation (candidate only)
 

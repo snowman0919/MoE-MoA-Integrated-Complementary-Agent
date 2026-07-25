@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 import uvicorn
@@ -20,6 +21,9 @@ from dgx_moa.config import load_settings
 
 PROJECT = Path(__file__).resolve().parents[1]
 PRODUCTION = Path("/home/kotori9/dgx-moa-agent")
+EXECUTOR_REVISION = "27a8f16f463b9a13c91c332c40cf93e09717347e"
+SPECIALIST_REVISION = "4135a98a9b728a548947683219633b25682223ac"
+SAFE_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
 def run(
@@ -59,6 +63,50 @@ def port_available(port: int) -> bool:
     return True
 
 
+def local_endpoint(value: str) -> str:
+    endpoint = value.rstrip("/")
+    parsed = urlparse(endpoint)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in SAFE_HOSTS
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise argparse.ArgumentTypeError("candidate endpoints must be loopback-only")
+    return endpoint
+
+
+def candidate_models(base, executor_endpoint: str, specialist_endpoint: str):  # type: ignore[no-untyped-def]
+    specialist = {
+        "repository": "nvidia/Gemma-4-31B-IT-NVFP4",
+        "revision": SPECIALIST_REVISION,
+        "classification": "official",
+        "base_url": specialist_endpoint,
+        "served_name": "dgx-moa-specialist-candidate",
+        "destination": Path("/home/kotori9/models/experimental/gemma-4-31b-it-nvfp4-4135a98a"),
+        "context_length": 65_536,
+        "max_num_seqs": 1,
+        "quantization": "modelopt_fp4",
+        "tool_call_parser": "gemma4",
+        "reasoning_parser": "gemma4",
+        "trust_remote_code": False,
+    }
+    return {
+        **base.models,
+        "executor": base.models["executor"].model_copy(
+            update={
+                "base_url": executor_endpoint,
+                "served_name": "dgx-moa-executor-candidate",
+            }
+        ),
+        "planner": base.models["planner"].model_copy(update=specialist),
+        "reviewer": base.models["reviewer"].model_copy(update=specialist),
+    }
+
+
 def client_env(root: Path, secret: str) -> dict[str, str]:
     locations = {
         "HOME": root / "home",
@@ -79,7 +127,13 @@ def client_env(root: Path, secret: str) -> dict[str, str]:
     }
 
 
-def start_gateway(root: Path, port: int, secret: str) -> tuple[uvicorn.Server, threading.Thread]:
+def start_gateway(
+    root: Path,
+    port: int,
+    secret: str,
+    executor_endpoint: str | None = None,
+    specialist_endpoint: str | None = None,
+) -> tuple[uvicorn.Server, threading.Thread]:
     original_auth = os.environ.get("DGX_MOA_AUTH_ENABLED")
     os.environ["DGX_MOA_AUTH_ENABLED"] = "false"
     try:
@@ -89,24 +143,25 @@ def start_gateway(root: Path, port: int, secret: str) -> tuple[uvicorn.Server, t
             os.environ.pop("DGX_MOA_AUTH_ENABLED", None)
         else:
             os.environ["DGX_MOA_AUTH_ENABLED"] = original_auth
-    settings = base.model_copy(
-        update={
-            "bind_host": "127.0.0.1",
-            "bind_port": port,
-            "auth_enabled": True,
-            "api_key": None,
-            "api_keys": {"physical": secret},
-            "admin_api_enabled": False,
-            "state_db": root / "runtime/state.db",
-            "run_dir": root / "runtime",
-            "runtime_channel": "dev",
-            "trace_origin": "validation",
-            "controller_commit": "dirty-predeployment-validation",
-            "frontier_enabled": False,
-            "lifecycle_mode": "disabled",
-            "lifecycle_unit_map": {},
-        }
-    )
+    update = {
+        "bind_host": "127.0.0.1",
+        "bind_port": port,
+        "auth_enabled": True,
+        "api_key": None,
+        "api_keys": {"physical": secret},
+        "admin_api_enabled": False,
+        "state_db": root / "runtime/state.db",
+        "run_dir": root / "runtime",
+        "runtime_channel": "dev",
+        "trace_origin": "validation",
+        "controller_commit": "dirty-predeployment-validation",
+        "frontier_enabled": False,
+        "lifecycle_mode": "disabled",
+        "lifecycle_unit_map": {},
+    }
+    if executor_endpoint is not None and specialist_endpoint is not None:
+        update["models"] = candidate_models(base, executor_endpoint, specialist_endpoint)
+    settings = base.model_copy(update=update)
     server = uvicorn.Server(
         uvicorn.Config(
             create_app(settings),
@@ -135,7 +190,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--port", type=int, default=19300)
+    parser.add_argument("--executor-endpoint", type=local_endpoint)
+    parser.add_argument("--specialist-endpoint", type=local_endpoint)
     args = parser.parse_args()
+    if (args.executor_endpoint is None) != (args.specialist_endpoint is None):
+        parser.error("candidate executor and specialist endpoints are required together")
     root = args.output.resolve()
     root.mkdir(parents=True, exist_ok=False)
     if not port_available(args.port):
@@ -144,7 +203,13 @@ def main() -> None:
     secret = secrets.token_urlsafe(32)
     base_url = f"http://127.0.0.1:{args.port}"
     headers = {"Authorization": f"Bearer {secret}"}
-    server, thread = start_gateway(root, args.port, secret)
+    server, thread = start_gateway(
+        root,
+        args.port,
+        secret,
+        args.executor_endpoint,
+        args.specialist_endpoint,
+    )
     results: dict[str, object] = {}
     try:
         generic = httpx.post(
@@ -325,6 +390,14 @@ def main() -> None:
     summary = {
         "schema": "live-client-matrix-v1",
         "passed": passed,
+        "candidate_topology": (
+            {
+                "executor_revision": EXECUTOR_REVISION,
+                "specialist_revision": SPECIALIST_REVISION,
+            }
+            if args.executor_endpoint is not None
+            else None
+        ),
         "clients": results,
         "model_invocation_rate_rows": len(rate_rows),
         "executor_invocations_recorded": max(
