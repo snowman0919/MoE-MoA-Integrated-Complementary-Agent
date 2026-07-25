@@ -1003,33 +1003,51 @@ class Controller:
                     "engineering_loop_started",
                     {"loop_id": state.engineering_loop.loop_id, "loop_type": "implementation"},
                 )
-            elif (
-                state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
-                and state.engineering_loop.remaining_budget.wall_clock_seconds == 0
-                and state.engineering_loop.wall_clock_recovery_count == 0
-            ):
-                state.engineering_loop.remaining_budget.wall_clock_seconds = (
-                    configured_budget.wall_clock_seconds
-                )
-                state.engineering_loop.wall_clock_recovery_count = 1
-                state.engineering_loop.termination_reason = None
-                state.engineering_loop.progress_state = "progressing"
-                state.engineering_loop.started_at_epoch = time.time()
-                state.phase = Phase.REPLANNING
-                state.final_status = None
-                self.store.event(
-                    state.session_id,
-                    "engineering_loop_wall_clock_recovered",
-                    {
-                        "remaining_wall_clock_seconds": (
-                            state.engineering_loop.remaining_budget.wall_clock_seconds
-                        )
-                    },
-                )
-            elif (
-                state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
-                and state.engineering_loop.remaining_budget.tokens == 0
-            ):
+            elif state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED":
+                loop = state.engineering_loop
+                recovered: dict[str, int | float] = {}
+                if (
+                    loop.remaining_budget.wall_clock_seconds == 0
+                    and loop.wall_clock_recovery_count == 0
+                ):
+                    loop.remaining_budget.wall_clock_seconds = configured_budget.wall_clock_seconds
+                    loop.wall_clock_recovery_count = 1
+                    recovered["wall_clock_seconds"] = configured_budget.wall_clock_seconds
+                    self.store.event(
+                        state.session_id,
+                        "engineering_loop_wall_clock_recovered",
+                        {
+                            "remaining_wall_clock_seconds": (
+                                loop.remaining_budget.wall_clock_seconds
+                            )
+                        },
+                    )
+                consumed = {
+                    name: 0
+                    for name in (
+                        "tool_calls",
+                        "reasoner_reentries",
+                        "planner_calls",
+                        "reviewer_calls",
+                        "frontier_calls",
+                        "judge_calls",
+                    )
+                }
+                for event in self.store.events(state.session_id):
+                    payload = event["payload"]
+                    action = payload.get("action")
+                    if (
+                        event["event_type"] == "engineering_loop_budget_consumed"
+                        and payload.get("loop_id") == loop.loop_id
+                        and action in consumed
+                    ):
+                        consumed[action] += 1
+                used = {"iterations": loop.iteration, **consumed}
+                for name, count in used.items():
+                    remaining = max(0, int(getattr(configured_budget, name)) - count)
+                    if remaining > getattr(loop.remaining_budget, name):
+                        setattr(loop.remaining_budget, name, remaining)
+                        recovered[name] = remaining
                 used_tokens = sum(
                     int(value)
                     for invocation in state.agent_invocations
@@ -1038,17 +1056,19 @@ class Controller:
                     and value >= 0
                 )
                 remaining_tokens = max(0, configured_budget.tokens - used_tokens)
-                if remaining_tokens:
-                    state.engineering_loop.remaining_budget.tokens = remaining_tokens
-                    state.engineering_loop.termination_reason = None
-                    state.engineering_loop.progress_state = "progressing"
-                    state.engineering_loop.started_at_epoch = time.time()
+                if remaining_tokens > loop.remaining_budget.tokens:
+                    loop.remaining_budget.tokens = remaining_tokens
+                    recovered["tokens"] = remaining_tokens
+                if recovered:
+                    loop.termination_reason = None
+                    loop.progress_state = "progressing"
+                    loop.started_at_epoch = time.time()
                     state.phase = Phase.REPLANNING
                     state.final_status = None
                     self.store.event(
                         state.session_id,
                         "engineering_loop_budget_expansion_recovered",
-                        {"remaining_tokens": remaining_tokens},
+                        {"recovered": recovered},
                     )
         repository = metadata.get("repository")
         if isinstance(repository, dict):

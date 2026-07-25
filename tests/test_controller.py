@@ -1618,6 +1618,54 @@ def test_wall_clock_budget_recovers_once(
     assert state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
 
 
+def test_expanded_action_budget_recovers_from_recorded_consumption(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    settings.loop_engineering.defaults["planner_calls"] = 1
+    settings.loop_engineering.defaults["iterations"] = 1
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session("action-budget-recovery", [{"role": "user", "content": "work"}])
+    controller.select_route(state, {})
+    controller.admit_loop_iteration(state)
+    controller.admit_loop_action(state, "planner_calls")
+    with pytest.raises(LoopAdmissionError, match="budget exhausted"):
+        controller.admit_loop_action(state, "planner_calls")
+
+    settings.loop_engineering.defaults["planner_calls"] = 8
+    settings.loop_engineering.defaults["iterations"] = 32
+    controller.select_route(state, {})
+
+    assert state.engineering_loop is not None
+    assert state.engineering_loop.remaining_budget.planner_calls == 7
+    assert state.engineering_loop.remaining_budget.iterations == 31
+    assert state.engineering_loop.termination_reason is None
+    assert state.phase == Phase.REPLANNING
+    assert state.final_status is None
+
+
+def test_action_budget_does_not_reopen_after_configured_limit_is_consumed(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    settings.loop_engineering.defaults["planner_calls"] = 1
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session("action-budget-stays-closed", [{"role": "user", "content": "work"}])
+    controller.select_route(state, {})
+    controller.admit_loop_action(state, "planner_calls")
+    with pytest.raises(LoopAdmissionError, match="budget exhausted"):
+        controller.admit_loop_action(state, "planner_calls")
+
+    controller.select_route(state, {})
+
+    assert state.engineering_loop is not None
+    assert state.engineering_loop.remaining_budget.planner_calls == 0
+    assert state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
+    assert state.phase == Phase.BLOCKED
+    assert state.final_status == "blocked"
+
+
 @pytest.mark.asyncio
 async def test_loop_rejects_second_executor_iteration_without_new_evidence(
     settings, stub_provider: StubProvider
