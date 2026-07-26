@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+repository_root="$(cd "$(dirname "$0")/.." && pwd)"
 image="lmsysorg/sglang:dev-cu13@sha256:26f620b13e49900cc6ab59ed693f9ce8f9ea4f3531074c1e39a3bf9db06ab8f0"
 executor_model="${DGX_MOA_EXPERIMENT_EXECUTOR_MODEL:-/home/kotori9/models/dgx-moa/executor}"
 specialist_model="${DGX_MOA_EXPERIMENT_SPECIALIST_MODEL:-/home/kotori9/models/experimental/gemma-4-31b-it-nvfp4-4135a98a}"
@@ -86,6 +87,14 @@ check_revision() {
   }
 }
 
+check_content() {
+  local model_path=$1 manifest=$2
+  (cd "$model_path" && sha256sum --strict --status -c "$manifest") || {
+    printf 'model content hash mismatch: %s\n' "$model_path" >&2
+    return 1
+  }
+}
+
 preflight() {
   [[ "${DGX_MOA_ISOLATED_ACK:-}" == "1" ]] || {
     printf 'set DGX_MOA_ISOLATED_ACK=1 for an approved maintenance window\n' >&2
@@ -105,6 +114,8 @@ preflight() {
   docker image inspect "$image" >/dev/null
   check_revision "$executor_model" "$executor_revision"
   check_revision "$specialist_model" "$specialist_revision"
+  check_content "$executor_model" "$repository_root/config/sglang-executor.sha256"
+  check_content "$specialist_model" "$repository_root/config/sglang-specialist.sha256"
   [[ -z "$(ss -ltnH 'sport = :18101 or sport = :18102')" ]] || {
     printf 'candidate port already in use\n' >&2
     return 1
