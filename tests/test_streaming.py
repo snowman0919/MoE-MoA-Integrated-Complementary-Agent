@@ -10,10 +10,10 @@ from dgx_moa.streaming import (
     MAX_BUFFERED_RESPONSE_CHARS,
     ProgressOnlyResponse,
     StreamObservation,
-    complete_apply_patch_sentinel,
     forward_sse,
     is_progress_only,
     keepalive_sse,
+    normalize_apply_patch_input,
     reported_usage,
     response_usage,
     responses_sse,
@@ -25,10 +25,31 @@ from dgx_moa.usage import SQLITE_MAX_INTEGER
 def test_apply_patch_missing_end_sentinel_is_completed() -> None:
     partial = "*** Begin Patch\n*** Update File: app.py\n@@\n-old\n+new"
 
-    assert complete_apply_patch_sentinel("apply_patch", partial) == (
-        partial + "\n*** End Patch"
+    assert normalize_apply_patch_input("apply_patch", partial) == partial + "\n*** End Patch"
+    assert normalize_apply_patch_input("exec_command", partial) == partial
+
+
+def test_fenced_unified_diff_is_normalized_for_apply_patch() -> None:
+    unified = (
+        "```diff\n"
+        "diff --git a/app.py b/app.py\n"
+        "index 123..456 100644\n"
+        "--- a/app.py\n"
+        "+++ b/app.py\n"
+        "@@\n"
+        "-old\n"
+        "+new\n"
+        "```"
     )
-    assert complete_apply_patch_sentinel("exec_command", partial) == partial
+
+    assert normalize_apply_patch_input("apply_patch", unified) == (
+        "*** Begin Patch\n"
+        "*** Update File: app.py\n"
+        "@@\n"
+        "-old\n"
+        "+new\n"
+        "*** End Patch"
+    )
 
 
 @pytest.mark.asyncio

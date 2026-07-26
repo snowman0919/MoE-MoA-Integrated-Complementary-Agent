@@ -105,11 +105,35 @@ def compatible_edit_call(
     )
 
 
-def complete_apply_patch_sentinel(name: str, value: str) -> str:
-    stripped = value.rstrip()
+def normalize_apply_patch_input(name: str, value: str) -> str:
+    if name != "apply_patch":
+        return value
+    stripped = value.strip()
+    if stripped.startswith("```") and stripped.endswith("```"):
+        stripped = stripped.split("\n", 1)[-1].rsplit("\n", 1)[0]
+    lines = stripped.splitlines()
+    old_header = next(
+        (
+            index
+            for index, line in enumerate(lines[:-1])
+            if line.startswith("--- a/") and lines[index + 1].startswith("+++ b/")
+        ),
+        None,
+    )
+    if old_header is not None:
+        old_path = lines[old_header][6:]
+        new_path = lines[old_header + 1][6:]
+        if old_path == new_path and old_path and "\n" not in old_path:
+            stripped = "\n".join(
+                (
+                    "*** Begin Patch",
+                    f"*** Update File: {old_path}",
+                    *lines[old_header + 2 :],
+                    "*** End Patch",
+                )
+            )
     if (
-        name == "apply_patch"
-        and stripped.startswith("*** Begin Patch")
+        stripped.startswith("*** Begin Patch")
         and "*** End Patch" not in stripped
         and any(
             marker in stripped
@@ -117,7 +141,7 @@ def complete_apply_patch_sentinel(name: str, value: str) -> str:
         )
     ):
         return stripped + "\n*** End Patch"
-    return value
+    return stripped
 
 
 def is_progress_only(text: str) -> bool:
@@ -772,9 +796,7 @@ async def responses_sse(
                         raise TypeError
                 except (KeyError, TypeError, ValueError):
                     custom_input = str(item["_arguments"])
-                custom_input = complete_apply_patch_sentinel(
-                    str(item["name"]), custom_input
-                )
+                custom_input = normalize_apply_patch_input(str(item["name"]), custom_input)
                 custom_item = {
                     "id": item["id"],
                     "type": "custom_tool_call",
