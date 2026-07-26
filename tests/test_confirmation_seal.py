@@ -28,6 +28,22 @@ def test_attempt_plan_is_complete_deterministic_and_opaque() -> None:
     }
 
 
+def test_breadth_attempt_plan_has_160_separate_attempts() -> None:
+    configuration = MODULE["configure_panel"]("breadth")
+    try:
+        attempts, _routes = MODULE["attempt_plan"]("breadth")
+        assert len(attempts) == 160
+        assert {row["task"] for row in attempts} == {
+            "scientific-meta-analysis",
+            "scientific-decay-fit",
+            "general-ranked-choice",
+            "general-timezone-schedule",
+        }
+        assert configuration["bootstrap_seed"] == 56_052_027
+    finally:
+        MODULE["configure_panel"]("coding")
+
+
 def test_exclusive_json_refuses_overwrite_and_protects_routing(tmp_path: Path) -> None:
     path = tmp_path / "routing.json"
     MODULE["exclusive_json"](path, {"secret": "mapping"}, mode=0o600)

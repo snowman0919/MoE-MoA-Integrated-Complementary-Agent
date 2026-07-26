@@ -22,10 +22,29 @@ PROTOCOL_PATH = PROJECT / "docs/QUALITY_EVALUATION.md"
 RUNNER = runpy.run_path(str(RUNNER_PATH))
 
 REPEATS = 10
-BOOTSTRAP_SEED = 56_052_026
+CODING_SEED = 56_052_026
+BREADTH_SEED = 56_052_027
+BOOTSTRAP_SEED = CODING_SEED
 QUALITY_MARGIN = -5.0
 SPEED_MARGIN = 1.5
 OPAQUE_LABELS = ("variant-a", "variant-b", "variant-c", "variant-d")
+
+
+def configure_panel(panel: str) -> dict[str, Any]:
+    global ANALYZER_PATH, BOOTSTRAP_SEED, RUNNER, RUNNER_PATH
+    if panel == "coding":
+        RUNNER_PATH = PROJECT / "scripts/run-client-quality-matrix.py"
+        ANALYZER_PATH = PROJECT / "scripts/analyze-frontier-noninferiority.py"
+        BOOTSTRAP_SEED = CODING_SEED
+        RUNNER = runpy.run_path(str(RUNNER_PATH))
+        return {"panel": panel, "bootstrap_seed": BOOTSTRAP_SEED, "runner": RUNNER}
+    if panel == "breadth":
+        RUNNER_PATH = PROJECT / "scripts/run-breadth-quality-panel.py"
+        ANALYZER_PATH = PROJECT / "scripts/analyze-breadth-noninferiority.py"
+        BOOTSTRAP_SEED = BREADTH_SEED
+        RUNNER = runpy.run_path(str(RUNNER_PATH))["BASE"]
+        return {"panel": panel, "bootstrap_seed": BOOTSTRAP_SEED, "runner": RUNNER}
+    raise ValueError(f"unknown panel: {panel}")
 
 
 def file_sha256(path: Path) -> str:
@@ -136,6 +155,7 @@ def exclusive_json(path: Path, value: Any, *, mode: int = 0o644) -> None:
 
 
 def create_seal(args: argparse.Namespace) -> dict[str, Any]:
+    configure_panel(getattr(args, "panel", "coding"))
     revision = repository_revision()
     attempts, routing = attempt_plan(args.protocol_id)
     clients = client_metadata()
@@ -168,6 +188,7 @@ def create_seal(args: argparse.Namespace) -> dict[str, Any]:
 
     private = {
         "protocol_id": args.protocol_id,
+        "panel": getattr(args, "panel", "coding"),
         "variant_routes": {
             label: {
                 "harness": harness,
@@ -207,6 +228,7 @@ def create_seal(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def verify_seal(args: argparse.Namespace) -> dict[str, Any]:
+    configure_panel(getattr(args, "panel", "coding"))
     seal_dir = args.output_root / args.protocol_id
     routing_path = seal_dir / "confirmation-routing.json"
     seal = json.loads((seal_dir / "confirmation-seal.json").read_text())
@@ -216,6 +238,7 @@ def verify_seal(args: argparse.Namespace) -> dict[str, Any]:
     providers = provider_fingerprints()
     checks = {
         "analysis_commit": repository_revision() == seal["analysis_commit"],
+        "panel": seal.get("panel") == getattr(args, "panel", "coding"),
         "runner_sha256": file_sha256(RUNNER_PATH) == seal["runner_sha256"],
         "analyzer_sha256": file_sha256(ANALYZER_PATH) == seal["analyzer_sha256"],
         "scorer_sha256": file_sha256(SCORER_PATH) == seal["scorer_sha256"],
@@ -277,6 +300,7 @@ def verify_seal(args: argparse.Namespace) -> dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=("create", "verify"))
+    parser.add_argument("--panel", choices=("coding", "breadth"), default="coding")
     parser.add_argument("--protocol-id", required=True)
     parser.add_argument("--workspace-root", type=Path, default=Path.home() / "code")
     parser.add_argument("--output-root", type=Path, default=Path("/tmp/dgx-moa-client-quality"))

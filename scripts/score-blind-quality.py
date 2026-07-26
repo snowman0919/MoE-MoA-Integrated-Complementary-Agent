@@ -36,6 +36,12 @@ SECRET_PATTERNS = (
 )
 
 
+def configure_panel(args: argparse.Namespace) -> None:
+    global RUNNER
+    configuration = SEAL_TOOL["configure_panel"](getattr(args, "panel", "coding"))
+    RUNNER = configuration["runner"]
+
+
 def score_schema() -> dict[str, Any]:
     properties = {
         name: {"type": "number", "minimum": 0, "maximum": limit}
@@ -181,6 +187,7 @@ def hard_gate_pass(harness: str, score: dict[str, Any]) -> bool:
 
 
 def package_all(args: argparse.Namespace) -> dict[str, Any]:
+    configure_panel(args)
     SEAL_TOOL["verify_seal"](args)
     seal, routing = load_protocol(args)
     blind_root = args.output_root / args.protocol_id / "blind"
@@ -291,6 +298,7 @@ def initial_secondary_ids(
 
 
 def secondary_plan(args: argparse.Namespace) -> dict[str, Any]:
+    configure_panel(args)
     seal, routing = load_protocol(args)
     root = args.output_root / args.protocol_id
     primary = load_judges(root, "primary")
@@ -328,6 +336,7 @@ def secondary_plan(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def assemble(args: argparse.Namespace) -> dict[str, Any]:
+    configure_panel(args)
     plan = secondary_plan(args)
     if plan["missing_attempt_ids"]:
         raise RuntimeError(f"required secondary scores missing: {len(plan['missing_attempt_ids'])}")
@@ -461,6 +470,7 @@ def secondary_score(
 
 
 def judge_one(args: argparse.Namespace) -> dict[str, Any]:
+    configure_panel(args)
     blind_root = args.output_root / args.protocol_id / "blind"
     package = json.loads((blind_root / f"{args.attempt_id}.json").read_text())
     assert_sanitized(package)
@@ -480,6 +490,7 @@ def judge_one(args: argparse.Namespace) -> dict[str, Any]:
     result = {
         "schema_version": "blind-quality-score-v1",
         "protocol_id": args.protocol_id,
+        "panel": args.panel,
         "attempt_id": args.attempt_id,
         "judge": args.judge,
         "model": model,
@@ -495,6 +506,7 @@ def judge_one(args: argparse.Namespace) -> dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=("package", "judge", "secondary-plan", "assemble"))
+    parser.add_argument("--panel", choices=("coding", "breadth"), default="coding")
     parser.add_argument("--protocol-id", required=True)
     parser.add_argument("--attempt-id")
     parser.add_argument("--judge", choices=("primary", "secondary"))

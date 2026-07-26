@@ -5543,3 +5543,27 @@ without mutation. After moving the restore drop-in outside the unit-only
 1,068-test suite passed; Ruff, shell syntax, and diff checks also passed. No
 model service, container, unit, or production file was changed. Dual-SGLang
 physical validation remains blocked pending maintenance approval.
+
+## Scientific and General breadth protocol — 2026-07-26
+
+A separate frozen breadth panel now contains two Scientific Reasoning tasks
+(random-effects meta-analysis and first-order decay inference) and two General
+tasks (deterministic ranked-choice resolution and time-zone-aware scheduling).
+It reuses the existing isolated client runner, hard gates, blind judges, and
+non-inferiority calculations. Scientific and General are analyzed independently
+with ten matched repeats per variant, 10,000 task-stratified paired bootstrap
+samples, and seed `56052027`; the resulting 160 attempts are not pooled with
+the preregistered 200 coding attempts or with external benchmark scores.
+
+The actual breadth CLI prepared exactly four isolated fixtures. Each starter
+test exited one as required, and the task names were the two registered
+Scientific and two registered General fixtures. Focused breadth, seal, blind
+judge, and non-inferiority tests passed `16/16`. The complete candidate suite
+then passed `1073/1073` in 27.62 seconds with one third-party Starlette
+deprecation warning; Ruff and `git diff --check` also passed.
+
+No breadth inference attempt or confirmatory result is claimed by this entry.
+The real breadth epoch cannot start until the strict cache telemetry and
+provider stability gates are satisfied. Dual-SGLang physical validation remains
+blocked pending explicit maintenance approval, and production, main, dev,
+model services, and systemd were not changed.

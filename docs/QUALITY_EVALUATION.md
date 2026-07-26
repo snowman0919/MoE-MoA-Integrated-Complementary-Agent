@@ -30,10 +30,50 @@ Artificial Analysis score.
   Opus 5 safety-classifier refusals. Opus 5 costs $5 per million input and $25
   per million output tokens.
   <https://www.anthropic.com/news/claude-opus-5>
+- Terminal-Bench 2.0 contains 89 human-authored, realistic terminal tasks with
+  isolated environments and comprehensive outcome tests. Its authors report
+  frontier agents below 65%, supporting container isolation and observable
+  completion as hard gates rather than relying on model self-report.
+  <https://arxiv.org/abs/2601.11868>
+- DeepSWE contains 113 original long-horizon tasks across 91 repositories and
+  five languages, with hand-written behavioral verifiers intended to reduce
+  contamination and accept alternative correct implementations. This supports
+  hidden outcome checks and retaining every failed trajectory.
+  <https://arxiv.org/abs/2607.07946>
+- GPQA contains 448 expert-authored graduate-level biology, physics, and
+  chemistry questions and reports a large expert/non-expert accuracy gap. It
+  motivates independent Scientific Reasoning evidence but is not reproduced by
+  the local repository tasks.
+  <https://arxiv.org/abs/2311.12022>
+- MMLU-Pro expands choices from four to ten, removes noisy/trivial items, and
+  reports lower prompt sensitivity across 24 prompt styles than MMLU. It
+  motivates a distinct General reasoning category and prompt freezing.
+  <https://proceedings.neurips.cc/paper_files/paper/2024/hash/ad236edc564f3e3156e1b2feafb99a24-Abstract.html>
 
 The public results set evaluation dimensions and frontier expectations only.
 Vendor claims and results from different index versions are not numerically
 pooled with this smaller local panel or used as confirmatory evidence.
+
+## Frozen breadth panel
+
+Scientific Reasoning and General are evaluated separately from the 200-attempt
+coding panel so its preregistration is unchanged. The breadth panel contains
+two Scientific Reasoning repository tasks (random-effects meta-analysis and
+first-order decay inference) and two General repository tasks (deterministic
+ranked-choice resolution and time-zone-aware scheduling). These are local
+agentic work samples, not replicas of Artificial Analysis tasks and not a
+public Intelligence Index score.
+
+The same four variants, opaque labels, functional and telemetry hard gates,
+judge rubric, quality margin, speed margin, cost gate, and provider-pinning
+rules apply. Each breadth task receives ten matched repeats per variant: 40
+attempts per variant and 160 total. Category-level quality and log speed ratios
+use task-stratified paired bootstrap intervals with 10,000 samples and seed
+`56052027`. Scientific and General must each independently pass reliability,
+quality, speed, and cost non-inferiority. A weighted aggregate is not reported
+because the local tasks are not numerically commensurate with the published
+Artificial Analysis components. Any fixture, runner, prompt, scorer, model, or
+protocol change after sealing invalidates the whole breadth epoch.
 
 ## Frozen local panel
 
