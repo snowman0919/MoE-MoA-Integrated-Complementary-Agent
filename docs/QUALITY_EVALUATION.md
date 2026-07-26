@@ -8,28 +8,32 @@ Artificial Analysis score.
 
 ## External anchors
 
-- OpenAI reports GPT-5.6 Sol at 80 on the Artificial Analysis Coding Agent
-  Index. The public index combines DeepSWE, Terminal-Bench v2, and
-  SWE-Atlas-QnA, each with three attempts per task.
+- OpenAI reports GPT-5.6 Sol with max reasoning at 80 on Artificial Analysis
+  Coding Agent Index v1.1 in its 2026-07-09 launch post. That historical score
+  is not treated as a score on the current v1.3 methodology.
   <https://openai.com/index/gpt-5-6/>
 - Artificial Analysis Intelligence Index v4.1 weights Agents 34%, Coding 24%,
   Scientific Reasoning 24%, and General 18%. It uses matched settings,
   pass@1, wall time, token use, and cost, and reports that its sub-1% aggregate
   95% confidence estimate relies on more than ten repeats for some models.
   <https://artificialanalysis.ai/methodology/intelligence-benchmarking>
-- Artificial Analysis Coding Agent Index reports task-normalized pass@1,
-  execution time, token use, and cost from the same attempts. Its current
-  components contain 321 tasks with three attempts per task.
+- Artificial Analysis Coding Agent Index v1.3 combines DeepSWE,
+  Terminal-Bench v2, and SWE-Atlas-QnA with equal component weight. Its current
+  components contain 321 tasks with three attempts per task; it also reports
+  pooled execution time, token use, and provider-list-price cost from those
+  attempts.
   <https://artificialanalysis.ai/methodology/coding-agents-benchmarking>
-- Anthropic reports Claude Opus 5 as state of the art on Frontier-Bench v0.1
-  and GDPval-AA v2, with stronger verification and long-horizon behavior than
-  Opus 4.8. The published Frontier-Bench result is the mean of five attempts
-  per task. Opus 5 costs $5 per million input and $25 per million output
-  tokens.
+- Anthropic's 2026-07-24 launch post reports Claude Opus 5 as state of the art
+  on its Frontier-Bench v0.1 and GDPval-AA v2 runs, with stronger verification
+  and long-horizon behavior than Opus 4.8. Its Frontier-Bench result is a
+  vendor-run mean of five attempts per task and used Opus 4.8 fallback for
+  Opus 5 safety-classifier refusals. Opus 5 costs $5 per million input and $25
+  per million output tokens.
   <https://www.anthropic.com/news/claude-opus-5>
 
-The public results set the evaluation dimensions and frontier expectations.
-They are not numerically pooled with this smaller local panel.
+The public results set evaluation dimensions and frontier expectations only.
+Vendor claims and results from different index versions are not numerically
+pooled with this smaller local panel or used as confirmatory evidence.
 
 ## Frozen local panel
 

@@ -5228,3 +5228,26 @@ output tokens, and zero cached input tokens. Therefore this is a functional
 recovery pass, not a speed, cache-efficiency, cost-quality, or frontier
 non-inferiority pass. The repeated blind panel, three-client comparison,
 physical dual-SGLang 65K residency, and ten-hour gate remain pending.
+
+## External benchmark source audit — 2026-07-26
+
+The current official OpenAI model guide identifies GPT-5.6 Sol as the
+frontier-capability tier and recommends representative workload comparisons
+across task success, evidence, tokens, latency, and cost. OpenAI's launch post
+reports the score of 80 against Artificial Analysis Coding Agent Index v1.1;
+Artificial Analysis now documents v1.3. The protocol therefore records the
+score with its historical version instead of presenting it as a current v1.3
+result.
+
+Artificial Analysis's current primary methodology confirms 321 coding-agent
+tasks, three attempts per task, equal component weighting, task-normalized
+pass@1, and pooled efficiency metrics. Its Intelligence Index v4.1 separately
+weights Agents 34%, Coding 24%, Scientific Reasoning 24%, and General 18%, and
+warns that a broad index may not represent a particular workload.
+
+Anthropic's primary launch page confirms Opus 5 pricing at $5/M input and
+$25/M output, and describes its Frontier-Bench result as an internal five-run
+mean that used Opus 4.8 fallback for safety-classifier refusals. These
+vendor-published results remain contextual anchors only. No external claim was
+converted into local evidence, and the frozen blind panel, reliability gate,
+paired bootstrap, cost gate, and ten-hour gate remain unchanged.
