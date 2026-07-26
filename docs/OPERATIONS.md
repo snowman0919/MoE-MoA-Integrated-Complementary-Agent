@@ -490,6 +490,19 @@ default; restore them only when the approved maintenance plan explicitly sets
 `DGX_MOA_RESTORE_SPECIALISTS=1`. The script refuses to run while either
 candidate container is active.
 
+For the full pinned baseline verification, including the existing Qwen Planner
+and North Reviewer revisions and inference probes before returning both
+optional roles to cold state, use:
+
+```bash
+sudo env DGX_MOA_RESTORE_ACK=1 scripts/restore-production-baseline.sh restore
+```
+
+This path requires both candidate containers to be stopped, verifies the
+effective production units and all three model revisions, starts and probes
+Executor → Planner → Reviewer in that order, then leaves only the vLLM Executor
+resident. It does not install or edit a unit or drop-in.
+
 ## Runtime metrics
 
 The gateway exposes the Goal-specific fixed metric set at

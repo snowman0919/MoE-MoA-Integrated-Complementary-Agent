@@ -5092,6 +5092,13 @@ startup is serialized before Specialist loading to avoid overlapping weight
 load peaks. `/v1/models` availability is only a start-order gate; later real
 inference must establish readiness.
 
+That paragraph records the initial prepared command. Commit `aed9e6f` later
+aligned the checked candidate with the installed SGLang feature set: the
+current Gemma command uses `mem-fraction-static=0.75`, `modelopt_fp4`, native KV
+dtype, no `--language-only`, cache reporting, and incremental streaming. The
+initial 0.34/FP8/language-only combination is historical and must not be used
+for the physical run.
+
 The new command-safety regression passed `1/1`. An initial full-suite run had
 one pre-existing 10 ms streaming-deadline timing failure; that exact test then
 passed `10/10`, and a fresh complete suite passed `981/981` in `68.75` seconds.
