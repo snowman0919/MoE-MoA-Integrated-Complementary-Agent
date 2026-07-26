@@ -499,8 +499,13 @@ def hermes_tool_metrics(state: Path, session: str) -> tuple[int, list[str]]:
 
 def provider_metrics(database: Path, started: float, completed: float) -> dict[str, Any]:
     with sqlite3.connect(database) as connection:
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(model_invocation_usage)")
+        }
+        cost_column = "cost_usd" if "cost_usd" in columns else "NULL"
         rows = connection.execute(
-            "SELECT role, provider, model, status, latency_ms, prompt_tokens, total_tokens "
+            "SELECT role, provider, model, status, latency_ms, prompt_tokens, total_tokens, "
+            f"{cost_column} "
             "FROM model_invocation_usage WHERE invoked_at >= ? AND invoked_at <= ? "
             "ORDER BY invoked_at",
             (started, completed),
@@ -513,6 +518,12 @@ def provider_metrics(database: Path, started: float, completed: float) -> dict[s
         == 1
         for role in {item[0] for item in provenance}
     )
+    remote_costs = [row[7] for row in rows if str(row[1]) != "local"]
+    variable_cost = (
+        None
+        if any(cost is None for cost in remote_costs)
+        else sum(float(cost) for cost in remote_costs)
+    )
     return {
         "provider_provenance": [
             {"role": role, "provider": provider, "model": model}
@@ -521,6 +532,7 @@ def provider_metrics(database: Path, started: float, completed: float) -> dict[s
         "provider_pinned": pinned,
         "provider_errors": sum(str(row[3]) not in {"completed", "success"} for row in rows),
         "context_tokens": max((int(row[5] or 0) for row in rows), default=0),
+        "variable_cost_usd": variable_cost,
     }
 
 
@@ -732,7 +744,7 @@ def run_checkpoint(
         ),
         "peak_memory_bytes": max(peak_before, peak_after),
         "swap_delta_bytes": max(0, swap_after - swap_before),
-        "variable_cost_usd": 0,
+        "variable_cost_usd": provider["variable_cost_usd"],
         "intentional_reconnect": index == 10,
         "premature_completion": progress["premature_completion"],
         "terminal": metrics["terminal"],

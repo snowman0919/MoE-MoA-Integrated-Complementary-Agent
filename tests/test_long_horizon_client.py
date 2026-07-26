@@ -149,13 +149,13 @@ def test_client_metrics_and_provider_pinning_are_aggregated_without_payloads(
         connection.execute(
             "CREATE TABLE model_invocation_usage ("
             "role TEXT, provider TEXT, model TEXT, status TEXT, latency_ms REAL, "
-            "prompt_tokens INTEGER, total_tokens INTEGER, invoked_at REAL)"
+            "prompt_tokens INTEGER, total_tokens INTEGER, cost_usd REAL, invoked_at REAL)"
         )
         connection.executemany(
-            "INSERT INTO model_invocation_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO model_invocation_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                ("executor", "local", "executor-fixed", "completed", 10, 120, 130, 2),
-                ("reviewer", "local", "specialist-fixed", "success", 20, 80, 90, 3),
+                ("executor", "local", "executor-fixed", "completed", 10, 120, 130, 0, 2),
+                ("reviewer", "local", "specialist-fixed", "success", 20, 80, 90, 0, 3),
             ),
         )
 
@@ -164,6 +164,7 @@ def test_client_metrics_and_provider_pinning_are_aggregated_without_payloads(
     assert provider["provider_pinned"] is True
     assert provider["provider_errors"] == 0
     assert provider["context_tokens"] == 120
+    assert provider["variable_cost_usd"] == 0
     assert provider["provider_provenance"] == [
         {"role": "executor", "provider": "local", "model": "executor-fixed"},
         {"role": "reviewer", "provider": "local", "model": "specialist-fixed"},
@@ -186,8 +187,7 @@ def test_hermes_metrics_use_tool_rows_not_model_api_count(tmp_path: Path) -> Non
     )
     with sqlite3.connect(tmp_path / "state.db") as connection:
         connection.execute(
-            "CREATE TABLE messages ("
-            "id INTEGER, session_id TEXT, tool_name TEXT, tool_calls TEXT)"
+            "CREATE TABLE messages (id INTEGER, session_id TEXT, tool_name TEXT, tool_calls TEXT)"
         )
         connection.execute(
             "INSERT INTO messages VALUES (?, ?, ?, ?)",

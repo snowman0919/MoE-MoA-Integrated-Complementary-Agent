@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import runpy
+import sqlite3
 from argparse import Namespace
 from pathlib import Path
 
@@ -53,6 +54,12 @@ def test_codex_quality_command_uses_native_patch_catalog(tmp_path: Path) -> None
     assert "apply_patch" in model["base_instructions"]
 
 
+def test_baseline_runtime_mounts_same_search_tool() -> None:
+    source = SCRIPT.read_text()
+
+    assert '(OPENCODE_RIPGREP, "/tools/rg")' in source
+
+
 def test_opencode_fixture_bounds_output_tokens(tmp_path: Path) -> None:
     args = Namespace(
         run_id="bounded",
@@ -96,3 +103,157 @@ def test_opencode_runtime_cache_is_mounted_read_only(tmp_path: Path, monkeypatch
     )
     assert (tmp_path / "state/.config/opencode/package.json").read_text() == "{}"
     assert (tmp_path / "state/.config/opencode/package-lock.json").read_text() == "{}"
+
+
+def test_hermes_profile_targets_selected_gateway(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "config.yaml").write_text(
+        "custom_providers:\n"
+        "  - name: dgx-moa-agent\n"
+        "    base_url: http://production:9000/v1\n"
+        "    api_key: keep-me\n"
+        "  - name: other\n"
+        "    base_url: http://other/v1\n"
+    )
+    (source / ".env").write_text("KEEP=me\n")
+    real_copy = MODULE["shutil"].copy2
+
+    def copy_fixture(source_path: str, destination: Path) -> None:
+        name = Path(source_path).name
+        real_copy(source / name, destination)
+
+    monkeypatch.setattr(MODULE["shutil"], "copy2", copy_fixture)
+    target = tmp_path / "profile"
+
+    MODULE["prepare_hermes_profile"](target, "http://127.0.0.1:19400/")
+
+    config = (target / "config.yaml").read_text()
+    assert "base_url: http://127.0.0.1:19400/v1" in config
+    assert "api_key: keep-me" in config
+    assert "base_url: http://other/v1" in config
+    assert (target / ".env").read_text() == "KEEP=me\n"
+
+
+def test_failed_hermes_usage_recovers_single_isolated_session(tmp_path: Path) -> None:
+    args = Namespace(run_id="failed", output_root=tmp_path)
+    task = MODULE["TASKS"][0]
+    profile = tmp_path / "failed/profiles/hermes-rate-limiter"
+    evidence = tmp_path / "evidence"
+    profile.mkdir(parents=True)
+    evidence.mkdir()
+    (profile / "usage.json").write_text('{"session_id":null,"failed":true}\n')
+    with sqlite3.connect(profile / "state.db") as connection:
+        connection.execute(
+            "CREATE TABLE messages ("
+            "id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, "
+            "tool_name TEXT, content TEXT, tool_calls TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO messages(session_id, role, tool_name, content, tool_calls) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                "isolated-session",
+                "tool",
+                "terminal",
+                json.dumps({"exit_code": 0, "output": "Ran 4 tests\nOK\n"}),
+                "python -m unittest",
+            ),
+        )
+
+    assert MODULE["hermes_test_evidence"](args, task, evidence)
+    summary = json.loads((evidence / "hermes-tool-evidence.json").read_text())
+    assert summary["unittest_tool_calls"] == 1
+    assert summary["successful_unittest_results"] == 1
+
+
+def test_hermes_usage_requires_explicit_completed_success(tmp_path: Path) -> None:
+    usage = tmp_path / "usage.json"
+
+    usage.write_text('{"completed":true,"failed":false}\n')
+    assert MODULE["hermes_usage_succeeded"](usage)
+
+    usage.write_text('{"completed":false,"failed":true}\n')
+    assert not MODULE["hermes_usage_succeeded"](usage)
+
+    usage.write_text('{"completed":true}\n')
+    assert not MODULE["hermes_usage_succeeded"](usage)
+
+
+def test_summary_keeps_incomplete_comparisons_inconclusive(tmp_path: Path) -> None:
+    args = Namespace(
+        run_id="incomplete",
+        workspace_root=tmp_path / "workspaces",
+        output_root=tmp_path / "evidence",
+    )
+    for task in MODULE["TASKS"]:
+        _, evidence = MODULE["paths"](args, "hermes", task)
+        evidence.mkdir(parents=True)
+        (evidence / "score.json").write_text(json.dumps({"harness": "hermes", "status": "passed"}))
+
+    result = MODULE["summary"](args)
+
+    assert result["counts"]["hermes"] == {"passed": len(MODULE["TASKS"]), "total": 5}
+    assert result["usability_not_below_baseline"]["hermes"] is None
+    assert result["complete"] is False
+
+
+def test_invocation_telemetry_is_content_free_and_fails_on_missing_cost(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "gateway.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE model_invocation_usage ("
+            "request_id TEXT, role TEXT, provider TEXT, model TEXT, status TEXT, "
+            "fallback_reason TEXT, latency_ms REAL, prompt_tokens INTEGER, "
+            "completion_tokens INTEGER, total_tokens INTEGER, cached_tokens INTEGER, "
+            "cost_usd REAL, invoked_at REAL)"
+        )
+        connection.execute(
+            "CREATE TABLE events (session_id TEXT, event_type TEXT, payload TEXT, created_at TEXT)"
+        )
+        connection.executemany(
+            "INSERT INTO model_invocation_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                (
+                    "private-request",
+                    "executor",
+                    "local",
+                    "local-model",
+                    "completed",
+                    None,
+                    10,
+                    5,
+                    2,
+                    7,
+                    3,
+                    None,
+                    2,
+                ),
+                (
+                    "private-request",
+                    "executor",
+                    "remote",
+                    "remote-model",
+                    "completed",
+                    "local_busy",
+                    20,
+                    7,
+                    3,
+                    10,
+                    0,
+                    None,
+                    3,
+                ),
+            ),
+        )
+
+    result = MODULE["invocation_telemetry"](database, 1, 4)
+
+    assert result["complete"] is False
+    assert result["reason"] == "remote_cost_missing"
+    assert result["provider_pinned"] is False
+    assert result["provider_switches"] == 1
+    assert result["remote_cost_usd"] is None
+    assert "private-request" not in json.dumps(result)

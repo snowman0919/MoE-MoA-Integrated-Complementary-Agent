@@ -447,6 +447,43 @@ def tool_result_call_ids(messages: list[dict[str, Any]]) -> set[str]:
     }
 
 
+def unsafe_frontier_correction_tool_call(response: Mapping[str, Any]) -> bool:
+    message = (response.get("choices") or [{}])[0].get("message", {})
+    for call in message.get("tool_calls") or []:
+        function = call.get("function") or {}
+        if function.get("name") not in {"edit", "edit_file"}:
+            continue
+        arguments = function.get("arguments", {})
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                return True
+        if not isinstance(arguments, dict):
+            return True
+        old = next(
+            (
+                arguments.get(key)
+                for key in ("oldString", "old_string", "oldText", "old_text")
+                if isinstance(arguments.get(key), str)
+            ),
+            None,
+        )
+        new = next(
+            (
+                arguments.get(key)
+                for key in ("newString", "new_string", "newText", "new_text")
+                if isinstance(arguments.get(key), str)
+            ),
+            None,
+        )
+        if old is None or new is None:
+            return True
+        if len(old.strip()) < 8 and len(new) >= 256:
+            return True
+    return False
+
+
 class ResponseOwnedIterator:
     def __init__(
         self,
@@ -2480,12 +2517,46 @@ def create_app(
             async def remote_executor_correction(
                 executor_request: dict[str, Any], stage: str
             ) -> dict[str, Any]:
+                if state.frontier_correction_required:
+                    correction_events = request.app.state.store.events(state_session_id)
+                    last_rejection = max(
+                        (
+                            index
+                            for index, event in enumerate(correction_events)
+                            if event["event_type"] == "frontier_review_rejected"
+                        ),
+                        default=-1,
+                    )
+                    last_retry = max(
+                        (
+                            index
+                            for index, event in enumerate(correction_events)
+                            if event["event_type"] == "frontier_correction_tool_retry_completed"
+                        ),
+                        default=-1,
+                    )
+                    if last_retry > last_rejection:
+                        request.app.state.store.event(
+                            state_session_id,
+                            "frontier_correction_tool_retry_exhausted",
+                            {"provider": "frontier"},
+                        )
+                        raise FrontierRequiredUnavailable(
+                            "required Frontier correction retry exhausted"
+                        )
                 response = await remote_executor_complete(executor_request, stage)
                 if not state.frontier_correction_required:
                     return response
                 message = (response.get("choices") or [{}])[0].get("message", {})
-                if message.get("tool_calls"):
+                unsafe_tool_call = unsafe_frontier_correction_tool_call(response)
+                if message.get("tool_calls") and not unsafe_tool_call:
                     return response
+                if unsafe_tool_call:
+                    request.app.state.store.event(
+                        state_session_id,
+                        "frontier_correction_tool_rejected",
+                        {"reason": "unsafe_low_specificity_edit"},
+                    )
                 tools = executor_request.get("tools")
                 if not isinstance(tools, list) or not tools:
                     request.app.state.store.event(
@@ -2519,7 +2590,9 @@ def create_app(
                             "finding explicitly requires that evidence. Never invoke a tool name "
                             "as a shell command; when apply_patch is unavailable, write through "
                             "an available command tool instead. Return a native tool call, not "
-                            "prose. Available tools: " + ", ".join(tool_names)
+                            "prose. For edit tools, identify a unique existing block of at least "
+                            "eight non-whitespace characters; otherwise replace the complete file "
+                            "with a write tool. Available tools: " + ", ".join(tool_names)
                         ),
                     },
                 ]
@@ -2532,14 +2605,22 @@ def create_app(
                     retry_request, f"{stage}_correction_tool_retry"
                 )
                 retry_message = (response.get("choices") or [{}])[0].get("message", {})
-                if not retry_message.get("tool_calls"):
+                unsafe_retry = unsafe_frontier_correction_tool_call(response)
+                if not retry_message.get("tool_calls") or unsafe_retry:
                     request.app.state.store.event(
                         state_session_id,
                         "frontier_correction_tool_retry_failed",
-                        {"provider": "frontier", "reason": "tool_call_missing"},
+                        {
+                            "provider": "frontier",
+                            "reason": (
+                                "unsafe_low_specificity_edit"
+                                if unsafe_retry
+                                else "tool_call_missing"
+                            ),
+                        },
                     )
                     raise FrontierRequiredUnavailable(
-                        "required Frontier correction did not produce a client tool call"
+                        "required Frontier correction did not produce a safe client tool call"
                     )
                 request.app.state.store.event(
                     state_session_id,
@@ -2606,13 +2687,34 @@ def create_app(
                 or has_matching_tool_result(raw["messages"])
                 or bool(getattr(request.state, "responses_tool_owner_recovered", False))
             ) and not new_failure_observed
+            executor_provider_pin = "frontier" if executor_remote else "local"
+            executor_provider_dispatched = False
+
+            async def pinned_executor_complete(
+                executor_request: dict[str, Any], stage: str
+            ) -> dict[str, Any]:
+                nonlocal executor_provider_dispatched
+                executor_provider_dispatched = True
+                if executor_provider_pin == "frontier":
+                    return await remote_executor_complete(executor_request, stage)
+                return cast(
+                    dict[str, Any],
+                    await request.app.state.provider.complete(
+                        "executor",
+                        configured.models["executor"],
+                        executor_request,
+                        timeout_seconds=configured.limits.planner_timeout_seconds,
+                        stage=stage,
+                    ),
+                )
+
             prepared = await request.app.state.controller.prepare_executor(
                 state,
                 raw,
                 roles,
                 ensure_dynamic_roles,
                 tool_continuation=tool_continuation,
-                executor_complete=remote_executor_complete if executor_remote else None,
+                executor_complete=pinned_executor_complete,
                 reasoner_complete=(
                     remote_reasoner_complete if request.app.state.frontier is not None else None
                 ),
@@ -2652,22 +2754,14 @@ def create_app(
                 and request.app.state.frontier is not None
                 and any(count >= 2 for count in state.failure_families.values())
             )
-            required_tool_continuation = (
-                not executor_remote
-                and request.app.state.frontier is not None
-                and tool_continuation
-                and prepared.get("tool_choice") == "required"
-            )
             if (
                 context_exceeded
                 or stalled
                 or completion_stalled
                 or frontier_correction
                 or repeated_failure
-                or required_tool_continuation
             ):
-                executor_remote = True
-                executor_routing_reason = (
+                requested_routing_reason = (
                     "local_context_exceeded"
                     if context_exceeded
                     else "frontier_correction_required"
@@ -2676,25 +2770,36 @@ def create_app(
                     if completion_stalled
                     else "local_repeated_failure"
                     if repeated_failure
-                    else "local_required_tool_continuation"
-                    if required_tool_continuation
                     else "local_no_progress"
                 )
-                executor_lease_id = str(
-                    uuid.uuid5(uuid.UUID(usage_request_id), "active_request:executor")
-                )
-                request.app.state.lifecycle_store.release_leases((executor_lease_id,))
-                active_lease_ids = tuple(
-                    lease_id for lease_id in active_lease_ids if lease_id != executor_lease_id
-                )
-                request.app.state.store.event(
-                    state_session_id,
-                    "executor_remote_selected",
-                    {
-                        "routing_reason": executor_routing_reason,
-                        "provider": "frontier",
-                    },
-                )
+                if executor_provider_dispatched:
+                    request.app.state.store.event(
+                        state_session_id,
+                        "executor_provider_switch_prevented",
+                        {
+                            "selected_provider": executor_provider_pin,
+                            "requested_provider": "frontier",
+                            "routing_reason": requested_routing_reason,
+                        },
+                    )
+                else:
+                    executor_remote = True
+                    executor_routing_reason = requested_routing_reason
+                    executor_lease_id = str(
+                        uuid.uuid5(uuid.UUID(usage_request_id), "active_request:executor")
+                    )
+                    request.app.state.lifecycle_store.release_leases((executor_lease_id,))
+                    active_lease_ids = tuple(
+                        lease_id for lease_id in active_lease_ids if lease_id != executor_lease_id
+                    )
+                    request.app.state.store.event(
+                        state_session_id,
+                        "executor_remote_selected",
+                        {
+                            "routing_reason": executor_routing_reason,
+                            "provider": "frontier",
+                        },
+                    )
             if executor_remote and executor_routing_reason == "local_no_progress":
                 prepared["messages"] = [
                     *prepared.get("messages", []),
@@ -2711,7 +2816,14 @@ def create_app(
                     },
                 ]
             if state.engineering_loop is not None and prepared.get("tools"):
-                if prepared.get("parallel_tool_calls") is None:
+                if state.frontier_correction_pending_verification:
+                    prepared["parallel_tool_calls"] = False
+                    request.app.state.store.event(
+                        state_session_id,
+                        "frontier_correction_verification_serialized",
+                        {"reason": "bounded_validation"},
+                    )
+                elif prepared.get("parallel_tool_calls") is None:
                     prepared["parallel_tool_calls"] = True
                 if state.engineering_loop.remaining_budget.tool_calls == 0:
                     prepared["tool_choice"] = "none"
@@ -2746,6 +2858,7 @@ def create_app(
             )
             if body.stream:
                 remote_failure: list[str] = []
+                remote_invocation_provenance: dict[str, Any] = {}
                 if executor_remote:
 
                     async def remote_upstream() -> AsyncIterator[bytes]:
@@ -2780,6 +2893,9 @@ def create_app(
                             ).encode()
                             yield b"data: [DONE]\n\n"
                             return
+                        provenance = remote_response.get("provider_provenance")
+                        if isinstance(provenance, dict):
+                            remote_invocation_provenance.update(provenance)
                         async for chunk in completed_chat_sse(remote_response):
                             yield chunk
 
@@ -2874,6 +2990,12 @@ def create_app(
                                     "prompt_tokens": observation.usage.get("prompt_tokens"),
                                     "completion_tokens": observation.usage.get("completion_tokens"),
                                     "total_tokens": observation.usage.get("total_tokens"),
+                                    "cached_tokens": observation.cached_tokens,
+                                    "cost_usd": (
+                                        remote_invocation_provenance.get("cost_usd")
+                                        if executor_remote
+                                        else 0.0
+                                    ),
                                     "status": "completed" if terminal else terminal_status,
                                 },
                                 account_loop_usage=False,
@@ -2990,19 +3112,29 @@ def create_app(
                                     first_byte_at = time.time()
                                 yield chunk
                         stream_completed = not remote_failure
-                    except LoopAdmissionError:
+                    except LoopAdmissionError as error:
                         loop_admission_failed = True
                         stage_status["executor_total"] = "failed"
+                        termination = (
+                            state.engineering_loop.termination_reason
+                            if state.engineering_loop is not None
+                            else None
+                        )
+                        code = (
+                            "loop_budget_exhausted"
+                            if termination == "BUDGET_EXHAUSTED"
+                            else "loop_new_evidence_required"
+                        )
                         request.app.state.store.event(
                             state_session_id,
                             "stream_loop_admission_failed",
-                            {"code": "loop_budget_exhausted"},
+                            {"code": code},
                         )
                         payload = {
                             "error": {
-                                "message": "tool loop budget exhausted",
+                                "message": str(error),
                                 "type": "loop_admission_error",
-                                "code": "loop_budget_exhausted",
+                                "code": code,
                             }
                         }
                         if "first_downstream_byte" not in state.timings_ms:

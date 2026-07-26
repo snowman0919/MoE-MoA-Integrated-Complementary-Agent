@@ -65,9 +65,7 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
         {
             "role": "tool",
             "name": "terminal",
-            "content": json.dumps(
-                {"output": "tests timed out", "exit_code": 124, "error": None}
-            ),
+            "content": json.dumps({"output": "tests timed out", "exit_code": 124, "error": None}),
         }
     )
 
@@ -111,9 +109,7 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
     )
     assert warned["exit_code"] == 1
     assert warned["stderr"] == ""
-    assert warned["stdout"] == (
-        "FAILED\n\n[Tool loop warning: inspect before retrying.]"
-    )
+    assert warned["stdout"] == ("FAILED\n\n[Tool loop warning: inspect before retrying.]")
     codex = normalize_tool_result(
         {
             "role": "tool",
@@ -789,9 +785,7 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
 
     assert frontier.calls == 1
     assert state.frontier_invocations == 2
-    assert frontier.correlation_ids == [
-        "frontier-correction-verification:frontier:2"
-    ]
+    assert frontier.correlation_ids == ["frontier-correction-verification:frontier:2"]
     assert state.frontier_correction_pending_verification is False
     assert state.frontier_review_verified is True
     assert any(
@@ -808,8 +802,7 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
 
     assert frontier.calls == 1
     assert not any(
-        event["event_type"] == "frontier_unavailable"
-        for event in store.events(state.session_id)
+        event["event_type"] == "frontier_unavailable" for event in store.events(state.session_id)
     )
 
 
@@ -1089,6 +1082,8 @@ def test_goal_file_wrapper_gets_full_completion_constraints(
     assert "expected_version" in reviewer_prompt
     assert "unused auxiliary state" in reviewer_prompt
     assert "total historical requests" in reviewer_prompt
+    assert "This review runs before final synthesis" in reviewer_prompt
+    assert "client-visible final answer is absent" in reviewer_prompt
 
 
 def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
@@ -1443,12 +1438,7 @@ def test_third_identical_successful_validation_blocks_no_progress(
                             "function": {
                                 "name": "exec_command",
                                 "arguments": json.dumps(
-                                    {
-                                        "cmd": (
-                                            "timeout 30s python -m unittest "
-                                            "discover -s tests -v"
-                                        )
-                                    }
+                                    {"cmd": ("timeout 30s python -m unittest discover -s tests -v")}
                                 ),
                             },
                         }
@@ -1457,9 +1447,7 @@ def test_third_identical_successful_validation_blocks_no_progress(
                 {
                     "role": "tool",
                     "tool_call_id": f"validation-{index}",
-                    "content": json.dumps(
-                        {"exit_code": 0, "stdout": "Ran 4 tests\nOK\n"}
-                    ),
+                    "content": json.dumps({"exit_code": 0, "stdout": "Ran 4 tests\nOK\n"}),
                 },
             ],
         )
@@ -1467,6 +1455,89 @@ def test_third_identical_successful_validation_blocks_no_progress(
     assert state.no_progress_count == 3
     assert state.phase == Phase.BLOCKED
     assert any(
+        event["event_type"] == "repeated_successful_validation_blocked"
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_blocked_session_requires_new_evidence_instead_of_backend_failure(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="blocked-session", phase=Phase.BLOCKED)
+
+    with pytest.raises(LoopAdmissionError, match="new implementation evidence required"):
+        await controller.prepare_executor(
+            state,
+            {"model": "dgx-moa-agent", "messages": []},
+            ("executor",),
+        )
+
+
+def test_successful_changes_between_identical_validations_reset_no_progress(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="validation-after-change")
+
+    for index in range(3):
+        controller._observe(
+            state,
+            [
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": f"validation-{index}",
+                            "type": "function",
+                            "function": {
+                                "name": "exec_command",
+                                "arguments": json.dumps(
+                                    {"cmd": "python -m unittest tests.test_store"}
+                                ),
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": f"validation-{index}",
+                    "content": json.dumps({"exit_code": 0, "stdout": "OK\n"}),
+                },
+            ],
+        )
+        if index < 2:
+            controller._observe(
+                state,
+                [
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": f"edit-{index}",
+                                "type": "function",
+                                "function": {
+                                    "name": "edit",
+                                    "arguments": json.dumps(
+                                        {"filePath": "store.py", "oldString": "a", "newString": "b"}
+                                    ),
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": f"edit-{index}",
+                        "content": json.dumps({"exit_code": 0}),
+                    },
+                ],
+            )
+
+    assert state.no_progress_count == 0
+    assert state.phase != Phase.BLOCKED
+    assert not any(
         event["event_type"] == "repeated_successful_validation_blocked"
         for event in store.events(state.session_id)
     )
@@ -1837,9 +1908,7 @@ async def test_reasoner_fallback_failure_records_safe_code(
     stub_provider.complete = fail_local_reasoner  # type: ignore[method-assign]
     store = StateStore(settings.state_db)
     controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
-    state = controller.session(
-        "reasoner-fallback-failed", [{"role": "user", "content": "work"}]
-    )
+    state = controller.session("reasoner-fallback-failed", [{"role": "user", "content": "work"}])
     controller.select_route(state, {})
 
     with pytest.raises(ReasonerUnavailable):
@@ -2482,6 +2551,9 @@ async def test_reviewer_retries_one_malformed_structured_response(
     )
     assert stub_provider.requests[-1]["max_tokens"] == 1024
     assert "bounded evidence" in stub_provider.requests[-1]["messages"][0]["content"]
+    assert (
+        "review runs before final synthesis" in stub_provider.requests[-1]["messages"][0]["content"]
+    )
     assert [
         invocation["mode"]
         for invocation in state.agent_invocations
@@ -3066,9 +3138,7 @@ def test_implementation_completion_requires_change_validation_and_review(
     assert controller.requires_implementation_tool_action(question, {}) is False
 
 
-def test_frontier_missing_tests_block_approval(
-    settings, stub_provider: StubProvider
-) -> None:  # type: ignore[no-untyped-def]
+def test_frontier_missing_tests_block_approval(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
 
     assert controller.material_frontier_review(
@@ -3081,9 +3151,7 @@ def test_frontier_missing_tests_block_approval(
     )
 
 
-def test_patch_tool_counts_as_a_file_change(
-    settings, stub_provider: StubProvider
-) -> None:  # type: ignore[no-untyped-def]
+def test_patch_tool_counts_as_a_file_change(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
 
     assert controller.tool_execution_changes_files(
@@ -3326,9 +3394,10 @@ async def test_incomplete_implementation_requires_a_tool_action(
     prepared = await controller.prepare_executor(state, request, ("executor",))
 
     assert prepared["tool_choice"] == "required"
-    assert "Repeated inspection is stalled. The very next tool call must" in prepared["messages"][
-        0
-    ]["content"]
+    assert (
+        "Repeated inspection is stalled. The very next tool call must"
+        in prepared["messages"][0]["content"]
+    )
     assert [tool["function"]["name"] for tool in prepared["tools"]] == ["apply_patch"]
     assert any(
         event["event_type"] == "executor_stall_tools_restricted"
@@ -3348,9 +3417,10 @@ async def test_incomplete_implementation_requires_a_tool_action(
     ]
     prepared = await controller.prepare_executor(state, command_only, ("executor",))
     assert [tool["function"]["name"] for tool in prepared["tools"]] == ["exec_command"]
-    assert "next invocation must modify the target source file" in prepared["tools"][0][
-        "function"
-    ]["description"]
+    assert (
+        "next invocation must modify the target source file"
+        in prepared["tools"][0]["function"]["description"]
+    )
     assert "If only exec_command is available" in prepared["messages"][0]["content"]
 
 

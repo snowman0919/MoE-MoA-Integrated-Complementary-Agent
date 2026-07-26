@@ -72,6 +72,16 @@ def finalization(module: Any, completed_at: float, duration: float) -> Any:
     )
 
 
+def database_bytes(path: Path) -> bytes:
+    payloads = [path.read_bytes()]
+    for candidate in sorted(path.parent.glob(f"{path.name}-*")):
+        try:
+            payloads.append(candidate.read_bytes())
+        except FileNotFoundError:
+            continue
+    return b"".join(payloads)
+
+
 def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
     module = usage_module()
     path = tmp_path / "usage.db"
@@ -166,7 +176,7 @@ def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
         "memory_before_bytes",
         "memory_after_bytes",
     }
-    assert {"provider", "fallback_reason"} <= invocation_columns
+    assert {"provider", "fallback_reason", "cost_usd", "cached_tokens"} <= invocation_columns
 
 
 def test_legacy_chat_runtime_mode_reads_as_fast(tmp_path: Path) -> None:
@@ -628,7 +638,14 @@ def test_api_token_dashboard_tracks_fallback_provenance(tmp_path: Path) -> None:
         prompt_tokens=7,
         completion_tokens=11,
         total_tokens=18,
+        cached_tokens=6,
+        cost_usd=0.25,
     )
+
+    with sqlite3.connect(store.path) as database:
+        assert database.execute(
+            "SELECT cached_tokens, cost_usd FROM model_invocation_usage WHERE request_id = 'remote'"
+        ).fetchone() == (6, 0.25)
 
     dashboard = store.api_token_dashboard(name="client")
 
@@ -802,7 +819,7 @@ def test_request_start_rejects_category_sentinels_before_persistence(
     with pytest.raises(ValidationError):
         store.start(module.RequestUsageStart.model_validate(raw))
 
-    sqlite_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("usage.db*"))
+    sqlite_bytes = database_bytes(path)
     assert sentinel.encode() not in sqlite_bytes
     assert sentinel not in json.dumps(store.report(now=100.0), sort_keys=True)
 
@@ -828,7 +845,7 @@ def test_request_finalization_rejects_category_sentinels_before_persistence(
         store.finalize("safe-request", module.RequestUsageFinalization.model_validate(raw))
 
     assert store.get("safe-request").completed_at is None
-    sqlite_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("usage.db*"))
+    sqlite_bytes = database_bytes(path)
     assert sentinel.encode() not in sqlite_bytes
     assert sentinel not in json.dumps(store.report(now=101.0), sort_keys=True)
 
@@ -851,7 +868,7 @@ def test_lifecycle_sample_rejects_category_sentinels_before_persistence(
     with pytest.raises(ValidationError):
         store.record_lifecycle_sample(module.LifecycleSample.model_validate(raw))
 
-    sqlite_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("usage.db*"))
+    sqlite_bytes = database_bytes(path)
     assert sentinel.encode() not in sqlite_bytes
     assert sentinel not in json.dumps(store.report(now=100.0), sort_keys=True)
 

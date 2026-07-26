@@ -13,7 +13,12 @@ from pathlib import Path
 import httpx
 import pytest
 from dgx_moa import providers
-from dgx_moa.api import create_app, has_matching_tool_result, ollama_model_ready
+from dgx_moa.api import (
+    create_app,
+    has_matching_tool_result,
+    ollama_model_ready,
+    unsafe_frontier_correction_tool_call,
+)
 from dgx_moa.config import Settings
 from dgx_moa.controller import fingerprint
 from dgx_moa.lifecycle import (
@@ -44,6 +49,198 @@ def test_runtime_version_is_2_0(settings: Settings) -> None:
 
     assert __version__ == "2.0.0"
     assert app.version == "2.0.0"
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments", "unsafe"),
+    [
+        (
+            "edit",
+            {"filePath": "store.py", "oldString": "}", "newString": "x" * 256},
+            True,
+        ),
+        (
+            "edit_file",
+            {
+                "path": "store.py",
+                "old_text": "def update(self):",
+                "new_text": "def update(self):\n        return 1",
+            },
+            False,
+        ),
+        ("write", {"filePath": "store.py", "content": "x" * 512}, False),
+    ],
+)
+def test_frontier_correction_rejects_low_specificity_edit(
+    name: str, arguments: dict[str, str], unsafe: bool
+) -> None:
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(arguments),
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    assert unsafe_frontier_correction_tool_call(response) is unsafe
+
+
+def test_frontier_correction_retries_unsafe_edit_with_safe_tool(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "unsafe-edit-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    app = create_app(
+        settings.model_copy(update={"frontier_enabled": True, "frontier_config": frontier_config})
+    )
+    calls = 0
+
+    async def remote_execute(
+        _remote_request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        function = (
+            {
+                "name": "edit",
+                "arguments": json.dumps(
+                    {"filePath": "store.py", "oldString": "}", "newString": "x" * 512}
+                ),
+            }
+            if calls == 1
+            else {
+                "name": "write",
+                "arguments": json.dumps({"filePath": "store.py", "content": "safe replacement"}),
+            }
+        )
+        return {
+            "id": f"chatcmpl-frontier-{calls}",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": f"call-{calls}",
+                                "type": "function",
+                                "function": function,
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"total_tokens": 8},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "primary", "cost_usd": None},
+        }
+
+    session_id = "unsafe-frontier-edit"
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        app.state.store.save(
+            SessionState(
+                session_id=session_id,
+                objective="Implement store.py in this repository.",
+                review_status="rejected_frontier",
+                review_deferred=True,
+                frontier_correction_required=True,
+            )
+        )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "continue"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "description": name,
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                    for name in ("edit", "write")
+                ],
+            },
+        )
+        events = app.state.store.events(session_id)
+
+    assert response.status_code == 200, response.text
+    assert calls == 2
+    function = response.json()["choices"][0]["message"]["tool_calls"][0]["function"]
+    assert function["name"] == "write"
+    assert any(
+        event["event_type"] == "frontier_correction_tool_rejected"
+        and event["payload"]["reason"] == "unsafe_low_specificity_edit"
+        for event in events
+    )
+    assert any(
+        event["event_type"] == "frontier_correction_tool_retry_completed" for event in events
+    )
+
+
+def test_frontier_correction_verification_serializes_tool_calls(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    settings.loop_engineering.enabled = True
+    session_id = "serialized-correction-verification"
+    objective = "Implement store.py in this repository."
+    state = SessionState(
+        session_id=session_id,
+        objective=objective,
+        review_status="deferred",
+        review_deferred=True,
+        frontier_correction_pending_verification=True,
+        engineering_loop=new_loop("request", objective),
+    )
+    with client_with_stub(settings, stub_provider) as client:
+        client.app.state.store.save(state)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "validate the correction"}],
+                "parallel_tool_calls": True,
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "bash",
+                            "description": "Run validation.",
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                ],
+            },
+        )
+        events = client.app.state.store.events(session_id)
+
+    assert response.status_code == 200, response.text
+    executor_request = next(
+        request for request in reversed(stub_provider.requests) if request.get("tools")
+    )
+    assert executor_request["parallel_tool_calls"] is False
+    assert any(
+        event["event_type"] == "frontier_correction_verification_serialized" for event in events
+    )
 
 
 def test_busy_executor_routes_new_session_to_frontier(
@@ -160,7 +357,7 @@ def test_shared_backend_busy_routes_new_session_to_frontier(
     assert started["payload"]["routing_reason"] == "local_busy"
 
 
-def test_required_tool_continuation_routes_to_frontier_before_dispatch(
+def test_ready_required_tool_continuation_stays_local(
     settings: Settings, stub_provider: StubProvider
 ) -> None:
     frontier_config = settings.state_db.parent / "frontier-tool-continuation.yaml"
@@ -264,14 +461,12 @@ def test_required_tool_continuation_routes_to_frontier_before_dispatch(
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert (
-        second.json()["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "write_file"
-    )
-    assert stub_provider.calls.count("executor") == 1
-    assert len(remote_calls) == 1
+    assert second.json()["choices"][0]["message"]["tool_calls"]
+    assert stub_provider.calls.count("executor") == 2
+    assert not remote_calls
     started = [event for event in events if event["event_type"] == "executor_started"]
-    assert started[-1]["payload"]["provider"] == "frontier"
-    assert started[-1]["payload"]["routing_reason"] == "local_required_tool_continuation"
+    assert started[-1]["payload"]["provider"] == "local"
+    assert started[-1]["payload"]["routing_reason"] == "local_ready"
 
 
 def test_busy_executor_remote_stream_failure_is_observable(
@@ -324,6 +519,70 @@ def test_busy_executor_remote_stream_failure_is_observable(
         "failure_code": "FRONTIER_OPENROUTER_FAILURE",
         "routing_reason": "local_busy",
     }
+
+
+def test_busy_executor_remote_stream_records_cost_and_cache(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "frontier-stream-usage.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    app = create_app(
+        settings.model_copy(update={"frontier_enabled": True, "frontier_config": frontier_config})
+    )
+
+    async def remote_execute(
+        _remote_request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        return {
+            "id": "chatcmpl-frontier-stream",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "원격 스트림 완료"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 7,
+                "completion_tokens": 3,
+                "total_tokens": 10,
+                "prompt_tokens_details": {"cached_tokens": 4},
+            },
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "primary", "cost_usd": 0.25},
+        }
+
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        held = app.state.lifecycle_store.acquire_request_leases(
+            str(uuid.uuid4()), ("executor",), kind="active_request"
+        )
+        try:
+            response = client.post(
+                "/v1/chat/completions",
+                headers={
+                    "Authorization": "Bearer test-secret",
+                    "X-Session-ID": "remote-stream-usage",
+                },
+                json={
+                    "model": "dgx-moa-fast",
+                    "messages": [{"role": "user", "content": "간단히 답해"}],
+                    "stream": True,
+                },
+            )
+        finally:
+            app.state.lifecycle_store.release_leases(lease.lease_id for lease in held)
+        with sqlite3.connect(settings.state_db) as database:
+            invocation = database.execute(
+                "SELECT provider, cached_tokens, cost_usd, status "
+                "FROM model_invocation_usage WHERE role = 'executor'"
+            ).fetchone()
+
+    assert response.status_code == 200
+    assert invocation == ("frontier", 4, 0.25, "completed")
 
 
 def test_oversized_executor_context_routes_to_frontier_before_dispatch(
@@ -437,6 +696,65 @@ def test_repeated_failure_routes_executor_to_frontier(
     assert "executor" not in stub_provider.calls
     selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
     assert selected["payload"]["routing_reason"] == "local_repeated_failure"
+
+
+def test_orchestrated_executor_provider_is_pinned_after_first_dispatch(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "pinned-executor-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    controlled = settings.model_copy(
+        update={"frontier_enabled": True, "frontier_config": frontier_config}
+    )
+    app = create_app(controlled)
+    remote_calls: list[str] = []
+
+    async def remote_execute(
+        _remote_request: dict[str, object], correlation_id: str
+    ) -> dict[str, object]:
+        remote_calls.append(correlation_id)
+        raise AssertionError("provider switched after local dispatch")
+
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+
+        original_prepare = app.state.controller.prepare_executor
+
+        async def prepare_then_mark_failure(*args, **kwargs):  # type: ignore[no-untyped-def]
+            prepared = await original_prepare(*args, **kwargs)
+            args[0].failure_families["late-failure"] = 2
+            return prepared
+
+        app.state.controller.prepare_executor = prepare_then_mark_failure
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "pinned-executor",
+            },
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "Implement the bounded change."}],
+            },
+        )
+        events = app.state.store.events("pinned-executor")
+
+    assert response.status_code == 200, f"{response.text}; remote_calls={remote_calls}"
+    assert remote_calls == []
+    assert stub_provider.calls.count("executor") == 2
+    assert not any(event["event_type"] == "executor_remote_selected" for event in events)
+    prevented = next(
+        event for event in events if event["event_type"] == "executor_provider_switch_prevented"
+    )
+    assert prevented["payload"] == {
+        "selected_provider": "local",
+        "requested_provider": "frontier",
+        "routing_reason": "local_repeated_failure",
+    }
 
 
 def test_duplicate_failed_call_routes_once_to_frontier(
@@ -676,6 +994,18 @@ def test_repeated_inspection_routes_executor_to_frontier(
             },
         )
         correction_events = app.state.store.events(rejected_id)
+        correction_remote_calls = len(remote_requests)
+        exhausted_response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": rejected_id},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": rejected.objective}],
+                "tools": [correction_tool],
+            },
+        )
+        exhausted_events = app.state.store.events(rejected_id)
+        assert len(remote_requests) == correction_remote_calls
         reviewer_calls_after_correction = stub_provider.calls.count("reviewer")
         newly_rejected_id = "newly-rejected-executor"
         newly_rejected = SessionState(
@@ -764,6 +1094,11 @@ def test_repeated_inspection_routes_executor_to_frontier(
     assert completion_selected["payload"]["routing_reason"] == "local_completion_stalled"
     assert correction_response.status_code == 200, correction_response.text
     assert correction_response.json()["choices"][0]["finish_reason"] == "tool_calls"
+    assert exhausted_response.status_code == 503
+    assert any(
+        event["event_type"] == "frontier_correction_tool_retry_exhausted"
+        for event in exhausted_events
+    )
     correction_selected = next(
         event for event in correction_events if event["event_type"] == "executor_remote_selected"
     )
@@ -7699,6 +8034,37 @@ def test_step_budget_failure_finalizes_one_usage_row(settings, stub_provider: St
     assert response.json()["error"]["message"] == "session step budget exhausted"
     assert stub_provider.calls == []
     assert usage.retryable_failure_class == "backend_error"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_blocked_session_is_nonretryable_loop_error_not_bad_gateway(
+    settings, stub_provider: StubProvider, stream: bool
+) -> None:  # type: ignore[no-untyped-def]
+    session_id = f"blocked-session-{stream}"
+    with client_with_stub(settings, stub_provider) as client:
+        client.app.state.store.save(
+            SessionState(
+                session_id=session_id,
+                phase=Phase.BLOCKED,
+                final_status="blocked",
+            )
+        )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "continue"}],
+                "stream": stream,
+            },
+        )
+        usage = assert_usage(client.app, "failed")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["type"] == "loop_admission_error"
+    assert response.json()["error"]["code"] == "loop_new_evidence_required"
+    assert usage.retryable_failure_class is None
+    assert stub_provider.calls == []
 
 
 def test_provenance_failure_finalizes_exactly_one_failed_usage_row(

@@ -43,12 +43,7 @@ def test_fenced_unified_diff_is_normalized_for_apply_patch() -> None:
     )
 
     assert normalize_apply_patch_input("apply_patch", unified) == (
-        "*** Begin Patch\n"
-        "*** Update File: app.py\n"
-        "@@\n"
-        "-old\n"
-        "+new\n"
-        "*** End Patch"
+        "*** Begin Patch\n*** Update File: app.py\n@@\n-old\n+new\n*** End Patch"
     )
 
 
@@ -675,6 +670,18 @@ async def test_keepalive_sse_covers_silent_upstream() -> None:
 
 
 @pytest.mark.asyncio
+async def test_responses_sse_exposes_upstream_keepalive_as_progress() -> None:
+    async def upstream():  # type: ignore[no-untyped-def]
+        yield b": keep-alive\n\n"
+        yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    output = b"".join([chunk async for chunk in responses_sse(upstream(), "test")])
+
+    assert output.count(b"event: response.in_progress") == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "terminal",
     [
@@ -903,6 +910,7 @@ async def test_observation_extracts_only_reported_token_counts() -> None:
     event = (
         b'data: {"choices":[{"delta":{"content":"SENTINEL_RESPONSE"}}],'
         b'"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5,'
+        b'"prompt_tokens_details":{"cached_tokens":1},'
         b'"secret":"SENTINEL_SECRET"}}\n\n'
     )
     observation = StreamObservation(max_capture_bytes=1_000)
@@ -914,6 +922,7 @@ async def test_observation_extracts_only_reported_token_counts() -> None:
         "completion_tokens": 3,
         "total_tokens": 5,
     }
+    assert observation.cached_tokens == 1
 
 
 @pytest.mark.parametrize("value", [True, -1, 2**63, "5", 1.0])

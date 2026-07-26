@@ -257,6 +257,8 @@ def test_frontier_review_requires_finite_arithmetic_parameters() -> None:
     assert "expected_version" in prompt
     assert "fully merged object" in prompt
     assert "when missing_tests is non-empty, use revise" in prompt
+    assert "This review runs before final synthesis" in prompt
+    assert "client-visible final answer is absent" in prompt
 
 
 def test_codex_oauth_environment_excludes_gateway_secrets(
@@ -610,25 +612,25 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
         def json(self) -> dict[str, object]:
             return {
                 "choices": [
-                        {
-                            "message": {
-                                "content": (
-                                    json.dumps(
-                                        {
-                                            "verdict": "approve",
-                                            "critical": [],
-                                            "important": [],
-                                            "suggestions": [],
-                                            "missing_tests": [],
-                                            "confidence": 0.9,
-                                        }
-                                    )
-                                    if self.valid
-                                    else "{}"
+                    {
+                        "message": {
+                            "content": (
+                                json.dumps(
+                                    {
+                                        "verdict": "approve",
+                                        "critical": [],
+                                        "important": [],
+                                        "suggestions": [],
+                                        "missing_tests": [],
+                                        "confidence": 0.9,
+                                    }
                                 )
-                            },
-                            "finish_reason": "stop",
-                        }
+                                if self.valid
+                                else "{}"
+                            )
+                        },
+                        "finish_reason": "stop",
+                    }
                 ],
                 "usage": {"prompt_tokens": 10, "completion_tokens": 10},
             }
@@ -742,6 +744,49 @@ def test_codex_oauth_does_not_fail_over_validation_failure(
         runner._run("architecture", {"objective": "x"}, "invalid-result")
 
     assert profiles == ["primary"]
+
+
+def test_codex_oauth_retries_malformed_structured_output(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    calls = 0
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        result_path.write_text(
+            "{}"
+            if calls == 1
+            else json.dumps(
+                {
+                    "recommended_architecture": "bounded",
+                    "design_decisions": [],
+                    "tradeoffs": [],
+                    "failure_modes": [],
+                    "implementation_sequence": [],
+                    "review_questions": [],
+                }
+            )
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(
+            enabled=True,
+            primary_profile="primary",
+            profile_root=tmp_path / "profiles",
+            collaboration_retries=1,
+        ),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    result = runner._run("architecture", {"objective": "x"}, "retry-invalid-result")
+
+    assert calls == 2
+    assert result.output["recommended_architecture"] == "bounded"
 
 
 def test_frontier_output_schema_uses_strict_property_types() -> None:

@@ -66,19 +66,13 @@ class ProgressOnlyResponse(Exception):
 def compatible_edit_call(
     name: str, raw_arguments: str, custom_tool_names: set[str] | None
 ) -> tuple[str, str]:
-    if name not in {"edit", "edit_file"} or "apply_patch" not in (
-        custom_tool_names or set()
-    ):
+    if name not in {"edit", "edit_file"} or "apply_patch" not in (custom_tool_names or set()):
         return name, raw_arguments
     try:
         arguments = json.loads(raw_arguments)
         path = arguments.get("file", arguments.get("path", arguments.get("file_path")))
-        old_text = arguments.get(
-            "old_text", arguments.get("old_string", arguments.get("old"))
-        )
-        new_text = arguments.get(
-            "new_text", arguments.get("new_string", arguments.get("new"))
-        )
+        old_text = arguments.get("old_text", arguments.get("old_string", arguments.get("old")))
+        new_text = arguments.get("new_text", arguments.get("new_string", arguments.get("new")))
         if (
             not isinstance(path, str)
             or not path
@@ -100,9 +94,7 @@ def compatible_edit_call(
             "*** End Patch",
         )
     )
-    return "apply_patch", json.dumps(
-        {"input": patch}, ensure_ascii=False, separators=(",", ":")
-    )
+    return "apply_patch", json.dumps({"input": patch}, ensure_ascii=False, separators=(",", ":"))
 
 
 def normalize_apply_patch_input(name: str, value: str) -> str:
@@ -328,6 +320,7 @@ class StreamObservation:
     tool_call_arguments: dict[int, str] = field(default_factory=dict)
     done_seen: bool = False
     usage: dict[str, int] = field(default_factory=dict)
+    cached_tokens: int | None = None
 
     def observe(self, event: bytes) -> None:
         remaining = self.max_capture_bytes - len(self.captured)
@@ -340,7 +333,13 @@ class StreamObservation:
                 payload = json.loads(line[6:])
             except ValueError:
                 continue
-            self.usage.update(reported_usage(payload.get("usage")))
+            raw_usage = payload.get("usage")
+            self.usage.update(reported_usage(raw_usage))
+            if isinstance(raw_usage, dict):
+                details = raw_usage.get("prompt_tokens_details")
+                cached = details.get("cached_tokens") if isinstance(details, dict) else None
+                if type(cached) is int and 0 <= cached <= SQLITE_MAX_INTEGER:
+                    self.cached_tokens = cached
             choice = (payload.get("choices") or [{}])[0]
             delta = choice.get("delta") or {}
             if isinstance(delta.get("content"), str):
@@ -576,6 +575,12 @@ async def responses_sse(
                 else chunk
             )
             for line in raw_chunk.decode(errors="replace").splitlines():
+                if line.startswith(":"):
+                    yield event(
+                        "response.in_progress",
+                        response=response_payload("in_progress", []),
+                    )
+                    continue
                 if not line.startswith("data: "):
                     continue
                 if line == "data: [DONE]":
@@ -791,10 +796,7 @@ async def responses_sse(
                     or not isinstance(arguments.get("session_id"), int)
                     or (
                         isinstance(arguments.get("chars"), str)
-                        and (
-                            "\n" in arguments["chars"]
-                            or len(arguments["chars"]) > 256
-                        )
+                        and ("\n" in arguments["chars"] or len(arguments["chars"]) > 256)
                     )
                 ):
                     if "exec_command" in (function_tool_names or set()):

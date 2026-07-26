@@ -5289,3 +5289,180 @@ deprecation warning.
 This is one physical OpenCode task pass, not the frozen five-task OpenCode
 panel, cross-client non-inferiority result, physical dual-SGLang residency
 gate, or ten-hour stability gate. Production was not changed.
+
+## OpenCode five-task panel and Codex stream recovery — 2026-07-26
+
+Candidate run `20260726-open-code-five-642230e` completed all five isolated
+Docker tasks. The independent scorer passed public and hidden validation,
+source-only changes, immutable tests, tool evidence, Korean terminal output,
+bad-terminal rejection, and Docker isolation for every task:
+
+- rate-limiter: 129.573 seconds
+- atomic-store: 124.924 seconds
+- dag-runner: 134.221 seconds
+- webhook-verifier: 222.892 seconds
+- log-report: 107.064 seconds
+
+The Gateway recorded 20 Frontier Executor calls, 10 local Executor calls, six
+Codex OAuth reviews, five local Reasoner calls, and 12 remote Reviewer calls.
+The panel is a functional `5/5` OpenCode pass, not an efficiency or
+non-inferiority pass; Frontier Executor alone consumed 559,889 recorded tokens.
+
+Codex diagnosis then reproduced three independent failures. The Docker image
+lacked `rg`; upstream SSE comments did not reset Codex's application-level idle
+timer; and pre-synthesis Reviewer/Frontier prompts incorrectly treated an
+absent client-visible final response as an implementation defect. The runner
+now mounts the existing host ripgrep binary read-only, Responses translates
+upstream keepalive comments into standard `response.in_progress` events, and
+both review contracts explicitly limit pre-synthesis review to implementation
+and available evidence. A Frontier correction may run once per rejection
+generation, preventing repeated client retries from creating unbounded paid
+calls. Codex OAuth structured output is considered successful only after schema
+validation; one malformed result is retried on the same profile and is never
+executed as a tool call.
+
+Run `20260726-codex-review-contract-p5` completed implementation and both
+validators but failed the bad-terminal gate because one malformed Frontier tool
+result reached Codex as `Reconnecting 1/5`. After the bounded structured-output
+retry, run `20260726-codex-review-contract-p6` completed in 376.569 seconds with
+exit code zero. All scorer checks passed: public and hidden validation, one
+source change, immutable tests, tool evidence, Korean terminal output, Docker
+isolation, and no reconnect, failed turn, or failed response marker.
+
+The installed OpenCode 1.17.18 production path was also checked independently.
+Its configured key matched the active, unexpired, unrevoked, unlimited
+`opencode` record. A no-tool request and a plugin-enabled write/read request
+both exited zero. The latter wrote and reread the expected file and completed
+two tool turns. Five older user-only sessions had no assistant message, client
+run log, or Gateway request and are classified as UI-process orphan sessions,
+not a current Gateway, key, model, or goal-plugin block.
+
+Ruff passed for the complete candidate tree, and the complete test suite passed
+`1037/1037` in 24.85 seconds with one third-party Starlette deprecation warning.
+Production code, services, configuration, and state were not changed. Four
+additional Codex tasks, the Hermes five-task panel, repeated blind comparison,
+physical dual-SGLang residency, and the ten-hour gate remain pending.
+
+## Codex and Hermes five-task completion — 2026-07-26
+
+The remaining isolated Codex Docker tasks completed with exit code zero and
+passed every independent scorer check:
+
+- rate-limiter: 376.569 seconds
+- atomic-store: 297.836 seconds
+- dag-runner: 148.538 seconds
+- webhook-verifier: 231.871 seconds
+- log-report: 136.585 seconds
+
+Together with the previously recorded rate-limiter canary, this is a functional
+Codex `5/5` pass. Each task passed public and hidden validation, changed only
+the requested source file, preserved tests, contained actual tool evidence,
+ended in Korean, and contained no failed response, reconnect, or generic
+progress terminal.
+
+The Hermes quality runner was found to copy the installed profile without
+changing its production Gateway address. The candidate now changes only the
+copied `dgx-moa-agent` provider `base_url` to the selected `--gateway` and fails
+closed when that provider is absent. API credentials and all other installed
+Hermes settings are preserved. Focused runner coverage passed `6/6`, and the
+generated profiles were verified to contain only
+`http://127.0.0.1:19400/v1`, not the production address.
+
+Installed Hermes then completed the same five tasks in isolated Docker
+containers:
+
+- rate-limiter: 266.965 seconds
+- atomic-store: 214.013 seconds
+- dag-runner: 197.663 seconds
+- webhook-verifier: 523.070 seconds
+- log-report: 345.728 seconds
+
+All five exited zero and passed public and hidden validators, immutable-test,
+source-only, real unittest-tool evidence, Korean terminal, bad-terminal, and
+Docker-isolation checks. The webhook task exposed an important latency path:
+the local Executor performed active GPU inference but produced no implementation
+action, so the orchestration retry selected Frontier, which recovered the task.
+The candidate did not return a Bad Gateway or disconnect, but the 523-second
+latency is not acceptable evidence of frontier-level efficiency.
+
+The installed OpenCode 1.17.18 path remained healthy during the same interval.
+Its active key was valid and unlimited, and both a no-tool request and a
+plugin-enabled write/read task had already exited zero. The older apparently
+blocked OpenCode rows remain client UI-process orphans: they contain only the
+user message and have no assistant message, OpenCode run log, or matching
+Gateway request. No current provider, credential, plugin, or Gateway block was
+reproduced.
+
+OpenCode, Codex, and Hermes now each have one functional `5/5` panel. This does
+not establish GPT-5.6 Sol or Opus 5 non-inferiority. Repeated blinded baseline
+comparisons, paired confidence intervals, cost/latency gates, physical
+dual-SGLang 65K residency and cache evidence, and the ten-hour stability run
+remain required. Production was not changed.
+
+## OpenCode Bad Gateway and correction-loop recovery — 2026-07-26
+
+The preserved `20260726-opencode-telemetry-r4` attempt timed out at exactly
+3,600.021 seconds with exit code 124. Public and hidden validators passed, but
+the harness had no terminal response. The first failure was not an upstream
+model outage: the controller counted three identical successful validations
+across the whole session even though edits occurred between them, set the
+session to `BLOCKED`, and raised a generic `ValueError`. The API converted that
+stable control state into HTTP 502, so OpenCode retried it as a transient Bad
+Gateway.
+
+The candidate now counts only consecutive identical successful validations.
+An intervening edit, write, read, or other action resets the sequence. A truly
+blocked session raises `LoopAdmissionError` and returns non-retryable HTTP 409
+with `loop_new_evidence_required`; it is no longer recorded as a retryable
+backend error. The SQLite sentinel test was also made race-safe by requiring
+the main database while tolerating a WAL/SHM file that SQLite deletes between
+directory enumeration and open.
+
+The first recovery attempt, `20260726-opencode-telemetry-r5a`, passed every
+functional scorer check but required 1,365.259 seconds, 43 local Executor
+calls, 11 Frontier Executor calls, eight Codex reviews, and 18 remote Reviewer
+calls. It is retained as functional diagnostic evidence only. Sanitized tool
+structure then showed a Frontier correction using a one-character edit target
+with more than 1.8K replacement characters, which could reintroduce duplicate
+code. Frontier correction calls now reject such low-specificity edits without
+recording their content and retry once with either a unique existing block or
+a whole-file write.
+
+`20260726-opencode-telemetry-r6a` completed both validators in 253.030 seconds
+but exited one without a terminal response. OpenCode's structured log contained
+one `UnknownError`; its final step requested ten bash tools together and hit
+OpenCode's separate `doom_loop` permission. It contained no 502, connection,
+provider-switch, or credential failure. Correction verification now forces
+`parallel_tool_calls=false` while ordinary implementation turns retain the
+existing parallel policy.
+
+The next isolated run, `20260726-opencode-telemetry-r7a`, exited zero in
+236.705 seconds and passed all ten scorer checks. The new same-epoch panel
+`20260726-opencode-five-r7b` then completed all five isolated Docker tasks:
+
+- rate-limiter: 265.538 seconds
+- atomic-store: 142.772 seconds
+- dag-runner: 429.468 seconds
+- webhook-verifier: 112.235 seconds
+- log-report: 338.648 seconds
+
+Every task exited zero, passed public and hidden validation, changed only the
+requested source file, preserved tests, contained tool evidence, ended in
+Korean, and passed bad-terminal and Docker-isolation checks. Every task also
+reported complete telemetry, zero provider errors, zero provider switches,
+provider pinning, complete configured variable-cost accounting, and no missing
+token rows. Cached-token and GPU-memory values remained `null`, not zero,
+because the providers and host probe did not expose trustworthy values.
+Reviewer cold warm-ups still failed and immediately used the remote fallback;
+the panel therefore remains dependent on remote Reviewer capacity.
+
+The panel summary intentionally reports `complete=false` and
+`usability_not_below_baseline=null` because no frozen baseline rows belong to
+this run. This is a stable OpenCode functional `5/5` result, not a blinded
+frontier non-inferiority, speed, cost-quality, cache-efficiency, or long-horizon
+pass. The candidate suite passed 1,054 tests with one third-party Starlette
+deprecation warning. Production, main, dev, model services, and systemd were
+not changed. Physical dual-SGLang validation remains blocked pending explicit
+maintenance approval; the 200-attempt confirmation panel, paired confidence
+intervals, Scientific Reasoning and General categories, and actual ten-hour
+run remain pending.

@@ -344,7 +344,9 @@ class UsageStore:
                     latency_ms REAL NOT NULL,
                     prompt_tokens INTEGER,
                     completion_tokens INTEGER,
-                    total_tokens INTEGER
+                    total_tokens INTEGER,
+                    cached_tokens INTEGER,
+                    cost_usd REAL
                 );
                 CREATE INDEX IF NOT EXISTS model_invocation_usage_role_time
                     ON model_invocation_usage(role, invoked_at);
@@ -368,6 +370,12 @@ class UsageStore:
                 database.execute(
                     "ALTER TABLE model_invocation_usage ADD COLUMN fallback_reason TEXT"
                 )
+            if "cost_usd" not in invocation_columns:
+                database.execute("ALTER TABLE model_invocation_usage ADD COLUMN cost_usd REAL")
+            if "cached_tokens" not in invocation_columns:
+                database.execute(
+                    "ALTER TABLE model_invocation_usage ADD COLUMN cached_tokens INTEGER"
+                )
         self.write_model_invocation_rates()
 
     def record_model_invocation(
@@ -384,15 +392,30 @@ class UsageStore:
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
         total_tokens: int | None = None,
+        cached_tokens: int | None = None,
+        cost_usd: float | None = None,
     ) -> None:
         if role not in {*self.model_catalog, "frontier"}:
             raise ValueError("unknown invocation role")
+        if cost_usd is not None and (
+            isinstance(cost_usd, bool)
+            or not isinstance(cost_usd, int | float)
+            or not math.isfinite(cost_usd)
+            or cost_usd < 0
+        ):
+            raise ValueError("cost_usd must be a nonnegative finite number")
+        if cached_tokens is not None and (
+            isinstance(cached_tokens, bool)
+            or not isinstance(cached_tokens, int)
+            or cached_tokens < 0
+        ):
+            raise ValueError("cached_tokens must be a nonnegative integer")
         with self._connect() as database:
             database.execute(
                 "INSERT INTO model_invocation_usage "
                 "(invocation_id, request_id, role, model, provider, fallback_reason, mode, "
-                "invoked_at, status, latency_ms, prompt_tokens, completion_tokens, total_tokens) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "invoked_at, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, "
+                "cached_tokens, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     str(uuid.uuid4()),
                     request_id,
@@ -407,6 +430,8 @@ class UsageStore:
                     prompt_tokens,
                     completion_tokens,
                     total_tokens,
+                    cached_tokens,
+                    cost_usd,
                 ),
             )
         self.write_model_invocation_rates()

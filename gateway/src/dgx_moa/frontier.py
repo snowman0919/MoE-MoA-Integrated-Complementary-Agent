@@ -234,11 +234,7 @@ def openrouter_compatible_schema(value: Any) -> Any:
 
     def clean(value: Any) -> Any:
         if isinstance(value, dict):
-            return {
-                key: clean(item)
-                for key, item in value.items()
-                if key not in unsupported
-            }
+            return {key: clean(item) for key, item in value.items() if key not in unsupported}
         if isinstance(value, list):
             return [clean(item) for item in value]
         return value
@@ -427,7 +423,10 @@ COLLABORATION_MODE_INSTRUCTIONS = {
         "non-finite constants on read. Put a test in missing_tests only when the gap blocks "
         "approval; when missing_tests "
         "is non-empty, use revise and include the underlying defect in important. Put optional "
-        "additional tests in suggestions instead."
+        "additional tests in suggestions instead. This review runs before final synthesis. Do not "
+        "revise or reject because the client-visible final answer is absent, or because of its "
+        "language, length, format, or summary content; final synthesis validates those "
+        "requirements."
     ),
     "architecture": (
         "For architecture, distinguish required decisions from optional future hardening."
@@ -621,9 +620,12 @@ class CodexOAuthCollaboration:
             completed: subprocess.CompletedProcess[str] | None = None
             selected_profile = ""
             final_failure = "FRONTIER_PROTOCOL_ERROR"
+            validated_result: dict[str, Any] | None = None
+            validation_error: ValueError | None = None
             for profile_index, (profile, provider) in enumerate(self.providers):
                 try_next_profile = False
                 for attempt in range(self.config.collaboration_retries + 1):
+                    result_path.unlink(missing_ok=True)
                     try:
                         with profile_lock(profile, self.run_dir):
                             completed = subprocess.run(
@@ -649,6 +651,17 @@ class CodexOAuthCollaboration:
                             break
                         continue
                     if completed.returncode == 0:
+                        try:
+                            validated_result = schema_model.model_validate_json(
+                                result_path.read_text()
+                            ).model_dump()
+                        except (OSError, ValueError) as error:
+                            validation_error = error
+                            final_failure = "FRONTIER_VALIDATION_FAILURE"
+                            if attempt < self.config.collaboration_retries:
+                                continue
+                            completed = None
+                            break
                         selected_profile = profile
                         break
                     failure = classify_frontier_failure(completed.stdout + completed.stderr)
@@ -668,6 +681,9 @@ class CodexOAuthCollaboration:
                     break
                 if not try_next_profile:
                     break
+            if validation_error is not None and not selected_profile:
+                self._failed()
+                raise validation_error
             if completed is None or not selected_profile or not result_path.is_file():
                 if (
                     paid_fallback_required
@@ -683,7 +699,8 @@ class CodexOAuthCollaboration:
                     )
                 self._failed()
                 raise RuntimeError(final_failure)
-            result = schema_model.model_validate_json(result_path.read_text()).model_dump()
+            assert validated_result is not None
+            result = validated_result
             prompt, completion = codex_usage(completed.stdout)
         self.failures = 0
         self.opened_at = None

@@ -184,7 +184,10 @@ REVIEWER_QUALITY_CONTRACT = (
     "Approve implementation work only when bounded code, "
     "patch, or diff evidence is present; test results alone are insufficient. An approval with "
     "empty findings asserts that these checks are visible in the code evidence. Verify required "
-    "corrections against newer implementation evidence before clearing them."
+    "corrections against newer implementation evidence before clearing them. This review runs "
+    "before final synthesis. Do not reject because the client-visible final answer is absent, or "
+    "because of its language, length, format, or summary content; final synthesis validates those "
+    "requirements. Review only the implementation and currently available evidence."
 )
 
 
@@ -361,10 +364,7 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
         try:
             prefix, offset = json.JSONDecoder().raw_decode(content)
             suffix = content[offset:].strip()
-            if not (
-                isinstance(prefix, dict)
-                and suffix.startswith("[Tool loop warning:")
-            ):
+            if not (isinstance(prefix, dict) and suffix.startswith("[Tool loop warning:")):
                 raise ValueError
             parsed = dict(prefix)
             output_key = "stdout" if "stdout" in parsed else "output"
@@ -649,17 +649,11 @@ class Controller:
         assert self.frontier is not None
         self.admit_loop_action(state, "frontier_calls")
         state.frontier_invocations += 1
-        invocation_id = (
-            f"{state.task_id or state.session_id}:frontier:{state.frontier_invocations}"
-        )
+        invocation_id = f"{state.task_id or state.session_id}:frontier:{state.frontier_invocations}"
         scoped_evidence = (
-            {**evidence, "_paid_fallback_required": True}
-            if mode == "code_review"
-            else evidence
+            {**evidence, "_paid_fallback_required": True} if mode == "code_review" else evidence
         )
-        return await self.frontier.collaborate(
-            mode, scoped_evidence, invocation_id
-        )
+        return await self.frontier.collaborate(mode, scoped_evidence, invocation_id)
 
     @staticmethod
     def safe_payload(state: SessionState, payload: Any) -> Any:
@@ -715,9 +709,14 @@ class Controller:
         mode: str = "default",
         provider: str | None = None,
         fallback_reason: str | None = None,
+        cost_usd: float | None = None,
     ) -> None:
         raw_usage = response.get("usage")
         usage = cast(dict[str, Any], raw_usage) if isinstance(raw_usage, dict) else {}
+        raw_prompt_details = usage.get("prompt_tokens_details")
+        prompt_details = (
+            cast(dict[str, Any], raw_prompt_details) if isinstance(raw_prompt_details, dict) else {}
+        )
         provenance = response.get("provider_provenance")
         provenance = cast(dict[str, Any], provenance) if isinstance(provenance, dict) else {}
         self.record_observed_invocation(
@@ -730,6 +729,8 @@ class Controller:
                 "prompt_tokens": usage.get("prompt_tokens"),
                 "completion_tokens": usage.get("completion_tokens"),
                 "total_tokens": usage.get("total_tokens"),
+                "cached_tokens": prompt_details.get("cached_tokens"),
+                "cost_usd": (cost_usd if cost_usd is not None else provenance.get("cost_usd")),
                 "status": "completed",
                 **(
                     {"provider": provider or provenance.get("provider")}
@@ -790,6 +791,8 @@ class Controller:
                 prompt_tokens=invocation.get("prompt_tokens"),
                 completion_tokens=invocation.get("completion_tokens"),
                 total_tokens=invocation.get("total_tokens"),
+                cached_tokens=invocation.get("cached_tokens"),
+                cost_usd=invocation.get("cost_usd"),
             )
         except Exception as error:
             self.store.event(
@@ -1522,16 +1525,16 @@ class Controller:
                 {**result, "target_paths": sorted(target_paths)},
                 generated_from=state.last_decision_id,
             )
-            repeated_success = (
-                sum(
-                    item.get("argument_fingerprint") == execution["argument_fingerprint"]
-                    and item.get("exit_code") == 0
-                    and item.get("failure_class") is None
-                    for item in state.tool_executions
-                )
-                if validation_completed
-                else 0
-            )
+            repeated_success = 0
+            if validation_completed:
+                for item in reversed(state.tool_executions):
+                    if (
+                        item.get("argument_fingerprint") != execution["argument_fingerprint"]
+                        or item.get("exit_code") != 0
+                        or item.get("failure_class") is not None
+                    ):
+                        break
+                    repeated_success += 1
             state.no_progress_count = repeated_success if repeated_success >= 3 else 0
             if state.no_progress_count:
                 state.phase = Phase.BLOCKED
@@ -2401,7 +2404,7 @@ class Controller:
             raise PolicyBlocked(f"request control state is {state.control_state}")
         body["max_tokens"] = self.executor_tokens(body)
         if state.phase == Phase.BLOCKED:
-            raise ValueError("session blocked after no progress")
+            raise LoopAdmissionError("session blocked; new implementation evidence required")
         context_fingerprint = reasoner_context_fingerprint(
             state, cast(list[dict[str, Any]], body.get("messages", []))
         )
@@ -2909,6 +2912,7 @@ class Controller:
                         if planner_routing.get("selected_provider") == "remote"
                         else None
                     ),
+                    cost_usd=planner_routing.get("remote_cost_usd"),
                 )
                 policy_planner = {
                     key: value for key, value in parsed.items() if key != "ordered_steps"
@@ -2957,13 +2961,10 @@ class Controller:
                     safe_reviewer["output"], ensure_ascii=False
                 )
                 material_review_issue = self.material_review_issue(pre_review_result)
-                review_assurance_needed = pre_review_result.get(
-                    "status"
-                ) == "approved" and (
+                review_assurance_needed = pre_review_result.get("status") == "approved" and (
                     state.frontier_correction_pending_verification
                     or (
-                        not pre_review_result.get("findings")
-                        and not state.frontier_review_verified
+                        not pre_review_result.get("findings") and not state.frontier_review_verified
                     )
                 )
                 if material_review_issue or review_assurance_needed:
@@ -3867,6 +3868,7 @@ class Controller:
                         if reviewer_routing.get("selected_provider") == "remote"
                         else None
                     ),
+                    cost_usd=reviewer_routing.get("remote_cost_usd"),
                 )
                 try:
                     result = ReviewResult.model_validate(parse_json_content(response)).model_dump()
@@ -3898,7 +3900,11 @@ class Controller:
                                 "approved or rejected and structured findings matching the "
                                 "required schema. Example: "
                                 '{"status":"approved","findings":[]}. '
-                                "Reject when the evidence shows defects. No prose; fewer than 300 "
+                                "Reject when the evidence shows implementation defects. This "
+                                "review runs before final synthesis, so do not reject for an "
+                                "absent "
+                                "client-visible final answer or its language, length, format, or "
+                                "summary content. No prose; fewer than 300 "
                                 f"tokens.\nBounded evidence:\n{retry_evidence}"
                             ),
                         }
@@ -3923,6 +3929,7 @@ class Controller:
                             if reviewer_routing.get("selected_provider") == "remote"
                             else None
                         ),
+                        cost_usd=reviewer_routing.get("remote_cost_usd"),
                     )
                     result = ReviewResult.model_validate(parse_json_content(response)).model_dump()
             finally:

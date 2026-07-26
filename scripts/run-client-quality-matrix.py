@@ -1099,6 +1099,40 @@ def opencode_runtime_mounts(state: Path) -> tuple[tuple[Path, str], ...]:
     )
 
 
+def prepare_hermes_profile(home: Path, gateway: str) -> None:
+    home.mkdir(parents=True, exist_ok=True)
+    config_path = home / "config.yaml"
+    shutil.copy2("/home/kotori9/.hermes/config.yaml", config_path)
+    shutil.copy2("/home/kotori9/.hermes/.env", home / ".env")
+    lines = config_path.read_text().splitlines()
+    in_provider = False
+    replaced = False
+    for index, line in enumerate(lines):
+        if re.match(r"^\s*-\s+name:\s*dgx-moa-agent\s*$", line):
+            in_provider = True
+            continue
+        if in_provider and re.match(r"^\s*-\s+name:", line):
+            break
+        if in_provider and re.match(r"^\s+base_url:", line):
+            indent = line[: len(line) - len(line.lstrip())]
+            lines[index] = f"{indent}base_url: {gateway.rstrip('/')}/v1"
+            replaced = True
+            break
+    if not replaced:
+        raise RuntimeError("Hermes dgx-moa-agent provider is missing")
+    config_path.write_text("\n".join(lines) + "\n")
+    config_path.chmod(0o600)
+    (home / ".env").chmod(0o600)
+
+
+def hermes_usage_succeeded(path: Path) -> bool:
+    try:
+        usage = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    return usage.get("completed") is True and usage.get("failed") is False
+
+
 def codex_moa_command(args: argparse.Namespace, workspace: Path, task: Task) -> list[str]:
     provider = "dgx_moa_quality"
     base_url = args.gateway.rstrip("/") + "/v1"
@@ -1158,10 +1192,178 @@ def run_codex_admin(args: argparse.Namespace, workspace: Path, task: Task) -> tu
         return 124, "", type(error).__name__
 
 
+def resource_snapshot() -> dict[str, int | None]:
+    memory: dict[str, int] = {}
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            name, raw = line.split(":", 1)
+            value = raw.strip().split()[0]
+            memory[name] = int(value) * 1024
+    except (OSError, ValueError, IndexError):
+        memory = {}
+    gpu_memory: int | None = None
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.used",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        values = [
+            int(value.strip()) for value in result.stdout.splitlines() if value.strip().isdigit()
+        ]
+        if result.returncode == 0 and values:
+            gpu_memory = sum(values) * 1024 * 1024
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        pass
+    return {
+        "host_memory_used_bytes": (
+            memory["MemTotal"] - memory["MemAvailable"]
+            if {"MemTotal", "MemAvailable"} <= memory.keys()
+            else None
+        ),
+        "swap_used_bytes": (
+            memory["SwapTotal"] - memory["SwapFree"]
+            if {"SwapTotal", "SwapFree"} <= memory.keys()
+            else None
+        ),
+        "gpu_memory_used_bytes": gpu_memory,
+    }
+
+
+def invocation_telemetry(
+    database: Path | None, started_at: float, ended_at: float
+) -> dict[str, Any]:
+    incomplete = {
+        "complete": False,
+        "reason": "state_db_not_configured" if database is None else "state_db_unavailable",
+        "provider_pinned": False,
+        "provider_switches": 0,
+        "remote_cost_complete": False,
+        "remote_cost_usd": None,
+        "missing_token_rows": 0,
+        "cached_tokens": None,
+        "provider_errors": 0,
+        "invocations": [],
+        "routing_events": {},
+    }
+    if database is None or not database.is_file():
+        return incomplete
+    try:
+        with sqlite3.connect(database) as connection:
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(model_invocation_usage)")
+            }
+            required = {
+                "request_id",
+                "role",
+                "provider",
+                "model",
+                "status",
+                "fallback_reason",
+                "latency_ms",
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+                "invoked_at",
+            }
+            if not required <= columns:
+                return incomplete | {"reason": "invocation_schema_incomplete"}
+            cost_column = "cost_usd" if "cost_usd" in columns else "NULL"
+            cache_column = "cached_tokens" if "cached_tokens" in columns else "NULL"
+            rows = connection.execute(
+                "SELECT request_id, role, provider, model, status, fallback_reason, "
+                "latency_ms, prompt_tokens, completion_tokens, total_tokens, "
+                f"{cache_column}, {cost_column} FROM model_invocation_usage "
+                "WHERE invoked_at >= ? AND invoked_at <= ? ORDER BY invoked_at",
+                (started_at, ended_at),
+            ).fetchall()
+            allowed_events = (
+                "specialist_provider_selected",
+                "specialist_provider_completed",
+                "specialist_provider_failed",
+                "specialist_warmup_started",
+                "specialist_warmup_completed",
+                "specialist_warmup_failed",
+                "specialist_unused_warmup",
+                "executor_provider_switch_prevented",
+            )
+            placeholders = ",".join("?" for _ in allowed_events)
+            routing_events = dict(
+                connection.execute(
+                    "SELECT event_type, COUNT(*) FROM events "
+                    f"WHERE event_type IN ({placeholders}) "
+                    "AND CAST(strftime('%s', created_at) AS REAL) BETWEEN ? AND ? "
+                    "GROUP BY event_type ORDER BY event_type",
+                    (*allowed_events, started_at, ended_at),
+                ).fetchall()
+            )
+    except (OSError, sqlite3.Error, ValueError):
+        return incomplete | {"reason": "telemetry_query_failed"}
+    groups: dict[tuple[str, str, str, str, str | None], list[float]] = {}
+    providers_by_call: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for row in rows:
+        request_id, role, provider, model, status, fallback_reason, latency_ms, *_ = row
+        groups.setdefault(
+            (str(role), str(provider), str(model), str(status), fallback_reason), []
+        ).append(float(latency_ms))
+        providers_by_call.setdefault((str(request_id), str(role)), set()).add(
+            (str(provider), str(model))
+        )
+    switches = sum(len(providers) > 1 for providers in providers_by_call.values())
+    remote_rows = [row for row in rows if str(row[2]) != "local" and row[4] == "completed"]
+    remote_cost_complete = "cost_usd" in columns and all(row[11] is not None for row in remote_rows)
+    remote_cost = (
+        round(sum(float(row[11]) for row in remote_rows), 9) if remote_cost_complete else None
+    )
+    cache_complete = "cached_tokens" in columns and all(row[10] is not None for row in rows)
+    invocations = [
+        {
+            "role": role,
+            "provider": provider,
+            "model": model,
+            "status": status,
+            "fallback_reason": fallback_reason,
+            "calls": len(latencies),
+            "average_latency_ms": round(sum(latencies) / len(latencies), 3),
+            "maximum_latency_ms": round(max(latencies), 3),
+        }
+        for (role, provider, model, status, fallback_reason), latencies in sorted(groups.items())
+    ]
+    return {
+        "complete": bool(rows) and remote_cost_complete and switches == 0,
+        "reason": (
+            None
+            if rows and remote_cost_complete and switches == 0
+            else "no_invocations"
+            if not rows
+            else "remote_cost_missing"
+            if not remote_cost_complete
+            else "provider_switch_detected"
+        ),
+        "provider_pinned": bool(rows) and switches == 0,
+        "provider_switches": switches,
+        "remote_cost_complete": remote_cost_complete,
+        "remote_cost_usd": remote_cost,
+        "missing_token_rows": sum(row[9] is None for row in rows),
+        "cached_tokens": (sum(int(row[10]) for row in rows) if cache_complete else None),
+        "provider_errors": sum(row[4] not in {"completed", "success"} for row in rows),
+        "invocations": invocations,
+        "routing_events": routing_events,
+    }
+
+
 def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any]:
     workspace, evidence = paths(args, harness, task)
     if not (evidence / "manifest.json").exists():
         raise RuntimeError(f"prepare first: {harness}/{task.slug}")
+    resources_before = resource_snapshot()
     started_at = time.time()
     started = time.monotonic()
     if harness == "opencode":
@@ -1231,7 +1433,10 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
                 codex_moa_command(args, workspace, task),
                 environment_names=("DGX_MOA_API_KEY",),
                 extra_environment=("CODEX_HOME=/state",),
-                read_only_mounts=((CODEX_BINARY, "/tools/codex"),),
+                read_only_mounts=(
+                    (CODEX_BINARY, "/tools/codex"),
+                    (OPENCODE_RIPGREP, "/tools/rg"),
+                ),
             )
             run = run_process(
                 command,
@@ -1269,6 +1474,7 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
                 extra_environment=("CODEX_HOME=/state",),
                 read_only_mounts=(
                     (CODEX_BINARY, "/tools/codex"),
+                    (OPENCODE_RIPGREP, "/tools/rg"),
                     (Path.home() / ".codex/auth.json", "/state/auth.json"),
                 ),
             )
@@ -1283,11 +1489,7 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
         return_code, stdout, stderr = run.returncode, run.stdout, run.stderr
     else:
         hermes_home = args.output_root / args.run_id / "profiles" / f"hermes-{task.slug}"
-        hermes_home.mkdir(parents=True, exist_ok=True)
-        shutil.copy2("/home/kotori9/.hermes/config.yaml", hermes_home / "config.yaml")
-        shutil.copy2("/home/kotori9/.hermes/.env", hermes_home / ".env")
-        (hermes_home / "config.yaml").chmod(0o600)
-        (hermes_home / ".env").chmod(0o600)
+        prepare_hermes_profile(hermes_home, args.gateway)
         usage_path = (
             Path("/state/usage.json") if args.runtime == "docker" else evidence / "usage.json"
         )
@@ -1326,7 +1528,12 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             timeout=args.timeout,
         )
         return_code, stdout, stderr = run.returncode, run.stdout, run.stderr
+        if return_code == 0 and not hermes_usage_succeeded(hermes_home / "usage.json"):
+            return_code = 1
     duration = round(time.monotonic() - started, 3)
+    ended_at = time.time()
+    telemetry = invocation_telemetry(getattr(args, "state_db", None), started_at, ended_at)
+    resources_after = resource_snapshot()
     (evidence / "stdout.log").write_text(stdout)
     (evidence / "stderr.log").write_text(stderr)
     result = {
@@ -1334,10 +1541,12 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
         "task": task.slug,
         "return_code": return_code,
         "started_at_epoch": started_at,
-        "ended_at_epoch": time.time(),
+        "ended_at_epoch": ended_at,
         "duration_seconds": duration,
         "runtime": args.runtime,
         "container_image": DOCKER_IMAGE if args.runtime == "docker" else None,
+        "telemetry": telemetry,
+        "resources": {"before": resources_before, "after": resources_after},
     }
     (evidence / "run.json").write_text(json.dumps(result, indent=2) + "\n")
     return result
@@ -1381,8 +1590,18 @@ def hermes_test_evidence(args: argparse.Namespace, task: Task, evidence: Path) -
     if not usage_path.is_file() or not state_path.is_file():
         return False
     try:
-        session_id = str(json.loads(usage_path.read_text())["session_id"])
+        usage = json.loads(usage_path.read_text())
         connection = sqlite3.connect(state_path)
+        raw_session_id = usage.get("session_id")
+        if isinstance(raw_session_id, str) and raw_session_id:
+            session_id = raw_session_id
+        else:
+            session_ids = connection.execute(
+                "SELECT DISTINCT session_id FROM messages WHERE session_id IS NOT NULL"
+            ).fetchall()
+            if len(session_ids) != 1:
+                return False
+            session_id = str(session_ids[0][0])
         rows = connection.execute(
             """
             SELECT role, tool_name, content, tool_calls
@@ -1524,7 +1743,11 @@ def summary(args: argparse.Namespace) -> dict[str, Any]:
     }
     baseline_passed = counts["baseline"]["passed"]
     usability_not_below_baseline = {
-        harness: counts[harness]["passed"] >= baseline_passed
+        harness: (
+            counts[harness]["passed"] >= baseline_passed
+            if counts["baseline"]["total"] == len(TASKS) and counts[harness]["total"] == len(TASKS)
+            else None
+        )
         for harness in ("opencode", "codex", "hermes")
     }
     result = {
@@ -1551,6 +1774,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workspace-root", type=Path, default=Path.home() / "code")
     parser.add_argument("--output-root", type=Path, default=Path("/tmp/dgx-moa-client-quality"))
     parser.add_argument("--gateway", default="http://127.0.0.1:9000")
+    parser.add_argument("--state-db", type=Path)
     parser.add_argument("--timeout", type=int, default=1_800)
     parser.add_argument("--runtime", choices=("host", "docker"), default="docker")
     return parser.parse_args()
