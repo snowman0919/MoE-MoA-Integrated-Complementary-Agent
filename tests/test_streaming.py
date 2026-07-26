@@ -332,7 +332,7 @@ async def test_responses_sse_preserves_tool_progress_and_terminates_failures(cap
         if line.startswith("data: ")
     ]
     assert any(
-        event.get("delta") == "다음 작업에 필요한 증거를 확인합니다." for event in tool_events
+        event.get("delta") == "필요한 파일과 작업 상태를 확인합니다." for event in tool_events
     )
     assert tool_events[-1]["type"] == "response.completed"
 
@@ -471,7 +471,7 @@ async def test_responses_sse_maps_local_mcp_file_to_exec_command() -> None:
     progress_index = next(
         index
         for index, event in enumerate(events)
-        if event.get("delta") == "다음 작업에 필요한 증거를 확인합니다."
+        if event.get("delta") == "연결된 자료를 확인합니다."
     )
     assert progress_index < events.index(added)
     assert json.loads(done["arguments"]) == {"cmd": "cat -- '/Users/test/goal objective.md'"}
@@ -479,19 +479,30 @@ async def test_responses_sse_maps_local_mcp_file_to_exec_command() -> None:
 
 
 @pytest.mark.parametrize(
-    ("arguments", "expected"),
+    ("name", "arguments", "expected"),
     [
-        ({"cmd": "pwd", "justification": "작업 공간을 확인합니다."}, "작업 공간을 확인합니다."),
         (
+            "exec_command",
+            {"cmd": "pwd", "justification": "작업 공간을 확인합니다."},
+            "작업 공간을 확인합니다.",
+        ),
+        (
+            "exec_command",
             {"cmd": "cat AGENTS.md docs/STATE.md docs/OPERATIONS.md"},
             "저장소 지침과 필수 운영 문서를 확인합니다.",
         ),
+        (
+            "exec_command",
+            {"cmd": "python -m unittest discover -s tests -v"},
+            "테스트와 검사를 실행해 결과를 확인합니다.",
+        ),
+        ("apply_patch", {}, "코드 변경을 적용합니다."),
     ],
 )
 def test_tool_progress_text_describes_immediate_purpose(
-    arguments: dict[str, str], expected: str
+    name: str, arguments: dict[str, str], expected: str
 ) -> None:
-    calls = {0: {"_arguments": json.dumps(arguments, ensure_ascii=False)}}
+    calls = {0: {"name": name, "_arguments": json.dumps(arguments, ensure_ascii=False)}}
     assert tool_progress_text(calls, "ko") == expected
 
 

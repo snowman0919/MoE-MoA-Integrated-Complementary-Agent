@@ -47,8 +47,52 @@ BAD_TERMINALS = (
     '"type":"turn.failed"',
     '"type":"response.failed"',
     "다음 도구 작업을 준비합니다.",
+    "다음 작업에 필요한 증거를 확인합니다.",
+    "필요한 증거를 한 번에 확인합니다.",
     "Planner 역할이 구조와 구현 순서를 설계합니다.",
 )
+
+
+def codex_model_catalog() -> dict[str, Any]:
+    return {
+        "models": [
+            {
+                "slug": "dgx-moa-orchestrated",
+                "display_name": "DGX MoA Orchestrated",
+                "description": "Dynamic MoA coding runtime",
+                "base_instructions": (
+                    "You are Codex, a coding agent. Inspect only what is needed, then implement "
+                    "with apply_patch, run bounded tests, review the diff, and persist until the "
+                    "task is verified. Never stop after only reading or planning. Raw apply_patch "
+                    "input starts with *** Begin Patch and ends with *** End Patch; do not wrap it "
+                    "in a Markdown fence."
+                ),
+                "default_reasoning_level": "high",
+                "supported_reasoning_levels": [
+                    {"effort": "high", "description": "Full Dynamic MoA orchestration"}
+                ],
+                "shell_type": "shell_command",
+                "visibility": "list",
+                "supported_in_api": True,
+                "priority": 1,
+                "default_reasoning_summary": "none",
+                "default_verbosity": "low",
+                "include_skills_usage_instructions": True,
+                "support_verbosity": True,
+                "apply_patch_tool_type": "freeform",
+                "truncation_policy": {"mode": "tokens", "limit": 10_000},
+                "supports_parallel_tool_calls": True,
+                "supports_image_detail_original": True,
+                "context_window": 65_536,
+                "max_context_window": 65_536,
+                "effective_context_window_percent": 95,
+                "experimental_supported_tools": [],
+                "input_modalities": ["text", "image"],
+                "supports_search_tool": False,
+                "use_responses_lite": False,
+            }
+        ]
+    }
 
 
 @dataclass(frozen=True)
@@ -1037,6 +1081,8 @@ def codex_moa_command(args: argparse.Namespace, workspace: Path, task: Task) -> 
         "-c",
         "model_context_window=65536",
         "-c",
+        'model_catalog_json="/state/model-catalog.json"',
+        "-c",
         'model_reasoning_effort="high"',
         "-c",
         'model_verbosity="low"',
@@ -1138,6 +1184,10 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             if not key:
                 raise RuntimeError("DGX_MOA_OPENCODE_KEY is required")
             state = args.output_root / args.run_id / "profiles" / f"codex-{task.slug}"
+            state.mkdir(parents=True, exist_ok=True)
+            (state / "model-catalog.json").write_text(
+                json.dumps(codex_model_catalog(), separators=(",", ":"))
+            )
             command = docker_command(
                 workspace,
                 state,

@@ -1286,7 +1286,7 @@ def test_successful_write_invalidates_approved_review(
     assert opencode_write.review_status == "deferred"
 
 
-def test_frontier_correction_latch_requires_a_new_file_change(
+def test_frontier_correction_latch_accepts_new_change_or_validation(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
     store = StateStore(settings.state_db)
@@ -1381,6 +1381,94 @@ def test_frontier_correction_latch_requires_a_new_file_change(
     assert any(
         event["event_type"] == "frontier_correction_applied"
         for event in store.events(python_state.session_id)
+    )
+
+    validation_state = SessionState(
+        session_id="frontier-validation-correction",
+        review_status="rejected_frontier",
+        review_deferred=True,
+        frontier_correction_required=True,
+    )
+    validation_messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "frontier-validation",
+                    "type": "function",
+                    "function": {
+                        "name": "exec_command",
+                        "arguments": json.dumps(
+                            {"cmd": "timeout 30s python -m unittest discover -s tests -v"}
+                        ),
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "frontier-validation",
+            "content": json.dumps({"exit_code": 0, "stdout": "Ran 4 tests\nOK\n"}),
+        },
+    ]
+    controller._observe(validation_state, validation_messages)
+
+    assert validation_state.frontier_correction_required is False
+    assert validation_state.frontier_correction_pending_verification is True
+    assert validation_state.review_status == "deferred"
+    assert any(
+        event["payload"]["reason"] == "validation_completed_after_frontier_rejection"
+        for event in store.events(validation_state.session_id)
+        if event["event_type"] == "frontier_correction_applied"
+    )
+
+
+def test_third_identical_successful_validation_blocks_no_progress(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="repeated-validation")
+
+    for index in range(3):
+        controller._observe(
+            state,
+            [
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": f"validation-{index}",
+                            "type": "function",
+                            "function": {
+                                "name": "exec_command",
+                                "arguments": json.dumps(
+                                    {
+                                        "cmd": (
+                                            "timeout 30s python -m unittest "
+                                            "discover -s tests -v"
+                                        )
+                                    }
+                                ),
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": f"validation-{index}",
+                    "content": json.dumps(
+                        {"exit_code": 0, "stdout": "Ran 4 tests\nOK\n"}
+                    ),
+                },
+            ],
+        )
+
+    assert state.no_progress_count == 3
+    assert state.phase == Phase.BLOCKED
+    assert any(
+        event["event_type"] == "repeated_successful_validation_blocked"
+        for event in store.events(state.session_id)
     )
 
 

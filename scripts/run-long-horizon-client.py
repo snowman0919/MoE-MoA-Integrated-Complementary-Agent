@@ -223,46 +223,7 @@ def opencode_config(args: argparse.Namespace, gateway_session: str) -> str:
     return json.dumps(value, separators=(",", ":"))
 
 
-def codex_model_catalog() -> dict[str, Any]:
-    return {
-        "models": [
-            {
-                "slug": "dgx-moa-orchestrated",
-                "display_name": "DGX MoA Orchestrated",
-                "description": "Dynamic MoA coding runtime",
-                "base_instructions": (
-                    "You are Codex, a coding agent. Inspect only what is needed, then implement "
-                    "with apply_patch, run bounded tests, review the diff, and persist until the "
-                    "task is verified. Never stop after only reading or planning. Raw apply_patch "
-                    "input starts with *** Begin Patch and ends with *** End Patch; do not wrap it "
-                    "in a Markdown fence."
-                ),
-                "default_reasoning_level": "high",
-                "supported_reasoning_levels": [
-                    {"effort": "high", "description": "Full Dynamic MoA orchestration"}
-                ],
-                "shell_type": "shell_command",
-                "visibility": "list",
-                "supported_in_api": True,
-                "priority": 1,
-                "default_reasoning_summary": "none",
-                "default_verbosity": "low",
-                "include_skills_usage_instructions": True,
-                "support_verbosity": True,
-                "apply_patch_tool_type": "freeform",
-                "truncation_policy": {"mode": "tokens", "limit": 10_000},
-                "supports_parallel_tool_calls": True,
-                "supports_image_detail_original": True,
-                "context_window": 65_536,
-                "max_context_window": 65_536,
-                "effective_context_window_percent": 95,
-                "experimental_supported_tools": [],
-                "input_modalities": ["text", "image"],
-                "supports_search_tool": False,
-                "use_responses_lite": False,
-            }
-        ]
-    }
+codex_model_catalog = QUALITY["codex_model_catalog"]
 
 
 def prepare_hermes(state: Path, args: argparse.Namespace) -> None:

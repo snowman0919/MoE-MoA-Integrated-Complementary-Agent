@@ -5185,3 +5185,46 @@ acceptance and fail-closed cases, and the complete branch suite passed `991`
 tests with one third-party Starlette deprecation warning in 26.52 seconds.
 This proves the analyzer contract only. No real ten-hour client run or
 long-horizon pass is claimed.
+
+## Isolated Codex atomic-store recovery — 2026-07-26
+
+All runs used a clean Git fixture in the pinned Docker quality image and an
+authenticated loopback-only candidate Gateway. A read-only watcher cancelled
+candidate work if a production lifecycle lease appeared; no production unit,
+configuration, worktree, or database was changed.
+
+- v13 completed in 342.547 seconds and passed the four public plus hidden
+  checks, but Codex lacked the custom model catalog, used a shell file
+  overwrite instead of the native patch tool, consumed 151,836 input tokens,
+  and reported zero cached tokens.
+- v14 received the shared native-patch model catalog and removed the metadata
+  fallback warning. Native `file_change` succeeded and all tests passed, but a
+  stale Frontier finding caused five redundant successful test runs. The run
+  was stopped after 500.217 seconds with no terminal response.
+- The common controller now treats a successful validation command as new
+  evidence for a Frontier correction and moves it to verification. A third
+  identical successful validation is blocked as no progress. The quality and
+  long-horizon runners share one model catalog. Focused controller, Responses,
+  and runner coverage passed 389 tests.
+- v15 then completed in 180.163 seconds with public and hidden checks passing.
+  Regrading exposed five generic progress messages, so the strengthened scorer
+  correctly changed its status from pass to fail.
+- Gateway progress text now describes the immediate command/tool purpose, and
+  the scorer rejects both historical generic Korean markers. Focused coverage
+  passed 382 tests.
+- v16 exercised a harder failure-recovery path: the first implementation patch
+  deleted the starter, two malformed restoration patches failed, stall routing
+  selected Frontier, a later native patch restored the source, and unittest
+  passed. The terminal result arrived with exit code zero after 564.145
+  seconds; public and hidden validators passed; only `atomic_store.py` changed;
+  metadata, patch-verification, generic-progress, and bad-terminal checks were
+  clean.
+
+v16 used 27 local Executor calls, two Frontier Executor calls, five local
+Reasoner calls, one remote Planner call, two remote Reviewer calls, and four
+Codex OAuth Frontier collaborations. The Gateway recorded 24 completed
+requests and 187,340 total tokens; Codex reported 167,894 input tokens, 8,358
+output tokens, and zero cached input tokens. Therefore this is a functional
+recovery pass, not a speed, cache-efficiency, cost-quality, or frontier
+non-inferiority pass. The repeated blind panel, three-client comparison,
+physical dual-SGLang 65K residency, and ten-hour gate remain pending.

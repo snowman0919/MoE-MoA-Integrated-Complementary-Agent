@@ -1418,6 +1418,7 @@ class Controller:
             observed_tool_call_ids.add(tool_call_id)
             self.store.event(state.session_id, "tool_execution_recorded", execution)
             changed_files = not failed and self.tool_execution_changes_files(execution)
+            validation_completed = not failed and self.successful_validation_execution(execution)
             if changed_files:
                 state.frontier_review_verified = False
                 change_arguments = arguments
@@ -1440,7 +1441,7 @@ class Controller:
                     }
                 )
                 state.implementation_evidence = state.implementation_evidence[-3:]
-            if changed_files and state.frontier_correction_required:
+            if (changed_files or validation_completed) and state.frontier_correction_required:
                 state.frontier_correction_required = False
                 state.frontier_correction_pending_verification = True
                 state.review_status = "deferred"
@@ -1449,7 +1450,11 @@ class Controller:
                     state.session_id,
                     "frontier_correction_applied",
                     {
-                        "reason": "implementation_changed_after_frontier_rejection",
+                        "reason": (
+                            "implementation_changed_after_frontier_rejection"
+                            if changed_files
+                            else "validation_completed_after_frontier_rejection"
+                        ),
                         "verification": "pending",
                     },
                 )
@@ -1517,7 +1522,24 @@ class Controller:
                 {**result, "target_paths": sorted(target_paths)},
                 generated_from=state.last_decision_id,
             )
-            state.no_progress_count = 0
+            repeated_success = (
+                sum(
+                    item.get("argument_fingerprint") == execution["argument_fingerprint"]
+                    and item.get("exit_code") == 0
+                    and item.get("failure_class") is None
+                    for item in state.tool_executions
+                )
+                if validation_completed
+                else 0
+            )
+            state.no_progress_count = repeated_success if repeated_success >= 3 else 0
+            if state.no_progress_count:
+                state.phase = Phase.BLOCKED
+                self.store.event(
+                    state.session_id,
+                    "repeated_successful_validation_blocked",
+                    {"occurrence_count": repeated_success},
+                )
             if actionable_failure and call:
                 call_fingerprint = fingerprint(call)
                 if state.engineering_loop is not None:
@@ -3382,22 +3404,42 @@ class Controller:
                 if isinstance(arguments, dict)
                 else None
             )
-            if (
+            if self.successful_validation_execution(execution) or (
                 execution.get("exit_code") == 0
                 and isinstance(command, str)
-                and (
-                    re.search(
-                        r"(?:^|&&|\|\||;|\n|[\"'])\s*(?:uv run )?(?:python -m )?"
-                        r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
-                        command,
-                    )
-                    or re.search(r"(?:^|&&|\|\||;|\n|[\"'])\s*git\s+diff\b", command)
-                )
+                and re.search(r"(?:^|&&|\|\||;|\n|[\"'])\s*git\s+diff\b", command)
             ):
                 return True
             if self.tool_execution_changes_files(execution):
                 break
         return False
+
+    @staticmethod
+    def successful_validation_execution(execution: dict[str, Any]) -> bool:
+        arguments = execution.get("normalized_arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                arguments = {}
+        command = (
+            arguments.get("cmd") or arguments.get("command")
+            if isinstance(arguments, dict)
+            else None
+        )
+        return (
+            execution.get("exit_code") == 0
+            and execution.get("failure_class") is None
+            and isinstance(command, str)
+            and bool(
+                re.search(
+                    r"(?:^|&&|\|\||;|\n|[\"'])\s*(?:timeout\s+\S+\s+)?"
+                    r"(?:uv run )?(?:python -m )?"
+                    r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
+                    command,
+                )
+            )
+        )
 
     def requires_implementation_tool_action(
         self, state: SessionState, metadata: dict[str, Any]

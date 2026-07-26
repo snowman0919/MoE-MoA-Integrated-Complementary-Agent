@@ -173,44 +173,88 @@ def _log_token(value: str) -> str:
 
 
 def tool_progress_text(tool_calls: dict[int, dict[str, object]], progress_language: str) -> str:
-    if len(tool_calls) > 1:
+    def purpose(item: dict[str, object]) -> str:
+        try:
+            arguments = json.loads(str(item["_arguments"]))
+        except (KeyError, TypeError, ValueError):
+            arguments = {}
+        command = arguments.get("cmd") if isinstance(arguments, dict) else None
+        if isinstance(command, str):
+            if "goal-objective" in command:
+                return (
+                    "목표 문서를 확인합니다."
+                    if progress_language == "ko"
+                    else "Reading the goal objective."
+                )
+            if "AGENTS.md" in command or "docs/STATE.md" in command:
+                return (
+                    "저장소 지침과 필수 운영 문서를 확인합니다."
+                    if progress_language == "ko"
+                    else "Reading the repository instructions and required operational documents."
+                )
+        justification = arguments.get("justification") if isinstance(arguments, dict) else None
+        if (
+            isinstance(justification, str)
+            and 1 <= len(justification.strip()) <= 200
+            and "\n" not in justification
+            and (progress_language != "ko" or re.search("[가-힣]", justification))
+        ):
+            return justification.strip()
+        if isinstance(command, str):
+            if re.search(r"\b(?:unittest|pytest|ruff|mypy)\b", command):
+                return (
+                    "테스트와 검사를 실행해 결과를 확인합니다."
+                    if progress_language == "ko"
+                    else "Running tests and checks."
+                )
+            if re.search(r"\bgit\s+(?:diff|status)\b", command):
+                return (
+                    "변경 범위와 상태를 검토합니다."
+                    if progress_language == "ko"
+                    else "Reviewing the changes and repository status."
+                )
+            if re.search(r"(?:^|[;&|]\s*)\b(?:cat|head|tail|ls|find|rg|sed|wc|pwd)\b", command):
+                return (
+                    "필요한 파일과 작업 상태를 확인합니다."
+                    if progress_language == "ko"
+                    else "Inspecting the required files and workspace state."
+                )
+            return (
+                "명령을 실행해 작업 결과를 확인합니다."
+                if progress_language == "ko"
+                else "Running the command and checking its result."
+            )
+        name = str(item.get("name", ""))
+        descriptions = {
+            "apply_patch": ("코드 변경을 적용합니다.", "Applying the code change."),
+            "edit": ("파일 내용을 수정합니다.", "Editing the file."),
+            "edit_file": ("파일 내용을 수정합니다.", "Editing the file."),
+            "read": ("필요한 파일 내용을 확인합니다.", "Reading the required file."),
+            "read_file": ("필요한 파일 내용을 확인합니다.", "Reading the required file."),
+            "read_mcp_resource": ("연결된 자료를 확인합니다.", "Reading the connected resource."),
+            "update_plan": ("작업 계획을 현재 상태에 맞게 갱신합니다.", "Updating the work plan."),
+            "view_image": ("첨부 이미지를 확인합니다.", "Inspecting the attached image."),
+            "write_stdin": (
+                "실행 중인 명령의 새 결과를 확인합니다.",
+                "Checking new command output.",
+            ),
+        }
+        return descriptions.get(
+            name,
+            (
+                "도구를 실행해 결과를 확인합니다.",
+                "Running the tool and checking its result.",
+            ),
+        )[0 if progress_language == "ko" else 1]
+
+    ordered = [purpose(tool_calls[index]) for index in sorted(tool_calls)]
+    if len(ordered) > 1:
         return (
-            "필요한 증거를 한 번에 확인합니다."
+            "병렬 실행: " + " / ".join(value.rstrip(".") for value in ordered) + "."
             if progress_language == "ko"
-            else "Checking the required evidence together."
+            else "Running in parallel: " + " / ".join(value.rstrip(".") for value in ordered) + "."
         )
-    first_tool = tool_calls[min(tool_calls)]
-    try:
-        arguments = json.loads(str(first_tool["_arguments"]))
-    except (KeyError, TypeError, ValueError):
-        arguments = {}
-    command = arguments.get("cmd") if isinstance(arguments, dict) else None
-    if isinstance(command, str):
-        if "goal-objective" in command:
-            return (
-                "목표 문서를 확인합니다."
-                if progress_language == "ko"
-                else "Reading the goal objective."
-            )
-        if "AGENTS.md" in command or "docs/STATE.md" in command:
-            return (
-                "저장소 지침과 필수 운영 문서를 확인합니다."
-                if progress_language == "ko"
-                else "Reading the repository instructions and required operational documents."
-            )
-    justification = arguments.get("justification") if isinstance(arguments, dict) else None
-    if (
-        isinstance(justification, str)
-        and 1 <= len(justification.strip()) <= 200
-        and "\n" not in justification
-        and (progress_language != "ko" or re.search("[가-힣]", justification))
-    ):
-        return justification.strip()
-    return (
-        "다음 작업에 필요한 증거를 확인합니다."
-        if progress_language == "ko"
-        else "Checking evidence needed for the next step."
-    )
+    return ordered[0]
 
 
 def batch_goal_prerequisite_read(

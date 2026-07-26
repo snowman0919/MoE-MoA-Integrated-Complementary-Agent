@@ -41,3 +41,13 @@ def test_prepared_quality_workspace_starts_clean(tmp_path: Path) -> None:
 
     workspace = Path(result["workspace"])
     assert MODULE["git"](workspace, "status", "--porcelain").stdout == ""
+
+
+def test_codex_quality_command_uses_native_patch_catalog(tmp_path: Path) -> None:
+    args = Namespace(gateway="http://127.0.0.1:19300")
+    command = MODULE["codex_moa_command"](args, tmp_path, MODULE["TASKS"][0])
+    model = MODULE["codex_model_catalog"]()["models"][0]
+
+    assert 'model_catalog_json="/state/model-catalog.json"' in command
+    assert model["apply_patch_tool_type"] == "freeform"
+    assert "apply_patch" in model["base_instructions"]
