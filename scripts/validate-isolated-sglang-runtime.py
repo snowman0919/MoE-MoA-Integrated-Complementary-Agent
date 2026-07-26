@@ -19,6 +19,13 @@ from dgx_moa.schemas import PlannerPlan, ReviewResult
 
 EXECUTOR_CONTAINER = "dgx-moa-exp-sglang-executor"
 SPECIALIST_CONTAINER = "dgx-moa-exp-sglang-specialist"
+IMAGE = (
+    "lmsysorg/sglang:dev-cu13@"
+    "sha256:26f620b13e49900cc6ab59ed693f9ce8f9ea4f3531074c1e39a3bf9db06ab8f0"
+)
+EXECUTOR_REVISION = "27a8f16f463b9a13c91c332c40cf93e09717347e"
+SPECIALIST_REVISION = "4135a98a9b728a548947683219633b25682223ac"
+EXECUTOR_MEMORY_RANGE = (63 * 1024**3, 65 * 1024**3)
 SAFE_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
@@ -333,6 +340,13 @@ def model_catalog(endpoint: str, timeout: float) -> list[str]:
     return sorted(str(item["id"]) for item in models if isinstance(item, dict) and item.get("id"))
 
 
+def expected_catalog(endpoint: str, model: str, timeout: float) -> dict[str, list[str]]:
+    models = model_catalog(endpoint, timeout)
+    if models != [model]:
+        raise RuntimeError("model_catalog_mismatch")
+    return {"models": models}
+
+
 def runtime_snapshot() -> dict[str, Any]:
     containers: dict[str, Any] = {}
     for role, name in (
@@ -389,6 +403,15 @@ def container_snapshot(name: str) -> dict[str, Any]:
         if option in args:
             selected[option.removeprefix("--")] = args[args.index(option) + 1]
     selected["radix-cache"] = "--disable-radix-cache" not in args
+    selected["metrics"] = "--enable-metrics" in args
+    selected["cache-report"] = "--enable-cache-report" in args
+    selected["incremental-streaming"] = "--incremental-streaming-output" in args
+    bindings = item.get("HostConfig", {}).get("PortBindings") or {}
+    ports = sorted(
+        f"{binding.get('HostIp')}:{binding.get('HostPort')}->{container_port}"
+        for container_port, items in bindings.items()
+        for binding in items or []
+    )
     return {
         "available": True,
         "status": item.get("State", {}).get("Status"),
@@ -396,6 +419,7 @@ def container_snapshot(name: str) -> dict[str, Any]:
         "image": item.get("Config", {}).get("Image"),
         "image_id": item.get("Image"),
         "model_revision": revision,
+        "ports": ports,
         "settings": selected,
         "memory": process_memory(int(item.get("State", {}).get("Pid", 0) or 0)),
     }
@@ -461,6 +485,71 @@ def checked(action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         }
 
 
+def runtime_contract(snapshot: dict[str, Any]) -> dict[str, Any]:
+    expected = {
+        "executor": {
+            "revision": EXECUTOR_REVISION,
+            "port": "127.0.0.1:18101->18101/tcp",
+            "settings": {
+                "context-length": "65536",
+                "mem-fraction-static": "0.54",
+                "max-running-requests": "1",
+                "max-total-tokens": "65536",
+                "max-mamba-cache-size": "5",
+                "quantization": "compressed-tensors",
+                "tool-call-parser": "qwen3_coder",
+                "radix-cache": True,
+                "metrics": True,
+                "cache-report": True,
+                "incremental-streaming": True,
+            },
+        },
+        "specialist": {
+            "revision": SPECIALIST_REVISION,
+            "port": "127.0.0.1:18102->18102/tcp",
+            "settings": {
+                "context-length": "65536",
+                "mem-fraction-static": "0.75",
+                "max-running-requests": "1",
+                "max-total-tokens": "65536",
+                "quantization": "modelopt_fp4",
+                "reasoning-parser": "gemma4",
+                "tool-call-parser": "gemma4",
+                "radix-cache": True,
+                "metrics": True,
+                "cache-report": True,
+                "incremental-streaming": True,
+            },
+        },
+    }
+    containers = snapshot.get("containers") or {}
+    for role, contract in expected.items():
+        container = containers.get(role) or {}
+        if (
+            container.get("available") is not True
+            or container.get("status") != "running"
+            or container.get("oom_killed") is not False
+            or container.get("image") != IMAGE
+            or container.get("model_revision") != contract["revision"]
+            or container.get("ports") != [contract["port"]]
+            or container.get("settings") != contract["settings"]
+        ):
+            raise RuntimeError("runtime_contract_mismatch")
+    executor_memory = (containers["executor"].get("memory") or {}).get("memory_current_bytes")
+    if (
+        isinstance(executor_memory, bool)
+        or not isinstance(executor_memory, int)
+        or not EXECUTOR_MEMORY_RANGE[0] <= executor_memory <= EXECUTOR_MEMORY_RANGE[1]
+    ):
+        raise RuntimeError("executor_memory_out_of_range")
+    return {
+        "executor_memory_used_bytes": executor_memory,
+        "executor_memory_min_bytes": EXECUTOR_MEMORY_RANGE[0],
+        "executor_memory_max_bytes": EXECUTOR_MEMORY_RANGE[1],
+        "roles": sorted(expected),
+    }
+
+
 def run_validation(
     executor_endpoint: str,
     specialist_endpoint: str,
@@ -471,6 +560,7 @@ def run_validation(
     executor_model = "dgx-moa-executor-candidate"
     specialist_model = "dgx-moa-specialist-candidate"
     checks = {
+        "runtime_before_contract": checked(lambda: runtime_contract(before)),
         "executor_readiness": checked(
             lambda: readiness(executor_endpoint, executor_model, "EXECUTOR_READY", timeout)
         ),
@@ -545,9 +635,13 @@ def run_validation(
         ),
     }
     catalogs = {
-        "executor": checked(lambda: {"models": model_catalog(executor_endpoint, timeout)}),
-        "specialist": checked(lambda: {"models": model_catalog(specialist_endpoint, timeout)}),
+        "executor": checked(lambda: expected_catalog(executor_endpoint, executor_model, timeout)),
+        "specialist": checked(
+            lambda: expected_catalog(specialist_endpoint, specialist_model, timeout)
+        ),
     }
+    after = runtime_snapshot()
+    checks["runtime_after_contract"] = checked(lambda: runtime_contract(after))
     passed = all(item["status"] == "passed" for item in (*checks.values(), *catalogs.values()))
     return {
         "schema_version": "isolated-sglang-runtime-v1",
@@ -555,13 +649,23 @@ def run_validation(
         "duration_seconds": round((datetime.now(UTC) - started).total_seconds(), 3),
         "passed": passed,
         "providers": {
-            "executor": {"provider": "sglang", "model": executor_model},
-            "planner_reviewer": {"provider": "sglang", "model": specialist_model},
+            "executor": {
+                "provider": "sglang",
+                "model": executor_model,
+                "repository": "RedHatAI/Qwen3-Coder-Next-NVFP4",
+                "revision": EXECUTOR_REVISION,
+            },
+            "planner_reviewer": {
+                "provider": "sglang",
+                "model": specialist_model,
+                "repository": "nvidia/Gemma-4-31B-IT-NVFP4",
+                "revision": SPECIALIST_REVISION,
+            },
         },
         "catalogs": catalogs,
         "checks": checks,
         "runtime_before": before,
-        "runtime_after": runtime_snapshot(),
+        "runtime_after": after,
     }
 
 

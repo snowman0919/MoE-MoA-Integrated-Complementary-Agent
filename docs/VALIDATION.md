@@ -5587,3 +5587,25 @@ local/remote mixture inside one call fails. Long-horizon focused tests passed
 `20/20`; the complete candidate suite passed `1075/1075` in 28.45 seconds with
 one third-party Starlette deprecation warning. Production, main, dev, services,
 and the frozen quality thresholds were not changed.
+
+## Dual-SGLang physical contract hardening — 2026-07-26
+
+The isolated runtime validator previously recorded container configuration and
+memory but did not include them in its PASS decision. A wrong image, revision,
+port binding, parser, context limit, OOM state, or Executor memory allocation
+could therefore pass if the inference probes happened to succeed.
+
+The validator now requires both before and after snapshots to contain the two
+running, non-OOM candidate containers with the pinned image and model
+revisions, exact loopback ports, 65K context and token limits, one running
+request, Executor Mamba cache size five, Radix/cache metrics, incremental
+streaming, and the fixed Qwen/Gemma parser and quantization settings. Executor
+cgroup current memory must be between 63 and 65 GiB. Model catalogs must contain
+only their fixed served model IDs, and the evidence records repository and
+revision provenance.
+
+Focused SGLang/topology/soak/rollback tests passed `17/17`; the complete
+candidate suite passed `1077/1077` in 28.58 seconds with one third-party
+Starlette deprecation warning. No candidate was started and no model service,
+production file, main, or dev branch was changed. Physical PASS remains pending
+an explicitly approved maintenance window.
