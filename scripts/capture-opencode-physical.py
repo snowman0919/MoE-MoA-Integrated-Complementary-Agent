@@ -102,7 +102,12 @@ def main() -> None:
                     "baseURL": base_url,
                     "apiKey": "{env:DGX_MOA_API_KEY}",
                 },
-                "models": {model_name: {"name": "DGX MoA Agent"}},
+                "models": {
+                    model_name: {
+                        "name": "DGX MoA Agent",
+                        "limit": {"context": 65_536, "output": 4_096},
+                    }
+                },
             }
         },
         "permission": {

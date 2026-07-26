@@ -2210,20 +2210,13 @@ def create_app(
                 )
                 backend_busy = (
                     await backend_busy_probe(configured.models["executor"]) is True
-                    if request.app.state.frontier is not None
-                    and callable(backend_busy_probe)
+                    if request.app.state.frontier is not None and callable(backend_busy_probe)
                     else False
                 )
                 executor_remote = (
-                    (
-                        request.app.state.lifecycle_store.get(
-                            "executor"
-                        ).active_request_count
-                        > 0
-                        or backend_busy
-                    )
-                    and request.app.state.frontier is not None
-                )
+                    request.app.state.lifecycle_store.get("executor").active_request_count > 0
+                    or backend_busy
+                ) and request.app.state.frontier is not None
                 if executor_remote:
                     executor_routing_reason = "local_busy"
                 initial_lease_roles = tuple(
@@ -2659,12 +2652,19 @@ def create_app(
                 and request.app.state.frontier is not None
                 and any(count >= 2 for count in state.failure_families.values())
             )
+            required_tool_continuation = (
+                not executor_remote
+                and request.app.state.frontier is not None
+                and tool_continuation
+                and prepared.get("tool_choice") == "required"
+            )
             if (
                 context_exceeded
                 or stalled
                 or completion_stalled
                 or frontier_correction
                 or repeated_failure
+                or required_tool_continuation
             ):
                 executor_remote = True
                 executor_routing_reason = (
@@ -2676,6 +2676,8 @@ def create_app(
                     if completion_stalled
                     else "local_repeated_failure"
                     if repeated_failure
+                    else "local_required_tool_continuation"
+                    if required_tool_continuation
                     else "local_no_progress"
                 )
                 executor_lease_id = str(

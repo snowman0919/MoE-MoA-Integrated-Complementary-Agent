@@ -204,7 +204,7 @@ def opencode_config(args: argparse.Namespace, gateway_session: str) -> str:
                 "models": {
                     "dgx-moa-orchestrated": {
                         "name": "DGX MoA orchestrated",
-                        "limit": {"context": 65_536, "output": 16_384},
+                        "limit": {"context": 65_536, "output": 4_096},
                     }
                 },
             }
@@ -331,6 +331,7 @@ def client_command(
             extra_environment=tuple(f"{key}={value}" for key, value in isolation.items()),
             read_only_mounts=(
                 (QUALITY["OPENCODE_BINARY"], "/tools/opencode"),
+                *QUALITY["opencode_runtime_mounts"](state),
                 *inputs,
             ),
         )
@@ -401,9 +402,7 @@ def client_metrics(
                 terminal = True
                 usage = row.get("usage") or {}
                 context_tokens = max(context_tokens, int(usage.get("input_tokens") or 0))
-                cached_tokens = max(
-                    cached_tokens, int(usage.get("cached_input_tokens") or 0)
-                )
+                cached_tokens = max(cached_tokens, int(usage.get("cached_input_tokens") or 0))
             item = row.get("item") or {}
             if row.get("type") == "item.completed" and item.get("type") in {
                 "command_execution",
@@ -411,9 +410,10 @@ def client_metrics(
                 "file_change",
             }:
                 tool_calls += 1
-                if item.get("type") == "mcp_tool_call" and "read" in str(
-                    item.get("tool") or ""
-                ).lower():
+                if (
+                    item.get("type") == "mcp_tool_call"
+                    and "read" in str(item.get("tool") or "").lower()
+                ):
                     read_fingerprints.append(sha256_text(json.dumps(item, sort_keys=True)))
     elif harness == "opencode":
         for row in rows:
@@ -506,10 +506,7 @@ def provider_metrics(database: Path, started: float, completed: float) -> dict[s
             (started, completed),
         ).fetchall()
     provenance = sorted(
-        {
-            (str(role), str(provider), str(model))
-            for role, provider, model, *_ in rows
-        }
+        {(str(role), str(provider), str(model)) for role, provider, model, *_ in rows}
     )
     pinned = bool(provenance) and all(
         len({(provider, model) for item_role, provider, model in provenance if item_role == role})
@@ -522,9 +519,7 @@ def provider_metrics(database: Path, started: float, completed: float) -> dict[s
             for role, provider, model in provenance
         ],
         "provider_pinned": pinned,
-        "provider_errors": sum(
-            str(row[3]) not in {"completed", "success"} for row in rows
-        ),
+        "provider_errors": sum(str(row[3]) not in {"completed", "success"} for row in rows),
         "context_tokens": max((int(row[5] or 0) for row in rows), default=0),
     }
 
@@ -630,9 +625,7 @@ def final_event(
     implementation = git(
         args.workspace, "diff", "--binary", header["baseline_commit"], snapshot["commit"]
     )
-    reviewer_seen = any(
-        row.get("role") == "reviewer" for row in checkpoint["provider_provenance"]
-    )
+    reviewer_seen = any(row.get("role") == "reviewer" for row in checkpoint["provider_provenance"])
     return {
         "type": "final",
         "completed_at_epoch": time.time(),
@@ -644,9 +637,7 @@ def final_event(
         "review_status": review.get("status") if reviewer_seen else "reviewer_not_observed",
         "validation_exit": validation_exit,
         "terminal": checkpoint["terminal"],
-        "unresolved_critical_findings": int(
-            review.get("unresolved_critical_findings", -1)
-        ),
+        "unresolved_critical_findings": int(review.get("unresolved_critical_findings", -1)),
         "task_outcome": (
             "completed"
             if review.get("status") == "approved"

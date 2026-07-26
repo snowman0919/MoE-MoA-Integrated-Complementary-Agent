@@ -109,13 +109,10 @@ def test_shared_backend_busy_routes_new_session_to_frontier(
 ) -> None:
     frontier_config = settings.state_db.parent / "frontier-shared-busy.yaml"
     frontier_config.write_text(
-        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\n"
-        "collaboration_retries: 0\n"
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
     )
     app = create_app(
-        settings.model_copy(
-            update={"frontier_enabled": True, "frontier_config": frontier_config}
-        )
+        settings.model_copy(update={"frontier_enabled": True, "frontier_config": frontier_config})
     )
 
     async def backend_busy(*_args, **_kwargs) -> bool:  # type: ignore[no-untyped-def]
@@ -161,6 +158,120 @@ def test_shared_backend_busy_routes_new_session_to_frontier(
     started = next(event for event in events if event["event_type"] == "executor_started")
     assert started["payload"]["provider"] == "frontier"
     assert started["payload"]["routing_reason"] == "local_busy"
+
+
+def test_required_tool_continuation_routes_to_frontier_before_dispatch(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "frontier-tool-continuation.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    app = create_app(
+        settings.model_copy(update={"frontier_enabled": True, "frontier_config": frontier_config})
+    )
+    remote_calls: list[str] = []
+
+    async def remote_execute(
+        _remote_request: dict[str, object], correlation_id: str
+    ) -> dict[str, object]:
+        remote_calls.append(correlation_id)
+        return {
+            "id": "chatcmpl-tool-continuation",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-write",
+                                "type": "function",
+                                "function": {
+                                    "name": "write_file",
+                                    "arguments": '{"path":"x","content":"fixed"}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"total_tokens": 7},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "primary", "cost_usd": None},
+        }
+
+    headers = {
+        "Authorization": "Bearer test-secret",
+        "X-Session-ID": "required-tool-continuation",
+    }
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": name,
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+        for name in ("read_file", "write_file")
+    ]
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        first = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "implement the requested change in the repository file",
+                    }
+                ],
+                "tools": tools,
+                "metadata": {"target_clear": True, "expected_files": 1},
+            },
+        )
+        first_call = first.json()["choices"][0]["message"]["tool_calls"][0]
+        second = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "implement the requested change in the repository file",
+                    },
+                    {"role": "assistant", "content": None, "tool_calls": [first_call]},
+                    {
+                        "role": "tool",
+                        "tool_call_id": first_call["id"],
+                        "content": (
+                            '{"tool_name":"read_file","stdout":"current source","exit_code":0}'
+                        ),
+                    },
+                ],
+                "tools": tools,
+                "metadata": {"target_clear": True, "expected_files": 1},
+            },
+        )
+        events = app.state.store.events("required-tool-continuation")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert (
+        second.json()["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "write_file"
+    )
+    assert stub_provider.calls.count("executor") == 1
+    assert len(remote_calls) == 1
+    started = [event for event in events if event["event_type"] == "executor_started"]
+    assert started[-1]["payload"]["provider"] == "frontier"
+    assert started[-1]["payload"]["routing_reason"] == "local_required_tool_continuation"
 
 
 def test_busy_executor_remote_stream_failure_is_observable(
@@ -324,9 +435,7 @@ def test_repeated_failure_routes_executor_to_frontier(
     assert response.status_code == 200, response.text
     assert response.json()["choices"][0]["message"]["content"] == "원격 반복 실패 복구"
     assert "executor" not in stub_provider.calls
-    selected = next(
-        event for event in events if event["event_type"] == "executor_remote_selected"
-    )
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
     assert selected["payload"]["routing_reason"] == "local_repeated_failure"
 
 
@@ -416,9 +525,7 @@ def test_duplicate_failed_call_routes_once_to_frontier(
     assert blocked.status_code == 409
     assert remote_calls == 1
     assert "executor" not in stub_provider.calls
-    selected = next(
-        event for event in events if event["event_type"] == "executor_remote_selected"
-    )
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
     assert selected["payload"]["routing_reason"] == "local_duplicate_failure"
 
 

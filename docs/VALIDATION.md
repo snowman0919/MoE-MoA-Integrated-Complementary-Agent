@@ -5251,3 +5251,41 @@ mean that used Opus 4.8 fallback for safety-classifier refusals. These
 vendor-published results remain contextual anchors only. No external claim was
 converted into local evidence, and the frozen blind panel, reliability gate,
 paired bootstrap, cost gate, and ten-hour gate remain unchanged.
+
+## OpenCode required-tool continuation recovery — 2026-07-26
+
+The first physical `atomic-store` diagnosis showed that an unbounded OpenCode
+model entry allowed a local Executor tool turn to generate toward the client's
+16K output ceiling for more than six minutes. Cancellation was propagated and
+the shared Executor returned to zero running and waiting requests. A 4K-only
+canary completed faster but failed correctly: the local backend ended at the
+length limit without changing a file or running validation.
+
+The candidate now bounds OpenCode model output at 4,096 tokens and selects the
+Codex OAuth Frontier before dispatch when a tool-result continuation still has
+`tool_choice=required`. This is a new request boundary, so the current call is
+pinned to one provider and no partial local and remote outputs are merged. The
+isolated Docker runner reuses the installed OpenCode package tree and ripgrep
+read-only; update, default-plugin, external-skill, LSP-download, model-fetch,
+share, and terminal-title side effects remain disabled.
+
+Physical run
+`20260726-current-138b7ca-opencode-frontier-p4/opencode/atomic-store`
+completed in 170.376 seconds with harness exit zero. The independent scorer
+passed public validation, hidden validation, source-only change, immutable
+tests, tool evidence, Korean terminal output, bad-terminal rejection, and
+Docker isolation. Only `atomic_store.py` changed. The Gateway recorded two
+local Executor starts and three Frontier Executor starts; every remote
+selection used routing reason `local_required_tool_continuation`. Reviewer
+cold misses continued remotely while local warm-ups failed without delaying
+the request. OpenCode's own log contained no error, warning, Bad Gateway,
+stream-disconnect, or background dependency-install entry.
+
+Ruff lint and formatting passed for all changed Python files. The focused
+routing and OpenCode-runner suite passed 6 tests, and the complete candidate
+suite passed 1,035 tests in 26.30 seconds with one third-party Starlette
+deprecation warning.
+
+This is one physical OpenCode task pass, not the frozen five-task OpenCode
+panel, cross-client non-inferiority result, physical dual-SGLang residency
+gate, or ten-hour stability gate. Production was not changed.

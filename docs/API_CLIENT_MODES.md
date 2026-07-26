@@ -108,7 +108,10 @@ OpenCode uses the same direct agent contract:
         "apiKey": "{env:DGX_MOA_API_KEY}"
       },
       "models": {
-        "dgx-moa-agent": {"name": "DGX MoA Agent"}
+        "dgx-moa-agent": {
+          "name": "DGX MoA Agent",
+          "limit": {"context": 65536, "output": 4096}
+        }
       }
     }
   },

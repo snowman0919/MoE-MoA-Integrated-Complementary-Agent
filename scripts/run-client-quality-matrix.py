@@ -28,6 +28,11 @@ CODEX_BINARY = Path(
     "/home/kotori9/.codex/packages/standalone/releases/0.145.0-aarch64-unknown-linux-musl/bin/codex"
 )
 OPENCODE_BINARY = Path("/home/kotori9/.opencode/bin/opencode")
+OPENCODE_NODE_MODULES = Path("/home/kotori9/.config/opencode/node_modules")
+OPENCODE_PACKAGE_JSON = Path("/home/kotori9/.config/opencode/package.json")
+OPENCODE_PACKAGE_LOCK = Path("/home/kotori9/.config/opencode/package-lock.json")
+OPENCODE_RIPGREP = Path(shutil.which("rg") or "/usr/bin/rg")
+OPENCODE_OUTPUT_LIMIT = 4_096
 OPENCODE_ISOLATION_ENV = {
     "OPENCODE_DISABLE_AUTOUPDATE": "1",
     "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
@@ -936,7 +941,12 @@ def prepare_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str,
                             "X-Dirty-State": "clean",
                         },
                     },
-                    "models": {"dgx-moa-agent": {"name": "DGX MoA Agent"}},
+                    "models": {
+                        "dgx-moa-agent": {
+                            "name": "DGX MoA Agent",
+                            "limit": {"context": 65_536, "output": OPENCODE_OUTPUT_LIMIT},
+                        }
+                    },
                 }
             },
             "model": "dgx-moa/dgx-moa-agent",
@@ -1065,6 +1075,30 @@ def docker_command(
     return [*command, DOCKER_IMAGE, *inner]
 
 
+def opencode_runtime_mounts(state: Path) -> tuple[tuple[Path, str], ...]:
+    missing = [
+        path
+        for path in (
+            OPENCODE_NODE_MODULES,
+            OPENCODE_PACKAGE_JSON,
+            OPENCODE_PACKAGE_LOCK,
+            OPENCODE_RIPGREP,
+        )
+        if not path.exists()
+    ]
+    if missing:
+        raise RuntimeError(f"OpenCode runtime cache missing: {missing[0]}")
+    config = state / ".config/opencode"
+    config.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(OPENCODE_PACKAGE_JSON, config / "package.json")
+    shutil.copy2(OPENCODE_PACKAGE_LOCK, config / "package-lock.json")
+    (state / ".cache/opencode/bin").mkdir(parents=True, exist_ok=True)
+    return (
+        (OPENCODE_NODE_MODULES, "/state/.config/opencode/node_modules"),
+        (OPENCODE_RIPGREP, "/state/.cache/opencode/bin/rg"),
+    )
+
+
 def codex_moa_command(args: argparse.Namespace, workspace: Path, task: Task) -> list[str]:
     provider = "dgx_moa_quality"
     base_url = args.gateway.rstrip("/") + "/v1"
@@ -1171,7 +1205,10 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
                 extra_environment=tuple(
                     f"{name}={value}" for name, value in OPENCODE_ISOLATION_ENV.items()
                 ),
-                read_only_mounts=((OPENCODE_BINARY, "/tools/opencode"),),
+                read_only_mounts=(
+                    (OPENCODE_BINARY, "/tools/opencode"),
+                    *opencode_runtime_mounts(state),
+                ),
             )
             if args.runtime == "docker"
             else inner

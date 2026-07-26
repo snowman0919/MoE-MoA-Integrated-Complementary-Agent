@@ -296,7 +296,7 @@ def main() -> None:
                             "models": {
                                 "dgx-moa-fast": {
                                     "name": "DGX MoA fast",
-                                    "limit": {"context": 65_536, "output": 16_384},
+                                    "limit": {"context": 65_536, "output": 4_096},
                                 }
                             },
                         }

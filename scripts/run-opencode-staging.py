@@ -142,7 +142,12 @@ def project_config(base_url: str, session: str, task: Task, workspace: Path) -> 
                         "X-Dirty-State": "clean",
                     },
                 },
-                "models": {"dgx-moa-agent": {"name": "DGX MoA Agent"}},
+                "models": {
+                    "dgx-moa-agent": {
+                        "name": "DGX MoA Agent",
+                        "limit": {"context": 65_536, "output": 4_096},
+                    }
+                },
             }
         },
         "model": "dgx-moa/dgx-moa-agent",
