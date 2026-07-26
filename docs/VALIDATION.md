@@ -5466,3 +5466,53 @@ not changed. Physical dual-SGLang validation remains blocked pending explicit
 maintenance approval; the 200-attempt confirmation panel, paired confidence
 intervals, Scientific Reasoning and General categories, and actual ten-hour
 run remain pending.
+
+## Confirmatory seal smoke — 2026-07-26
+
+The immutable diagnostic protocol `20260726-seal-smoke-a1` prepared all 200
+fixtures before any inference result, recorded deterministic opaque attempt
+order, actual fixture commits and test hashes, prompt/runner/analyzer/protocol
+hashes, clean candidate and Hermes revisions, client binary fingerprints,
+provider configuration fingerprints, and the Docker image ID. Its private
+variant routing file was created with mode `0600`.
+
+Immediate verification passed all 227 checks, including every fixture HEAD and
+test hash, the deterministic order, current clients/providers, repository
+revision, image ID, and routing-file integrity. This is diagnostic evidence
+that the seal can be created and revalidated; it is not a quality result and
+does not start or satisfy the 200-attempt confirmatory epoch. Blind artifact
+packaging and frozen judge execution remain required before the real epoch can
+be sealed.
+
+## Blind judge protocol smoke — 2026-07-26
+
+The frozen GPT-5.6 Sol primary judge completed one synthetic artifact through
+Codex OAuth and returned a schema-valid five-component score whose sum was
+100. No raw judge stream, hidden reasoning, prompt, credential, or finding was
+retained.
+
+OpenRouter listed `anthropic/claude-opus-5`, but its default Azure route
+returned HTTP 400 when high reasoning and structured output were combined.
+Using the display name instead of a provider slug was not a valid pin, and
+combining the correct `amazon-bedrock` slug with `require_parameters=true`
+returned 404 because OpenRouter filtered out the parameter combination.
+The final fixed request uses `only=["amazon-bedrock"]`, disables fallbacks,
+removes unsupported numeric schema constraints, excludes reasoning text, and
+validates the returned provider and numeric ranges locally. The actual scorer
+then completed through Amazon Bedrock with a schema-valid score of 98, 699
+input tokens, 338 output tokens, and $0.011945 reported cost.
+
+Successful exploratory Opus calls with reported costs totaled at least
+$0.049045. One earlier successful short call did not have its cost captured,
+so the diagnostic total is intentionally not reported as exact or as zero.
+These are separately budgeted judge-development costs, not ordinary candidate
+attempt costs. The real confirmatory epoch has not started.
+
+The first full-suite run after the scorer work exposed one deterministic test
+setup failure: a 10 ms executor deadline elapsed while the response object was
+being created, before the test could observe its intended first byte. The test
+deadline was raised to 250 ms and its outer observation timeout to 750 ms; the
+production timeout implementation was unchanged. The focused test then passed
+five consecutive runs. The complete candidate suite passed 1,065 tests in
+108.23 seconds with one third-party Starlette deprecation warning; Ruff and
+`git diff --check` also passed.

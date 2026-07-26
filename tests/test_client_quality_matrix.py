@@ -256,4 +256,58 @@ def test_invocation_telemetry_is_content_free_and_fails_on_missing_cost(
     assert result["provider_pinned"] is False
     assert result["provider_switches"] == 1
     assert result["remote_cost_usd"] is None
+    assert result["prompt_tokens"] == 12
+    assert result["completion_tokens"] == 5
+    assert result["total_tokens"] == 17
+    assert result["cached_tokens"] == 3
+    assert result["retryable_failures"] is None
     assert "private-request" not in json.dumps(result)
+
+
+def test_invocation_telemetry_requires_and_collects_retry_cache_and_tokens(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "gateway.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE model_invocation_usage ("
+            "request_id TEXT, role TEXT, provider TEXT, model TEXT, status TEXT, "
+            "fallback_reason TEXT, latency_ms REAL, prompt_tokens INTEGER, "
+            "completion_tokens INTEGER, total_tokens INTEGER, cached_tokens INTEGER, "
+            "cost_usd REAL, invoked_at REAL)"
+        )
+        connection.execute(
+            "CREATE TABLE request_usage (accepted_at TEXT, retryable_failure_class TEXT)"
+        )
+        connection.execute(
+            "CREATE TABLE events (session_id TEXT, event_type TEXT, payload TEXT, created_at TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO model_invocation_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "opaque",
+                "reviewer",
+                "remote",
+                "review-model",
+                "completed",
+                "local_busy",
+                20,
+                7,
+                3,
+                10,
+                2,
+                0.0,
+                2,
+            ),
+        )
+        connection.execute("INSERT INTO request_usage VALUES ('1970-01-01T00:00:03+00:00', NULL)")
+
+    result = MODULE["invocation_telemetry"](database, 1, 4)
+
+    assert result["complete"] is True
+    assert result["reason"] is None
+    assert result["prompt_tokens"] == 7
+    assert result["completion_tokens"] == 3
+    assert result["total_tokens"] == 10
+    assert result["cached_tokens"] == 2
+    assert result["retryable_failures"] == 0

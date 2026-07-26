@@ -67,9 +67,11 @@ def load_rows(path: Path, repeats: int) -> dict[tuple[str, str, str], dict[str, 
         row["duration_seconds"] = finite_number(
             row.get("duration_seconds"), "duration_seconds", minimum=0.000001
         )
-        row["variable_cost_usd"] = finite_number(
-            row.get("variable_cost_usd"), "variable_cost_usd", minimum=0
-        )
+        cost = row.get("variable_cost_usd")
+        if cost is None and not row["passed"]:
+            row["variable_cost_usd"] = None
+        else:
+            row["variable_cost_usd"] = finite_number(cost, "variable_cost_usd", minimum=0)
         score = row.get("quality_score")
         if score is not None:
             row["quality_score"] = finite_number(score, "quality_score", minimum=0)
@@ -83,10 +85,7 @@ def load_rows(path: Path, repeats: int) -> dict[tuple[str, str, str], dict[str, 
     if len(repeat_ids) != repeats:
         raise ValueError(f"expected {repeats} repeats")
     expected = {
-        (repeat, task, variant)
-        for repeat in repeat_ids
-        for task in TASKS
-        for variant in VARIANTS
+        (repeat, task, variant) for repeat in repeat_ids for task in TASKS for variant in VARIANTS
     }
     if set(rows) != expected:
         raise ValueError("incomplete or incomparable panel")
@@ -103,11 +102,7 @@ def stratified_bootstrap(
     generator = random.Random(seed)
     estimates = []
     for _ in range(samples):
-        draw = [
-            generator.choice(values[task])
-            for task in TASKS
-            for _ in range(len(values[task]))
-        ]
+        draw = [generator.choice(values[task]) for task in TASKS for _ in range(len(values[task]))]
         estimates.append(statistics.fmean(draw))
     return percentile(estimates, 0.05), percentile(estimates, 0.95)
 
@@ -132,9 +127,7 @@ def verdict_speed(lower: float, upper: float) -> str:
     return "inconclusive"
 
 
-def analyze(
-    path: Path, *, repeats: int = 10, bootstrap_samples: int = 10_000
-) -> dict[str, Any]:
+def analyze(path: Path, *, repeats: int = 10, bootstrap_samples: int = 10_000) -> dict[str, Any]:
     rows = load_rows(path, repeats)
     repeat_ids = sorted({key[0] for key in rows})
     result: dict[str, Any] = {
@@ -147,16 +140,17 @@ def analyze(
         "comparisons": {},
     }
     for variant in VARIANTS:
-        attempts = [
-            rows[(repeat, task, variant)] for repeat in repeat_ids for task in TASKS
-        ]
+        attempts = [rows[(repeat, task, variant)] for repeat in repeat_ids for task in TASKS]
+        costs = [row["variable_cost_usd"] for row in attempts]
+        cost_complete = all(cost is not None for cost in costs)
         result["variants"][variant] = {
             "passes": sum(row["passed"] for row in attempts),
             "telemetry_complete": all(row["telemetry_complete"] for row in attempts),
-            "variable_cost_usd": sum(row["variable_cost_usd"] for row in attempts),
-            "median_seconds": statistics.median(
-                row["duration_seconds"] for row in attempts
+            "cost_complete": cost_complete,
+            "variable_cost_usd": (
+                sum(cost for cost in costs if cost is not None) if cost_complete else None
             ),
+            "median_seconds": statistics.median(row["duration_seconds"] for row in attempts),
         }
 
     for variant in VARIANTS[1:]:
@@ -166,13 +160,8 @@ def analyze(
             for task in TASKS:
                 baseline = rows[(repeat, task, "baseline")]
                 candidate = rows[(repeat, task, variant)]
-                if (
-                    baseline["quality_score"] is not None
-                    and candidate["quality_score"] is not None
-                ):
-                    quality[task].append(
-                        candidate["quality_score"] - baseline["quality_score"]
-                    )
+                if baseline["quality_score"] is not None and candidate["quality_score"] is not None:
+                    quality[task].append(candidate["quality_score"] - baseline["quality_score"])
                 speed[task].append(
                     math.log(candidate["duration_seconds"] / baseline["duration_seconds"])
                 )
@@ -184,9 +173,7 @@ def analyze(
             if quality_pairs == expected_pairs
             else (None, None)
         )
-        speed_log_bounds = stratified_bootstrap(
-            speed, samples=bootstrap_samples, seed=SEED + 1
-        )
+        speed_log_bounds = stratified_bootstrap(speed, samples=bootstrap_samples, seed=SEED + 1)
         speed_bounds = tuple(math.exp(value) for value in speed_log_bounds)
         quality_result = (
             verdict_quality(quality_bounds[0], quality_bounds[1])
@@ -195,10 +182,8 @@ def analyze(
         )
         speed_result = verdict_speed(*speed_bounds)
         metrics = result["variants"][variant]
-        hard_gate = (
-            metrics["passes"] == expected_pairs and metrics["telemetry_complete"]
-        )
-        cost_gate = metrics["variable_cost_usd"] == 0
+        hard_gate = metrics["passes"] == expected_pairs and metrics["telemetry_complete"]
+        cost_gate = metrics["cost_complete"] and metrics["variable_cost_usd"] == 0
         overall = (
             "FRONTIER-SUPERIOR"
             if hard_gate

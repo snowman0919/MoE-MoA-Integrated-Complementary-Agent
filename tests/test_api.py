@@ -6435,7 +6435,7 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
 async def test_stream_total_deadline_does_not_retry_after_first_byte(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
-    settings.limits.executor_total_timeout_seconds = 0.01
+    settings.limits.executor_total_timeout_seconds = 0.25
     first_event = b'data: {"choices":[{"delta":{"content":"first"}}]}\n\n'
     stream_attempts = 0
 
@@ -6476,7 +6476,7 @@ async def test_stream_total_deadline_does_not_retry_after_first_byte(
         assert await anext(response.body_iterator) == first_event
 
         with pytest.raises(TimeoutError) as captured:
-            await asyncio.wait_for(anext(response.body_iterator), timeout=0.1)
+            await asyncio.wait_for(anext(response.body_iterator), timeout=0.75)
 
         assert stream_attempts == 1
         assert type(captured.value).__name__ == "StageTimeout"

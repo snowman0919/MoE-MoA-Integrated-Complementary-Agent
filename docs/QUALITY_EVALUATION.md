@@ -99,12 +99,30 @@ Each passing artifact receives a 100-point score:
 - validation and evidence discipline: 10.
 
 The primary judge is a frozen GPT-5.6 Sol rubric invocation over opaque
-artifacts. Claude Opus 5 independently scores a deterministic 20% stratified
-sample plus every pair whose primary score differs by more than 10 points.
+artifacts through Codex OAuth, model `gpt-5.6-sol`, high reasoning, and
+temperature-independent structured output. Claude Opus 5 uses OpenRouter model
+`anthropic/claude-opus-5`, high reasoning, and temperature zero to independently
+score through its pinned OpenRouter Amazon Bedrock route (provider slug
+`amazon-bedrock`, fallbacks disabled). Numeric range keywords are removed from
+the transmitted JSON schema because the Anthropic route rejects them; the
+scorer enforces those ranges locally. The returned provider must still equal
+Amazon Bedrock. The secondary sample contains exactly two repeats per
+task/opaque-variant stratum, plus every matched baseline/candidate pair whose
+primary scores differ by more than 10 points.
 If fewer than 80% of dual-scored artifacts agree within 10 points, Opus 5
 scoring expands to the full panel before unblinding. Judge prompts, model
 versions, effort, and output schemas are fixed; only parsed scores and
 redacted findings are retained.
+
+The blinded package contains only the opaque variant, repeat, task contract,
+starter source, candidate source, and boolean functional checks. It excludes
+the client final response, provider/model/route data, timing, cost, tokens,
+telemetry, raw logs, prompts, request IDs, repository names, and credentials.
+Both judges return the five rubric components and their sum. The final score is
+the primary score when no secondary score is required and the arithmetic mean
+when both scores exist. Judge disagreement is reported separately and is never
+silently discarded. A missing, malformed, or out-of-range required judge score
+makes the confirmatory analysis inconclusive.
 
 For every Dynamic MoA client, calculate matched score differences
 `candidate - baseline`. Use a task-stratified paired percentile bootstrap with

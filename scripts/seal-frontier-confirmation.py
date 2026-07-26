@@ -17,6 +17,7 @@ from typing import Any
 PROJECT = Path(__file__).resolve().parents[1]
 RUNNER_PATH = PROJECT / "scripts/run-client-quality-matrix.py"
 ANALYZER_PATH = PROJECT / "scripts/analyze-frontier-noninferiority.py"
+SCORER_PATH = PROJECT / "scripts/score-blind-quality.py"
 PROTOCOL_PATH = PROJECT / "docs/QUALITY_EVALUATION.md"
 RUNNER = runpy.run_path(str(RUNNER_PATH))
 
@@ -189,6 +190,7 @@ def create_seal(args: argparse.Namespace) -> dict[str, Any]:
         "speed_noninferiority_margin": SPEED_MARGIN,
         "runner_sha256": file_sha256(RUNNER_PATH),
         "analyzer_sha256": file_sha256(ANALYZER_PATH),
+        "scorer_sha256": file_sha256(SCORER_PATH),
         "protocol_sha256": file_sha256(PROTOCOL_PATH),
         "container_image": RUNNER["DOCKER_IMAGE"],
         "container_image_digest": image_digest,
@@ -216,6 +218,7 @@ def verify_seal(args: argparse.Namespace) -> dict[str, Any]:
         "analysis_commit": repository_revision() == seal["analysis_commit"],
         "runner_sha256": file_sha256(RUNNER_PATH) == seal["runner_sha256"],
         "analyzer_sha256": file_sha256(ANALYZER_PATH) == seal["analyzer_sha256"],
+        "scorer_sha256": file_sha256(SCORER_PATH) == seal["scorer_sha256"],
         "protocol_sha256": file_sha256(PROTOCOL_PATH) == seal["protocol_sha256"],
         "routing_sha256": canonical_sha256(private) == seal["routing_sha256"],
         "attempt_order_sha256": canonical_sha256(seal["attempts"]) == seal["attempt_order_sha256"],

@@ -1247,7 +1247,11 @@ def invocation_telemetry(
         "remote_cost_complete": False,
         "remote_cost_usd": None,
         "missing_token_rows": 0,
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "total_tokens": None,
         "cached_tokens": None,
+        "retryable_failures": None,
         "provider_errors": 0,
         "invocations": [],
         "routing_events": {},
@@ -1304,6 +1308,19 @@ def invocation_telemetry(
                     (*allowed_events, started_at, ended_at),
                 ).fetchall()
             )
+            request_columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(request_usage)")
+            }
+            retryable_failures = (
+                connection.execute(
+                    "SELECT COUNT(*) FROM request_usage "
+                    "WHERE retryable_failure_class IS NOT NULL "
+                    "AND CAST(strftime('%s', accepted_at) AS REAL) BETWEEN ? AND ?",
+                    (started_at, ended_at),
+                ).fetchone()[0]
+                if {"accepted_at", "retryable_failure_class"} <= request_columns
+                else None
+            )
     except (OSError, sqlite3.Error, ValueError):
         return incomplete | {"reason": "telemetry_query_failed"}
     groups: dict[tuple[str, str, str, str, str | None], list[float]] = {}
@@ -1322,6 +1339,7 @@ def invocation_telemetry(
     remote_cost = (
         round(sum(float(row[11]) for row in remote_rows), 9) if remote_cost_complete else None
     )
+    token_complete = all(all(value is not None for value in row[7:10]) for row in rows)
     cache_complete = "cached_tokens" in columns and all(row[10] is not None for row in rows)
     invocations = [
         {
@@ -1337,22 +1355,44 @@ def invocation_telemetry(
         for (role, provider, model, status, fallback_reason), latencies in sorted(groups.items())
     ]
     return {
-        "complete": bool(rows) and remote_cost_complete and switches == 0,
+        "complete": (
+            bool(rows)
+            and remote_cost_complete
+            and switches == 0
+            and token_complete
+            and cache_complete
+            and retryable_failures is not None
+        ),
         "reason": (
             None
-            if rows and remote_cost_complete and switches == 0
+            if rows
+            and remote_cost_complete
+            and switches == 0
+            and token_complete
+            and cache_complete
+            and retryable_failures is not None
             else "no_invocations"
             if not rows
             else "remote_cost_missing"
             if not remote_cost_complete
             else "provider_switch_detected"
+            if switches
+            else "token_usage_missing"
+            if not token_complete
+            else "cache_usage_missing"
+            if not cache_complete
+            else "retry_telemetry_missing"
         ),
         "provider_pinned": bool(rows) and switches == 0,
         "provider_switches": switches,
         "remote_cost_complete": remote_cost_complete,
         "remote_cost_usd": remote_cost,
         "missing_token_rows": sum(row[9] is None for row in rows),
+        "prompt_tokens": (sum(int(row[7]) for row in rows) if token_complete else None),
+        "completion_tokens": (sum(int(row[8]) for row in rows) if token_complete else None),
+        "total_tokens": (sum(int(row[9]) for row in rows) if token_complete else None),
         "cached_tokens": (sum(int(row[10]) for row in rows) if cache_complete else None),
+        "retryable_failures": retryable_failures,
         "provider_errors": sum(row[4] not in {"completed", "success"} for row in rows),
         "invocations": invocations,
         "routing_events": routing_events,
