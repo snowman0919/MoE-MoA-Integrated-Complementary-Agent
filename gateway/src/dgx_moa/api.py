@@ -713,6 +713,9 @@ def create_app(
                 await app.state.observation.close()
             if app.state.specialists is not None:
                 await app.state.specialists.close()
+            close_provider = getattr(provider, "aclose", None)
+            if close_provider is not None:
+                await close_provider()
             await app.state.lifecycle.close()
 
     app = FastAPI(title="DGX MoA Agent", version="2.0.0", lifespan=lifespan)

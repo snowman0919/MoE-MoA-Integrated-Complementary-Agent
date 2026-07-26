@@ -6763,10 +6763,11 @@ async def test_streaming_api_first_byte_cancellation_persists_terminal_evidence(
             await pending
 
         assert responses[0].is_closed
-        assert clients[0].is_closed
+        assert not clients[0].is_closed
         state = app.state.store.get("first-byte-cancelled")
         events = app.state.store.events("first-byte-cancelled")
 
+    assert clients[0].is_closed
     assert state and state.final_status == "cancelled"
     assert sum(event["event_type"] == "stream_aborted" for event in events) == 1
     timing_events = [event for event in events if event["event_type"] == "request_timing"]

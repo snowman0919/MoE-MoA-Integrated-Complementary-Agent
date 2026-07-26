@@ -158,14 +158,18 @@ async def test_executor_context_fit_uses_served_tokenizer_limit(
         lambda **kwargs: async_client(transport=transport, **kwargs),
     )
 
-    fits = await ModelProvider.context_fits(
-        settings.models["executor"],
-        {
-            "messages": [{"role": "user", "content": "large"}],
-            "tools": [{"type": "function", "function": {"name": "read_file"}}],
-            "max_tokens": 1_024,
-        },
-    )
+    provider = ModelProvider()
+    try:
+        fits = await provider.context_fits(
+            settings.models["executor"],
+            {
+                "messages": [{"role": "user", "content": "large"}],
+                "tools": [{"type": "function", "function": {"name": "read_file"}}],
+                "max_tokens": 1_024,
+            },
+        )
+    finally:
+        await provider.aclose()
 
     assert fits is False
     assert requests[0].url.path == "/tokenize"
@@ -207,7 +211,43 @@ async def test_backend_busy_uses_shared_runtime_metrics(
         lambda **kwargs: async_client(transport=transport, **kwargs),
     )
 
-    assert await ModelProvider.backend_busy(settings.models["executor"]) is expected
+    provider = ModelProvider()
+    try:
+        assert await provider.backend_busy(settings.models["executor"]) is expected
+    finally:
+        await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_provider_reuses_one_client_until_lifespan_close(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            },
+            request=request,
+        )
+    )
+    clients: list[CountingClient] = []
+
+    def client(**kwargs):  # type: ignore[no-untyped-def]
+        created = CountingClient(transport=transport, **kwargs)
+        clients.append(created)
+        return created
+
+    monkeypatch.setattr("dgx_moa.providers.httpx.AsyncClient", client)
+    provider = ModelProvider()
+    await provider.complete("executor", settings.models["executor"], {"messages": []})
+    await provider.complete("executor", settings.models["executor"], {"messages": []})
+
+    assert len(clients) == 1
+    assert clients[0].close_count == 0
+    await provider.aclose()
+    assert clients[0].close_count == 1
 
 
 @pytest.mark.asyncio
@@ -465,8 +505,9 @@ async def test_stream_setup_cancellation_closes_response_and_client(
         return created
 
     monkeypatch.setattr("dgx_moa.providers.httpx.AsyncClient", client)
+    provider = ModelProvider()
     pending = asyncio.create_task(
-        ModelProvider().stream(
+        provider.stream(
             "executor",
             settings.models["executor"],
             {"messages": []},
@@ -481,6 +522,8 @@ async def test_stream_setup_cancellation_closes_response_and_client(
         await pending
 
     assert responses[0].is_closed
+    assert not clients[0].is_closed
+    await provider.aclose()
     assert clients[0].is_closed
 
 
@@ -494,7 +537,8 @@ async def test_stream_close_before_first_iteration_closes_response_and_client_on
             yield b"second"
 
     responses, clients = tracked_stream_transport(monkeypatch, Bytes())
-    stream = await ModelProvider().stream(
+    provider = ModelProvider()
+    stream = await provider.stream(
         "executor",
         settings.models["executor"],
         {"messages": []},
@@ -504,6 +548,8 @@ async def test_stream_close_before_first_iteration_closes_response_and_client_on
     await stream.aclose()  # type: ignore[attr-defined]
 
     assert responses[0].is_closed
+    assert not clients[0].is_closed
+    await provider.aclose()
     assert clients[0].is_closed
     assert responses[0].close_count == 1
     assert clients[0].close_count == 1
@@ -520,7 +566,8 @@ async def test_stream_preserves_prefetched_byte_order_and_closes_on_exhaustion(
             yield b"third"
 
     responses, clients = tracked_stream_transport(monkeypatch, Bytes())
-    stream = await ModelProvider().stream(
+    provider = ModelProvider()
+    stream = await provider.stream(
         "executor",
         settings.models["executor"],
         {"messages": []},
@@ -531,6 +578,8 @@ async def test_stream_preserves_prefetched_byte_order_and_closes_on_exhaustion(
 
     assert chunks == [b"first", b"second", b"third"]
     assert responses[0].close_count == 1
+    assert clients[0].close_count == 0
+    await provider.aclose()
     assert clients[0].close_count == 1
 
 
@@ -544,7 +593,8 @@ async def test_stream_iteration_error_closes_response_and_client_once(
             raise RuntimeError("stream failed")
 
     responses, clients = tracked_stream_transport(monkeypatch, FailingBytes())
-    stream = await ModelProvider().stream(
+    provider = ModelProvider()
+    stream = await provider.stream(
         "executor",
         settings.models["executor"],
         {"messages": []},
@@ -556,6 +606,8 @@ async def test_stream_iteration_error_closes_response_and_client_once(
     await stream.aclose()  # type: ignore[attr-defined]
 
     assert responses[0].close_count == 1
+    assert clients[0].close_count == 0
+    await provider.aclose()
     assert clients[0].close_count == 1
 
 
@@ -572,7 +624,8 @@ async def test_stream_iteration_cancellation_closes_response_and_client_once(
             await asyncio.Event().wait()
 
     responses, clients = tracked_stream_transport(monkeypatch, BlockingBytes())
-    stream = await ModelProvider().stream(
+    provider = ModelProvider()
+    stream = await provider.stream(
         "executor",
         settings.models["executor"],
         {"messages": []},
@@ -587,4 +640,6 @@ async def test_stream_iteration_cancellation_closes_response_and_client_once(
     await stream.aclose()  # type: ignore[attr-defined]
 
     assert responses[0].close_count == 1
+    assert clients[0].close_count == 0
+    await provider.aclose()
     assert clients[0].close_count == 1

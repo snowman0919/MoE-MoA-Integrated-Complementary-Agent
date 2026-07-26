@@ -31,13 +31,11 @@ class OwnedByteStream:
         first: bytes | None,
         iterator: AsyncIterator[bytes],
         response: httpx.Response,
-        client: httpx.AsyncClient,
     ) -> None:
         self._first = first
         self._first_pending = first is not None
         self._iterator = iterator
         self._response = response
-        self._client = client
         self._close_lock = asyncio.Lock()
         self._closed = False
 
@@ -65,17 +63,25 @@ class OwnedByteStream:
             if self._closed:
                 return
             self._closed = True
-            try:
-                if not self._response.is_closed:
-                    await self._response.aclose()
-            finally:
-                if not self._client.is_closed:
-                    await self._client.aclose()
+            if not self._response.is_closed:
+                await self._response.aclose()
 
 
 class ModelProvider:
-    def __init__(self, timeout: float = 300.0):
+    def __init__(
+        self,
+        timeout: float = 300.0,
+        *,
+        client: httpx.AsyncClient | None = None,
+    ):
         self.timeout = timeout
+        self.client = client or httpx.AsyncClient(timeout=None)
+        self._owns_client = client is None
+
+    async def aclose(self) -> None:
+        close = getattr(self.client, "aclose", None)
+        if self._owns_client and close is not None:
+            await close()
 
     @staticmethod
     def body(role: str, model: ModelConfig, request: dict[str, Any]) -> dict[str, Any]:
@@ -136,8 +142,8 @@ class ModelProvider:
         available = max(1, context_length - prompt_tokens - 8)
         body["max_tokens"] = min(requested, available)
 
-    @staticmethod
     async def backend_busy(
+        self,
         model: ModelConfig,
         *,
         timeout_seconds: float = 0.5,
@@ -148,9 +154,8 @@ class ModelProvider:
             base_url = base_url[:-3]
         try:
             async with asyncio.timeout(timeout_seconds):
-                async with httpx.AsyncClient(timeout=None) as client:
-                    response = await client.get(f"{base_url}/metrics")
-                    response.raise_for_status()
+                response = await self.client.get(f"{base_url}/metrics")
+                response.raise_for_status()
         except (TimeoutError, httpx.HTTPError):
             return None
 
@@ -173,8 +178,8 @@ class ModelProvider:
                 return True
         return False if measured else None
 
-    @staticmethod
     async def context_fits(
+        self,
         model: ModelConfig,
         request: dict[str, Any],
         *,
@@ -185,18 +190,17 @@ class ModelProvider:
         body = ModelProvider.body(role, model, request)
         try:
             async with asyncio.timeout(timeout_seconds):
-                async with httpx.AsyncClient(timeout=None) as client:
-                    response = await client.post(
-                        f"{model.base_url.rstrip('/')}/tokenize",
-                        json={
-                            "model": model.served_name,
-                            "messages": body.get("messages", []),
-                            "tools": body.get("tools"),
-                            "chat_template_kwargs": body.get("chat_template_kwargs"),
-                        },
-                    )
-                    response.raise_for_status()
-                    payload = response.json()
+                response = await self.client.post(
+                    f"{model.base_url.rstrip('/')}/tokenize",
+                    json={
+                        "model": model.served_name,
+                        "messages": body.get("messages", []),
+                        "tools": body.get("tools"),
+                        "chat_template_kwargs": body.get("chat_template_kwargs"),
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
         except (TimeoutError, httpx.HTTPError, ValueError):
             return None
         prompt_tokens = payload.get("count")
@@ -342,29 +346,30 @@ class ModelProvider:
         timeout_seconds = self.timeout if timeout_seconds is None else timeout_seconds
         try:
             async with asyncio.timeout(timeout_seconds):
-                async with httpx.AsyncClient(timeout=None) as client:
-                    if model.provider == "ollama":
-                        response = await client.post(
-                            f"{model.base_url.rstrip('/')}/api/chat",
-                            json=self.ollama_body(model, request),
+                if model.provider == "ollama":
+                    response = await self.client.post(
+                        f"{model.base_url.rstrip('/')}/api/chat",
+                        json=self.ollama_body(model, request),
+                    )
+                else:
+                    body = self.body(role, model, request)
+                    if (
+                        role in {"planner", "reviewer"}
+                        and model.reasoning_parser in {"nemotron_v3", "gemma4"}
+                        and body.get("response_format")
+                    ):
+                        return await self.complete_reasoning_specialist(
+                            self.client, model, body
                         )
-                    else:
-                        body = self.body(role, model, request)
-                        if (
-                            role in {"planner", "reviewer"}
-                            and model.reasoning_parser in {"nemotron_v3", "gemma4"}
-                            and body.get("response_format")
-                        ):
-                            return await self.complete_reasoning_specialist(client, model, body)
-                        if role == "reviewer":
-                            await self.fit_specialist_completion(client, model, body)
-                        response = await client.post(
-                            f"{model.base_url.rstrip('/')}/v1/chat/completions",
-                            json=body,
-                        )
-                    response.raise_for_status()
-                    payload = cast(dict[str, Any], response.json())
-                    return self.ollama_response(payload) if model.provider == "ollama" else payload
+                    if role == "reviewer":
+                        await self.fit_specialist_completion(self.client, model, body)
+                    response = await self.client.post(
+                        f"{model.base_url.rstrip('/')}/v1/chat/completions",
+                        json=body,
+                    )
+                response.raise_for_status()
+                payload = cast(dict[str, Any], response.json())
+                return self.ollama_response(payload) if model.provider == "ollama" else payload
         except (TimeoutError, httpx.TimeoutException) as error:
             raise StageTimeout(stage or role) from error
 
@@ -383,7 +388,7 @@ class ModelProvider:
         body["stream"] = True
         timeout_seconds = self.timeout if timeout_seconds is None else timeout_seconds
         timeout_stage = stage or role
-        client = httpx.AsyncClient(timeout=None)
+        client = self.client
         response: httpx.Response | None = None
         try:
             async with asyncio.timeout(timeout_seconds):
@@ -401,20 +406,17 @@ class ModelProvider:
         except asyncio.CancelledError:
             if response is not None:
                 await response.aclose()
-            await client.aclose()
             raise
         except (TimeoutError, httpx.TimeoutException) as error:
             if response is not None:
                 await response.aclose()
-            await client.aclose()
             raise StageTimeout(timeout_stage) from error
         except Exception:
             if response is not None:
                 await response.aclose()
-            await client.aclose()
             raise
 
-        return OwnedByteStream(first, iterator, response, client)
+        return OwnedByteStream(first, iterator, response)
 
 
 def response_message(response: dict[str, Any]) -> dict[str, Any]:
