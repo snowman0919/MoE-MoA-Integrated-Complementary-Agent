@@ -241,8 +241,14 @@ async def test_local_specialist_completion_fits_served_context(settings, monkeyp
     assert completion_bodies[0]["chat_template_kwargs"] == {"reasoning": False}
 
 
+@pytest.mark.parametrize(
+    ("role", "reasoning_parser"),
+    (("planner", "nemotron_v3"), ("planner", "gemma4"), ("reviewer", "gemma4")),
+)
 @pytest.mark.asyncio
-async def test_nemotron_planner_separates_reasoning_from_final_json(settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+async def test_specialist_separates_reasoning_from_final_json(  # type: ignore[no-untyped-def]
+    settings, monkeypatch, role: str, reasoning_parser: str
+) -> None:
     completion_bodies: list[dict[str, object]] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -295,10 +301,10 @@ async def test_nemotron_planner_separates_reasoning_from_final_json(settings, mo
         "dgx_moa.providers.httpx.AsyncClient",
         lambda **kwargs: async_client(transport=transport, **kwargs),
     )
-    model = settings.models["planner"].model_copy(update={"reasoning_parser": "nemotron_v3"})
+    model = settings.models[role].model_copy(update={"reasoning_parser": reasoning_parser})
 
     result = await ModelProvider().complete(
-        "planner",
+        role,
         model,
         {
             "messages": [{"role": "user", "content": "Analyze in English and plan."}],
@@ -310,6 +316,11 @@ async def test_nemotron_planner_separates_reasoning_from_final_json(settings, mo
     assert len(completion_bodies) == 2
     assert completion_bodies[0]["max_tokens"] == 768
     assert "response_format" not in completion_bodies[0]
+    assert completion_bodies[0]["chat_template_kwargs"]["enable_thinking"] is True
+    if reasoning_parser == "nemotron_v3":
+        assert completion_bodies[0]["chat_template_kwargs"]["reasoning_budget"] == 768
+    else:
+        assert "reasoning_budget" not in completion_bodies[0]["chat_template_kwargs"]
     assert completion_bodies[1]["max_tokens"] == 1536
     assert completion_bodies[1]["chat_template_kwargs"] == {
         "enable_thinking": False,

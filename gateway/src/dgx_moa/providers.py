@@ -210,19 +210,23 @@ class ModelProvider:
         return int(prompt_tokens) + int(output_tokens) <= int(context_length)
 
     @classmethod
-    async def complete_reasoning_planner(
+    async def complete_reasoning_specialist(
         cls,
         client: httpx.AsyncClient,
         model: ModelConfig,
         body: dict[str, Any],
     ) -> dict[str, Any]:
-        """Run bounded English analysis, then finalize the structured local plan."""
+        """Run bounded English analysis, then finalize one structured specialist result."""
         analysis_body = {
             **body,
             "max_tokens": min(
                 int(body.get("max_tokens", PLANNER_REASONING_TOKENS)),
                 PLANNER_REASONING_TOKENS,
             ),
+            "chat_template_kwargs": {
+                **dict(body.get("chat_template_kwargs") or {}),
+                "enable_thinking": True,
+            },
         }
         analysis_body.pop("response_format", None)
         await cls.fit_specialist_completion(client, model, analysis_body)
@@ -346,8 +350,12 @@ class ModelProvider:
                         )
                     else:
                         body = self.body(role, model, request)
-                        if role == "planner" and model.reasoning_parser == "nemotron_v3":
-                            return await self.complete_reasoning_planner(client, model, body)
+                        if (
+                            role in {"planner", "reviewer"}
+                            and model.reasoning_parser in {"nemotron_v3", "gemma4"}
+                            and body.get("response_format")
+                        ):
+                            return await self.complete_reasoning_specialist(client, model, body)
                         if role == "reviewer":
                             await self.fit_specialist_completion(client, model, body)
                         response = await client.post(

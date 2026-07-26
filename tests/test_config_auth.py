@@ -104,10 +104,8 @@ def test_loop_budget_overrides_merge_request_class_then_risk() -> None:
 def test_default_loop_budget_covers_frontier_task_limit() -> None:
     settings = Settings(auth_enabled=False)
 
-    assert (
-        settings.loop_engineering.defaults["frontier_calls"]
-        >= FrontierConfig().max_invocations_per_task
-    )
+    assert FrontierConfig().max_invocations_per_task is None
+    assert settings.loop_engineering.defaults["frontier_calls"] > 0
 
 
 def test_runtime_skills_environment_is_bounded_and_disabled_by_default(

@@ -29,6 +29,30 @@ EXECUTOR_REVISION = "15c399c8189eccc9c47d17dcf8adf3c16e8bb3f8"
 SPECIALIST_REVISION = "4135a98a9b728a548947683219633b25682223ac"
 MINIMUM_AVAILABLE_MEMORY_KIB = 10 * 1024**2
 SAFE_HOSTS = {"127.0.0.1", "::1", "localhost"}
+SAFE_CHECK_FAILURES = frozenset(
+    {
+        "cache_marker_mismatch",
+        "host_memory_headroom_below_minimum",
+        "host_memory_unavailable",
+        "incomplete_sse_response",
+        "invalid_capacity_metric",
+        "invalid_json_response",
+        "invalid_model_catalog",
+        "invalid_sse_response",
+        "invalid_text_response",
+        "missing_assistant_message",
+        "model_catalog_mismatch",
+        "radix_cache_reuse_not_observed",
+        "readiness_marker_mismatch",
+        "reasoning_split_failure",
+        "runtime_contract_mismatch",
+        "served_token_capacity_mismatch",
+        "structured_output_failure",
+        "tool_call_argument_failure",
+        "tool_call_parser_failure",
+        "transport_failure",
+    }
+)
 
 
 def local_endpoint(value: str) -> str:
@@ -295,21 +319,51 @@ def structured(
     prompt: str,
     timeout: float,
 ) -> dict[str, Any]:
-    response, latency = completion(
+    messages = [
+        {
+            "role": "system",
+            "content": "Analyze privately in English and return only the requested JSON.",
+        },
+        {"role": "user", "content": prompt},
+    ]
+    analysis, analysis_latency = completion(
         endpoint,
         model,
-        [
-            {
-                "role": "system",
-                "content": "Analyze privately in English and return only the requested JSON.",
-            },
-            {"role": "user", "content": prompt},
-        ],
+        messages,
         timeout,
-        max_tokens=2048,
+        max_tokens=768,
         separate_reasoning=True,
         chat_template_kwargs={"enable_thinking": True},
-        custom_params={"thinking_budget": 512},
+    )
+    analysis_message = message(analysis)
+    private_analysis = str(
+        analysis_message.get("reasoning_content") or analysis_message.get("content") or ""
+    )
+    final_messages = [*messages]
+    if private_analysis:
+        final_messages.append(
+            {"role": "assistant", "reasoning_content": private_analysis, "content": ""}
+        )
+    final_messages.append(
+        {
+            "role": "user",
+            "content": (
+                "Using the private English analysis above, return only one minimal valid "
+                "JSON object matching the required schema. Do not repeat the analysis."
+            ),
+        }
+    )
+    response, final_latency = completion(
+        endpoint,
+        model,
+        final_messages,
+        timeout,
+        max_tokens=1536,
+        separate_reasoning=True,
+        chat_template_kwargs={
+            "enable_thinking": False,
+            "truncate_history_thinking": False,
+        },
         response_format={
             "type": "json_schema",
             "json_schema": {
@@ -324,11 +378,19 @@ def structured(
     except (TypeError, ValueError):
         raise RuntimeError("structured_output_failure") from None
     result = message(response)
+    analysis_usage = token_usage(analysis.get("usage"))
+    final_usage = token_usage(response.get("usage"))
     return {
-        "latency_seconds": round(latency, 3),
+        "latency_seconds": round(analysis_latency + final_latency, 3),
         "schema": schema.__name__,
         "reasoning_characters": len(str(result.get("reasoning_content") or "")),
-        **token_usage(response.get("usage")),
+        "analysis_completion_tokens": analysis_usage["completion_tokens"],
+        "prompt_tokens": analysis_usage["prompt_tokens"] + final_usage["prompt_tokens"],
+        "completion_tokens": (
+            analysis_usage["completion_tokens"] + final_usage["completion_tokens"]
+        ),
+        "total_tokens": analysis_usage["total_tokens"] + final_usage["total_tokens"],
+        "cached_tokens": analysis_usage["cached_tokens"] + final_usage["cached_tokens"],
     }
 
 
@@ -532,11 +594,12 @@ def checked(action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     try:
         return {"status": "passed", **action()}
     except Exception as error:  # evidence must retain every independent failure
+        failure = str(error)
         return {
             "status": "failed",
             "error_type": type(error).__name__,
-            "failure": str(error)
-            if str(error).startswith(("http_status_", "transport_"))
+            "failure": failure
+            if failure in SAFE_CHECK_FAILURES or failure.startswith("http_status_")
             else "check_failed",
         }
 

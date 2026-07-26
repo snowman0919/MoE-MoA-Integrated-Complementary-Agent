@@ -696,6 +696,32 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
     assert requests == 2
 
 
+def test_optional_review_does_not_use_paid_fallback_while_oauth_circuit_is_open(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    key_path = tmp_path / "openrouter_api"
+    key_path.write_text("synthetic-openrouter-key")
+
+    class FailIfCalled:
+        def __init__(self, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            pytest.fail("optional review must not call OpenRouter")
+
+    monkeypatch.setattr("dgx_moa.frontier.httpx.Client", FailIfCalled)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(
+            enabled=True,
+            openrouter_fallback_enabled=True,
+            openrouter_api_key_file=key_path,
+        ),
+        tmp_path / "run",
+        tmp_path,
+    )
+    runner.opened_at = time.monotonic()
+
+    with pytest.raises(RuntimeError, match="FRONTIER_CIRCUIT_OPEN"):
+        runner._run("code_review", {"bounded_diff": "bounded"}, "optional-review")
+
+
 @pytest.mark.parametrize(
     ("primary_failure", "failure_class"),
     [

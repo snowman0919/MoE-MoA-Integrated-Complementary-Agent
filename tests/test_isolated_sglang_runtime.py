@@ -138,12 +138,14 @@ def valid_runtime_snapshot() -> dict[str, Any]:
 
 def test_runtime_validator_covers_real_contract_without_retaining_payloads(monkeypatch) -> None:
     cache_calls = 0
+    structured_payloads: list[dict[str, Any]] = []
 
     def fake_post(
         _url: str, payload: dict[str, Any], _timeout: float
     ) -> tuple[dict[str, Any], float]:
         nonlocal cache_calls
         prompt = payload["messages"][-1]["content"]
+        all_content = " ".join(str(item.get("content") or "") for item in payload["messages"])
         if payload.get("tools"):
             name = payload["tools"][0]["function"]["name"]
             field, value = ("path", "README.md") if name == "inspect_file" else ("risk", "race")
@@ -157,9 +159,12 @@ def test_runtime_validator_covers_real_contract_without_retaining_payloads(monke
                 ]
             ), 0.1
         if payload.get("response_format"):
-            assert payload["custom_params"] == {"thinking_budget": 512}
-            content = planner_json() if "API migration" in prompt else reviewer_json()
-            return response(content, reasoning="private analysis"), 0.2
+            structured_payloads.append(payload)
+            content = planner_json() if "API migration" in all_content else reviewer_json()
+            return response(content), 0.2
+        if "API migration" in all_content or "shared dictionary" in all_content:
+            structured_payloads.append(payload)
+            return response("", reasoning="private analysis"), 0.2
         if "17 * 19" in prompt:
             return response("323", reasoning="private arithmetic"), 0.1
         if "Radix validation" in prompt:
@@ -219,6 +224,11 @@ def test_runtime_validator_covers_real_contract_without_retaining_payloads(monke
 
     assert result["passed"] is True
     assert result["checks"]["executor_radix_cache"]["second_cached_tokens"] == 3000
+    assert [payload["max_tokens"] for payload in structured_payloads] == [768, 1536, 768, 1536]
+    assert [
+        payload["chat_template_kwargs"]["enable_thinking"]
+        for payload in structured_payloads
+    ] == [True, False, True, False]
     rendered = json.dumps(result)
     for private in ("private analysis", "private arithmetic", "API migration", "shared dictionary"):
         assert private not in rendered
@@ -322,6 +332,16 @@ def test_runtime_validator_fails_closed_when_reasoning_or_cache_is_missing(monke
     reasoning = MODULE.checked(lambda: MODULE.reasoning("http://127.0.0.1:18102", "candidate", 1))
 
     assert reasoning == {
+        "status": "failed",
+        "error_type": "RuntimeError",
+        "failure": "reasoning_split_failure",
+    }
+
+
+def test_runtime_validator_redacts_unknown_failure_text() -> None:
+    result = MODULE.checked(lambda: (_ for _ in ()).throw(RuntimeError("private output")))
+
+    assert result == {
         "status": "failed",
         "error_type": "RuntimeError",
         "failure": "check_failed",
