@@ -148,14 +148,25 @@ def test_client_metrics_and_provider_pinning_are_aggregated_without_payloads(
     with sqlite3.connect(database) as connection:
         connection.execute(
             "CREATE TABLE model_invocation_usage ("
-            "role TEXT, provider TEXT, model TEXT, status TEXT, latency_ms REAL, "
+            "request_id TEXT, role TEXT, provider TEXT, model TEXT, status TEXT, latency_ms REAL, "
             "prompt_tokens INTEGER, total_tokens INTEGER, cost_usd REAL, invoked_at REAL)"
         )
         connection.executemany(
-            "INSERT INTO model_invocation_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO model_invocation_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                ("executor", "local", "executor-fixed", "completed", 10, 120, 130, 0, 2),
-                ("reviewer", "local", "specialist-fixed", "success", 20, 80, 90, 0, 3),
+                (
+                    "request-a",
+                    "executor",
+                    "local",
+                    "executor-fixed",
+                    "completed",
+                    10,
+                    120,
+                    130,
+                    0,
+                    2,
+                ),
+                ("request-b", "reviewer", "local", "specialist-fixed", "success", 20, 80, 90, 0, 3),
             ),
         )
 
@@ -169,6 +180,55 @@ def test_client_metrics_and_provider_pinning_are_aggregated_without_payloads(
         {"role": "executor", "provider": "local", "model": "executor-fixed"},
         {"role": "reviewer", "provider": "local", "model": "specialist-fixed"},
     ]
+
+
+def test_provider_pinning_is_scoped_to_each_call(tmp_path: Path) -> None:
+    database = tmp_path / "state.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE model_invocation_usage ("
+            "request_id TEXT, role TEXT, provider TEXT, model TEXT, status TEXT, latency_ms REAL, "
+            "prompt_tokens INTEGER, total_tokens INTEGER, cost_usd REAL, invoked_at REAL)"
+        )
+        connection.executemany(
+            "INSERT INTO model_invocation_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                (
+                    "request-a",
+                    "reviewer",
+                    "local",
+                    "specialist-fixed",
+                    "completed",
+                    10,
+                    10,
+                    12,
+                    0,
+                    2,
+                ),
+                ("request-b", "reviewer", "remote", "reviewer-go", "completed", 20, 10, 12, 0, 3),
+            ),
+        )
+
+    assert MODULE["provider_metrics"](database, 1, 4)["provider_pinned"] is True
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO model_invocation_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "request-b",
+                "reviewer",
+                "local",
+                "specialist-fixed",
+                "completed",
+                10,
+                10,
+                12,
+                0,
+                3.5,
+            ),
+        )
+
+    assert MODULE["provider_metrics"](database, 1, 4)["provider_pinned"] is False
 
 
 def test_hermes_metrics_use_tool_rows_not_model_api_count(tmp_path: Path) -> None:

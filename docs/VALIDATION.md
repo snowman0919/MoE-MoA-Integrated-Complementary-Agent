@@ -5571,3 +5571,19 @@ The real breadth epoch cannot start until the strict cache telemetry and
 provider stability gates are satisfied. Dual-SGLang physical validation remains
 blocked pending explicit maintenance approval, and production, main, dev,
 model services, and systemd were not changed.
+
+## Long-horizon provider pinning scope — 2026-07-26
+
+The long-horizon collector previously treated every provider used by the same
+role during a 30-minute checkpoint as one call. A healthy local Reviewer call
+followed by a separate remote Reviewer call therefore appeared to switch
+providers even though each dispatch remained pinned.
+
+The collector now groups internally by `(request_id, role)` and fails only
+when one call contains more than one provider/model pair. Request IDs are used
+only for the in-memory comparison and are not returned or archived. A
+regression test proves that separate local and remote calls pass while a
+local/remote mixture inside one call fails. Long-horizon focused tests passed
+`20/20`; the complete candidate suite passed `1075/1075` in 28.45 seconds with
+one third-party Starlette deprecation warning. Production, main, dev, services,
+and the frozen quality thresholds were not changed.

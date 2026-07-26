@@ -504,21 +504,24 @@ def provider_metrics(database: Path, started: float, completed: float) -> dict[s
         }
         cost_column = "cost_usd" if "cost_usd" in columns else "NULL"
         rows = connection.execute(
-            "SELECT role, provider, model, status, latency_ms, prompt_tokens, total_tokens, "
-            f"{cost_column} "
+            "SELECT request_id, role, provider, model, status, latency_ms, prompt_tokens, "
+            f"total_tokens, {cost_column} "
             "FROM model_invocation_usage WHERE invoked_at >= ? AND invoked_at <= ? "
             "ORDER BY invoked_at",
             (started, completed),
         ).fetchall()
     provenance = sorted(
-        {(str(role), str(provider), str(model)) for role, provider, model, *_ in rows}
+        {(str(role), str(provider), str(model)) for _, role, provider, model, *_ in rows}
     )
-    pinned = bool(provenance) and all(
-        len({(provider, model) for item_role, provider, model in provenance if item_role == role})
-        == 1
-        for role in {item[0] for item in provenance}
+    providers_by_call: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for request_id, role, provider, model, *_ in rows:
+        providers_by_call.setdefault((str(request_id), str(role)), set()).add(
+            (str(provider), str(model))
+        )
+    pinned = bool(providers_by_call) and all(
+        len(providers) == 1 for providers in providers_by_call.values()
     )
-    remote_costs = [row[7] for row in rows if str(row[1]) != "local"]
+    remote_costs = [row[8] for row in rows if str(row[2]) != "local"]
     variable_cost = (
         None
         if any(cost is None for cost in remote_costs)
@@ -530,8 +533,8 @@ def provider_metrics(database: Path, started: float, completed: float) -> dict[s
             for role, provider, model in provenance
         ],
         "provider_pinned": pinned,
-        "provider_errors": sum(str(row[3]) not in {"completed", "success"} for row in rows),
-        "context_tokens": max((int(row[5] or 0) for row in rows), default=0),
+        "provider_errors": sum(str(row[4]) not in {"completed", "success"} for row in rows),
+        "context_tokens": max((int(row[6] or 0) for row in rows), default=0),
         "variable_cost_usd": variable_cost,
     }
 
