@@ -5530,3 +5530,16 @@ and numeric CUDA memory. It correctly remained incomplete with
 cached-token values. The missing cache value remains `null`, not zero, and
 blocks sealing the real confirmatory epoch until provider-backed cache evidence
 is available.
+
+The isolated dual-SGLang command print passed static checks for both loopback
+ports, cache reporting, incremental streaming, and one running request per
+model; both shell scripts passed syntax validation. A tracked vLLM restore
+script now requires an explicit maintenance acknowledgement, addresses the
+sudo caller's user-systemd bus, refuses active candidate containers, restores
+and verifies the Executor first, and leaves optional specialists stopped unless
+separately requested. The no-ack path was physically invoked and rejected
+without mutation. After moving the restore drop-in outside the unit-only
+`systemd/` directory, 11 focused systemd/restore/topology tests and the full
+1,068-test suite passed; Ruff, shell syntax, and diff checks also passed. No
+model service, container, unit, or production file was changed. Dual-SGLang
+physical validation remains blocked pending maintenance approval.

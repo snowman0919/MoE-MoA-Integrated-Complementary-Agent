@@ -468,6 +468,28 @@ Production deployment is a fast-forward/pull of reviewed `main` into
 `/home/kotori9/dgx-moa-agent`, followed by proportional checks. `dev` may be
 deployed there only as an explicitly identified validation runtime; its traces
 must use `runtime_channel=dev` and must never be labeled production.
+
+## Isolated SGLang maintenance
+
+Do not run the isolated candidate while any production model service is active.
+After explicit maintenance approval, inspect the pinned loopback-only commands
+with `scripts/isolated-sglang-topology.sh print`; `preflight` and `start` also
+require `DGX_MOA_ISOLATED_ACK=1`. Stop both candidate containers before
+restoring vLLM.
+
+The sudo-safe rollback command is:
+
+```bash
+sudo env DGX_MOA_RESTORE_ACK=1 scripts/restore-vllm-executor.sh
+```
+
+It addresses the calling user's systemd bus explicitly, installs the pinned
+vLLM drop-in, performs an exact Executor stop/start, waits for readiness, and
+verifies the live command is vLLM. Planner and Reviewer remain stopped by
+default; restore them only when the approved maintenance plan explicitly sets
+`DGX_MOA_RESTORE_SPECIALISTS=1`. The script refuses to run while either
+candidate container is active.
+
 ## Runtime metrics
 
 The gateway exposes the Goal-specific fixed metric set at
