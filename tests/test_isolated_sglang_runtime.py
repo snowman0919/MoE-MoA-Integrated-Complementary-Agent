@@ -84,6 +84,59 @@ def reviewer_json() -> str:
     )
 
 
+def valid_runtime_snapshot() -> dict[str, Any]:
+    common = {
+        "available": True,
+        "status": "running",
+        "oom_killed": False,
+        "image": MODULE.IMAGE,
+    }
+    return {
+        "containers": {
+            "executor": {
+                **common,
+                "model_revision": MODULE.EXECUTOR_REVISION,
+                "ports": ["127.0.0.1:18101->18101/tcp"],
+                "settings": {
+                    "context-length": "65536",
+                    "mem-fraction-static": "0.54",
+                    "max-running-requests": "1",
+                    "max-total-tokens": "65536",
+                    "max-mamba-cache-size": "5",
+                    "quantization": "compressed-tensors",
+                    "tool-call-parser": "qwen3_coder",
+                    "radix-cache": True,
+                    "metrics": True,
+                    "cache-report": True,
+                    "incremental-streaming": True,
+                },
+                "memory": {"memory_current_bytes": 64 * 1024**3},
+            },
+            "specialist": {
+                **common,
+                "model_revision": MODULE.SPECIALIST_REVISION,
+                "ports": ["127.0.0.1:18102->18102/tcp"],
+                "settings": {
+                    "context-length": "65536",
+                    "mem-fraction-static": "0.75",
+                    "max-running-requests": "1",
+                    "max-total-tokens": "65536",
+                    "quantization": "modelopt_fp4",
+                    "reasoning-parser": "gemma4",
+                    "tool-call-parser": "gemma4",
+                    "radix-cache": True,
+                    "metrics": True,
+                    "cache-report": True,
+                    "incremental-streaming": True,
+                },
+                "memory": {"memory_current_bytes": 30 * 1024**3},
+            },
+        },
+        "gpu": [],
+        "memory": {},
+    }
+
+
 def test_runtime_validator_covers_real_contract_without_retaining_payloads(monkeypatch) -> None:
     cache_calls = 0
 
@@ -120,7 +173,20 @@ def test_runtime_validator_covers_real_contract_without_retaining_payloads(monke
     monkeypatch.setattr(
         MODULE,
         "get_json",
-        lambda _url, _timeout: ({"data": [{"id": "candidate"}]}, 0.01),
+        lambda url, _timeout: (
+            {
+                "data": [
+                    {
+                        "id": (
+                            "dgx-moa-executor-candidate"
+                            if "18101" in url
+                            else "dgx-moa-specialist-candidate"
+                        )
+                    }
+                ]
+            },
+            0.01,
+        ),
     )
     monkeypatch.setattr(
         MODULE,
@@ -135,7 +201,7 @@ def test_runtime_validator_covers_real_contract_without_retaining_payloads(monke
     monkeypatch.setattr(
         MODULE,
         "runtime_snapshot",
-        lambda: {"containers": {}, "gpu": [], "memory": {}},
+        valid_runtime_snapshot,
     )
 
     result = MODULE.run_validation("http://127.0.0.1:18101", "http://localhost:18102", 1)
@@ -145,6 +211,32 @@ def test_runtime_validator_covers_real_contract_without_retaining_payloads(monke
     rendered = json.dumps(result)
     for private in ("private analysis", "private arithmetic", "API migration", "shared dictionary"):
         assert private not in rendered
+
+
+def test_runtime_contract_rejects_memory_drift_and_oom() -> None:
+    snapshot = valid_runtime_snapshot()
+
+    assert MODULE.runtime_contract(snapshot)["executor_memory_used_bytes"] == 64 * 1024**3
+
+    snapshot["containers"]["executor"]["memory"]["memory_current_bytes"] = 62 * 1024**3
+    with pytest.raises(RuntimeError, match="executor_memory_out_of_range"):
+        MODULE.runtime_contract(snapshot)
+
+    snapshot = valid_runtime_snapshot()
+    snapshot["containers"]["specialist"]["oom_killed"] = True
+    with pytest.raises(RuntimeError, match="runtime_contract_mismatch"):
+        MODULE.runtime_contract(snapshot)
+
+
+def test_expected_catalog_rejects_wrong_served_model(monkeypatch) -> None:
+    monkeypatch.setattr(
+        MODULE,
+        "get_json",
+        lambda _url, _timeout: ({"data": [{"id": "wrong-model"}]}, 0.01),
+    )
+
+    with pytest.raises(RuntimeError, match="model_catalog_mismatch"):
+        MODULE.expected_catalog("http://127.0.0.1:18101", "expected-model", 1)
 
 
 @pytest.mark.parametrize(
