@@ -10,6 +10,7 @@ from dgx_moa.streaming import (
     MAX_BUFFERED_RESPONSE_CHARS,
     ProgressOnlyResponse,
     StreamObservation,
+    complete_apply_patch_sentinel,
     forward_sse,
     is_progress_only,
     keepalive_sse,
@@ -19,6 +20,15 @@ from dgx_moa.streaming import (
     tool_progress_text,
 )
 from dgx_moa.usage import SQLITE_MAX_INTEGER
+
+
+def test_apply_patch_missing_end_sentinel_is_completed() -> None:
+    partial = "*** Begin Patch\n*** Update File: app.py\n@@\n-old\n+new"
+
+    assert complete_apply_patch_sentinel("apply_patch", partial) == (
+        partial + "\n*** End Patch"
+    )
+    assert complete_apply_patch_sentinel("exec_command", partial) == partial
 
 
 @pytest.mark.asyncio

@@ -105,6 +105,21 @@ def compatible_edit_call(
     )
 
 
+def complete_apply_patch_sentinel(name: str, value: str) -> str:
+    stripped = value.rstrip()
+    if (
+        name == "apply_patch"
+        and stripped.startswith("*** Begin Patch")
+        and "*** End Patch" not in stripped
+        and any(
+            marker in stripped
+            for marker in ("*** Update File:", "*** Add File:", "*** Delete File:")
+        )
+    ):
+        return stripped + "\n*** End Patch"
+    return value
+
+
 def is_progress_only(text: str) -> bool:
     stripped = text.strip()
     return stripped in PROGRESS_ONLY_TEXT or (
@@ -757,6 +772,9 @@ async def responses_sse(
                         raise TypeError
                 except (KeyError, TypeError, ValueError):
                     custom_input = str(item["_arguments"])
+                custom_input = complete_apply_patch_sentinel(
+                    str(item["name"]), custom_input
+                )
                 custom_item = {
                     "id": item["id"],
                     "type": "custom_tool_call",

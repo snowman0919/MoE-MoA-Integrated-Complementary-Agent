@@ -233,7 +233,9 @@ def codex_model_catalog() -> dict[str, Any]:
                 "base_instructions": (
                     "You are Codex, a coding agent. Inspect only what is needed, then implement "
                     "with apply_patch, run bounded tests, review the diff, and persist until the "
-                    "task is verified. Never stop after only reading or planning."
+                    "task is verified. Never stop after only reading or planning. Raw apply_patch "
+                    "input starts with *** Begin Patch and ends with *** End Patch; do not wrap it "
+                    "in a Markdown fence."
                 ),
                 "default_reasoning_level": "high",
                 "supported_reasoning_levels": [
