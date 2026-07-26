@@ -1,40 +1,25 @@
 # User Services
 
-Install and validate:
+Install only the authenticated gateway and loopback socket:
 
 ```bash
-scripts/install-systemd-user.sh
-systemctl --user enable dgx-moa-resident.target
-systemctl --user start dgx-moa.target
+scripts/install-systemd-user.sh --start
 scripts/systemd-status.sh
 scripts/runtime-status.sh
 ```
 
-Units: `dgx-moa-gateway.service`, `dgx-moa-executor.service`,
-`dgx-moa-planner.service`, `dgx-moa-reviewer.service`, and
-`dgx-moa-judge.service`. Targets: `dgx-moa.target`,
-`dgx-moa-resident.target`, and `dgx-moa-judge.target`.
+The approved isolated maintenance candidate runs Executor and Specialist
+inference in pinned SGLang containers on loopback ports `18101` and `18102`.
+The installer neither manages those containers nor installs or enables the old
+resident/model targets. Candidate execution is not production deployment.
 
-Resident and judge targets conflict. Model services use loopback ports and
-systemd user journald. `MAX_JOBS=1` serializes FlashInfer CUDA JIT; concurrent
-`cicc` processes previously exhausted unified memory. `ProtectHome=read-only`
-and explicit cache `ReadWritePaths` are tested with the active profile.
+The checked-in vLLM Executor, Planner, Reviewer, Reasoner, Judge units and
+targets are rollback assets only. Use only the separately acknowledged restore
+scripts after stopping both SGLang containers. They are not a normal profile
+switching interface.
 
-Profile transitions are serialized by `data/run/profile.lock`; failed starts
-stop the requested target and restore the previous resident profile. Do not
-change unit topology, model selection, KV reservations, context limits, or memory
-gates without new measured evidence and approval.
-
-Check lifecycle and logs:
+Gateway logs:
 
 ```bash
-systemctl --user status dgx-moa.target
 journalctl --user -u dgx-moa-gateway.service
-journalctl --user -u dgx-moa-executor.service
-scripts/switch-profile.sh judge
-scripts/switch-profile.sh restore
 ```
-
-User lingering was not changed automatically. Inspect with
-`loginctl show-user "$USER" -p Linger`; enable it manually with
-`sudo loginctl enable-linger kotori9` if boot-persistent services are wanted.

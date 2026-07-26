@@ -47,8 +47,14 @@ def test_restore_requires_approval_and_pins_exact_baseline() -> None:
     assert restore.index("start dgx-moa-planner.service") < restore.index(
         "start dgx-moa-reviewer.service"
     )
-    assert restore.index("REVIEWER_ROLLBACK_READY") < restore.index(
-        "systemctl --user stop"
+    assert restore.index("PLANNER_ROLLBACK_READY") < restore.index(
+        "systemctl --user stop dgx-moa-planner.service"
     )
-    assert "dgx-moa-reviewer.service dgx-moa-planner.service" in restore
+    assert restore.index("systemctl --user stop dgx-moa-planner.service") < restore.index(
+        "start dgx-moa-reviewer.service"
+    )
+    assert restore.index("REVIEWER_ROLLBACK_READY") < restore.index(
+        "systemctl --user stop dgx-moa-reviewer.service"
+    )
+    assert '"--max-model-len 8192"' in restore
     assert "docker rm" not in source

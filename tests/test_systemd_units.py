@@ -18,7 +18,6 @@ def test_required_systemd_units_exist() -> None:
         "dgx-moa-judge.service",
         "dgx-moa-resident.target",
         "dgx-moa-judge.target",
-        "dgx-moa.target",
         "dgx-moa-codex-frontier@.service",
     }
     assert required == {path.name for path in SYSTEMD.iterdir()}
@@ -28,6 +27,7 @@ def test_loopback_socket_proxies_only_to_the_configured_gateway() -> None:
     socket = (SYSTEMD / "dgx-moa-loopback.socket").read_text()
     service = (SYSTEMD / "dgx-moa-loopback.service").read_text()
     installer = (ROOT / "scripts/install-systemd-user.sh").read_text()
+    uninstaller = (ROOT / "scripts/uninstall-systemd-user.sh").read_text()
     assert "ListenStream=127.0.0.1:9000" in socket
     assert "0.0.0.0" not in socket
     assert "Requires=dgx-moa-gateway.service dgx-moa-loopback.socket" in service
@@ -35,8 +35,12 @@ def test_loopback_socket_proxies_only_to_the_configured_gateway() -> None:
     assert "systemd-socket-proxyd" in service
     assert "StartLimitIntervalSec=60" in service
     assert "StartLimitBurst=10" in service
-    assert "dgx-moa-*.socket" in installer
-    assert "enable dgx-moa-resident.target dgx-moa-loopback.socket" in installer
+    assert "systemd/dgx-moa-loopback.socket" in installer
+    assert "enable dgx-moa-gateway.service dgx-moa-loopback.socket" in installer
+    assert "disable dgx-moa-resident.target" in installer
+    assert "switch-profile.sh" not in installer
+    assert "disable dgx-moa-gateway.service dgx-moa-loopback.socket" in uninstaller
+    assert "dgx-moa.target" not in uninstaller
 
 
 def test_targets_and_services_are_mutually_exclusive() -> None:
@@ -60,6 +64,8 @@ def test_targets_and_services_are_mutually_exclusive() -> None:
 
 def test_resident_target_requires_only_gateway_and_executor() -> None:
     resident = (SYSTEMD / "dgx-moa-resident.target").read_text()
+    assert "legacy rollback" in resident.lower()
+    assert "WantedBy=" not in resident
     assert "Requires=dgx-moa-gateway.service dgx-moa-executor.service" in resident
     requires = next(line for line in resident.splitlines() if line.startswith("Requires="))
     assert "planner" not in requires
@@ -97,6 +103,7 @@ def test_unit_environment_and_hardening() -> None:
 
 def test_profile_switch_uses_systemd_and_lock() -> None:
     script = (ROOT / "scripts/switch-profile.sh").read_text()
+    assert "DGX_MOA_RESTORE_ACK" in script
     assert "flock -n" in script
     assert "systemctl --user start" in script
     assert "systemctl --user stop" in script

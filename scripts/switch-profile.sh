@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
+[[ ${DGX_MOA_RESTORE_ACK:-} == 1 ]] || {
+  echo "switch-profile.sh is rollback-only; set DGX_MOA_RESTORE_ACK=1" >&2
+  exit 64
+}
 requested=${1:?resident, judge, restore, or status required}
 [[ $requested =~ ^(resident|judge|restore|status)$ ]] || exit 64
 if [[ $requested == status ]]; then

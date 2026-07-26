@@ -164,11 +164,9 @@ original guard ownership afterward.
 
 Bearer authentication protects `GET /v1/model-status` and
 `GET /v1/model-status/{role}`. Admin enablement plus authentication protects
-`GET /v1/admin/runtime-status`, `GET /admin/profile`, and profile switch routes
-`POST /admin/profile/resident`, `POST /admin/profile/judge`, and
-`POST /admin/profile/restore`. Status reads never call the lifecycle driver.
-They return persisted state and current-mode decisions only; disabled or
-unmapped roles remain explicit.
+the read-only `GET /v1/admin/runtime-status` and `GET /admin/profile` routes.
+Status reads never call the lifecycle driver. They return persisted state and
+current-mode decisions only; disabled or unmapped roles remain explicit.
 
 SQLite request usage, lifecycle decisions, and lifecycle samples are
 content-free. They store identifiers, timestamps, roles, states, counts,

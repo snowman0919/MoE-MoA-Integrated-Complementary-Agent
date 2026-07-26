@@ -121,9 +121,13 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 
 - Gateway: authenticated direct tailnet TCP at `100.125.239.72:9000`, with
   `127.0.0.1:9000` proxied to the same gateway by a loopback-only systemd socket.
-- Model endpoints: loopback-only executor `8101`, planner `8102`, reviewer `8103`.
-- Production context limits are Executor `65536`, Planner `8192`, and Reviewer
-  `8192`.
+- Production still uses the deployed loopback-only vLLM Executor baseline on
+  `8101`; the existing optional Planner/Reviewer services remain rollback
+  assets. The approved isolated maintenance candidate uses SGLang Executor
+  `18101` and shared Gemma Planner/Reviewer specialist `18102`, both
+  loopback-only. Candidate ports are not production deployment evidence.
+- The production Executor context limit remains `65536`. Candidate Executor,
+  Planner, and Reviewer expose `65536` only inside the isolated physical gate.
 - The deployed `main` runtime exposes `dgx-moa`, `dgx-moa-fast`,
   `dgx-moa-agent`, and `dgx-moa-orchestrated`. `dgx-moa` is the primary
   Reasoner + Executor core; `dgx-moa-fast` is the explicitly Executor-only

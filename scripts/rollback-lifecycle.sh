@@ -2,6 +2,10 @@
 set -Eeuo pipefail
 config_arg=${1:?explicit lifecycle config path required}
 [[ $# -eq 1 ]] || exit 64
+[[ ${DGX_MOA_RESTORE_ACK:-} == 1 ]] || {
+  echo "set DGX_MOA_RESTORE_ACK=1 for legacy resident rollback" >&2
+  exit 64
+}
 config=$(realpath "$config_arg")
 cd "$(dirname "$0")/.."
 if [[ -f .env ]]; then set -a; source .env; set +a; fi

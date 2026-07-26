@@ -1,5 +1,0 @@
-[Unit]
-Description=DGX MoA default operational target
-Requires=dgx-moa-resident.target
-After=dgx-moa-resident.target
-

@@ -70,18 +70,19 @@ status, and token usage, but not reasoning items or raw command output.
 
 ```bash
 scripts/install-systemd-user.sh
-systemctl --user status dgx-moa.target
+systemctl --user status dgx-moa-gateway.service dgx-moa-loopback.socket
 journalctl --user -u dgx-moa-gateway.service -f
 scripts/healthcheck.sh
 ```
 
 Gateway binds the configured tailnet address on port `9000`.
 `dgx-moa-loopback.socket` exposes `127.0.0.1:9000` through the systemd socket
-proxy to that same authenticated gateway; it never binds `0.0.0.0`. Local model
-servers bind only ports `8101`, `8102`, `8103`, and `8110` on loopback. The
-configured Ollama Reasoner is an external dependency and must remain protected
-by its own network boundary; this gateway does not expose or proxy its native
-API.
+proxy to that same authenticated gateway; it never binds `0.0.0.0`. During an
+approved isolated maintenance window, candidate SGLang model servers bind only
+ports `18101` and `18102` on loopback. These candidate listeners do not imply
+production deployment. The configured Ollama Reasoner is an external dependency
+and must remain protected by its own network boundary; this gateway does not
+expose or proxy its native API.
 
 ```bash
 scripts/runtime-status.sh
@@ -355,51 +356,18 @@ left exact owned PSS/RSS zero after every stop. The operational source of truth
 for limitations and artifact hashes is `docs/MEMORY_OPTIMIZATION.md`; these
 numbers are evidence, not an instruction to act on production units.
 
-## Profiles
+## Runtime lifecycle
 
-The local resident target requires `dgx-moa-gateway.service` and
-`dgx-moa-executor.service`. Planner and Reviewer remain optional and retain
-`PartOf=dgx-moa-resident.target`, so stopping resident cleans up either role if
-started separately. The external Ollama Reasoner is not a member of the local
-target and must be healthy for default product readiness. Existing stop
-verification still checks the legacy local Reasoner unit/port as cleanup along
-with Executor/Planner/Reviewer; it never targets the external Ollama service.
+The gateway and loopback socket are the only normally installed user units.
+The maintenance script owns the isolated SGLang Executor and shared Gemma
+specialist containers with loopback-only published ports and restart policies;
+the systemd installer does not create or manage them. Checked-in lifecycle
+control remains disabled with an empty unit map.
 
-The reviewed target and exact adaptive unit map are installed in production;
-safe checked-in lifecycle defaults remain disabled. Do not change the installed
-target or unit map in place. Any later topology change still requires a reviewed
-PR/deployment that verifies the installed diff, daemon reload, profile
-transition, readiness, typed cold-role behavior, and rollback. A cold required
-optional role currently receives the typed retryable loading/unavailable `503`
-contract.
-
-Rollback uses the one-config atomic disabled/empty-map path documented above,
-then restores and verifies the fixed resident services. A production rollback
-still requires separate approval; do not edit installed units in place.
-
-```bash
-scripts/switch-profile.sh resident
-scripts/switch-profile.sh judge
-scripts/stop-resident.sh
-scripts/stop-judge.sh
-```
-
-Profile changes use systemd targets and `data/run/profile.lock`, stop the old
-profile first, wait `DGX_MOA_MEMORY_SETTLE_SECONDS` for unified-memory reclaim,
-check readiness and memory headroom, then record state. Failed starts roll back
-to the previous resident profile.
-
-```bash
-systemctl --user start dgx-moa-resident.target
-systemctl --user stop dgx-moa-resident.target
-systemctl --user start dgx-moa-judge.target
-systemctl --user start dgx-moa.target
-systemctl --user status dgx-moa.target
-scripts/switch-profile.sh resident
-scripts/switch-profile.sh judge
-scripts/switch-profile.sh restore
-scripts/switch-profile.sh status
-```
+The old resident target and role units are rollback assets only. They are not
+installed or enabled by `scripts/install-systemd-user.sh`, and profile mutation
+is not exposed through the administrator API. Never start them while either
+SGLang container is active.
 
 ## Tailscale
 
@@ -454,8 +422,6 @@ in `docs/API_CLIENT_MODES.md`; Hermes configuration is in
 scripts/verify-models.sh executor reviewer planner
 scripts/verify-models.sh executor reviewer planner judge
 scripts/estimate-model-storage.sh judge
-scripts/tune-context.sh resident
-scripts/tune-context.sh judge
 ```
 
 Downloads are pinned, resumable, lock-protected, and never remove unrelated caches.

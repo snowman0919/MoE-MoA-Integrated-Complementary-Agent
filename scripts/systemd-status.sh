@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-systemctl --user --no-pager status dgx-moa.target dgx-moa-resident.target \
-  dgx-moa-judge.target dgx-moa-gateway.service dgx-moa-executor.service \
-  dgx-moa-planner.service dgx-moa-reviewer.service dgx-moa-judge.service || true
-
+systemctl --user --no-pager status \
+  dgx-moa-gateway.service dgx-moa-loopback.socket dgx-moa-loopback.service || true
+docker ps --filter "name=dgx-moa-exp-sglang-" \
+  --format '{{.Names}} {{.Status}} {{.Ports}}'

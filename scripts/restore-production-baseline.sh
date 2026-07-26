@@ -128,18 +128,22 @@ restore() {
     "--max-running-requests 1" \
     "--quantization modelopt"
   probe 8102 dgx-moa-planner PLANNER_ROLLBACK_READY
+  run_as_runtime_user systemctl --user stop dgx-moa-planner.service
+  [[ "$(run_as_runtime_user systemctl --user is-active dgx-moa-planner.service || true)" == "inactive" ]] || {
+    printf 'optional baseline role did not return cold: planner\n' >&2
+    return 1
+  }
 
   run_as_runtime_user systemctl --user start dgx-moa-reviewer.service
   run_as_runtime_user "$production_root/scripts/wait-model.sh" reviewer
   verify_command reviewer \
     "/vllm serve /home/kotori9/models/dgx-moa/reviewer" \
-    "--max-model-len 65536" \
+    "--max-model-len 8192" \
     "--max-num-seqs 1" \
     "--reasoning-parser cohere_command4"
   probe 8103 dgx-moa-reviewer REVIEWER_ROLLBACK_READY
 
-  run_as_runtime_user systemctl --user stop \
-    dgx-moa-reviewer.service dgx-moa-planner.service
+  run_as_runtime_user systemctl --user stop dgx-moa-reviewer.service
   for role in reviewer planner; do
     [[ "$(run_as_runtime_user systemctl --user is-active "dgx-moa-$role.service" || true)" == "inactive" ]] || {
       printf 'optional baseline role did not return cold: %s\n' "$role" >&2

@@ -1,8 +1,5 @@
 [Unit]
-Description=DGX MoA resident profile
+Description=DGX MoA legacy rollback resident profile
 Requires=dgx-moa-gateway.service dgx-moa-executor.service
 After=dgx-moa-gateway.service dgx-moa-executor.service dgx-moa-judge.target
 Conflicts=dgx-moa-judge.target
-
-[Install]
-WantedBy=default.target
