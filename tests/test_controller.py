@@ -16,12 +16,35 @@ from dgx_moa.controller import (
     compact_resolved_goal_history,
     fingerprint,
     normalize_tool_result,
+    structured_response_diagnostics,
 )
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
 from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
 from dgx_moa.state import Phase, SessionState, StateStore
 
 from .conftest import StubProvider
+
+
+def test_structured_response_diagnostics_excludes_private_content() -> None:
+    diagnostics = structured_response_diagnostics(
+        {
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {"content": "private", "reasoning_content": "hidden"},
+                }
+            ],
+            "usage": {"completion_tokens": 16_384},
+        }
+    )
+
+    assert diagnostics == {
+        "finish_reason": "length",
+        "completion_tokens": 16_384,
+        "content_characters": 7,
+        "reasoning_characters": 6,
+    }
+    assert "private" not in json.dumps(diagnostics)
 
 
 def reviewer_finding(severity: str = "important") -> dict[str, object]:
@@ -1049,6 +1072,8 @@ def test_goal_file_wrapper_gets_full_completion_constraints(
     assert "synchronization of shared state" in prompt
     assert "memory that grows with total historical requests" in prompt
     assert "monotonicity restrictions" in prompt
+    assert "resume only the returned tool session" in prompt
+    assert "never leave two copies of the same test running" in prompt
     reviewer_prompt = controller.prompt_sandwich("reviewer", state, "evidence", "review")
     assert "test results alone are insufficient" in reviewer_prompt
     assert "expected_version" in reviewer_prompt
@@ -3065,6 +3090,46 @@ def test_repeated_successful_inspection_marks_executor_stalled(
     )
     assert controller.executor_stalled(codex) is True
 
+    distinct = SessionState(
+        session_id="distinct-inspection",
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": f"cat file-{index}.md"},
+                "exit_code": 0,
+            }
+            for index in range(6)
+        ],
+    )
+    assert controller.executor_stalled(distinct) is True
+
+    polling = SessionState(
+        session_id="valid-polling",
+        tool_executions=[
+            {
+                "tool_name": "write_stdin",
+                "normalized_arguments": {"session_id": 7},
+                "stdout_summary": "Process still running",
+                "exit_code": 0,
+            }
+            for _ in range(8)
+        ],
+    )
+    assert controller.executor_stalled(polling) is False
+
+    planning = SessionState(
+        session_id="planning-churn",
+        tool_executions=[
+            {
+                "tool_name": "update_plan",
+                "normalized_arguments": {"plan": [{"step": f"step-{index}"}]},
+                "exit_code": 0,
+            }
+            for index in range(6)
+        ],
+    )
+    assert controller.executor_stalled(planning) is True
+
     invalid_process = SessionState(
         session_id="invalid-process-inspection",
         tool_executions=[
@@ -3130,6 +3195,14 @@ async def test_incomplete_implementation_requires_a_tool_action(
         frontier_correction_pending_verification=True,
         review_status="deferred",
         review_deferred=True,
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "cat atomic_store.py"},
+                "exit_code": 0,
+            }
+            for _ in range(3)
+        ],
     )
     request = {
         "model": "dgx-moa",
@@ -3139,7 +3212,15 @@ async def test_incomplete_implementation_requires_a_tool_action(
             {
                 "type": "function",
                 "function": {"name": "exec_command", "parameters": {}},
-            }
+            },
+            {
+                "type": "function",
+                "function": {"name": "update_plan", "parameters": {}},
+            },
+            {
+                "type": "function",
+                "function": {"name": "apply_patch", "parameters": {}},
+            },
         ],
         "tool_choice": "auto",
     }
@@ -3147,10 +3228,32 @@ async def test_incomplete_implementation_requires_a_tool_action(
     prepared = await controller.prepare_executor(state, request, ("executor",))
 
     assert prepared["tool_choice"] == "required"
+    assert "Repeated inspection is stalled. The very next tool call must" in prepared["messages"][
+        0
+    ]["content"]
+    assert [tool["function"]["name"] for tool in prepared["tools"]] == ["apply_patch"]
+    assert any(
+        event["event_type"] == "executor_stall_tools_restricted"
+        for event in store.events(state.session_id)
+    )
     assert any(
         event["event_type"] == "implementation_tool_action_required"
         for event in store.events(state.session_id)
     )
+
+    command_only = dict(request)
+    command_only["tools"] = [
+        {
+            "type": "function",
+            "function": {"name": "exec_command", "parameters": {}},
+        }
+    ]
+    prepared = await controller.prepare_executor(state, command_only, ("executor",))
+    assert [tool["function"]["name"] for tool in prepared["tools"]] == ["exec_command"]
+    assert "next invocation must modify the target source file" in prepared["tools"][0][
+        "function"
+    ]["description"]
+    assert "If only exec_command is available" in prepared["messages"][0]["content"]
 
 
 @pytest.mark.asyncio

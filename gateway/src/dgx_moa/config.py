@@ -323,7 +323,7 @@ class SpecialistRoutingConfig(BaseModel):
         default_factory=lambda: {"planner": 25.0, "reviewer": 5.0}
     )
     remote_min_completion_tokens: dict[str, int] = Field(
-        default_factory=lambda: {"planner": 4_096, "reviewer": 2_048}
+        default_factory=lambda: {"planner": 16_384, "reviewer": 2_048}
     )
     network_latency_seconds: float = Field(default=0.25, ge=0, allow_inf_nan=False)
     remote_queue_latency_seconds: float = Field(default=0.5, ge=0, allow_inf_nan=False)

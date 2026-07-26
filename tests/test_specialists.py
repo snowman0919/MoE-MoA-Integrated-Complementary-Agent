@@ -323,3 +323,12 @@ async def test_opencode_specialist_uses_role_model_and_drops_tools(
     assert "metadata" not in body
     assert body["response_format"] == {"type": "json_object"}
     assert requests[0].headers["authorization"] == "Bearer synthetic-secret"
+
+
+def test_remote_planner_reserves_tokens_for_hidden_reasoning() -> None:
+    settings = SpecialistRoutingConfig()
+
+    assert settings.remote_min_completion_tokens == {
+        "planner": 16_384,
+        "reviewer": 2_048,
+    }

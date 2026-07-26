@@ -23,7 +23,7 @@ from typing import Any
 HARNESSES = ("baseline", "opencode", "codex", "hermes")
 CORE_ENV = ("HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "SHELL", "TERM", "USER")
 TEST_COMMAND = (sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v")
-DOCKER_IMAGE = "python:3.11-slim"
+DOCKER_IMAGE = "dgx-moa-quality-harness:py311-git-v1"
 CODEX_BINARY = Path(
     "/home/kotori9/.codex/packages/standalone/releases/0.145.0-aarch64-unknown-linux-musl/bin/codex"
 )
@@ -847,7 +847,12 @@ def prepare_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str,
         "starter",
     )
     starter_test = subprocess.run(
-        TEST_COMMAND, cwd=workspace, text=True, capture_output=True, check=False
+        TEST_COMMAND,
+        cwd=workspace,
+        env=filtered_env({"PYTHONDONTWRITEBYTECODE": "1"}),
+        text=True,
+        capture_output=True,
+        check=False,
     )
     if starter_test.returncode == 0:
         raise RuntimeError(f"starter unexpectedly passes: {task.slug}")

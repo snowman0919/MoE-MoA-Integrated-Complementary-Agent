@@ -83,8 +83,14 @@ def test_ollama_reasoner_contract(settings) -> None:  # type: ignore[no-untyped-
         "messages": [{"role": "system", "content": "reason"}],
         "stream": False,
         "keep_alive": -1,
-        "options": {"num_ctx": 65536, "num_predict": 321},
+        "options": {
+            "num_ctx": 65536,
+            "num_predict": 321,
+            "temperature": 0,
+            "seed": 0,
+        },
         "format": schema,
+        "think": False,
     }
     response = ModelProvider.ollama_response(
         {

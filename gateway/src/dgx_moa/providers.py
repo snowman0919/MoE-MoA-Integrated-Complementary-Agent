@@ -255,6 +255,8 @@ class ModelProvider:
             json_schema = response_format.get("json_schema")
             if isinstance(json_schema, dict) and isinstance(json_schema.get("schema"), dict):
                 body["format"] = json_schema["schema"]
+                body["think"] = False
+                body["options"].update({"temperature": 0, "seed": 0})
         return body
 
     @staticmethod

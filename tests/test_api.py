@@ -3390,6 +3390,10 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             for model in models["models"]
         )
         assert all(
+            "resume only the returned tool session" in model["base_instructions"]
+            for model in models["models"]
+        )
+        assert all(
             "supplied tests are examples, not the complete specification"
             in model["base_instructions"]
             for model in models["models"]

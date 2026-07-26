@@ -151,6 +151,10 @@ IMPLEMENTATION_QUALITY_CONTRACT = (
     "explicitly disables them. Collection, sample, and selection counts may be zero when zero "
     "naturally means none; reject negative values. Do not invent a stronger boundary than the "
     "written contract. "
+    "When a command is still running, resume only the returned tool session; do not launch a "
+    "duplicate command. Run potentially blocking tests with a bounded timeout. If a test hangs, "
+    "terminate that exact process before inspecting the cause or retrying, and never leave two "
+    "copies of the same test running. "
     "Do not claim completion merely because the supplied tests pass."
 )
 
@@ -411,6 +415,23 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
         if isinstance(parsed.get(key), list):
             result[key] = [str(path) for path in parsed[key]]
     return result
+
+
+def structured_response_diagnostics(response: dict[str, Any]) -> dict[str, Any]:
+    choices = response.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices else {}
+    message = choice.get("message", {}) if isinstance(choice, dict) else {}
+    usage = response.get("usage", {})
+    content = message.get("content") if isinstance(message, dict) else None
+    reasoning = message.get("reasoning_content") if isinstance(message, dict) else None
+    return {
+        "finish_reason": choice.get("finish_reason") if isinstance(choice, dict) else None,
+        "completion_tokens": (
+            int(usage.get("completion_tokens", 0) or 0) if isinstance(usage, dict) else 0
+        ),
+        "content_characters": len(content) if isinstance(content, str) else 0,
+        "reasoning_characters": len(reasoning) if isinstance(reasoning, str) else 0,
+    }
 
 
 class Controller:
@@ -2818,7 +2839,10 @@ class Controller:
                     self.store.event(
                         state.session_id,
                         "replan_requested",
-                        {"reason": "planner_structured_output_invalid"},
+                        {
+                            "reason": "planner_structured_output_invalid",
+                            **structured_response_diagnostics(planner),
+                        },
                     )
                     self.admit_loop_action(state, "planner_calls")
                     planner, planner_routing = await self.complete_specialist(
@@ -2842,11 +2866,10 @@ class Controller:
                         "failure_class": type(error).__name__,
                     },
                 )
-                self.store.event(
-                    state.session_id,
-                    "planner_failed",
-                    {"failure_class": type(error).__name__},
-                )
+                failure = {"failure_class": type(error).__name__}
+                if planner is not None:
+                    failure.update(structured_response_diagnostics(planner))
+                self.store.event(state.session_id, "planner_failed", failure)
             finally:
                 state.timings_ms["planner"] = round((time.monotonic() - planner_started) * 1000, 3)
             if planner is not None and planner_error is None:
@@ -3234,6 +3257,48 @@ class Controller:
         implementation_complete = self.implementation_completion_ready(
             state, dict(request.get("metadata", {}))
         )
+        inspection_stalled = self.executor_stalled(state)
+        if inspection_stalled and body.get("tools"):
+            named_tools = {
+                str(tool.get("name") or tool.get("function", {}).get("name")): tool
+                for tool in body["tools"]
+                if isinstance(tool, dict)
+            }
+            selected_names = next(
+                (
+                    tuple(name for name in group if name in named_tools)
+                    for group in (
+                        ("apply_patch", "edit", "write"),
+                        ("exec_command", "shell", "terminal", "execute_code"),
+                    )
+                    if any(name in named_tools for name in group)
+                ),
+                (),
+            )
+            if selected_names:
+                selected_tools = []
+                for name in selected_names:
+                    tool = dict(named_tools[name])
+                    if name in {"exec_command", "shell", "terminal", "execute_code"}:
+                        description = (
+                            "STALLED IMPLEMENTATION RECOVERY: the next invocation must modify "
+                            "the target source file. Do not read, list, search, inspect, or run "
+                            "tests."
+                        )
+                        if isinstance(tool.get("function"), dict):
+                            function = dict(tool["function"])
+                            function["description"] = description
+                            tool["function"] = function
+                        else:
+                            tool["description"] = description
+                    selected_tools.append(tool)
+                body["tools"] = selected_tools
+                available_tools = selected_names
+                self.store.event(
+                    state.session_id,
+                    "executor_stall_tools_restricted",
+                    {"tools": list(selected_names)},
+                )
         if implementation_complete and (tool_continuation or progress_retry):
             body.pop("tools", None)
             body.pop("tool_choice", None)
@@ -3276,7 +3341,14 @@ class Controller:
                             "are complete. "
                             "Return the concise final result now; do not call more tools."
                             if implementation_complete
-                            else "Take one useful step"
+                            else (
+                                "Repeated inspection is stalled. The very next tool call must "
+                                "modify the target source file. If only exec_command is available, "
+                                "use it to write or replace that file now. Do not read, list, "
+                                "search, inspect, or run tests first."
+                                if inspection_stalled
+                                else "Take one useful step"
+                            )
                         )
                     ),
                     available_tools=available_tools,
@@ -3398,6 +3470,7 @@ class Controller:
     def executor_stalled(self, state: SessionState) -> bool:
         """Detect repeated successful inspection since the latest file change."""
         counts: dict[str, int] = {}
+        inspections = 0
         for execution in reversed(state.tool_executions):
             if execution.get("exit_code") != 0:
                 continue
@@ -3421,16 +3494,25 @@ class Controller:
                     command,
                 )
             )
-            if not command_inspection and tool_name not in {
+            no_progress_tool = tool_name in {
                 "read",
                 "read_file",
                 "view_image",
-                "write_stdin",
                 "list",
                 "glob",
                 "grep",
                 "search_files",
-            }:
+                "create_goal",
+                "get_goal",
+                "request_user_input",
+                "update_goal",
+                "update_plan",
+            }
+            if command_inspection or no_progress_tool:
+                inspections += 1
+                if inspections >= 6:
+                    return True
+            if not command_inspection and not no_progress_tool and tool_name != "write_stdin":
                 continue
             targets = argument_paths(arguments)
             if not targets and any(
