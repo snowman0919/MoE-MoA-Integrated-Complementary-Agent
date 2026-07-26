@@ -1,0 +1,38 @@
+from __future__ import annotations
+
+import json
+import runpy
+from pathlib import Path
+
+import pytest
+
+SCRIPT = Path(__file__).parents[1] / "scripts/seal-frontier-confirmation.py"
+MODULE = runpy.run_path(str(SCRIPT))
+
+
+def test_attempt_plan_is_complete_deterministic_and_opaque() -> None:
+    first, routes = MODULE["attempt_plan"]("confirm")
+    second, second_routes = MODULE["attempt_plan"]("confirm")
+
+    assert first == second
+    assert routes == second_routes
+    assert len(first) == 200
+    assert len({row["attempt_id"] for row in first}) == 200
+    assert set(routes.values()) == set(MODULE["RUNNER"]["HARNESSES"])
+    assert all(row["variant"] not in MODULE["RUNNER"]["HARNESSES"] for row in first)
+    assert {(row["repeat"], row["task"], row["variant"]) for row in first} == {
+        (repeat, task.slug, label)
+        for repeat in range(1, 11)
+        for task in MODULE["RUNNER"]["TASKS"]
+        for label in MODULE["OPAQUE_LABELS"]
+    }
+
+
+def test_exclusive_json_refuses_overwrite_and_protects_routing(tmp_path: Path) -> None:
+    path = tmp_path / "routing.json"
+    MODULE["exclusive_json"](path, {"secret": "mapping"}, mode=0o600)
+
+    assert json.loads(path.read_text()) == {"secret": "mapping"}
+    assert path.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(FileExistsError):
+        MODULE["exclusive_json"](path, {"secret": "replacement"}, mode=0o600)
