@@ -310,7 +310,10 @@ def clean_tool_output(value: object) -> str:
 
 
 def embedded_tool_exit_code(value: object) -> int:
-    match = re.search(r"(?m)^Process exited with code (-?\d+)\s*$", str(value))
+    text = str(value)
+    match = re.search(r"(?m)^Process exited with code (-?\d+)\s*$", text)
+    if re.search(r"(?mi)^(?:Error: )?apply_patch verification failed:", text):
+        return 1
     return int(match.group(1)) if match else 0
 
 

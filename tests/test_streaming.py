@@ -36,7 +36,7 @@ def test_fenced_unified_diff_is_normalized_for_apply_patch() -> None:
         "index 123..456 100644\n"
         "--- a/app.py\n"
         "+++ b/app.py\n"
-        "@@\n"
+        "@@ -1 +1 @@\n"
         "-old\n"
         "+new\n"
         "```"

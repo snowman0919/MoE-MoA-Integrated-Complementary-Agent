@@ -124,11 +124,15 @@ def normalize_apply_patch_input(name: str, value: str) -> str:
         old_path = lines[old_header][6:]
         new_path = lines[old_header + 1][6:]
         if old_path == new_path and old_path and "\n" not in old_path:
+            hunks = [
+                "@@" if re.match(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", line) else line
+                for line in lines[old_header + 2 :]
+            ]
             stripped = "\n".join(
                 (
                     "*** Begin Patch",
                     f"*** Update File: {old_path}",
-                    *lines[old_header + 2 :],
+                    *hunks,
                     "*** End Patch",
                 )
             )

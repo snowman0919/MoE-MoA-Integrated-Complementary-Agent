@@ -127,6 +127,16 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
     )
     assert codex["exit_code"] == 1
     assert codex["stdout"].endswith("FAILED (failures=1)")
+    failed_patch = normalize_tool_result(
+        {
+            "role": "tool",
+            "content": (
+                "apply_patch verification failed: Failed to find context "
+                "'-1,40 +1,40 @@' in atomic_store.py"
+            ),
+        }
+    )
+    assert failed_patch["exit_code"] == 1
 
 
 def test_role_schemas_discard_hidden_reasoning_and_require_structured_findings() -> None:
