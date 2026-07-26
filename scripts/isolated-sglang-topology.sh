@@ -31,7 +31,7 @@ run_as_runtime_user() {
 }
 
 executor_command=(
-  docker run -d --rm --name "$executor_container" --pull never
+  docker run -d --name "$executor_container" --pull never
   --gpus all --network bridge -p 127.0.0.1:18101:18101
   --memory 72g --memory-swap 72g --oom-score-adj 1000
   -v "$executor_model:/model:ro"
@@ -43,15 +43,14 @@ executor_command=(
   --context-length 65536 --mem-fraction-static 0.54
   --max-running-requests 1 --max-total-tokens 65536
   --max-mamba-cache-size 5 --quantization compressed-tensors
-  --language-only
   --cuda-graph-backend-decode disabled
   --cuda-graph-backend-prefill disabled
   --tool-call-parser qwen3_coder
-  --enable-metrics --enable-cache-report --stream-output
+  --enable-metrics --enable-cache-report --incremental-streaming-output
 )
 
 specialist_command=(
-  docker run -d --rm --name "$specialist_container" --pull never
+  docker run -d --name "$specialist_container" --pull never
   --gpus all --network bridge -p 127.0.0.1:18102:18102
   --memory 48g --memory-swap 48g --oom-score-adj 1000
   -v "$specialist_model:/model:ro"
@@ -60,14 +59,13 @@ specialist_command=(
   python -m sglang.launch_server
   --model-path /model --host 0.0.0.0 --port 18102
   --served-model-name dgx-moa-specialist-candidate
-  --context-length 65536 --mem-fraction-static 0.34
+  --context-length 65536 --mem-fraction-static 0.75
   --max-running-requests 1 --max-total-tokens 65536
-  --quantization modelopt_fp4 --kv-cache-dtype fp8_e4m3
-  --language-only
+  --quantization modelopt_fp4
   --cuda-graph-backend-decode disabled
   --cuda-graph-backend-prefill disabled
   --reasoning-parser gemma4 --tool-call-parser gemma4
-  --enable-metrics --enable-cache-report --stream-output
+  --enable-metrics --enable-cache-report --incremental-streaming-output
 )
 
 print_command() {
@@ -118,7 +116,7 @@ preflight() {
 wait_server() {
   local container=$1 url=$2 deadline=$((SECONDS + 1800))
   until curl -fsS "$url/v1/models" >/dev/null 2>&1; do
-    if ((SECONDS >= deadline)) || ! docker container inspect "$container" >/dev/null 2>&1; then
+    if ((SECONDS >= deadline)) || [[ "$(docker container inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)" != "true" ]]; then
       printf 'candidate server did not become available: %s\n' "$container" >&2
       return 1
     fi
