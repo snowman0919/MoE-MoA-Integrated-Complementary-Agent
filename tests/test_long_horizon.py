@@ -1,26 +1,24 @@
 from __future__ import annotations
 
 import json
-import runpy
 from pathlib import Path
 
 import pytest
+from dgx_moa import long_horizon_analysis as MODULE
 
-SCRIPT = Path(__file__).parents[1] / "scripts" / "analyze-long-horizon.py"
-MODULE = runpy.run_path(str(SCRIPT))
 HASH = "a" * 64
 
 
 def write_evidence(path: Path) -> None:
     header = {
         "type": "header",
-        "protocol": MODULE["PROTOCOL"],
+        "protocol": MODULE.PROTOCOL,
         "variant": "V1",
         "started_at_epoch": 1_000_000,
         "expected_checkpoints": 21,
         "checkpoint_interval_seconds": 1_800,
         "baseline_commit": "a" * 40,
-        **{field: HASH for field in MODULE["STABLE_HASHES"]},
+        **{field: HASH for field in MODULE.STABLE_HASHES},
     }
     checkpoints = []
     for index in range(21):
@@ -52,7 +50,7 @@ def write_evidence(path: Path) -> None:
                 "variable_cost_usd": 0,
                 "intentional_reconnect": index == 10,
                 "premature_completion": False,
-                **{field: HASH for field in MODULE["STABLE_HASHES"]},
+                **{field: HASH for field in MODULE.STABLE_HASHES},
             }
         )
     final = {
@@ -68,7 +66,7 @@ def write_evidence(path: Path) -> None:
         "terminal": True,
         "unresolved_critical_findings": 0,
         "task_outcome": "completed",
-        **{field: HASH for field in MODULE["STABLE_HASHES"]},
+        **{field: HASH for field in MODULE.STABLE_HASHES},
     }
     path.write_text("\n".join(json.dumps(item) for item in [header, *checkpoints, final]) + "\n")
 
@@ -77,7 +75,7 @@ def test_long_horizon_analyzer_accepts_complete_pinned_ten_hour_run(tmp_path: Pa
     evidence = tmp_path / "long.jsonl"
     write_evidence(evidence)
 
-    result = MODULE["analyze"](evidence)
+    result = MODULE.analyze(evidence)
 
     assert result["passed"] is True
     assert result["checkpoints"] == 21
@@ -131,7 +129,7 @@ def test_long_horizon_analyzer_fails_closed(
     mutation(rows)
     evidence.write_text("\n".join(map(json.dumps, rows)) + "\n")
 
-    result = MODULE["analyze"](evidence)
+    result = MODULE.analyze(evidence)
 
     assert result["passed"] is False
     assert failure in result["failures"]
@@ -145,4 +143,4 @@ def test_long_horizon_analyzer_rejects_private_payload_fields(tmp_path: Path) ->
     evidence.write_text("\n".join(map(json.dumps, rows)) + "\n")
 
     with pytest.raises(ValueError, match="private field"):
-        MODULE["analyze"](evidence)
+        MODULE.analyze(evidence)

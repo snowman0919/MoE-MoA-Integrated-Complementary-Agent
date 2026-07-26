@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import json
-import runpy
-from pathlib import Path
 
 import pytest
-
-SCRIPT = Path(__file__).parents[1] / "scripts/score-blind-quality.py"
-MODULE = runpy.run_path(str(SCRIPT))
+from dgx_moa import blind_quality as MODULE
 
 
 def valid_score() -> dict[str, object]:
@@ -23,20 +19,20 @@ def valid_score() -> dict[str, object]:
 
 
 def test_score_validation_requires_component_sum_and_bounds() -> None:
-    result = MODULE["validate_score"](valid_score())
+    result = MODULE.validate_score(valid_score())
     assert result["total"] == 90
 
     wrong_total = valid_score() | {"total": 89}
     with pytest.raises(ValueError, match="component sum"):
-        MODULE["validate_score"](wrong_total)
+        MODULE.validate_score(wrong_total)
 
     out_of_range = valid_score() | {"security_data_integrity": 21, "total": 93}
     with pytest.raises(ValueError, match="out of range"):
-        MODULE["validate_score"](out_of_range)
+        MODULE.validate_score(out_of_range)
 
 
 def test_openrouter_schema_removes_only_numeric_constraints() -> None:
-    schema = MODULE["openrouter_schema"](MODULE["score_schema"]())
+    schema = MODULE.openrouter_schema(MODULE.score_schema())
     encoded = str(schema)
 
     assert "minimum" not in encoded
@@ -46,14 +42,14 @@ def test_openrouter_schema_removes_only_numeric_constraints() -> None:
 
 
 def test_blind_artifact_secret_scan_rejects_credential_like_values() -> None:
-    MODULE["assert_sanitized"]({"candidate_source": "value = 'ordinary'"})
+    MODULE.assert_sanitized({"candidate_source": "value = 'ordinary'"})
     with pytest.raises(ValueError, match="credential"):
-        MODULE["assert_sanitized"]({"candidate_source": "api_key = 'visible-secret'"})
+        MODULE.assert_sanitized({"candidate_source": "api_key = 'visible-secret'"})
 
 
 def test_artifact_payload_has_only_blinded_evidence() -> None:
-    task = MODULE["RUNNER"]["TASKS"][0]
-    package = MODULE["artifact_payload"](
+    task = MODULE.RUNNER.TASKS[0]
+    package = MODULE.artifact_payload(
         {
             "attempt_id": "confirm-a001",
             "repeat": 1,
@@ -106,18 +102,18 @@ def test_hard_gate_rejects_missing_cache_or_gpu_memory() -> None:
         },
     }
 
-    assert MODULE["hard_gate_pass"]("opencode", score)
+    assert MODULE.hard_gate_pass("opencode", score)
     score["telemetry"]["cached_tokens"] = None
-    assert not MODULE["hard_gate_pass"]("opencode", score)
+    assert not MODULE.hard_gate_pass("opencode", score)
     score["telemetry"]["cached_tokens"] = 0
     score["resources"]["after"]["gpu_memory_used_bytes"] = None
-    assert not MODULE["hard_gate_pass"]("opencode", score)
-    assert MODULE["hard_gate_pass"]("baseline", {"status": "passed"})
+    assert not MODULE.hard_gate_pass("opencode", score)
+    assert MODULE.hard_gate_pass("baseline", {"status": "passed"})
 
 
 def test_secondary_selection_is_stratified_and_adds_large_difference_pairs() -> None:
-    seal_module = MODULE["SEAL_TOOL"]
-    attempts, routes = seal_module["attempt_plan"]("confirm")
+    seal_module = MODULE.SEAL_TOOL
+    attempts, routes = seal_module.attempt_plan("confirm")
     seal = {"attempts": attempts}
     routing = {"variant_routes": {label: {"harness": harness} for label, harness in routes.items()}}
     primary = {
@@ -135,7 +131,7 @@ def test_secondary_selection_is_stratified_and_adds_large_difference_pairs() -> 
         for row in attempts
     }
 
-    selected = MODULE["initial_secondary_ids"](seal, routing, primary)
+    selected = MODULE.initial_secondary_ids(seal, routing, primary)
 
     assert len(selected) >= 40
     baseline_label = next(label for label, harness in routes.items() if harness == "baseline")
@@ -153,7 +149,7 @@ def test_judge_prompt_does_not_add_provider_or_route_metadata() -> None:
         "contract": "Return one.",
         "candidate_source": "def one(): return 1",
     }
-    prompt = MODULE["judge_prompt"](package)
+    prompt = MODULE.judge_prompt(package)
 
     assert "variant-a" in prompt
     assert "opencode" not in prompt.lower()
@@ -185,8 +181,8 @@ def test_secondary_score_pins_bedrock_and_parses_accounting(monkeypatch) -> None
         assert timeout == 30
         return FakeResponse()
 
-    monkeypatch.setattr(MODULE["urllib"].request, "urlopen", urlopen)
-    score, accounting = MODULE["secondary_score"](
+    monkeypatch.setattr(MODULE.urllib.request, "urlopen", urlopen)
+    score, accounting = MODULE.secondary_score(
         {"variant": "variant-a"}, key="synthetic", timeout=30
     )
 

@@ -1,18 +1,11 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
-
-ROOT = Path(__file__).parents[1]
-SCRIPT = ROOT / "scripts" / "validate-isolated-sglang-runtime.py"
-SPEC = importlib.util.spec_from_file_location("isolated_sglang_runtime", SCRIPT)
-assert SPEC and SPEC.loader
-MODULE = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(MODULE)
+from dgx_moa import isolated_sglang_validation as MODULE
 
 
 def response(
@@ -99,18 +92,19 @@ def valid_runtime_snapshot() -> dict[str, Any]:
                 "ports": ["127.0.0.1:18101->18101/tcp"],
                 "settings": {
                     "context-length": "65536",
-                    "mem-fraction-static": "0.54",
+                    "mem-fraction-static": "0.45",
                     "max-running-requests": "1",
                     "max-total-tokens": "65536",
                     "max-mamba-cache-size": "5",
-                    "quantization": "compressed-tensors",
+                    "quantization": "modelopt_fp4",
                     "tool-call-parser": "qwen3_coder",
                     "radix-cache": True,
                     "metrics": True,
                     "cache-report": True,
                     "incremental-streaming": True,
+                    "overlap-schedule": False,
                 },
-                "memory": {"memory_current_bytes": 64 * 1024**3},
+                "memory": {"memory_current_bytes": 6 * 1024**3},
             },
             "specialist": {
                 **common,
@@ -118,9 +112,10 @@ def valid_runtime_snapshot() -> dict[str, Any]:
                 "ports": ["127.0.0.1:18102->18102/tcp"],
                 "settings": {
                     "context-length": "65536",
-                    "mem-fraction-static": "0.75",
+                    "mem-fraction-static": "0.90",
                     "max-running-requests": "1",
                     "max-total-tokens": "65536",
+                    "swa-full-tokens-ratio": "0.06",
                     "quantization": "modelopt_fp4",
                     "reasoning-parser": "gemma4",
                     "tool-call-parser": "gemma4",
@@ -128,12 +123,16 @@ def valid_runtime_snapshot() -> dict[str, Any]:
                     "metrics": True,
                     "cache-report": True,
                     "incremental-streaming": True,
+                    "overlap-schedule": True,
                 },
                 "memory": {"memory_current_bytes": 30 * 1024**3},
             },
         },
         "gpu": [],
-        "memory": {},
+        "memory": {
+            "memavailable_kib": 12 * 1024**2,
+            "memtotal_kib": 125_441_420,
+        },
     }
 
 
@@ -158,14 +157,16 @@ def test_runtime_validator_covers_real_contract_without_retaining_payloads(monke
                 ]
             ), 0.1
         if payload.get("response_format"):
+            assert payload["custom_params"] == {"thinking_budget": 512}
             content = planner_json() if "API migration" in prompt else reviewer_json()
             return response(content, reasoning="private analysis"), 0.2
         if "17 * 19" in prompt:
             return response("323", reasoning="private arithmetic"), 0.1
         if "Radix validation" in prompt:
             cache_calls += 1
-            marker = "CACHE_ONE" if cache_calls == 1 else "CACHE_TWO"
-            return response(marker, cached=0 if cache_calls == 1 else 3000), 0.1
+            return response("4", cached=0 if cache_calls == 1 else 3000), 0.1
+        if "2+2" in prompt:
+            return response("4"), 0.1
         marker = "EXECUTOR_READY" if "EXECUTOR_READY" in prompt else "SPECIALIST_READY"
         return response(marker), 0.1
 
@@ -191,7 +192,7 @@ def test_runtime_validator_covers_real_contract_without_retaining_payloads(monke
     monkeypatch.setattr(
         MODULE,
         "stream_json",
-        lambda _url, _payload, _timeout: {
+        lambda *_args: {
             "latency_seconds": 0.1,
             "chunks": 2,
             "done": True,
@@ -203,6 +204,16 @@ def test_runtime_validator_covers_real_contract_without_retaining_payloads(monke
         "runtime_snapshot",
         valid_runtime_snapshot,
     )
+    monkeypatch.setattr(
+        MODULE,
+        "get_text",
+        lambda _url, _timeout: (
+            'sglang:max_total_num_tokens{model_name="dgx-moa-executor-candidate"} '
+            "65536\n"
+            'sglang:max_total_num_tokens{model_name="dgx-moa-specialist-candidate"} '
+            "65536\n"
+        ),
+    )
 
     result = MODULE.run_validation("http://127.0.0.1:18101", "http://localhost:18102", 1)
 
@@ -213,19 +224,66 @@ def test_runtime_validator_covers_real_contract_without_retaining_payloads(monke
         assert private not in rendered
 
 
-def test_runtime_contract_rejects_memory_drift_and_oom() -> None:
+def test_runtime_contract_rejects_low_headroom_and_oom() -> None:
     snapshot = valid_runtime_snapshot()
 
-    assert MODULE.runtime_contract(snapshot)["executor_memory_used_bytes"] == 64 * 1024**3
+    assert MODULE.runtime_contract(snapshot)["host_memory_available_gib"] == 12.0
 
-    snapshot["containers"]["executor"]["memory"]["memory_current_bytes"] = 62 * 1024**3
-    with pytest.raises(RuntimeError, match="executor_memory_out_of_range"):
+    snapshot["memory"]["memavailable_kib"] = 10 * 1024**2 - 1
+    with pytest.raises(RuntimeError, match="host_memory_headroom_below_minimum"):
         MODULE.runtime_contract(snapshot)
 
     snapshot = valid_runtime_snapshot()
     snapshot["containers"]["specialist"]["oom_killed"] = True
     with pytest.raises(RuntimeError, match="runtime_contract_mismatch"):
         MODULE.runtime_contract(snapshot)
+
+
+def test_runtime_validator_skips_inference_when_contract_is_unsafe(monkeypatch) -> None:
+    snapshot = valid_runtime_snapshot()
+    snapshot["memory"]["memavailable_kib"] = 1
+    monkeypatch.setattr(MODULE, "runtime_snapshot", lambda: snapshot)
+    monkeypatch.setattr(
+        MODULE,
+        "post_json",
+        lambda *_args, **_kwargs: pytest.fail("unsafe inference dispatched"),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "get_json",
+        lambda url, _timeout: (
+            {
+                "data": [
+                    {
+                        "id": (
+                            "dgx-moa-executor-candidate"
+                            if "18101" in url
+                            else "dgx-moa-specialist-candidate"
+                        )
+                    }
+                ]
+            },
+            0.01,
+        ),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "get_text",
+        lambda _url, _timeout: (
+            'sglang:max_total_num_tokens{model_name="dgx-moa-executor-candidate"} '
+            "65536\n"
+            'sglang:max_total_num_tokens{model_name="dgx-moa-specialist-candidate"} '
+            "65536\n"
+        ),
+    )
+
+    result = MODULE.run_validation("http://127.0.0.1:18101", "http://127.0.0.1:18102", 1)
+
+    assert result["passed"] is False
+    assert result["checks"]["executor_readiness"] == {
+        "status": "skipped",
+        "failure": "unsafe_runtime_contract",
+    }
 
 
 def test_expected_catalog_rejects_wrong_served_model(monkeypatch) -> None:

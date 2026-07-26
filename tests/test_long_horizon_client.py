@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import runpy
 import sqlite3
 from pathlib import Path
 
 import pytest
-
-SCRIPT = Path(__file__).parents[1] / "scripts" / "run-long-horizon-client.py"
-MODULE = runpy.run_path(str(SCRIPT))
+from dgx_moa import long_horizon_client as MODULE
 
 
 def arguments(tmp_path: Path, harness: str) -> argparse.Namespace:
@@ -38,39 +35,39 @@ def arguments(tmp_path: Path, harness: str) -> argparse.Namespace:
         gateway="http://127.0.0.1:19300",
         api_key_env="TEST_LONG_API_KEY",
         provider_manifest=provider_manifest,
-        provider_manifest_sha256=MODULE["sha256_file"](provider_manifest),
+        provider_manifest_sha256=MODULE.sha256_file(provider_manifest),
     )
 
 
 def test_evidence_is_durable_and_rejects_private_fields(tmp_path: Path) -> None:
     evidence = tmp_path / "evidence.jsonl"
-    MODULE["append_event"](evidence, {"type": "header", "value": 1}, create=True)
-    MODULE["append_event"](evidence, {"type": "checkpoint", "value": 2})
+    MODULE.append_event(evidence, {"type": "header", "value": 1}, create=True)
+    MODULE.append_event(evidence, {"type": "checkpoint", "value": 2})
 
     assert evidence.stat().st_mode & 0o777 == 0o600
-    assert [row["type"] for row in MODULE["load_events"](evidence)] == [
+    assert [row["type"] for row in MODULE.load_events(evidence)] == [
         "header",
         "checkpoint",
     ]
     with pytest.raises(ValueError, match="private evidence"):
-        MODULE["append_event"](evidence, {"type": "bad", "raw_prompt": "secret"})
+        MODULE.append_event(evidence, {"type": "bad", "raw_prompt": "secret"})
     with pytest.raises(ValueError, match="private evidence"):
-        MODULE["append_event"](evidence, {"type": "bad", "nested": {"session_id": "raw"}})
+        MODULE.append_event(evidence, {"type": "bad", "nested": {"session_id": "raw"}})
 
 
 def test_provider_manifest_hash_rejects_private_fields(tmp_path: Path) -> None:
     manifest = tmp_path / "provider.json"
     manifest.write_text(json.dumps({"executor": {"model": "fixed", "revision": "abc"}}))
 
-    assert MODULE["provider_manifest_hash"](manifest) == MODULE["sha256_file"](manifest)
+    assert MODULE.provider_manifest_hash(manifest) == MODULE.sha256_file(manifest)
 
     manifest.write_text(json.dumps({"executor": {"api_key": "private"}}))
     with pytest.raises(ValueError, match="private evidence"):
-        MODULE["provider_manifest_hash"](manifest)
+        MODULE.provider_manifest_hash(manifest)
 
 
 def test_codex_model_catalog_enables_native_patch_tool() -> None:
-    model = MODULE["codex_model_catalog"]()["models"][0]
+    model = MODULE.codex_model_catalog()["models"][0]
 
     assert model["slug"] == "dgx-moa-orchestrated"
     assert model["apply_patch_tool_type"] == "freeform"
@@ -97,7 +94,7 @@ def test_client_commands_resume_the_same_private_session(
     args = arguments(tmp_path, harness)
     state = tmp_path / f"state-{harness}"
 
-    command, environment, _ = MODULE["client_command"](
+    command, environment, _ = MODULE.client_command(
         args, state, "private-session", 4, "private-gateway-session"
     )
 
@@ -129,7 +126,7 @@ def test_client_metrics_and_provider_pinning_are_aggregated_without_payloads(
             "tokens": {"input": 100, "cache": {"read": 75}},
         },
     }
-    metrics = MODULE["client_metrics"](
+    metrics = MODULE.client_metrics(
         "opencode",
         "\n".join(json.dumps(row) for row in (repeated_read, repeated_read, finish)),
         "",
@@ -170,7 +167,7 @@ def test_client_metrics_and_provider_pinning_are_aggregated_without_payloads(
             ),
         )
 
-    provider = MODULE["provider_metrics"](database, 1, 4)
+    provider = MODULE.provider_metrics(database, 1, 4)
 
     assert provider["provider_pinned"] is True
     assert provider["provider_errors"] == 0
@@ -209,7 +206,7 @@ def test_provider_pinning_is_scoped_to_each_call(tmp_path: Path) -> None:
             ),
         )
 
-    assert MODULE["provider_metrics"](database, 1, 4)["provider_pinned"] is True
+    assert MODULE.provider_metrics(database, 1, 4)["provider_pinned"] is True
 
     with sqlite3.connect(database) as connection:
         connection.execute(
@@ -228,7 +225,94 @@ def test_provider_pinning_is_scoped_to_each_call(tmp_path: Path) -> None:
             ),
         )
 
-    assert MODULE["provider_metrics"](database, 1, 4)["provider_pinned"] is False
+    assert MODULE.provider_metrics(database, 1, 4)["provider_pinned"] is False
+
+
+def test_provider_cost_handles_fixed_plans_and_fails_closed_for_paid_routes(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "state.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE model_invocation_usage ("
+            "request_id TEXT, role TEXT, provider TEXT, model TEXT, status TEXT, latency_ms REAL, "
+            "prompt_tokens INTEGER, total_tokens INTEGER, invoked_at REAL)"
+        )
+        connection.execute(
+            "INSERT INTO model_invocation_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("fixed", "executor", "frontier", "gpt-fixed", "completed", 10, 10, 12, 2),
+        )
+
+    assert MODULE.provider_metrics(database, 1, 4)["variable_cost_usd"] == 0
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO model_invocation_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "paid",
+                "executor",
+                "openrouter:paid-model",
+                "paid-model",
+                "completed",
+                10,
+                10,
+                12,
+                3,
+            ),
+        )
+
+    assert MODULE.provider_metrics(database, 1, 4)["variable_cost_usd"] is None
+
+
+def test_provider_metrics_exclude_concurrent_other_sessions(tmp_path: Path) -> None:
+    database = tmp_path / "state.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE model_invocation_usage ("
+            "request_id TEXT, role TEXT, provider TEXT, model TEXT, status TEXT, latency_ms REAL, "
+            "prompt_tokens INTEGER, total_tokens INTEGER, cost_usd REAL, invoked_at REAL)"
+        )
+        connection.execute("CREATE TABLE request_usage (request_id TEXT, session_id TEXT)")
+        connection.executemany(
+            "INSERT INTO request_usage VALUES (?, ?)",
+            (("target-request", "private-target"), ("other-request", "private-other")),
+        )
+        connection.executemany(
+            "INSERT INTO model_invocation_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                (
+                    "target-request",
+                    "executor",
+                    "local",
+                    "executor-fixed",
+                    "completed",
+                    10,
+                    10,
+                    12,
+                    0,
+                    2,
+                ),
+                (
+                    "other-request",
+                    "executor",
+                    "openrouter:paid-model",
+                    "paid-model",
+                    "completed",
+                    10,
+                    10,
+                    12,
+                    None,
+                    2.5,
+                ),
+            ),
+        )
+
+    metrics = MODULE.provider_metrics(database, 1, 4, "private-target")
+
+    assert metrics["provider_provenance"] == [
+        {"role": "executor", "provider": "local", "model": "executor-fixed"}
+    ]
+    assert metrics["variable_cost_usd"] == 0
 
 
 def test_hermes_metrics_use_tool_rows_not_model_api_count(tmp_path: Path) -> None:
@@ -268,7 +352,7 @@ def test_hermes_metrics_use_tool_rows_not_model_api_count(tmp_path: Path) -> Non
             ),
         )
 
-    metrics = MODULE["client_metrics"]("hermes", "done", "", usage, tmp_path)
+    metrics = MODULE.client_metrics("hermes", "done", "", usage, tmp_path)
 
     assert metrics["tool_calls"] == 1
     assert metrics["context_tokens"] == 90
@@ -293,14 +377,14 @@ def test_checkpoint_interrupt_removes_only_its_named_container(
     }
     existence = iter((False, True))
     removed: list[str] = []
-    globals_ = MODULE["run_checkpoint"].__globals__
+    globals_ = MODULE.run_checkpoint.__globals__
     monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
-    monkeypatch.setitem(
-        MODULE["QUALITY"],
+    monkeypatch.setattr(
+        MODULE.QUALITY,
         "run_process",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
-    monkeypatch.setitem(MODULE["RUNTIME"], "runtime_snapshot", lambda: {})
+    monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
     monkeypatch.setitem(
         globals_,
         "client_command",
@@ -311,6 +395,57 @@ def test_checkpoint_interrupt_removes_only_its_named_container(
     monkeypatch.setitem(globals_, "remove_client_container", removed.append)
 
     with pytest.raises(KeyboardInterrupt):
-        MODULE["run_checkpoint"](args, state, control, 0)
+        MODULE.run_checkpoint(args, state, control, 0)
 
-    assert removed == [MODULE["client_container_name"](args, state, 0)]
+    assert removed == [MODULE.client_container_name(args, state, 0)]
+
+
+def test_checkpoint_timeout_is_distinguished_from_generic_client_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = arguments(tmp_path, "codex")
+    args.state_db = tmp_path / "unused.db"
+    args.timeout = 1
+    state = tmp_path / "state"
+    state.mkdir()
+    control = {
+        "started_at_epoch": 1,
+        "baseline": {},
+        "gateway_session": "private-gateway",
+        "client_session": None,
+    }
+    globals_ = MODULE.run_checkpoint.__globals__
+    monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
+    monkeypatch.setattr(
+        MODULE.QUALITY,
+        "run_process",
+        lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
+            [], 124, "", "timeout"
+        ),
+    )
+    monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
+    monkeypatch.setitem(
+        globals_,
+        "client_command",
+        lambda *_args: (["docker", "run", "--rm", "image", "command"], {}, None),
+    )
+    monkeypatch.setitem(globals_, "wait_until", lambda _target: None)
+    monkeypatch.setitem(globals_, "container_exists", lambda _name: False)
+    monkeypatch.setitem(
+        globals_,
+        "client_metrics",
+        lambda *_args: {
+            "session": None,
+            "terminal": False,
+            "context_tokens": 0,
+            "cached_tokens": 0,
+            "tool_calls": 0,
+            "retries": 0,
+            "unjustified_repeated_reads": 0,
+            "output_sha256": "0" * 64,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="client_checkpoint_timeout"):
+        MODULE.run_checkpoint(args, state, control, 0)
