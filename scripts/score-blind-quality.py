@@ -165,6 +165,10 @@ def hard_gate_pass(harness: str, score: dict[str, Any]) -> bool:
         and telemetry.get("provider_errors") == 0
         and telemetry.get("remote_cost_complete") is True
         and all(
+            resources.get(phase, {}).get("gpu_memory_source") in {"nvidia-smi", "cudaMemGetInfo"}
+            for phase in ("before", "after")
+        )
+        and all(
             isinstance(telemetry.get(name), (int, float))
             and not isinstance(telemetry.get(name), bool)
             for name in required_numbers

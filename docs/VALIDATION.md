@@ -5516,3 +5516,17 @@ production timeout implementation was unchanged. The focused test then passed
 five consecutive runs. The complete candidate suite passed 1,065 tests in
 108.23 seconds with one third-party Starlette deprecation warning; Ruff and
 `git diff --check` also passed.
+
+On this GB10 unified-memory host, `nvidia-smi --query-gpu=memory.used` returns
+literal `[N/A]`; treating that as zero or model-process RSS would be
+misleading. The quality runner now falls back to CUDA `cudaMemGetInfo` through
+Python's standard-library `ctypes` and records the source. A live probe returned
+numeric GPU, host, and swap measurements with source `cudaMemGetInfo`.
+
+Reapplying the strict telemetry collector to an immutable r7 attempt recovered
+prompt/completion/total tokens, zero retryable failures, complete remote cost,
+and numeric CUDA memory. It correctly remained incomplete with
+`cache_usage_missing` because those historical providers did not report
+cached-token values. The missing cache value remains `null`, not zero, and
+blocks sealing the real confirmatory epoch until provider-backed cache evidence
+is available.

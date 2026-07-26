@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -1192,7 +1193,21 @@ def run_codex_admin(args: argparse.Namespace, workspace: Path, task: Task) -> tu
         return 124, "", type(error).__name__
 
 
-def resource_snapshot() -> dict[str, int | None]:
+def cuda_memory_used() -> int | None:
+    try:
+        runtime = ctypes.CDLL("libcudart.so")
+        free = ctypes.c_size_t()
+        total = ctypes.c_size_t()
+        if runtime.cudaMemGetInfo(ctypes.byref(free), ctypes.byref(total)) != 0:
+            return None
+        if total.value < free.value:
+            return None
+        return total.value - free.value
+    except (OSError, ValueError):
+        return None
+
+
+def resource_snapshot() -> dict[str, Any]:
     memory: dict[str, int] = {}
     try:
         for line in Path("/proc/meminfo").read_text().splitlines():
@@ -1202,6 +1217,7 @@ def resource_snapshot() -> dict[str, int | None]:
     except (OSError, ValueError, IndexError):
         memory = {}
     gpu_memory: int | None = None
+    gpu_memory_source: str | None = None
     try:
         result = subprocess.run(
             [
@@ -1219,8 +1235,13 @@ def resource_snapshot() -> dict[str, int | None]:
         ]
         if result.returncode == 0 and values:
             gpu_memory = sum(values) * 1024 * 1024
+            gpu_memory_source = "nvidia-smi"
     except (OSError, subprocess.TimeoutExpired, ValueError):
         pass
+    if gpu_memory is None:
+        gpu_memory = cuda_memory_used()
+        if gpu_memory is not None:
+            gpu_memory_source = "cudaMemGetInfo"
     return {
         "host_memory_used_bytes": (
             memory["MemTotal"] - memory["MemAvailable"]
@@ -1233,6 +1254,7 @@ def resource_snapshot() -> dict[str, int | None]:
             else None
         ),
         "gpu_memory_used_bytes": gpu_memory,
+        "gpu_memory_source": gpu_memory_source,
     }
 
 

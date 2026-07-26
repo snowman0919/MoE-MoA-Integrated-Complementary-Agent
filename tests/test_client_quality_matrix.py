@@ -311,3 +311,16 @@ def test_invocation_telemetry_requires_and_collects_retry_cache_and_tokens(
     assert result["total_tokens"] == 10
     assert result["cached_tokens"] == 2
     assert result["retryable_failures"] == 0
+
+
+def test_cuda_memory_used_reads_runtime_without_torch(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class Runtime:
+        @staticmethod
+        def cudaMemGetInfo(free, total):  # type: ignore[no-untyped-def]
+            free._obj.value = 30  # noqa: SLF001
+            total._obj.value = 100  # noqa: SLF001
+            return 0
+
+    monkeypatch.setattr(MODULE["ctypes"], "CDLL", lambda _name: Runtime())
+
+    assert MODULE["cuda_memory_used"]() == 70

@@ -98,6 +98,7 @@ def test_hard_gate_rejects_missing_cache_or_gpu_memory() -> None:
         "resources": {
             phase: {
                 "gpu_memory_used_bytes": 1,
+                "gpu_memory_source": "cudaMemGetInfo",
                 "host_memory_used_bytes": 2,
                 "swap_used_bytes": 0,
             }
