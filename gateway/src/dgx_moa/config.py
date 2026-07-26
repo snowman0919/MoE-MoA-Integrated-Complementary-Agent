@@ -270,6 +270,40 @@ class RuntimeEvolutionConfig(BaseModel):
     state_db: Path = Path("data/evolution/evolution.db")
 
 
+class ImageGenerationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    provider: Literal["codex_oauth"] = "codex_oauth"
+    model: Literal["gpt-image-2"] = "gpt-image-2"
+    profile: str = "primary"
+    profile_root: Path = Path("/home/kotori9/.local/share/dgx-moa/codex-profiles")
+    artifact_root: Path = Path("data/imagegen")
+    capability_probe: Path | None = None
+    capability_probe_sha256: str | None = None
+    timeout_seconds: int = Field(default=600, ge=1, le=1_800)
+    max_prompt_characters: int = Field(default=8_000, ge=1, le=32_000)
+    max_artifact_bytes: int = Field(default=25_000_000, ge=1_024, le=100_000_000)
+    max_dimension: int = Field(default=4_096, ge=64, le=16_384)
+    max_calls_per_key_per_day: int = Field(default=5, ge=1, le=1_000)
+
+    @model_validator(mode="after")
+    def validate_activation_gate(self) -> ImageGenerationConfig:
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", self.profile):
+            raise ValueError("image generation profile must be a safe Codex OAuth profile")
+        if self.capability_probe_sha256 is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", self.capability_probe_sha256
+        ):
+            raise ValueError("image generation probe checksum must be lowercase SHA-256")
+        if self.enabled and (
+            self.capability_probe is None or self.capability_probe_sha256 is None
+        ):
+            raise ValueError(
+                "enabled image generation requires a checksummed physical capability probe"
+            )
+        return self
+
+
 class RemoteJudgeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -511,6 +545,7 @@ class Settings(BaseModel):
     runtime_skills: RuntimeSkillsPolicy = Field(default_factory=RuntimeSkillsPolicy)
     runtime_knowledge: RuntimeKnowledgePolicy = Field(default_factory=RuntimeKnowledgePolicy)
     runtime_evolution: RuntimeEvolutionConfig = Field(default_factory=RuntimeEvolutionConfig)
+    image_generation: ImageGenerationConfig = Field(default_factory=ImageGenerationConfig)
     remote_judge: RemoteJudgeConfig = Field(default_factory=RemoteJudgeConfig)
     specialist_routing: SpecialistRoutingConfig = Field(default_factory=SpecialistRoutingConfig)
     declarative_policy: DeclarativePolicyConfig = Field(default_factory=DeclarativePolicyConfig)
@@ -688,6 +723,13 @@ def load_settings(path: str | Path | None = None) -> Settings:
         with suppress(json.JSONDecodeError):
             runtime_evolution = json.loads(runtime_evolution)
     gateway["runtime_evolution"] = runtime_evolution
+    image_generation: Any = os.getenv(
+        "DGX_MOA_IMAGE_GENERATION", gateway.get("image_generation", {})
+    )
+    if isinstance(image_generation, str):
+        with suppress(json.JSONDecodeError):
+            image_generation = json.loads(image_generation)
+    gateway["image_generation"] = image_generation
     remote_judge: Any = os.getenv("DGX_MOA_REMOTE_JUDGE", gateway.get("remote_judge", {}))
     if isinstance(remote_judge, str):
         with suppress(json.JSONDecodeError):

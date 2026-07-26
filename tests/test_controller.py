@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -23,6 +24,49 @@ from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
 from dgx_moa.state import Phase, SessionState, StateStore
 
 from .conftest import StubProvider
+
+
+def test_local_invocation_records_zero_when_cache_detail_is_absent(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="local-cache")
+
+    controller.record_invocation(
+        state,
+        "reasoner",
+        {
+            "model": "reasoner",
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
+        },
+        time.monotonic(),
+    )
+
+    assert state.agent_invocations[-1]["cached_tokens"] == 0
+
+
+def test_unbounded_codex_oauth_skips_only_the_frontier_specific_budget(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class Frontier:
+        config = FrontierConfig(enabled=True, max_invocations_per_task=None)
+
+    settings.loop_engineering.enabled = True
+    controller = Controller(
+        settings,
+        StateStore(settings.state_db),
+        stub_provider,  # type: ignore[arg-type]
+        Frontier(),  # type: ignore[arg-type]
+    )
+    state = controller.session("unbounded-frontier", [{"role": "user", "content": "work"}])
+    controller.select_route(state, {})
+    assert state.engineering_loop is not None
+    before = state.engineering_loop.remaining_budget.frontier_calls
+
+    controller.admit_frontier_call(state)
+
+    assert state.engineering_loop.remaining_budget.frontier_calls == before
+    assert state.engineering_loop.remaining_budget.wall_clock_seconds > 0
 
 
 def test_structured_response_diagnostics_excludes_private_content() -> None:
@@ -338,6 +382,86 @@ async def test_planner_and_frontier_are_concurrent_and_frontier_evidence_survive
 
 
 @pytest.mark.asyncio
+async def test_invalid_remote_planner_preserves_failure_provenance(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class Specialists:
+        def prewarm(self, *args) -> None:  # type: ignore[no-untyped-def]
+            del args
+
+        async def complete(self, role, request, **kwargs):  # type: ignore[no-untyped-def]
+            del role, request, kwargs
+            return (
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": '{"ordered_steps":',
+                                "reasoning_content": "private",
+                            },
+                            "finish_reason": "length",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 2048,
+                        "completion_tokens": 4096,
+                        "total_tokens": 6144,
+                        "prompt_tokens_details": {"cached_tokens": 512},
+                    },
+                },
+                {
+                    "selected_provider": "remote",
+                    "model": "deepseek-v4-pro",
+                    "routing_reason": "local_not_ready",
+                    "remote_cost_usd": 0.0,
+                },
+            )
+
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)
+    controller.specialists = Specialists()  # type: ignore[assignment]
+    state = SessionState(
+        session_id="remote-planner-invalid",
+        objective="Create a bounded implementation plan",
+        runtime_mode="orchestrated",
+        request_class="explicit_orchestrated",
+        roles_required=["planner"],
+    )
+
+    with pytest.raises(json.JSONDecodeError):
+        await controller.prepare_executor(
+            state,
+            {
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": state.objective}],
+                "metadata": {},
+            },
+            ("planner",),
+        )
+
+    failed = next(
+        invocation
+        for invocation in state.agent_invocations
+        if invocation["role"] == "planner" and invocation["status"] == "failed"
+    )
+    assert failed == {
+        "role": "planner",
+        "mode": "collaboration",
+        "model": "deepseek-v4-pro",
+        "provider": "remote",
+        "routing_reason": "local_not_ready",
+        "fallback_reason": "local_not_ready",
+        "latency_ms": failed["latency_ms"],
+        "prompt_tokens": 2048,
+        "completion_tokens": 4096,
+        "total_tokens": 6144,
+        "cached_tokens": 512,
+        "cost_usd": 0.0,
+        "status": "failed",
+        "failure_class": "JSONDecodeError",
+    }
+
+
+@pytest.mark.asyncio
 async def test_executor_declared_dependency_keeps_planner_before_frontier(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -647,7 +771,7 @@ async def test_local_review_escalates_to_frontier_code_review(
     prepared = await controller.prepare_executor(state, request, ("reasoner", "executor"))
 
     assert [mode for mode, _ in frontier.calls] == ["code_review"]
-    assert frontier.calls[0][1]["_paid_fallback_required"] is True
+    assert frontier.calls[0][1].get("_paid_fallback_required") is not True
     assert frontier.calls[0][1]["local_reviewer_findings"]["status"] == (
         "approved" if clean_approval else "rejected"
     )
@@ -2116,8 +2240,15 @@ async def test_tool_continuation_reenters_reasoner_for_changed_context_or_no_pro
         ("reasoner", "executor"),
         tool_continuation=True,
     )
+    state.tool_results.extend([{"stdout": "first"}, {"stdout": "second"}])
+    await controller.prepare_executor(
+        state, changed, ("reasoner", "executor"), tool_continuation=True
+    )
+    await controller.prepare_executor(
+        state, changed, ("reasoner", "executor"), tool_continuation=True
+    )
 
-    assert stub_provider.calls.count("reasoner") == 3
+    assert stub_provider.calls.count("reasoner") == 4
     reentries = [
         event["payload"]
         for event in controller.store.events(state.session_id)
@@ -2126,6 +2257,7 @@ async def test_tool_continuation_reenters_reasoner_for_changed_context_or_no_pro
     assert reentries == [
         {"reasons": ["user_context_changed"]},
         {"reasons": ["no_progress"]},
+        {"reasons": ["tool_evidence_changed"]},
     ]
 
 

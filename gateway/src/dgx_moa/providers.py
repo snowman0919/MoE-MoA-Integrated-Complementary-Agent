@@ -322,6 +322,7 @@ class ModelProvider:
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": prompt_tokens + completion_tokens,
+                "prompt_tokens_details": {"cached_tokens": 0},
             },
         }
 

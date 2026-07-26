@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sqlite3
 import subprocess
-import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -13,14 +13,13 @@ from pathlib import Path
 import httpx
 import pytest
 from dgx_moa import providers
-from dgx_moa.api import (
-    create_app,
+from dgx_moa.api import create_app, ollama_model_ready
+from dgx_moa.config import ImageGenerationConfig, Settings
+from dgx_moa.controller import fingerprint
+from dgx_moa.inference import (
     has_matching_tool_result,
-    ollama_model_ready,
     unsafe_frontier_correction_tool_call,
 )
-from dgx_moa.config import Settings
-from dgx_moa.controller import fingerprint
 from dgx_moa.lifecycle import (
     FakeLifecycleDriver,
     calculate_idle_policy,
@@ -35,7 +34,7 @@ from dgx_moa.state import Phase, SessionState
 from dgx_moa.streaming import forward_sse as unclosed_forward_sse
 from dgx_moa.training import TrainingCandidate
 from dgx_moa.weekly import previous_complete_week
-from fastapi import HTTPException, Request
+from fastapi import Request
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
@@ -1144,7 +1143,6 @@ def block_real_lifecycle_and_profile_commands(monkeypatch: pytest.MonkeyPatch) -
         pytest.fail(f"unexpected real lifecycle/profile command: {args!r} {kwargs!r}")
 
     monkeypatch.setattr(subprocess, "run", tripwire)
-    monkeypatch.setattr("dgx_moa.profiles.ProfileManager.switch", tripwire)
 
 
 @contextmanager
@@ -1154,6 +1152,172 @@ def client_with_stub(settings, stub_provider: StubProvider):  # type: ignore[no-
         app.state.provider = stub_provider
         app.state.controller.provider = stub_provider
         yield client
+
+
+def test_verified_image_tool_is_local_executor_only_and_owner_scoped(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profiles = settings.state_db.parent / "profiles"
+    codex_home = profiles / "primary"
+    codex_home.mkdir(parents=True)
+    (codex_home / "auth.json").write_text("{}")
+    probe = settings.state_db.parent / "image-probe.json"
+    probe.write_text(
+        json.dumps(
+            {
+                "protocol_id": "imagegen-capability-v1",
+                "passed": True,
+                "provider": "codex_oauth",
+                "model": "gpt-image-2",
+                "content_free_logging": True,
+                "secret_scan_passed": True,
+                "artifact_validation_passed": True,
+                "profile_lock_passed": True,
+            },
+            sort_keys=True,
+        )
+    )
+    image_config = ImageGenerationConfig(
+        enabled=True,
+        profile_root=profiles,
+        artifact_root=settings.state_db.parent / "images",
+        capability_probe=probe,
+        capability_probe_sha256=hashlib.sha256(probe.read_bytes()).hexdigest(),
+    )
+    configured = settings.model_copy(
+        update={
+            "api_key": None,
+            "api_keys": {"owner": "owner-secret", "other": "other-secret"},
+            "image_generation": image_config,
+        }
+    )
+
+    class ImageExecutor(StubProvider):
+        async def complete(  # type: ignore[override]
+            self,
+            role,
+            model,
+            request,
+            **kwargs,
+        ):  # type: ignore[no-untyped-def]
+            if role != "executor" or request.get("response_format"):
+                return await super().complete(role, model, request, **kwargs)
+            self.calls.append(role)
+            self.requests.append(request)
+            self.call_options.append(kwargs)
+            if len([call for call in self.calls if call == "executor"]) == 1:
+                assert any(
+                    tool.get("function", {}).get("name") == "generate_image"
+                    for tool in request["tools"]
+                )
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call-image",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "generate_image",
+                                            "arguments": json.dumps(
+                                                {"prompt": "private blue square"}
+                                            ),
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6},
+                }
+            assert not any(
+                tool.get("function", {}).get("name") == "generate_image"
+                for tool in request.get("tools", [])
+            )
+            assert request["messages"][-1]["role"] == "tool"
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "이미지가 준비됐습니다."},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+            }
+
+    class ImageProcess:
+        returncode = 0
+
+        def __init__(self, command, **_kwargs):  # type: ignore[no-untyped-def]
+            assert command[-1] == "-"
+
+        def communicate(self, input=None, timeout=None):  # type: ignore[no-untyped-def]
+            assert "private blue square" in input
+            generated = codex_home / "generated_images"
+            generated.mkdir()
+            (generated / "image.png").write_bytes(
+                b"\x89PNG\r\n\x1a\n"
+                + b"\x00\x00\x00\rIHDR"
+                + (16).to_bytes(4, "big")
+                + (12).to_bytes(4, "big")
+                + b"\x08\x02\x00\x00\x00"
+            )
+            return "", ""
+
+        def poll(self):  # type: ignore[no-untyped-def]
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.returncode = -15
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout=None):  # type: ignore[no-untyped-def]
+            return self.returncode
+
+    monkeypatch.setattr(subprocess, "Popen", ImageProcess)
+    executor = ImageExecutor()
+    app = create_app(configured)
+    with TestClient(app) as client:
+        app.state.provider = executor
+        app.state.controller.provider = executor
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer owner-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "이미지를 만들어줘"}],
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["choices"][0]["message"]["content"] == "이미지가 준비됐습니다."
+        event = next(
+            event
+            for event in app.state.store.events(response.headers["X-Session-ID"])
+            if event["event_type"] == "image_generation_completed"
+        )
+        artifact_id = event["payload"]["artifact_id"]
+        owner = client.get(
+            f"/v1/image-artifacts/{artifact_id}",
+            headers={"Authorization": "Bearer owner-secret"},
+        )
+        other = client.get(
+            f"/v1/image-artifacts/{artifact_id}",
+            headers={"Authorization": "Bearer other-secret"},
+        )
+        assert owner.status_code == 200
+        assert owner.headers["content-type"] == "image/png"
+        assert other.status_code == 404
+        assert "private blue square" not in json.dumps(
+            app.state.store.events(response.headers["X-Session-ID"])
+        )
+        assert len([call for call in executor.calls if call == "executor"]) == 2
 
 
 def chat_endpoint(app):  # type: ignore[no-untyped-def]
@@ -1259,15 +1423,6 @@ def remote_verdict(value: str = "approve") -> RemoteJudgeVerdict:
             "confidence_class": "high",
         }
     )
-
-
-def block_profile_control(monkeypatch: pytest.MonkeyPatch) -> None:
-    def reject_control(*args, **kwargs):  # type: ignore[no-untyped-def]
-        raise AssertionError("profile control escaped an admin route test")
-
-    monkeypatch.setattr("dgx_moa.profiles.ProfileManager.switch", reject_control)
-    monkeypatch.setattr("dgx_moa.profiles.ProfileManager.transition", reject_control)
-    monkeypatch.setattr("dgx_moa.profiles.subprocess.run", reject_control)
 
 
 def test_systemd_lifecycle_driver_uses_model_load_timeout(
@@ -1726,106 +1881,6 @@ async def test_readiness_to_lease_race_returns_typed_503_before_controller_or_pr
     assert payload["model_state"]["state"] == "unloading"
     assert usage.retryable_failure_class == "model_loading"
     assert stub_provider.calls == []
-
-
-@pytest.mark.asyncio
-async def test_profile_switch_holds_exact_managed_role_guards_until_terminal_cleanup(
-    settings,
-) -> None:  # type: ignore[no-untyped-def]
-    controlled = Settings.model_validate(
-        settings.model_dump()
-        | {
-            "lifecycle_mode": "fixed",
-            "lifecycle_unit_map": {
-                "executor": "dgx-moa-dev-executor.service",
-                "planner": "dgx-moa-dev-planner.service",
-            },
-        }
-    )
-    driver = FakeLifecycleDriver({"executor": "active", "planner": "active"})
-    app = create_app(
-        controlled,
-        lifecycle_driver=driver,
-        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
-        lifecycle_clock=lambda: 1_000.0,
-        lifecycle_sleeper=lambda seconds: asyncio.Event().wait(),
-    )
-    entered = threading.Event()
-    release = threading.Event()
-
-    def blocked_switch(name: str) -> dict[str, str]:
-        entered.set()
-        assert release.wait(timeout=2)
-        return {"status": "active", "active_profile": name}
-
-    async with app.router.lifespan_context(app):
-        app.state.profiles.switch = blocked_switch
-        pending = asyncio.create_task(
-            endpoint(app, "/admin/profile/resident", "POST")(Request({"type": "http", "app": app}))
-        )
-        for _ in range(1_000):
-            if entered.is_set():
-                break
-            await asyncio.sleep(0.001)
-        assert entered.is_set()
-        assert app.state.lifecycle_store.get("executor").profile_guard is True
-        assert app.state.lifecycle_store.get("planner").profile_guard is True
-        assert app.state.lifecycle_store.get("reviewer").profile_guard is False
-
-        release.set()
-        response = await asyncio.wait_for(pending, timeout=1)
-
-        assert response["active_profile"] == "resident"
-        assert app.state.lifecycle_store.get("executor").profile_guard is False
-        assert app.state.lifecycle_store.get("planner").profile_guard is False
-
-
-@pytest.mark.asyncio
-async def test_profile_guard_claim_failure_is_typed_and_never_partially_claims(
-    settings,
-) -> None:  # type: ignore[no-untyped-def]
-    controlled = Settings.model_validate(
-        settings.model_dump()
-        | {
-            "lifecycle_mode": "fixed",
-            "lifecycle_unit_map": {
-                "executor": "dgx-moa-dev-executor.service",
-                "planner": "dgx-moa-dev-planner.service",
-            },
-        }
-    )
-    app = create_app(
-        controlled,
-        lifecycle_driver=FakeLifecycleDriver({"executor": "active", "planner": "active"}),
-        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
-        lifecycle_sleeper=lambda seconds: asyncio.Event().wait(),
-    )
-    switch_called = False
-    async with app.router.lifespan_context(app):
-        executor = app.state.lifecycle_store.get("executor")
-        app.state.lifecycle_store.set_guard(
-            "executor",
-            "profile_guard",
-            True,
-            expected_transition_id=executor.transition_id,
-        )
-
-        def reject_switch(name: str) -> dict[str, str]:
-            nonlocal switch_called
-            switch_called = True
-            return {"status": "active", "active_profile": name}
-
-        app.state.profiles.switch = reject_switch
-        with pytest.raises(HTTPException) as error:
-            await endpoint(app, "/admin/profile/resident", "POST")(
-                Request({"type": "http", "app": app})
-            )
-
-        assert error.value.status_code == 503
-        assert error.value.detail == "lifecycle profile guard unavailable"
-        assert switch_called is False
-        assert app.state.lifecycle_store.get("executor").profile_guard is True
-        assert app.state.lifecycle_store.get("planner").profile_guard is False
 
 
 @pytest.mark.asyncio
@@ -4293,6 +4348,38 @@ def test_cold_planner_runs_remotely_while_local_warmup_starts(
     assert driver.calls.count(("start", "planner")) == 1
 
 
+@pytest.mark.asyncio
+async def test_external_specialists_require_startup_inference_probe(settings) -> None:  # type: ignore[no-untyped-def]
+    models = settings.model_dump()["models"]
+    for role in ("planner", "reviewer"):
+        models[role] |= {"lifecycle_control": "external"}
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "models": models,
+            "specialist_routing": {
+                "enabled": True,
+                "provider": "opencode_go",
+                "endpoint": "https://opencode.invalid",
+            },
+        }
+    )
+    probed: list[str] = []
+
+    async def health(role: str) -> bool:
+        probed.append(role)
+        return role == "planner"
+
+    app = create_app(controlled, lifecycle_health_probe=health)
+    async with app.router.lifespan_context(app):
+        assert app.state.lifecycle_store.get("planner").state == "ready"
+        reviewer = app.state.lifecycle_store.get("reviewer")
+        assert reviewer.state == "failed"
+        assert reviewer.failure_class == "external_unavailable"
+
+    assert probed == ["planner", "reviewer"]
+
+
 def test_policy_selected_cold_reviewer_triggers_load_before_review(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -4442,7 +4529,6 @@ def test_dynamically_selected_unconfigured_role_is_typed_unmanaged(
 def test_nonstream_usage_is_content_free_and_uses_opaque_server_ids(
     settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # type: ignore[no-untyped-def]
-    block_profile_control(monkeypatch)
     raw_session = "SENTINEL_RAW_SESSION_1f3c8d"
     raw_prompt = "SENTINEL_PROMPT_074f95"
     raw_response = "SENTINEL_RESPONSE_f92bb1"
@@ -5587,12 +5673,18 @@ def test_responses_success_continues_after_historical_tool_failure(
             },
         )
         state = client.app.state.store.get("responses-recovery")
+        events = client.app.state.store.events("responses-recovery")
 
     assert failed.status_code == 200
     assert recovered.status_code == 200
     assert reasoner_calls_after_failure == 1
-    assert stub_provider.calls.count("reasoner") == 1
-    assert state and state.engineering_loop and state.engineering_loop.iteration == 1
+    assert stub_provider.calls.count("reasoner") == 2
+    assert any(
+        event["event_type"] == "reasoner_reentry"
+        and event["payload"] == {"reasons": ["tool_evidence_changed"]}
+        for event in events
+    )
+    assert state and state.engineering_loop and state.engineering_loop.iteration == 2
 
 
 def test_title_request_does_not_set_the_work_session_objective(
@@ -5734,7 +5826,6 @@ def test_metrics_overlay_runtime_knowledge_registry(
 def test_auth_disabled_allows_inference_headers_or_none(
     settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # type: ignore[no-untyped-def]
-    block_profile_control(monkeypatch)
     disabled = Settings.model_validate(
         settings.model_dump() | {"auth_enabled": False, "api_key": None}
     )
@@ -5746,13 +5837,25 @@ def test_auth_disabled_allows_inference_headers_or_none(
         assert client.get("/admin/profile").status_code == 404
 
 
+def test_legacy_profile_mutation_routes_are_absent(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        for path in (
+            "/admin/profile/resident",
+            "/admin/profile/judge",
+            "/admin/profile/restore",
+        ):
+            assert (
+                client.post(path, headers={"Authorization": "Bearer test-secret"}).status_code
+                == 404
+            )
+
+
 @pytest.mark.parametrize(
     ("method", "path"),
     [
         ("GET", "/admin/profile"),
-        ("POST", "/admin/profile/resident"),
-        ("POST", "/admin/profile/judge"),
-        ("POST", "/admin/profile/restore"),
         ("GET", "/v1/admin/runtime-status"),
         ("POST", "/v1/admin/observation/nonces"),
         ("POST", "/v1/admin/observation/commands"),
@@ -5778,7 +5881,6 @@ def test_admin_flag_is_checked_before_authentication_for_every_admin_endpoint(
     path: str,
     authorization: str | None,
 ) -> None:  # type: ignore[no-untyped-def]
-    block_profile_control(monkeypatch)
     headers = {"Authorization": authorization} if authorization else {}
     with client_with_stub(settings, stub_provider) as client:
         response = client.request(method, path, headers=headers)
@@ -5790,7 +5892,6 @@ def test_admin_flag_is_checked_before_authentication_for_every_admin_endpoint(
 def test_runtime_status_requires_admin_auth_and_returns_safe_usage(
     settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # type: ignore[no-untyped-def]
-    block_profile_control(monkeypatch)
     enabled = Settings.model_validate(settings.model_dump() | {"admin_api_enabled": True})
 
     def fake_command(*args: str) -> str:
@@ -6322,6 +6423,42 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         assert usage.streaming is True
         assert usage.first_byte_at is not None
         assert usage.total_tokens == 1
+
+
+def test_local_stream_records_explicit_zero_cache_usage(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    async def stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        async def chunks():  # type: ignore[no-untyped-def]
+            yield b'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":null}]}\n\n'
+            yield (
+                b'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
+                b'"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4,'
+                b'"prompt_tokens_details":null}}\n\n'
+            )
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    stub_provider.stream = stream  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "stream": True,
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        with sqlite3.connect(settings.state_db) as database:
+            cached_tokens = database.execute(
+                "SELECT cached_tokens FROM model_invocation_usage "
+                "WHERE role = 'executor' AND mode = 'final_synthesis'"
+            ).fetchone()[0]
+
+    assert response.status_code == 200
+    assert cached_tokens == 0
 
 
 def test_streaming_preserves_completed_pre_review(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

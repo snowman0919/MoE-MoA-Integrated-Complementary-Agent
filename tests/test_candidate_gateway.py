@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import argparse
 import os
-import runpy
 from pathlib import Path
 
 import pytest
+from dgx_moa import live_client_validation as MODULE
 from dgx_moa.config import load_settings
-
-SCRIPT = Path(__file__).parents[1] / "scripts" / "validate-live-client-matrix.py"
-MODULE = runpy.run_path(str(SCRIPT))
 
 
 def base_settings():  # type: ignore[no-untyped-def]
@@ -24,8 +21,21 @@ def base_settings():  # type: ignore[no-untyped-def]
             os.environ["DGX_MOA_AUTH_ENABLED"] = previous
 
 
+def test_checked_in_config_uses_promoted_sglang_topology() -> None:
+    models = base_settings().models
+    assert models["executor"].base_url == "http://127.0.0.1:18101"
+    assert models["executor"].revision == MODULE.EXECUTOR_REVISION
+    assert models["planner"].base_url == models["reviewer"].base_url == "http://127.0.0.1:18102"
+    assert (
+        models["planner"].revision
+        == models["reviewer"].revision
+        == MODULE.SPECIALIST_REVISION
+    )
+    assert models["planner"].served_name == models["reviewer"].served_name
+
+
 def test_candidate_gateway_pins_executor_and_unified_specialist() -> None:
-    models = MODULE["candidate_models"](
+    models = MODULE.candidate_models(
         base_settings(),
         "http://127.0.0.1:18101",
         "http://localhost:18102",
@@ -34,12 +44,12 @@ def test_candidate_gateway_pins_executor_and_unified_specialist() -> None:
     executor = models["executor"]
     assert executor.base_url == "http://127.0.0.1:18101"
     assert executor.served_name == "dgx-moa-executor-candidate"
-    assert executor.revision == MODULE["EXECUTOR_REVISION"]
+    assert executor.revision == MODULE.EXECUTOR_REVISION
 
     planner, reviewer = models["planner"], models["reviewer"]
     assert planner.base_url == reviewer.base_url == "http://localhost:18102"
     assert planner.served_name == reviewer.served_name == "dgx-moa-specialist-candidate"
-    assert planner.revision == reviewer.revision == MODULE["SPECIALIST_REVISION"]
+    assert planner.revision == reviewer.revision == MODULE.SPECIALIST_REVISION
     assert planner.repository == reviewer.repository == "nvidia/Gemma-4-31B-IT-NVFP4"
     assert planner.context_length == reviewer.context_length == 65_536
     assert planner.quantization == reviewer.quantization == "modelopt_fp4"
@@ -58,4 +68,4 @@ def test_candidate_gateway_pins_executor_and_unified_specialist() -> None:
 )
 def test_candidate_gateway_rejects_non_loopback_endpoint(endpoint: str) -> None:
     with pytest.raises(argparse.ArgumentTypeError):
-        MODULE["local_endpoint"](endpoint)
+        MODULE.local_endpoint(endpoint)

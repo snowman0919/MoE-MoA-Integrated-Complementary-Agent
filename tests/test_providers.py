@@ -104,6 +104,7 @@ def test_ollama_reasoner_contract(settings) -> None:  # type: ignore[no-untyped-
         "prompt_tokens": 7,
         "completion_tokens": 3,
         "total_tokens": 10,
+        "prompt_tokens_details": {"cached_tokens": 0},
     }
     with pytest.raises(ValueError, match="cannot issue tools"):
         ModelProvider.ollama_response(

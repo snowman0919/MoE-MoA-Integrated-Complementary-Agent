@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 import secrets
 import sqlite3
@@ -14,6 +13,7 @@ from fastapi import Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from .config import Settings
+from .database import connect_sqlite
 
 SECRET_PATTERNS = (
     re.compile(r"(?i)(authorization:\s*bearer\s+)[^\s]+"),
@@ -53,7 +53,6 @@ class ApiKeyStore:
         self.path = Path(path)
         self.clock = clock
         self.max_admin_keys = max_admin_keys
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as database:
             database.execute(
                 "CREATE TABLE IF NOT EXISTS api_keys ("
@@ -104,12 +103,8 @@ class ApiKeyStore:
             ).fetchone()[0]
             if admin_count > self.max_admin_keys:
                 raise ValueError("configured admin API keys exceed the limit")
-        os.chmod(self.path, 0o600)
-
     def _connect(self) -> sqlite3.Connection:
-        database = sqlite3.connect(self.path, timeout=30)
-        database.row_factory = sqlite3.Row
-        return database
+        return connect_sqlite(self.path, rows=True, secure=True)
 
     @staticmethod
     def _digest(token: str) -> str:

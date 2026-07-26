@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 from dgx_moa.frontier import (
     COLLABORATION_MODE_INSTRUCTIONS,
     COLLABORATION_SCHEMAS,
@@ -22,6 +23,7 @@ from dgx_moa.frontier import (
     codex_usage,
     evaluate_frontier_candidate,
     frontier_eligible,
+    frontier_invocation_limit_reached,
     load_frontier_config,
     normalize_openrouter_tool_calls,
     openrouter_compatible_schema,
@@ -74,10 +76,14 @@ def test_frontier_lock_and_eligibility(tmp_path) -> None:  # type: ignore[no-unt
     assert classify_frontier_failure("You've hit your usage limit") == "FRONTIER_USAGE_LIMIT"
     assert classify_frontier_failure("HTTP 429") == "FRONTIER_RATE_LIMIT"
     assert classify_frontier_failure("503 unavailable") == "FRONTIER_PROVIDER_UNAVAILABLE"
-    usage_event = '{"type":"turn.completed","usage":{"input_tokens":7,"output_tokens":3}}'
+    usage_event = (
+        '{"type":"turn.completed","usage":{"input_tokens":7,'
+        '"cached_input_tokens":5,"output_tokens":3}}'
+    )
     assert codex_usage(usage_event) == (
         7,
         3,
+        5,
     )
 
     def take_second_lock() -> None:
@@ -127,6 +133,20 @@ def test_frontier_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert CodexOAuthProvider("primary", tmp_path).environment()["CODEX_HOME"] == str(
         tmp_path / "primary"
     )
+
+
+def test_candidate_frontier_budget_allows_repeated_oauth_calls() -> None:
+    root = Path(__file__).parents[1]
+    frontier = load_frontier_config(root / "config/codex-frontier.yaml")
+    models = yaml.safe_load((root / "config/models.yaml").read_text())
+    loop = models["gateway"]["loop_engineering"]["defaults"]
+
+    assert FrontierConfig().max_invocations_per_task is None
+    assert frontier.max_invocations_per_task is None
+    assert frontier.max_recursive_cycles == 8
+    assert loop["frontier_calls"] >= loop["iterations"]
+    assert loop["external_cost_usd"] == 10
+    assert not frontier_invocation_limit_reached(10_000, frontier.max_invocations_per_task)
 
 
 def test_frontier_code_review_keeps_bounded_tool_executions() -> None:

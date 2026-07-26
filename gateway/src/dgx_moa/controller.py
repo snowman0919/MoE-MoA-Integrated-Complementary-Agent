@@ -20,11 +20,13 @@ from .evolution import PromptRegistry
 from .frontier import (
     CodexOAuthCollaboration,
     FrontierCollaborationResult,
+    FrontierConfig,
     FrontierResult,
     FrontierTask,
     build_frontier_task,
     evaluate_frontier_candidate,
     frontier_eligible,
+    frontier_invocation_limit_reached,
     select_frontier_profile,
 )
 from .knowledge import KnowledgeQuery, KnowledgeRegistry
@@ -259,6 +261,10 @@ def reasoner_context_fingerprint(state: SessionState, messages: list[dict[str, A
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()
     ).hexdigest()
+
+
+def reasoner_evidence_generation(state: SessionState) -> int:
+    return len(state.tool_results) // 2
 
 
 def pending_goal_prerequisites(state: SessionState) -> tuple[str, ...]:
@@ -640,6 +646,13 @@ class Controller:
             raise PolicyBlocked("tool call denied by declarative policy")
         self.admit_loop_action(state, "tool_calls")
 
+    def admit_frontier_call(self, state: SessionState) -> None:
+        if (
+            self.frontier is None
+            or self.frontier.config.max_invocations_per_task is not None
+        ):
+            self.admit_loop_action(state, "frontier_calls")
+
     async def _frontier_collaborate(
         self,
         state: SessionState,
@@ -647,13 +660,10 @@ class Controller:
         evidence: dict[str, Any],
     ) -> FrontierCollaborationResult:
         assert self.frontier is not None
-        self.admit_loop_action(state, "frontier_calls")
+        self.admit_frontier_call(state)
         state.frontier_invocations += 1
         invocation_id = f"{state.task_id or state.session_id}:frontier:{state.frontier_invocations}"
-        scoped_evidence = (
-            {**evidence, "_paid_fallback_required": True} if mode == "code_review" else evidence
-        )
-        return await self.frontier.collaborate(mode, scoped_evidence, invocation_id)
+        return await self.frontier.collaborate(mode, evidence, invocation_id)
 
     @staticmethod
     def safe_payload(state: SessionState, payload: Any) -> Any:
@@ -719,6 +729,14 @@ class Controller:
         )
         provenance = response.get("provider_provenance")
         provenance = cast(dict[str, Any], provenance) if isinstance(provenance, dict) else {}
+        selected_provider = str(provider or provenance.get("provider") or "local")
+        cached_tokens = prompt_details.get("cached_tokens")
+        if (
+            cached_tokens is None
+            and selected_provider == "local"
+            and usage.get("prompt_tokens") is not None
+        ):
+            cached_tokens = 0
         self.record_observed_invocation(
             state,
             {
@@ -729,7 +747,7 @@ class Controller:
                 "prompt_tokens": usage.get("prompt_tokens"),
                 "completion_tokens": usage.get("completion_tokens"),
                 "total_tokens": usage.get("total_tokens"),
-                "cached_tokens": prompt_details.get("cached_tokens"),
+                "cached_tokens": cached_tokens,
                 "cost_usd": (cost_usd if cost_usd is not None else provenance.get("cost_usd")),
                 "status": "completed",
                 **(
@@ -1163,7 +1181,12 @@ class Controller:
             raise PolicyBlocked("operator approval required by declarative policy")
 
     def frontier_eligible(self, state: SessionState, metadata: dict[str, Any]) -> tuple[bool, str]:
-        metadata = metadata | {"frontier_invocations": state.frontier_invocations}
+        metadata = metadata | {
+            "frontier_invocations": state.frontier_invocations,
+            "frontier_invocation_limit": (
+                self.frontier.config.max_invocations_per_task if self.frontier is not None else 1
+            ),
+        }
         eligible, reason = frontier_eligible(state, metadata)
         if eligible and not self.settings.frontier_enabled:
             required = bool(metadata.get("frontier_required"))
@@ -1225,15 +1248,18 @@ class Controller:
             )
             self.store.save(state)
             raise ValueError("frontier human approval required")
-        if state.frontier_invocations >= 1:
+        frontier_config = self.frontier.config if self.frontier is not None else FrontierConfig()
+        if frontier_invocation_limit_reached(
+            state.frontier_invocations, frontier_config.max_invocations_per_task
+        ):
             self.store.event(state.session_id, "frontier_usage_limited", {"reason": "task_limit"})
             self.store.save(state)
             raise ValueError("frontier invocation limit reached")
-        if state.recursive_cycles >= 3:
+        if state.recursive_cycles >= frontier_config.max_recursive_cycles:
             self.store.event(state.session_id, "frontier_usage_limited", {"reason": "cycle_limit"})
             self.store.save(state)
             raise ValueError("frontier recursive cycle limit reached")
-        self.admit_loop_action(state, "frontier_calls")
+        self.admit_frontier_call(state)
         state.frontier_invocations += 1
         state.recursive_cycles += 1
         self.store.event(
@@ -2405,16 +2431,20 @@ class Controller:
         body["max_tokens"] = self.executor_tokens(body)
         if state.phase == Phase.BLOCKED:
             raise LoopAdmissionError("session blocked; new implementation evidence required")
-        context_fingerprint = reasoner_context_fingerprint(
+        user_context_fingerprint = reasoner_context_fingerprint(
             state, cast(list[dict[str, Any]], body.get("messages", []))
         )
+        evidence_generation = reasoner_evidence_generation(state)
+        context_fingerprint = f"{user_context_fingerprint}:{evidence_generation}"
         reentry_reasons: list[str] = []
         if tool_continuation and "reasoner" in roles:
-            if (
-                state.reasoner_context_fingerprint
-                and state.reasoner_context_fingerprint != context_fingerprint
-            ):
+            previous_context, _, previous_generation = (
+                state.reasoner_context_fingerprint.partition(":")
+            )
+            if previous_context and previous_context != user_context_fingerprint:
                 reentry_reasons.append("user_context_changed")
+            if evidence_generation > int(previous_generation or 0):
+                reentry_reasons.append("tool_evidence_changed")
             if metadata.get("no_progress"):
                 reentry_reasons.append("no_progress")
         if reentry_reasons:
@@ -2536,7 +2566,7 @@ class Controller:
                 )
                 if reasoner_complete is None:
                     raise ReasonerUnavailable("required Reasoner unavailable") from error
-                self.admit_loop_action(state, "frontier_calls")
+                self.admit_frontier_call(state)
                 reasoner_record_started = time.monotonic()
                 self.store.event(
                     state.session_id,
@@ -2745,7 +2775,10 @@ class Controller:
                         {"status": state.judge_status},
                     )
                 elif (
-                    state.frontier_invocations >= self.frontier.config.max_invocations_per_task
+                    frontier_invocation_limit_reached(
+                        state.frontier_invocations,
+                        self.frontier.config.max_invocations_per_task,
+                    )
                     and not state.frontier_correction_pending_verification
                 ):
                     self.store.event(
@@ -2884,12 +2917,34 @@ class Controller:
                 planner_error = error
                 self.record_provider_failure(state, "planner", error)
                 state.derived_confidence = "low"
+                raw_usage = planner.get("usage") if planner is not None else None
+                usage = raw_usage if isinstance(raw_usage, dict) else {}
+                raw_prompt_details = usage.get("prompt_tokens_details")
+                prompt_details = (
+                    raw_prompt_details if isinstance(raw_prompt_details, dict) else {}
+                )
+                selected_provider = str(
+                    planner_routing.get("selected_provider") or "unknown"
+                )
                 self.record_observed_invocation(
                     state,
                     {
                         "role": "planner",
                         "mode": "collaboration",
+                        "model": planner_routing.get("model") or "unknown",
+                        "provider": selected_provider,
+                        "routing_reason": planner_routing.get("routing_reason"),
+                        **(
+                            {"fallback_reason": planner_routing.get("routing_reason")}
+                            if selected_provider == "remote"
+                            else {}
+                        ),
                         "latency_ms": round((time.monotonic() - planner_started) * 1000, 3),
+                        "prompt_tokens": usage.get("prompt_tokens"),
+                        "completion_tokens": usage.get("completion_tokens"),
+                        "total_tokens": usage.get("total_tokens"),
+                        "cached_tokens": prompt_details.get("cached_tokens"),
+                        "cost_usd": planner_routing.get("remote_cost_usd"),
                         "status": "failed",
                         "failure_class": type(error).__name__,
                     },
@@ -2995,8 +3050,10 @@ class Controller:
                             if request.get("metadata", {}).get("frontier_required"):
                                 raise FrontierRequiredUnavailable("required Frontier unavailable")
                         elif (
-                            state.frontier_invocations
-                            >= self.frontier.config.max_invocations_per_task
+                            frontier_invocation_limit_reached(
+                                state.frontier_invocations,
+                                self.frontier.config.max_invocations_per_task,
+                            )
                             and not state.frontier_correction_pending_verification
                         ):
                             self.store.event(
@@ -3106,6 +3163,7 @@ class Controller:
                         "prompt_tokens": frontier_result.prompt_tokens,
                         "completion_tokens": frontier_result.completion_tokens,
                         "total_tokens": frontier_result.total_tokens,
+                        "cached_tokens": frontier_result.cached_tokens,
                         "cost_usd": frontier_result.cost_usd,
                         "profile": frontier_result.profile,
                         "status": "completed",

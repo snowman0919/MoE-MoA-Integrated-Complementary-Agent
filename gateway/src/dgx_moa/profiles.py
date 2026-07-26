@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import subprocess
 from argparse import ArgumentParser
 from pathlib import Path
 from typing import Literal, cast
@@ -60,15 +59,6 @@ class ProfileManager:
     def checkpoint(database_path: str | Path) -> None:
         with sqlite3.connect(database_path) as database:
             database.execute("PRAGMA wal_checkpoint(FULL)")
-
-    def switch(self, profile: Literal["resident", "judge", "restore"]) -> dict[str, str]:
-        current = self.current()["active_profile"]
-        if current == profile or (profile == "restore" and current == "resident"):
-            return self.current()
-        command = self.project_root / "scripts" / "switch-profile.sh"
-        subprocess.run([str(command), profile], cwd=self.project_root, check=True)
-        return self.current()
-
 
 def main() -> None:
     parser = ArgumentParser()

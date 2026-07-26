@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sqlite3
 
-import pytest
 import yaml
 from dgx_moa.model_download import classify_failure, verify_model
 from dgx_moa.model_registry import estimate
@@ -99,7 +98,7 @@ def test_storage_estimate_accepts_required_final_headroom(monkeypatch, tmp_path)
     assert result["remaining_bytes"] == 80
 
 
-def test_profile_state_and_failed_switch(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_profile_state(tmp_path) -> None:  # type: ignore[no-untyped-def]
     manager = ProfileManager(tmp_path / "run", tmp_path)
     assert manager.current()["active_profile"] == "stopped"
     assert manager.current()["status"] == "stopped"
@@ -109,12 +108,6 @@ def test_profile_state_and_failed_switch(monkeypatch, tmp_path) -> None:  # type
     assert manager.current()["to"] == "judge"
     manager.record("resident")
     manager.record("stopped")
-    monkeypatch.setattr(
-        "dgx_moa.profiles.subprocess.run",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("startup failed")),
-    )
-    with pytest.raises(RuntimeError, match="startup failed"):
-        manager.switch("judge")
     assert manager.current()["active_profile"] == "stopped"
 
 

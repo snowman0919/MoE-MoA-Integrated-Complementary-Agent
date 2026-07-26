@@ -16,6 +16,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .database import connect_sqlite
 from .routing import RequestClass, RuntimeMode
 
 SafeClientClass = Literal[
@@ -278,7 +279,6 @@ class UsageStore:
             Path(invocation_report_path) if invocation_report_path is not None else None
         )
         self.model_catalog = dict(model_catalog or {})
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as database:
             database.executescript(
                 """
@@ -505,10 +505,7 @@ class UsageStore:
             temporary.unlink(missing_ok=True)
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.row_factory = sqlite3.Row
-        return connection
+        return connect_sqlite(self.path, rows=True, secure=True)
 
     def start(self, record: RequestUsageStart) -> None:
         with self._connect() as database:

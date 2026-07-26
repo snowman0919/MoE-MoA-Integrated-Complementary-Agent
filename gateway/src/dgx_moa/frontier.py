@@ -133,7 +133,7 @@ class FrontierConfig(BaseModel):
     protocol: str = "codex-exec-jsonl"
     model: str = "gpt-5.6-sol"
     reasoning_effort: Literal["high"] = "high"
-    max_invocations_per_task: int = 4
+    max_invocations_per_task: int | None = Field(default=None, ge=1)
     max_recursive_cycles: int = 3
     primary_profile: str = "default"
     secondary_profile: str | None = None
@@ -449,15 +449,16 @@ class FrontierCollaborationResult(BaseModel):
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    cached_tokens: int | None = None
     cost_usd: float | None = None
     latency_ms: float
     transmitted_categories: list[str]
     profile: str = "unknown"
 
 
-def codex_usage(output: str) -> tuple[int | None, int | None]:
-    prompt = completion = 0
-    found = False
+def codex_usage(output: str) -> tuple[int | None, int | None, int | None]:
+    prompt = completion = cached = 0
+    prompt_found = completion_found = cached_found = False
     for line in output.splitlines():
         try:
             event = json.loads(line)
@@ -468,13 +469,21 @@ def codex_usage(output: str) -> tuple[int | None, int | None]:
             continue
         input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
         output_tokens = usage.get("output_tokens", usage.get("completion_tokens"))
+        cached_tokens = usage.get("cached_input_tokens")
         if isinstance(input_tokens, int) and not isinstance(input_tokens, bool):
             prompt = max(prompt, input_tokens)
-            found = True
+            prompt_found = True
         if isinstance(output_tokens, int) and not isinstance(output_tokens, bool):
             completion = max(completion, output_tokens)
-            found = True
-    return (prompt, completion) if found else (None, None)
+            completion_found = True
+        if isinstance(cached_tokens, int) and not isinstance(cached_tokens, bool):
+            cached = max(cached, cached_tokens)
+            cached_found = True
+    return (
+        prompt if prompt_found else None,
+        completion if completion_found else None,
+        cached if cached_found else None,
+    )
 
 
 class CodexOAuthCollaboration:
@@ -621,7 +630,7 @@ class CodexOAuthCollaboration:
             selected_profile = ""
             final_failure = "FRONTIER_PROTOCOL_ERROR"
             validated_result: dict[str, Any] | None = None
-            validation_error: ValueError | None = None
+            validation_error: OSError | ValueError | None = None
             for profile_index, (profile, provider) in enumerate(self.providers):
                 try_next_profile = False
                 for attempt in range(self.config.collaboration_retries + 1):
@@ -701,7 +710,7 @@ class CodexOAuthCollaboration:
                 raise RuntimeError(final_failure)
             assert validated_result is not None
             result = validated_result
-            prompt, completion = codex_usage(completed.stdout)
+            prompt, completion, cached = codex_usage(completed.stdout)
         self.failures = 0
         self.opened_at = None
         return FrontierCollaborationResult(
@@ -712,6 +721,7 @@ class CodexOAuthCollaboration:
             total_tokens=(
                 prompt + completion if prompt is not None and completion is not None else None
             ),
+            cached_tokens=cached,
             cost_usd=self._cost(prompt, completion),
             latency_ms=round((time.monotonic() - started) * 1000, 3),
             transmitted_categories=categories,
@@ -857,6 +867,8 @@ class CodexOAuthCollaboration:
                 usage = payload.get("usage", {})
                 prompt = usage.get("prompt_tokens")
                 completion = usage.get("completion_tokens")
+                details = usage.get("prompt_tokens_details")
+                cached = details.get("cached_tokens") if isinstance(details, dict) else None
                 prompt = (
                     prompt if isinstance(prompt, int) and not isinstance(prompt, bool) else None
                 )
@@ -864,6 +876,9 @@ class CodexOAuthCollaboration:
                     completion
                     if isinstance(completion, int) and not isinstance(completion, bool)
                     else None
+                )
+                cached = (
+                    cached if isinstance(cached, int) and not isinstance(cached, bool) else None
                 )
                 break
             except (httpx.HTTPError, KeyError, TypeError, ValueError) as error:
@@ -893,6 +908,7 @@ class CodexOAuthCollaboration:
             total_tokens=(
                 prompt + completion if prompt is not None and completion is not None else None
             ),
+            cached_tokens=cached,
             cost_usd=cost,
             latency_ms=round((time.monotonic() - started) * 1000, 3),
             transmitted_categories=sorted(bounded),
@@ -936,7 +952,7 @@ class CodexOAuthCollaboration:
             FrontierExecutorResult.model_validate(result.output),
             workspace_root,
         )
-        usage = {
+        usage: dict[str, Any] = {
             key: value
             for key, value in {
                 "prompt_tokens": result.prompt_tokens,
@@ -945,6 +961,8 @@ class CodexOAuthCollaboration:
             }.items()
             if value is not None
         }
+        if result.cached_tokens is not None:
+            usage["prompt_tokens_details"] = {"cached_tokens": result.cached_tokens}
         return {
             "id": f"chatcmpl-frontier-{correlation_id}",
             "object": "chat.completion",
@@ -1073,7 +1091,11 @@ def profile_lock(profile: str, run_dir: str | Path) -> Iterator[None]:
 
 
 def frontier_eligible(state: SessionState, metadata: dict[str, Any]) -> tuple[bool, str]:
-    if int(metadata.get("frontier_invocations", 0)) >= 1:
+    invocation_limit = metadata.get("frontier_invocation_limit", 1)
+    if frontier_invocation_limit_reached(
+        int(metadata.get("frontier_invocations", 0)),
+        int(invocation_limit) if invocation_limit is not None else None,
+    ):
         return False, "frontier_invocation_limit"
     if metadata.get("frontier_requested"):
         return True, "explicit_request"
@@ -1086,6 +1108,10 @@ def frontier_eligible(state: SessionState, metadata: dict[str, Any]) -> tuple[bo
     if int(metadata.get("modules_changed", 0)) > int(metadata.get("frontier_module_limit", 8)):
         return True, "module_threshold"
     return False, "local_moa_sufficient"
+
+
+def frontier_invocation_limit_reached(invocations: int, limit: int | None) -> bool:
+    return limit is not None and invocations >= limit
 
 
 def select_frontier_profile(

@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .database import connect_sqlite
 from .loop_engineering import LoopState
 
 RuntimeChannel = Literal["main", "dev", "candidate"]
@@ -182,7 +183,6 @@ class StateStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self._event_listeners: list[Callable[[str, str, dict[str, Any], str], None]] = []
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as database:
             database.execute(
                 "CREATE TABLE IF NOT EXISTS sessions "
@@ -201,9 +201,7 @@ class StateStore:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.execute("PRAGMA journal_mode=WAL")
-        return connection
+        return connect_sqlite(self.path, secure=True)
 
     def get(self, session_id: str) -> SessionState | None:
         with self._connect() as database:

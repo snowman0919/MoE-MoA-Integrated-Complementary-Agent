@@ -13,8 +13,8 @@ primary_profile: primary
 secondary_profile: secondary
 tertiary_profile: default
 allow_profile_failover: true
-max_invocations_per_task: 4
-max_recursive_cycles: 3
+max_invocations_per_task: null
+max_recursive_cycles: 8
 profile_root: /home/kotori9/.local/share/dgx-moa/codex-profiles
 collaboration_timeout_seconds: 300
 collaboration_retries: 1

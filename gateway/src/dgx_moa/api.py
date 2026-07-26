@@ -4,13 +4,10 @@ import asyncio
 import json
 import math
 import os
-import re
-import subprocess
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import aclosing, asynccontextmanager
-from datetime import UTC, date, datetime, timedelta
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import aclosing, asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -18,10 +15,10 @@ import httpx
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
-from .admin_codex import AdminCodexRequest, AdminCodexRunner
-from .admin_dashboard import ADMIN_DASHBOARD
+from .admin_codex import AdminCodexRunner
+from .admin_routes import build_admin_router
 from .config import Settings, get_settings
 from .controller import (
     IMPLEMENTATION_QUALITY_CONTRACT,
@@ -38,13 +35,37 @@ from .controller import (
 from .evolution import PromptRegistry
 from .frontier import (
     CodexOAuthCollaboration,
-    CodexOAuthProvider,
     load_frontier_config,
-    profile_home,
-    profile_lock,
-    profile_status,
 )
-from .key_dashboard import API_KEY_DASHBOARD
+from .image_generation import (
+    CodexOAuthImageGenerator,
+    ImageGenerationStore,
+    image_prompt_from_tool_calls,
+)
+from .image_generation import (
+    capability_status as image_generation_status,
+)
+from .inference import (
+    ResponseOwnedIterator,
+    ResponseOwnedStreamingResponse,
+    elapsed_ms,
+    has_matching_tool_result,
+    title_request_index,
+    tool_result_call_ids,
+    unsafe_frontier_correction_tool_call,
+)
+from .inference import (
+    chat_response_payload as _chat_response_payload,
+)
+from .inference import (
+    coerce_responses_input_messages as _coerce_responses_input_messages,
+)
+from .inference import (
+    coerce_responses_tools as _coerce_responses_tools,
+)
+from .inference import (
+    responses_payload as _responses_payload,
+)
 from .knowledge import KnowledgeRegistry
 from .lifecycle import (
     LifecycleCoordinator,
@@ -69,7 +90,6 @@ from .policy import PolicyEngine
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
 from .remote_judge import JudgeProviderError, OpenCodeGoJudgeProvider
-from .replay import ReplayEngine, ReplayRequest
 from .routing import (
     COMPATIBILITY_MODEL_ALIASES,
     MODEL_MODES,
@@ -81,14 +101,9 @@ from .routing import (
     review_fails_closed,
 )
 from .runtime_status import memory_available as runtime_memory_available
-from .runtime_status import report as runtime_report
-from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest, text_content
+from .schemas import ChatMessage, ChatRequest, ResponsesRequest, text_content
 from .security import (
-    ADMIN_SESSION_COOKIE,
-    ADMIN_SESSION_SECONDS,
-    ApiKeyRequest,
     ApiKeyStore,
-    ApiKeyUpdate,
     admin_dependency,
     auth_dependency,
 )
@@ -104,26 +119,20 @@ from .state import Phase, SessionState, StateStore
 from .streaming import (
     ProgressOnlyResponse,
     StreamObservation,
-    compatible_edit_call,
     completed_chat_sse,
     forward_sse,
     keepalive_sse,
     reported_usage,
-    response_usage,
     responses_error_sse,
     responses_sse,
 )
 from .trace import TraceRecorder
 from .training import (
-    CandidateReviewRequest,
     ContentStore,
     TrainingCollector,
-    TrainingRepositoryExclusion,
-    TrainingRequestExclusion,
-    TrainingRetentionRequest,
     TrainingStore,
-    TrainingUserExclusion,
 )
+from .training_routes import build_training_router
 from .usage import (
     ModelAlias,
     RequestStatus,
@@ -136,10 +145,7 @@ from .usage import (
 )
 from .weekly import (
     ArchiveRegistry,
-    WeeklyPackageKeyRequest,
     WeeklyPackager,
-    WeeklyPackageRevocationRequest,
-    WeeklyRetentionRequest,
     WeeklyScheduler,
     previous_complete_week,
     snapshot_version,
@@ -196,330 +202,6 @@ def error_response(
         headers=headers,
     )
 
-
-def title_request_index(messages: list[dict[str, Any]]) -> int | None:
-    """Return OpenCode's trailing automatic title prompt, if present."""
-    title_generator = any(
-        message.get("role") == "system"
-        and text_content(message.get("content"))
-        .strip()
-        .lower()
-        .startswith("you are a title generator. you output only a thread title.")
-        for message in messages
-    )
-    for index in range(len(messages) - 1, -1, -1):
-        message = messages[index]
-        if message.get("role") == "user":
-            content = text_content(message.get("content")).strip().lower()
-            if content.startswith("generate a title for this conversation"):
-                return index
-            if not title_generator:
-                return None
-    return None
-
-
-def _coerce_responses_input_messages(
-    raw_input: str | list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    if isinstance(raw_input, str):
-        return [{"role": "user", "content": raw_input}]
-    if isinstance(raw_input, list):
-        messages: list[dict[str, Any]] = []
-        for item in raw_input:
-            item_type = item.get("type")
-            if item_type == "reasoning":
-                continue
-            if item_type in {"function_call", "custom_tool_call"}:
-                arguments = (
-                    item.get("arguments", "")
-                    if item_type == "function_call"
-                    else json.dumps({"input": item.get("input", "")})
-                )
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": item["call_id"],
-                                "type": "function",
-                                "function": {
-                                    "name": item["name"],
-                                    "arguments": arguments,
-                                },
-                            }
-                        ],
-                    }
-                )
-                continue
-            if item_type in {"function_call_output", "custom_tool_call_output"}:
-                output = item.get("output", "")
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": item["call_id"],
-                        "content": output if isinstance(output, str) else json.dumps(output),
-                    }
-                )
-                continue
-            message = dict(item)
-            if isinstance(content := message.get("content"), list):
-                message["content"] = [
-                    {**part, "type": "text"}
-                    if part.get("type") in {"input_text", "output_text"}
-                    else part
-                    for part in content
-                ]
-            messages.append(message)
-        return messages
-    raise TypeError("invalid responses input type")
-
-
-def _coerce_responses_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
-    if not tools:
-        return None
-    chat_tools = []
-    for tool in tools:
-        tool_type = tool.get("type")
-        if tool_type not in {"function", "custom"}:
-            continue
-        nested_function = tool.get("function")
-        function: dict[str, Any] = nested_function if isinstance(nested_function, dict) else tool
-        if tool_type == "custom":
-            function = {
-                "name": tool.get("name"),
-                "description": tool.get("description"),
-                "parameters": {
-                    "type": "object",
-                    "properties": {"input": {"type": "string"}},
-                    "required": ["input"],
-                    "additionalProperties": False,
-                },
-            }
-        chat_tools.append(
-            {
-                "type": "function",
-                "function": {
-                    key: function[key]
-                    for key in ("name", "description", "parameters", "strict")
-                    if key in function
-                },
-            }
-        )
-    return chat_tools or None
-
-
-def _responses_payload(
-    model: str,
-    chat_response: dict[str, Any] | None = None,
-    *,
-    status: str = "completed",
-    custom_tool_names: set[str] | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "id": f"resp-{uuid.uuid4().hex}",
-        "object": "response",
-        "created": int(time.time()),
-        "model": model,
-        "status": status,
-        "output": [],
-    }
-    if chat_response is None:
-        return payload
-    if error := chat_response.get("error"):
-        payload["error"] = error
-        payload["status"] = "failed"
-        return payload
-
-    choices = chat_response.get("choices") or []
-    if choices:
-        message = choices[0].get("message", {})
-        content = message.get("content")
-        if isinstance(content, str) and content:
-            payload["output"] = [
-                {
-                    "type": "message",
-                    "status": "completed",
-                    "role": message.get("role", "assistant"),
-                    "content": [
-                        {"type": "output_text", "text": content},
-                    ],
-                }
-            ]
-        for tool_call in message.get("tool_calls") or []:
-            function = tool_call.get("function") or {}
-            name, arguments = compatible_edit_call(
-                str(function.get("name", "")),
-                str(function.get("arguments", "")),
-                custom_tool_names,
-            )
-            if name in (custom_tool_names or set()):
-                try:
-                    parsed_arguments = json.loads(arguments)
-                    custom_input = parsed_arguments["input"]
-                    if not isinstance(custom_input, str):
-                        raise TypeError
-                except (KeyError, TypeError, ValueError):
-                    custom_input = arguments
-                payload["output"].append(
-                    {
-                        "type": "custom_tool_call",
-                        "id": f"ctc_{uuid.uuid4().hex}",
-                        "call_id": tool_call.get("id"),
-                        "name": name,
-                        "input": custom_input,
-                    }
-                )
-                continue
-            payload["output"].append(
-                {
-                    "type": "function_call",
-                    "id": f"fc_{uuid.uuid4().hex}",
-                    "call_id": tool_call.get("id"),
-                    "name": name,
-                    "arguments": arguments,
-                    "status": "completed",
-                }
-            )
-    if not payload["output"]:
-        payload["status"] = "failed"
-        payload["error"] = {
-            "message": "upstream response did not contain assistant output",
-            "type": "backend_error",
-            "code": "backend_error",
-        }
-    if usage := response_usage(chat_response.get("usage")):
-        payload["usage"] = usage
-    return payload
-
-
-def _chat_response_payload(response: Response) -> dict[str, Any] | None:
-    raw_body = getattr(response, "body", None)
-    if not raw_body:
-        return None
-    try:
-        return cast(
-            dict[str, Any],
-            json.loads(raw_body.decode() if isinstance(raw_body, bytes) else raw_body),
-        )
-    except ValueError:
-        return None
-
-
-def elapsed_ms(started: float) -> float:
-    return round((time.monotonic() - started) * 1000, 3)
-
-
-def has_matching_tool_result(messages: list[dict[str, Any]]) -> bool:
-    assistant_index = next(
-        (
-            index
-            for index in range(len(messages) - 1, -1, -1)
-            if messages[index].get("role") == "assistant" and messages[index].get("tool_calls")
-        ),
-        None,
-    )
-    if assistant_index is None:
-        return False
-    trailing = messages[assistant_index + 1 :]
-    if not trailing or any(message.get("role") != "tool" for message in trailing):
-        return False
-    call_ids = {
-        call_id
-        for call in (messages[assistant_index].get("tool_calls") or [])
-        if isinstance(call, dict) and isinstance(call_id := call.get("id"), str) and call_id.strip()
-    }
-    result_ids = {
-        tool_call_id
-        for message in trailing
-        if isinstance(tool_call_id := message.get("tool_call_id"), str) and tool_call_id.strip()
-    }
-    return bool(call_ids & result_ids)
-
-
-def tool_result_call_ids(messages: list[dict[str, Any]]) -> set[str]:
-    return {
-        tool_call_id
-        for message in messages
-        if message.get("role") == "tool"
-        and isinstance(tool_call_id := message.get("tool_call_id"), str)
-        and tool_call_id.strip()
-    }
-
-
-def unsafe_frontier_correction_tool_call(response: Mapping[str, Any]) -> bool:
-    message = (response.get("choices") or [{}])[0].get("message", {})
-    for call in message.get("tool_calls") or []:
-        function = call.get("function") or {}
-        if function.get("name") not in {"edit", "edit_file"}:
-            continue
-        arguments = function.get("arguments", {})
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except ValueError:
-                return True
-        if not isinstance(arguments, dict):
-            return True
-        old = next(
-            (
-                arguments.get(key)
-                for key in ("oldString", "old_string", "oldText", "old_text")
-                if isinstance(arguments.get(key), str)
-            ),
-            None,
-        )
-        new = next(
-            (
-                arguments.get(key)
-                for key in ("newString", "new_string", "newText", "new_text")
-                if isinstance(arguments.get(key), str)
-            ),
-            None,
-        )
-        if old is None or new is None:
-            return True
-        if len(old.strip()) < 8 and len(new) >= 256:
-            return True
-    return False
-
-
-class ResponseOwnedIterator:
-    def __init__(
-        self,
-        stream: AsyncIterator[bytes],
-        cleanup: Callable[[], Awaitable[None]],
-    ) -> None:
-        self._stream = stream
-        self._cleanup = cleanup
-
-    def __aiter__(self) -> ResponseOwnedIterator:
-        return self
-
-    async def __anext__(self) -> bytes:
-        try:
-            return await anext(self._stream)
-        except BaseException:
-            await self._cleanup()
-            raise
-
-    async def aclose(self) -> None:
-        try:
-            close = getattr(self._stream, "aclose", None)
-            if close is not None:
-                await close()
-        finally:
-            await self._cleanup()
-
-
-class ResponseOwnedStreamingResponse(StreamingResponse):
-    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        try:
-            await super().__call__(scope, receive, send)
-        finally:
-            close = getattr(self.body_iterator, "aclose", None)
-            if close is not None:
-                await close()
 
 
 def create_app(
@@ -658,6 +340,15 @@ def create_app(
         app.state.usage_session_namespace = uuid.uuid4()
         app.state.project_root = project_root
         app.state.provider = provider
+        app.state.image_generator = None
+        if image_generation_status(configured.image_generation)["state"] == "ready":
+            app.state.image_generator = CodexOAuthImageGenerator(
+                configured.image_generation,
+                ImageGenerationStore(configured.state_db),
+                run_dir=configured.run_dir,
+                project_root=project_root,
+                profile_root=configured.image_generation.profile_root,
+            )
         frontier = None
         if frontier_config is not None:
             if frontier_config.provider != "codex_oauth":
@@ -801,6 +492,21 @@ def create_app(
             )
             app.state.controller.specialists = app.state.specialists
         try:
+            if configured.specialist_routing.enabled:
+                for role in ("planner", "reviewer"):
+                    if configured.models[role].lifecycle_control != "external":
+                        continue
+                    try:
+                        healthy = await (
+                            lifecycle_health_probe or default_lifecycle_health_probe
+                        )(role)
+                    except Exception:
+                        healthy = False
+                    app.state.lifecycle_store.recover_state(
+                        role,
+                        "ready" if healthy else "failed",
+                        failure_class=None if healthy else "external_unavailable",
+                    )
             managed_roles = tuple(configured.lifecycle_unit_map)
             if configured.lifecycle_mode in {"observe", "fixed", "adaptive"}:
                 await app.state.lifecycle.reconcile_managed(managed_roles)
@@ -1019,6 +725,8 @@ def create_app(
             await app.state.lifecycle.close()
 
     app = FastAPI(title="DGX MoA Agent", version="2.0.0", lifespan=lifespan)
+    app.include_router(build_admin_router(admin_auth))
+    app.include_router(build_training_router(admin_auth))
 
     @app.middleware("http")
     async def reject_new_work_while_draining(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -1496,182 +1204,6 @@ def create_app(
             )
         return response
 
-    def training_store(request: Request) -> TrainingStore:
-        store = request.app.state.training_store
-        if store is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "training data workflow is disabled")
-        return cast(TrainingStore, store)
-
-    @app.get(
-        "/v1/admin/training/candidates/{candidate_id}",
-        dependencies=[Depends(admin_auth)],
-    )
-    async def inspect_training_candidate(candidate_id: str, request: Request) -> dict[str, Any]:
-        store = training_store(request)
-        try:
-            candidate = store.candidate(candidate_id)
-        except KeyError as error:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-        return {
-            "candidate": candidate.model_dump(mode="json"),
-            "review_history": store.review_history(candidate_id),
-        }
-
-    @app.post(
-        "/v1/admin/training/candidates/{candidate_id}/state",
-        dependencies=[Depends(admin_auth)],
-    )
-    async def transition_training_candidate(
-        candidate_id: str, body: CandidateReviewRequest, request: Request
-    ) -> dict[str, Any]:
-        store = training_store(request)
-        actor = str(getattr(request.state, "api_token_id", "loopback-admin"))
-        try:
-            candidate = store.transition_candidate(
-                candidate_id,
-                body.target_state,
-                actor=actor,
-                reason=body.reason,
-            )
-        except KeyError as error:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-        except PermissionError as error:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-        return {
-            "candidate_id": candidate.candidate_id,
-            "review_state": candidate.review_state,
-        }
-
-    @app.post(
-        "/v1/admin/training/exclusions/requests",
-        dependencies=[Depends(admin_auth)],
-    )
-    async def exclude_training_request(
-        body: TrainingRequestExclusion, request: Request
-    ) -> dict[str, Any]:
-        store = training_store(request)
-        store.tombstone(body.request_id, body.reason)
-        return {"request_id": body.request_id, "excluded": True}
-
-    @app.post(
-        "/v1/admin/training/exclusions/repositories",
-        dependencies=[Depends(admin_auth)],
-    )
-    async def exclude_training_repository(
-        body: TrainingRepositoryExclusion, request: Request
-    ) -> dict[str, Any]:
-        store = training_store(request)
-        identity_hash = store.exclude_repository(body.repository_identity, body.reason)
-        return {"repository_identity_hash": identity_hash, "excluded": True}
-
-    @app.post(
-        "/v1/admin/training/exclusions/users",
-        dependencies=[Depends(admin_auth)],
-    )
-    async def exclude_training_user(
-        body: TrainingUserExclusion, request: Request
-    ) -> dict[str, Any]:
-        subject_hash = training_store(request).exclude_user(body.subject_id, body.reason)
-        return {"training_subject_hash": subject_hash, "excluded": True}
-
-    @app.post(
-        "/v1/admin/training/retention",
-        dependencies=[Depends(admin_auth)],
-    )
-    async def apply_training_retention(
-        body: TrainingRetentionRequest, request: Request
-    ) -> dict[str, Any]:
-        return training_store(request).purge_retention(
-            event_before=body.event_before,
-            candidate_before=body.candidate_before,
-            apply=body.apply,
-        )
-
-    def weekly_packager(request: Request) -> WeeklyPackager:
-        packager = request.app.state.weekly_packager
-        if packager is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "weekly packaging is disabled")
-        return cast(WeeklyPackager, packager)
-
-    @app.post(
-        "/v1/admin/weekly-packages/verify",
-        dependencies=[Depends(admin_auth)],
-    )
-    async def verify_weekly_package(
-        body: WeeklyPackageKeyRequest, request: Request
-    ) -> dict[str, Any]:
-        try:
-            return weekly_packager(request).verify(body.idempotency_key)
-        except KeyError as error:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-
-    @app.post(
-        "/v1/admin/weekly-packages/revoke",
-        dependencies=[Depends(admin_auth)],
-    )
-    async def revoke_weekly_package(
-        body: WeeklyPackageRevocationRequest, request: Request
-    ) -> dict[str, Any]:
-        try:
-            return weekly_packager(request).registry.revoke(body.idempotency_key, body.reason)
-        except KeyError as error:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-        except ValueError as error:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-
-    @app.post(
-        "/v1/admin/weekly-packages/regenerate",
-        dependencies=[Depends(admin_auth)],
-    )
-    async def regenerate_weekly_package(
-        body: WeeklyPackageKeyRequest, request: Request
-    ) -> dict[str, Any]:
-        try:
-            packager = weekly_packager(request)
-            window = packager.package_window(body.idempotency_key)
-            candidates = training_store(request).packageable_candidates(
-                created_from=window.utc_start.isoformat(),
-                created_before=window.utc_end.isoformat(),
-            )
-            return packager.regenerate(body.idempotency_key, candidates)
-        except KeyError as error:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-        except (OSError, ValueError, PermissionError, subprocess.SubprocessError) as error:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-
-    @app.post(
-        "/v1/admin/weekly-packages/retention",
-        dependencies=[Depends(admin_auth)],
-    )
-    async def apply_weekly_retention(
-        body: WeeklyRetentionRequest, request: Request
-    ) -> dict[str, Any]:
-        try:
-            return weekly_packager(request).purge_retention(body.before, apply=body.apply)
-        except ValueError as error:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-
-    @app.post("/v1/admin/replay", dependencies=[Depends(admin_auth)])
-    async def replay_execution(body: ReplayRequest) -> dict[str, Any]:
-        if not body.exact and body.mode != "audit":
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "live comparative replay requires an internal provider callback",
-            )
-        try:
-            result = await ReplayEngine().run(
-                body.snapshot,
-                mode=body.mode,
-                exact=body.exact,
-            )
-        except ValueError as error:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-        return result.model_dump(mode="json")
-
     @app.get("/metrics", dependencies=[Depends(auth)])
     async def metrics(request: Request) -> Response:
         overlays: dict[str, int | float] = {}
@@ -1853,6 +1385,9 @@ def create_app(
             "automation": request.app.state.lifecycle_store.automation_status().model_dump(
                 mode="json"
             ),
+            "capabilities": {
+                "generate_image": image_generation_status(configured.image_generation)
+            },
         }
         if mode == "disabled":
             payload["external_state"] = "not_lifecycle_managed"
@@ -1868,6 +1403,30 @@ def create_app(
                 "model_role_not_found",
             )
         return status_lifecycle_record(role)
+
+    @app.get("/v1/image-artifacts/{artifact_id}", dependencies=[Depends(auth)])
+    async def image_artifact(artifact_id: str, request: Request) -> Response:
+        generator = request.app.state.image_generator
+        if generator is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "image artifact not found")
+        try:
+            artifact = generator.artifact_for(
+                artifact_id,
+                getattr(request.state, "api_token_id", ""),
+            )
+        except (KeyError, OSError, ValueError):
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "image artifact not found"
+            ) from None
+        return FileResponse(
+            artifact.path,
+            media_type=artifact.media_type,
+            filename=f"{artifact.artifact_id}{artifact.path.suffix}",
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     @app.post("/v1/chat/completions", dependencies=[Depends(auth)])
     async def chat(
@@ -2800,6 +2359,27 @@ def create_app(
                             "provider": "frontier",
                         },
                     )
+            image_generator = request.app.state.image_generator
+            if image_generator is not None and not body.stream and not executor_remote:
+                image_tool = image_generator.tool_definition()
+                if image_tool is not None:
+                    tools = list(prepared.get("tools") or [])
+                    if any(
+                        isinstance(tool, dict)
+                        and (
+                            tool.get("name") == "generate_image"
+                            or (
+                                isinstance(tool.get("function"), dict)
+                                and tool["function"].get("name") == "generate_image"
+                            )
+                        )
+                        for tool in tools
+                    ):
+                        raise HTTPException(
+                            status.HTTP_400_BAD_REQUEST,
+                            "generate_image is a reserved Executor capability",
+                        )
+                    prepared["tools"] = [*tools, image_tool]
             if executor_remote and executor_routing_reason == "local_no_progress":
                 prepared["messages"] = [
                     *prepared.get("messages", []),
@@ -2990,7 +2570,15 @@ def create_app(
                                     "prompt_tokens": observation.usage.get("prompt_tokens"),
                                     "completion_tokens": observation.usage.get("completion_tokens"),
                                     "total_tokens": observation.usage.get("total_tokens"),
-                                    "cached_tokens": observation.cached_tokens,
+                                    "cached_tokens": (
+                                        observation.cached_tokens
+                                        if observation.cached_tokens is not None or executor_remote
+                                        else (
+                                            0
+                                            if observation.usage.get("prompt_tokens") is not None
+                                            else None
+                                        )
+                                    ),
                                     "cost_usd": (
                                         remote_invocation_provenance.get("cost_usd")
                                         if executor_remote
@@ -3191,6 +2779,113 @@ def create_app(
             validate_assistant_response(response)
             assistant_message = response.get("choices", [{}])[0].get("message", {})
             assistant_tool_calls = assistant_message.get("tool_calls") or []
+            image_request = image_prompt_from_tool_calls(assistant_tool_calls)
+            if image_request is not None:
+                if image_generator is None or executor_remote or body.stream:
+                    raise RuntimeError("IMAGE_GENERATION_PROVIDER_BOUNDARY_VIOLATION")
+                image_call_id, image_prompt = image_request
+                request.app.state.controller.admit_tool_call(state, "generate_image")
+                stage_status["image_generation"] = "started"
+                image_generation_id = uuid.uuid4().hex
+                image_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        image_generator.generate,
+                        image_prompt,
+                        api_token_id,
+                        image_generation_id,
+                    )
+                )
+                try:
+                    artifact = await asyncio.shield(image_task)
+                except asyncio.CancelledError:
+                    image_generator.cancel(image_generation_id)
+                    with suppress(Exception, asyncio.CancelledError):
+                        await asyncio.wait_for(asyncio.shield(image_task), timeout=10)
+                    raise
+                except Exception as error:
+                    stage_status["image_generation"] = "failed"
+                    request.app.state.store.event(
+                        state_session_id,
+                        "image_generation_failed",
+                        {
+                            "provider": "codex_oauth",
+                            "model": "gpt-image-2",
+                            "failure_class": type(error).__name__,
+                        },
+                    )
+                    raise
+                stage_status["image_generation"] = "completed"
+                request.app.state.store.event(
+                    state_session_id,
+                    "image_generation_completed",
+                    {
+                        "artifact_id": artifact.artifact_id,
+                        "provider": "codex_oauth",
+                        "model": "gpt-image-2",
+                        "byte_size": artifact.byte_size,
+                        "validation": "passed",
+                    },
+                )
+                continuation = dict(prepared)
+                continuation["messages"] = [
+                    *prepared.get("messages", []),
+                    assistant_message,
+                    {
+                        "role": "tool",
+                        "tool_call_id": image_call_id,
+                        "content": json.dumps(
+                            {
+                                "artifact_id": artifact.artifact_id,
+                                "download_url": (
+                                    f"/v1/image-artifacts/{artifact.artifact_id}"
+                                ),
+                                "media_type": artifact.media_type,
+                                "width": artifact.width,
+                                "height": artifact.height,
+                                "byte_size": artifact.byte_size,
+                                "validation": "passed",
+                            },
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                    },
+                ]
+                continuation["tools"] = [
+                    tool
+                    for tool in continuation.get("tools", [])
+                    if not (
+                        isinstance(tool, dict)
+                        and (
+                            tool.get("name") == "generate_image"
+                            or (
+                                isinstance(tool.get("function"), dict)
+                                and tool["function"].get("name") == "generate_image"
+                            )
+                        )
+                    )
+                ]
+                image_continuation_started = time.monotonic()
+                response = await request.app.state.provider.complete(
+                    "executor",
+                    configured.models["executor"],
+                    continuation,
+                    timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                    stage="image_generation_continuation",
+                )
+                for key, value in reported_usage(response.get("usage")).items():
+                    token_usage[key] = token_usage.get(key, 0) + value
+                request.app.state.controller.record_invocation(
+                    state,
+                    "executor",
+                    response,
+                    image_continuation_started,
+                    mode="image_generation_continuation",
+                )
+                validate_assistant_response(response)
+                assistant_message = response.get("choices", [{}])[0].get("message", {})
+                assistant_tool_calls = assistant_message.get("tool_calls") or []
+                if image_prompt_from_tool_calls(assistant_tool_calls) is not None:
+                    raise RuntimeError("IMAGE_GENERATION_REPEAT_BLOCKED")
             for call in assistant_tool_calls:
                 request.app.state.controller.admit_tool_call(
                     state,
@@ -4205,401 +3900,6 @@ def create_app(
             x_repository_commit=x_repository_commit,
             x_dirty_state=x_dirty_state,
         )
-
-    @app.get("/v1/admin/runtime-status", dependencies=[Depends(admin_auth)])
-    async def admin_runtime_status(request: Request) -> dict[str, Any]:
-        return await asyncio.to_thread(
-            runtime_report,
-            request.app.state.settings.state_db,
-            request.app.state.project_root,
-            lifecycle_mode=configured.lifecycle_mode,
-            managed_roles=tuple(configured.lifecycle_unit_map),
-        )
-
-    @app.get("/v1/admin/drain", dependencies=[Depends(admin_auth)])
-    async def admin_drain_status(request: Request) -> dict[str, Any]:
-        return {
-            "draining": bool(request.app.state.draining),
-            "active_request_count": request.app.state.usage.active_request_count(),
-        }
-
-    @app.post("/v1/admin/drain", dependencies=[Depends(admin_auth)])
-    async def admin_drain_start(request: Request) -> dict[str, Any]:
-        request.app.state.draining = True
-        request.app.state.store.event("runtime-drain", "gateway_drain_started", {})
-        return await admin_drain_status(request)
-
-    @app.delete("/v1/admin/drain", dependencies=[Depends(admin_auth)])
-    async def admin_drain_cancel(request: Request) -> dict[str, Any]:
-        request.app.state.draining = False
-        request.app.state.store.event("runtime-drain", "gateway_drain_cancelled", {})
-        return await admin_drain_status(request)
-
-    def admin_html(content: str) -> HTMLResponse:
-        return HTMLResponse(
-            content,
-            headers={
-                "Cache-Control": "no-store",
-                "Content-Security-Policy": (
-                    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
-                    "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
-                    "form-action 'self'"
-                ),
-                "Referrer-Policy": "no-referrer",
-                "X-Content-Type-Options": "nosniff",
-            },
-        )
-
-    @app.get("/admin", response_class=HTMLResponse)
-    async def admin_dashboard() -> HTMLResponse:
-        return admin_html(ADMIN_DASHBOARD)
-
-    @app.get("/admin/api-keys", response_class=HTMLResponse)
-    async def api_key_dashboard() -> HTMLResponse:
-        return admin_html(API_KEY_DASHBOARD)
-
-    def key_response(payload: dict[str, Any]) -> JSONResponse:
-        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
-
-    def key_event(request: Request, action: str, name: str) -> None:
-        request.app.state.store.event(
-            "api-key-admin",
-            "api_key_admin_action",
-            {
-                "action": action,
-                "name": name,
-                "operator": request.state.api_token_id,
-            },
-        )
-
-    @app.post("/v1/admin/session", dependencies=[Depends(admin_auth)])
-    async def api_key_session(request: Request) -> Response:
-        token = request.app.state.api_keys.create_admin_session(request.state.api_token_id)
-        response = Response(status_code=status.HTTP_204_NO_CONTENT)
-        response.set_cookie(
-            ADMIN_SESSION_COOKIE,
-            token,
-            max_age=ADMIN_SESSION_SECONDS,
-            httponly=True,
-            secure=request.url.scheme == "https",
-            samesite="strict",
-        )
-        return response
-
-    @app.delete("/v1/admin/session")
-    async def api_key_session_delete(request: Request) -> Response:
-        if token := request.cookies.get(ADMIN_SESSION_COOKIE):
-            request.app.state.api_keys.delete_admin_session(token)
-        response = Response(status_code=status.HTTP_204_NO_CONTENT)
-        response.delete_cookie(ADMIN_SESSION_COOKIE, samesite="strict")
-        return response
-
-    @app.get("/v1/admin/codex/workspaces", dependencies=[Depends(admin_auth)])
-    async def admin_codex_workspaces(request: Request) -> JSONResponse:
-        runner = cast(AdminCodexRunner, request.app.state.admin_codex)
-        return key_response({"root": "~/code", "workspaces": runner.workspaces()})
-
-    @app.post("/v1/admin/codex", dependencies=[Depends(admin_auth)])
-    async def admin_codex(body: AdminCodexRequest, request: Request) -> StreamingResponse:
-        stream = await cast(AdminCodexRunner, request.app.state.admin_codex).start(body)
-        return StreamingResponse(
-            stream,
-            media_type="application/x-ndjson",
-            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-        )
-
-    @app.get("/v1/admin/api-keys", dependencies=[Depends(admin_auth)])
-    async def api_key_list(request: Request) -> JSONResponse:
-        model_catalog = [
-            {
-                "role": role,
-                "served_name": configured.models[role].served_name,
-                "repository": configured.models[role].repository,
-            }
-            for role in ("executor", "planner", "reviewer")
-            if role in configured.models
-        ]
-        frontier_config = request.app.state.frontier_config
-        if frontier_config is not None:
-            model_catalog.append(
-                {
-                    "role": "frontier",
-                    "served_name": frontier_config.model,
-                    "repository": "Codex OAuth",
-                }
-            )
-        return key_response(
-            {
-                "keys": [
-                    {field: value for field, value in key.items() if field != "api_key"}
-                    for key in request.app.state.api_keys.list()
-                ],
-                "usage": request.app.state.usage.api_token_dashboard(),
-                "model_catalog": model_catalog,
-                "max_admin_keys": configured.max_admin_api_keys,
-            }
-        )
-
-    def frontier_auth_profile(profile: str, request: Request) -> tuple[Path, CodexOAuthProvider]:
-        frontier_config = request.app.state.frontier_config
-        if frontier_config is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Frontier is disabled")
-        profiles = {frontier_config.primary_profile, frontier_config.secondary_profile}
-        if profile not in profiles:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Frontier profile not found")
-        root = frontier_config.profile_root
-        home = profile_home(profile, root) if root is not None else profile_home(profile)
-        return home, CodexOAuthProvider(profile, root)
-
-    @app.get("/v1/admin/frontier-auth", dependencies=[Depends(admin_auth)])
-    async def frontier_auth_status(request: Request) -> JSONResponse:
-        frontier_config = request.app.state.frontier_config
-        if frontier_config is None:
-            return key_response({"enabled": False, "profiles": []})
-        root = frontier_config.profile_root
-        profiles = dict.fromkeys(
-            profile
-            for profile in (frontier_config.primary_profile, frontier_config.secondary_profile)
-            if profile is not None
-        )
-        return key_response(
-            {
-                "enabled": True,
-                "model": frontier_config.model,
-                "profiles": [
-                    profile_status(profile, root) if root is not None else profile_status(profile)
-                    for profile in profiles
-                ],
-            }
-        )
-
-    @app.post("/v1/admin/frontier-auth/{profile}", dependencies=[Depends(admin_auth)])
-    async def frontier_auth_login(profile: str, request: Request) -> StreamingResponse:
-        home, provider = frontier_auth_profile(profile, request)
-        active = request.app.state.frontier_auth_active
-        if profile in active:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Frontier authentication already active")
-        lock = profile_lock(profile, configured.run_dir)
-        try:
-            lock.__enter__()
-        except RuntimeError as error:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-        active.add(profile)
-
-        async def login_stream() -> AsyncIterator[bytes]:
-            process: asyncio.subprocess.Process | None = None
-            try:
-                home.mkdir(parents=True, exist_ok=True, mode=0o700)
-                home.chmod(0o700)
-                process = await asyncio.create_subprocess_exec(
-                    "codex",
-                    "login",
-                    "--device-auth",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,
-                    env=provider.environment(),
-                )
-                assert process.stdout is not None
-                deadline = time.monotonic() + 16 * 60
-                while time.monotonic() < deadline:
-                    try:
-                        chunk = await asyncio.wait_for(process.stdout.read(1024), timeout=10)
-                    except TimeoutError:
-                        yield b"\n"
-                        continue
-                    if not chunk:
-                        break
-                    text = chunk.decode(errors="replace")
-                    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
-                    text = "".join(
-                        character
-                        for character in text
-                        if character in "\n\t" or ord(character) >= 32
-                    )
-                    yield text.encode()
-                else:
-                    process.terminate()
-                    yield "\n인증 시간이 만료되었습니다. 다시 시도하세요.\n".encode()
-                return_code = await process.wait()
-                auth_file = home / "auth.json"
-                if return_code == 0 and auth_file.is_file():
-                    auth_file.chmod(0o600)
-                yield (
-                    "\n인증이 완료되었습니다.\n"
-                    if return_code == 0
-                    else "\n인증이 완료되지 않았습니다.\n"
-                ).encode()
-            finally:
-                if process is not None and process.returncode is None:
-                    process.terminate()
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=5)
-                    except TimeoutError:
-                        process.kill()
-                active.discard(profile)
-                lock.__exit__(None, None, None)
-
-        return StreamingResponse(
-            login_stream(),
-            media_type="text/plain; charset=utf-8",
-            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
-        )
-
-    @app.get("/v1/admin/api-keys/{name}/reveal", dependencies=[Depends(admin_auth)])
-    async def api_key_reveal(name: str, request: Request) -> JSONResponse:
-        try:
-            record = request.app.state.api_keys.get(name)
-        except KeyError as error:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found") from error
-        return key_response({"api_key": record["api_key"]})
-
-    @app.get("/v1/admin/api-keys/{name}/usage", dependencies=[Depends(admin_auth)])
-    async def api_key_usage(
-        name: str,
-        request: Request,
-        start: date | None = None,
-        end: date | None = None,
-    ) -> JSONResponse:
-        try:
-            request.app.state.api_keys.get(name)
-        except KeyError as error:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found") from error
-        if start and end and end < start:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "end date must not precede start date")
-        start_at = (
-            datetime.combine(start, datetime.min.time(), tzinfo=UTC).timestamp() if start else None
-        )
-        end_at = (
-            datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=UTC).timestamp()
-            if end
-            else None
-        )
-        return key_response(
-            request.app.state.usage.api_token_dashboard(
-                name=name,
-                start_at=start_at,
-                end_at=end_at,
-            )
-        )
-
-    @app.post("/v1/admin/api-keys", dependencies=[Depends(admin_auth)])
-    async def api_key_create(payload: ApiKeyRequest, request: Request) -> JSONResponse:
-        try:
-            token, record = request.app.state.api_keys.create(payload)
-        except ValueError as error:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-        key_event(request, "create", payload.name)
-        return key_response({"api_key": token, "key": record})
-
-    @app.post("/v1/admin/api-keys/{name}/rotate", dependencies=[Depends(admin_auth)])
-    async def api_key_rotate(name: str, payload: ApiKeyRequest, request: Request) -> JSONResponse:
-        if payload.name != name:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "key name does not match path")
-        if name == request.state.api_token_id and payload.kind != "admin":
-            raise HTTPException(status.HTTP_409_CONFLICT, "cannot demote the active admin key")
-        try:
-            token, record = request.app.state.api_keys.create(payload, replace=True)
-        except ValueError as error:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-        key_event(request, "rotate", name)
-        return key_response({"api_key": token, "key": record})
-
-    @app.post("/v1/admin/api-keys/{name}/update", dependencies=[Depends(admin_auth)])
-    async def api_key_update(name: str, payload: ApiKeyUpdate, request: Request) -> JSONResponse:
-        try:
-            record = request.app.state.api_keys.update(name, payload)
-        except KeyError as error:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found") from error
-        except ValueError as error:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-        key_event(request, "update", name)
-        return key_response({"key": record})
-
-    @app.post("/v1/admin/api-keys/{name}/revoke", dependencies=[Depends(admin_auth)])
-    async def api_key_revoke(name: str, request: Request) -> JSONResponse:
-        if name == request.state.api_token_id:
-            raise HTTPException(status.HTTP_409_CONFLICT, "cannot revoke the active admin key")
-        try:
-            record = request.app.state.api_keys.revoke(name)
-        except KeyError as error:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found") from error
-        key_event(request, "revoke", name)
-        return key_response({"key": record})
-
-    @app.delete("/v1/admin/api-keys/{name}", dependencies=[Depends(admin_auth)])
-    async def api_key_delete(name: str, request: Request) -> Response:
-        try:
-            request.app.state.api_keys.delete(name)
-        except KeyError as error:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found") from error
-        except ValueError as error:
-            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-        key_event(request, "delete", name)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    @app.get("/admin/profile", response_model=ProfileResponse, dependencies=[Depends(admin_auth)])
-    async def profile(request: Request) -> dict[str, str]:
-        return dict(request.app.state.profiles.current())
-
-    async def switch_profile(name: str, request: Request) -> dict[str, str]:
-        guard_ownership: dict[str, str] = {}
-        switch_task: asyncio.Task[Mapping[str, str]] | None = None
-        try:
-            if configured.lifecycle_mode in {"fixed", "adaptive"}:
-                try:
-                    guard_ownership = await request.app.state.lifecycle.claim_guards(
-                        configured.lifecycle_unit_map,
-                        "profile_guard",
-                    )
-                except Exception as error:
-                    raise HTTPException(
-                        status.HTTP_503_SERVICE_UNAVAILABLE,
-                        "lifecycle profile guard unavailable",
-                    ) from error
-            switch_task = asyncio.create_task(
-                asyncio.to_thread(request.app.state.profiles.switch, name)
-            )
-            try:
-                return dict(await asyncio.shield(switch_task))
-            except asyncio.CancelledError:
-                await switch_task
-                raise
-        except HTTPException:
-            raise
-        except Exception as error:
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(error)) from error
-        finally:
-            if guard_ownership:
-                try:
-                    await request.app.state.lifecycle.release_guards(
-                        guard_ownership,
-                        "profile_guard",
-                    )
-                except Exception as error:
-                    raise HTTPException(
-                        status.HTTP_503_SERVICE_UNAVAILABLE,
-                        "lifecycle profile guard cleanup unavailable",
-                    ) from error
-
-    @app.post(
-        "/admin/profile/resident",
-        response_model=ProfileResponse,
-        dependencies=[Depends(admin_auth)],
-    )
-    async def resident(request: Request) -> dict[str, str]:
-        return await switch_profile("resident", request)
-
-    @app.post(
-        "/admin/profile/judge", response_model=ProfileResponse, dependencies=[Depends(admin_auth)]
-    )
-    async def judge(request: Request) -> dict[str, str]:
-        return await switch_profile("judge", request)
-
-    @app.post(
-        "/admin/profile/restore", response_model=ProfileResponse, dependencies=[Depends(admin_auth)]
-    )
-    async def restore(request: Request) -> dict[str, str]:
-        return await switch_profile("restore", request)
 
     return app
 

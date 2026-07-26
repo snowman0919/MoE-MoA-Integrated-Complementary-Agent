@@ -148,7 +148,9 @@ const fmtTime=value=>value?new Date(value*1000).toLocaleString():"없음";
 const optional=id=>$(id).value?Number($(id).value):null;
 let modelCatalog=new Map();
 const modelNames=new Map([["dgx-moa-executor","Qwen3-Next"],
-  ["dgx-moa-planner","Nemotron-30B"],["dgx-moa-reviewer","North-Mini-30B"]]);
+  ["dgx-moa-planner","Nemotron-30B"],["dgx-moa-reviewer","North-Mini-30B"],
+  ["dgx-moa-executor-candidate","Qwen3-Next"],
+  ["dgx-moa-specialist-candidate","Gemma-4-31B"]]);
 const modelLabel=model=>modelNames.get(model)||model;
 const reasonNames=new Map([["local_busy","로컬 Busy"],["local_context_exceeded","컨텍스트 초과"],
   ["executor_remote","Executor 원격"],["remote_faster","원격 우선"],
@@ -237,9 +239,9 @@ async function load(){
   const data=await api("/v1/admin/api-keys");$("content").hidden=false;$("login").hidden=true;
   modelCatalog=new Map(data.model_catalog.map(item=>[item.served_name,item.repository]));
   $("model-catalog").replaceChildren();
-  data.model_catalog.forEach(item=>{const line=document.createElement("span");
-    line.textContent=modelLabel(item.served_name);
-    tip(line,item.served_name+"\\n"+item.repository);$("model-catalog").append(line)});
+  [...modelCatalog].forEach(([served_name,repository])=>{const line=document.createElement("span");
+    line.textContent=modelLabel(served_name);
+    tip(line,served_name+"\\n"+repository);$("model-catalog").append(line)});
   const usage=new Map(data.usage.summary.map(item=>[item.name,item]));$("keys").replaceChildren();
   const selected=$("graph-key").value;$("graph-key").replaceChildren();
   data.keys.forEach(key=>{const row=document.createElement("tr");const stats=usage.get(key.name)||{};
