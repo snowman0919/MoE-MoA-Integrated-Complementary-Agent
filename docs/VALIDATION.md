@@ -5178,6 +5178,29 @@ and rollback gates remain unproven.
   concurrent role requests, durable evidence, OOM rejection, and truncated-run
   rejection. The complete branch suite passed `993/993` in `26.53` seconds.
 
+## Interrupted dual-SGLang soak and cache boundary — 2026-07-27
+
+Immutable attempt `20260727-performance-c6-overlap-fix` was intentionally
+stopped after `12,878` seconds because elapsed time alone is not the long-Goal
+gate. It completed 1,579 cycles and 3,158 requests with zero request failure,
+restart, or OOM. Minimum `MemAvailable` was `13,519,660` KiB. This is useful
+backend stability evidence, not a completed ten-hour or long-horizon Goal.
+
+Role-separated inspection found Specialist cache reuse in 1,567 of 1,579
+requests but Executor reuse in 0 of 1,579. Synthetic loopback probes isolated
+the cause: repeated Qwen prefixes of 4,749 and 7,309 prompt tokens reused zero
+tokens, while 8,717 and 13,453 prompt tokens reused exactly 8,192 tokens. The
+live server reported `mamba_radix_cache_strategy=no_buffer`,
+`mamba_track_interval=256`, and `chunked_prefill_size=8192`. The Mamba/Radix
+cache was healthy; the soak's approximately 5K-token stable prefix was below
+the effective prefill checkpoint boundary. Future soak attempts use a
+256-repeat prefix above that boundary and report cache reuse independently for
+Executor and Specialist. A direct probe with that exact revised prefix passed:
+the Executor repeated 10,782 prompt tokens with 8,192 cached tokens and reduced
+latency from 2.736 to 1.178 seconds; the Specialist repeated 10,791 prompt
+tokens with 10,766 cached tokens and reduced latency from 15.305 to 3.682
+seconds. Existing evidence files remain unchanged.
+
 ## Frozen ten-hour context-retention gate — 2026-07-26
 
 `scripts/analyze-long-horizon.py` now rejects incomplete or reordered
@@ -5634,3 +5657,702 @@ directly against the installed weights (`14/14`), and focused
 topology/runtime/rollback tests passed `14/14`. The complete candidate suite
 passed `1078/1078` in 27.77 seconds with one third-party Starlette deprecation
 warning. No model, service, production file, main, or dev branch was changed.
+
+## Dual-SGLang maintenance-window physical admission — 2026-07-26
+
+The operator approved an isolated maintenance window. The authenticated gateway
+was drained with zero active requests, and only the production Executor,
+Planner, and Reviewer model units were stopped. The gateway remained running.
+No production worktree, unit file, `main`, or `dev` content was changed.
+
+The original Red Hat compressed-tensors Executor checkpoint could answer a
+simple completion but did not reliably complete the fixed tool and exact-output
+contracts under SGLang. It was replaced only in the candidate topology with
+`Cirrascale/Qwen3-Coder-Next-NVFP4` revision
+`15c399c8189eccc9c47d17dcf8adf3c16e8bb3f8`, whose model card explicitly
+targets SGLang ModelOpt FP4. All ten locally installed weight shards passed the
+new pinned SHA-256 manifest before startup. The production vLLM checkpoint and
+service were not removed or edited.
+
+The immutable physical attempts were retained rather than rewritten:
+
+- `a1` recorded the original Executor tool/output failures and showed that the
+  Gemma runtime exposed only 28,603 tokens at its prepared memory setting.
+- `a2` used the SGLang-specific Executor and a 65,536-token Gemma pool.
+  Executor readiness and tool parsing passed, but the host had only about
+  0.5 GiB available before validation and the Executor was OOM-killed.
+- `a3` reduced static fractions. Executor exposed 65,536 tokens, Gemma exposed
+  only 56,812, and host availability was about 3.3 GiB. The validator's new
+  fail-closed path skipped every inference request because the runtime contract
+  was unsafe.
+- `a5` established the 65,536/32,768 topology with about 11.6 GiB available,
+  but retained a validator string-normalization mismatch as a failed attempt.
+- `a6` passed readiness, tool parsing, separated reasoning, both Planner and
+  Reviewer structured schemas, streaming, and Radix cache reuse. It still
+  failed because host availability fell from 11.634 GiB to 7.729 GiB.
+- `a7` fixed the Gemma Planner/Reviewer pool at 20,480 tokens while preserving
+  the 65,536-token Executor. Every catalog, capacity, before/after runtime,
+  readiness, tool, reasoning, structured-output, streaming, and cache check
+  passed. Host availability was 15.859 GiB before and 12.041 GiB after the
+  250.528-second validation; neither container was OOM-killed. Executor Radix
+  reuse reported 14,976 cached tokens on the second request.
+
+The `a7` 20,480-token Gemma limit was an explicit memory-safety tradeoff, not
+evidence that the original dual-65K contract fit this 128 GiB unified-memory
+host with the then-current options.
+`language-only` would remove only about 1.061 GiB of measured checkpoint
+tensors and was not reused; explicit FP8 KV, offload, cache reset, sleep, eager
+mode, and chunking experiments remain rejected. Long-context execution remains
+on the protected 65K Executor or an eligible pinned remote fallback.
+
+The first three-minute repeated smoke (`b1`) retained its failure: all Executor
+requests passed, but Gemma exhausted the 128-token budget in hidden reasoning
+on the long cache prefix, leaving no visible marker. Admission already tests
+reasoning independently, so repeated cache/concurrency probes now disable
+thinking and retain a 32-token visible-output bound. The fresh immutable `b2`
+smoke then completed six cycles and 12 concurrent role requests with zero
+failures, 48,718 cached tokens, no OOM, and minimum `MemAvailable` of
+11,741,864 KiB. The soak summary now fails closed below the repository's 10 GiB
+headroom requirement rather than merely reporting the value.
+
+The first nominal ten-hour run (`c1`) used that provisional 20,480-token
+specialist topology. It was deliberately stopped after 720 seconds when a
+dual-65K option fix became available, so it remains an interrupted diagnostic,
+not a pass: 12 cycles, 48 requests, zero request failures, no OOM, minimum
+`MemAvailable` 11,548,512 KiB, `interrupted=true`, and `passed=false`. Its
+append-only JSONL and summary SHA-256 values are
+`023b8476c444d7258223cf4410f125d79104a2daec452686186052e8de36057f` and
+`8e3dd5fba6b1dfcc773d3e31cad9a5a4e7b7f0f6c9d54cb70669cd6e824aedef`.
+
+The fixed Gemma revision declares a 1,024-token sliding window. SGLang's
+default `swa_full_tokens_ratio=0.8` therefore reserved 52,428 sliding-window
+tokens at a 65,536-token full pool, consuming about 20 GiB of unnecessary SWA
+KV memory. The candidate now uses SGLang's native
+`--swa-full-tokens-ratio 0.06`, which retains 3,932 SWA tokens—enough for the
+two-request physical concurrency probe with margin—while exposing the full
+65,536-token pool. This does not use offload, `language-only`, cache reset,
+sleep, eager mode, chunking, or an explicit KV dtype override.
+
+Fresh immutable attempt `a8` physically admitted the resulting dual-65K
+topology in 249.718 seconds. Both catalogs, 65,536-token capacities,
+before/after runtime contracts, real inference readiness probes, tool parsers,
+separated reasoning, Planner and Reviewer structured outputs, streaming, and
+Radix cache reuse passed; the Executor reused 13,824 cached tokens. Host
+availability was 20.104 GiB before and 16.550 GiB after validation, with no OOM
+or restart. The runtime, Executor log, and Specialist log SHA-256 values are
+`dd447cf0f31739c1e509b5e0132f2c3891cb4ccacbe1d44fa8c387dba3307a83`,
+`213b3ab3a16926f32a7f6b45e1b5b319649a10eecea2f54a0ec7c47eb7445432`,
+and `a2a73b152274cced1c71894a9308fd3c617df614efb542ffb35ae6b391cfc3cc`.
+
+The first dual-65K repeated smoke (`b3`) retained the preceding `0.025` option
+and failed closed rather than being rewritten. Executor requests passed, but
+one Specialist request consumed 99.94% of the 1,638-token SWA pool, leaving the
+second request queued with no running request until the 600-second client
+limit. The immutable run recorded one cycle, four requests, two Specialist
+failures, no OOM or restart, and minimum `MemAvailable` 16,937,396 KiB. Its
+JSONL and summary SHA-256 values are
+`7eef311f8f0f43aada9eda9f9aa8833e335e3adba5c5124e89f0fb0d7f4a871a` and
+`be5c7f0e38b4efd0b89ee258e21dcab7dcbf95eef3d775f37758dc15fa0aaf87`.
+This measured concurrency failure, rather than the one-request startup floor,
+is why the checked-in candidate ratio is now `0.06`.
+
+Fresh immutable attempt `a9` admitted the `0.06` topology in 246.881 seconds.
+Every `a8` contract passed again at 65,536 tokens per model, including both
+role schemas and Radix cache reuse; the Executor reused 14,208 cached tokens.
+Host availability was 16.123 GiB before and 15.147 GiB after validation, with
+no OOM or restart. The runtime, Executor log, and Specialist log SHA-256 values
+are `9d504238236275d610fc4f340bb077d84e55b7c32f285c1beffdc786b5d0a940`,
+`6a4af55a0cc0cf5cb13810e5e5da32afa98c46926c2684b76990ab1fbc1e3b39`,
+and `f2b519fb29239da57b970b5461052fe5223b1c2a37f38365617c07a3a6d22597`.
+
+Fresh immutable repeated smoke `b4` then completed exactly 180 seconds: three
+cycles, 12 requests, zero failures, 52,560 cached tokens, no OOM or restart,
+and minimum `MemAvailable` 15,851,704 KiB. Unlike `b3`, both queued Specialist
+requests completed in every cycle and the SWA pool returned to zero use. Its
+JSONL and summary SHA-256 values are
+`a2168a0cdde71d9d69a0427a5e64c01d02e530aa2e338afc5205869a87385b68` and
+`61b36dbd773ec8b122cb7138261db132d20bc84df58d9745cc78892e68f5f511`.
+
+The first dual-65K ten-hour epoch (`c2`) failed closed during its independent
+admission and never entered the timed soak. Planner hidden reasoning consumed
+the 2,048-token structured-output budget, so `planner_structured_output` failed
+after 446.572 seconds; every runtime remained healthy and the guard did not
+trigger. The immutable header/footer JSONL SHA-256 is
+`91317688f742f96433439ae226b7c9f1b33a0b79d0a15e7dc72688155e252217`;
+there is intentionally no success summary. SGLang supports a per-request
+grammar `thinking_budget`, so Planner and Reviewer schema probes now retain
+English hidden reasoning but cap it at 512 tokens, preserving the remaining
+output budget for grammar-constrained JSON.
+
+Fresh immutable attempt `a10` physically verified that fix in 242.390 seconds.
+Planner and Reviewer both retained non-empty hidden reasoning and returned
+valid `PlannerPlan` and `ReviewResult` documents; every other dual-65K
+admission contract also passed, with 15,360 cached Executor tokens and no OOM
+or restart. The runtime, Executor log, and Specialist log SHA-256 values are
+`46700c9cc80f1a7fee381d7382c04889c32977bc98b0e1af57926eca22f3e7de`,
+`cd3759956f1e68282b81d21db809aa55e38135a82f2a55c0558edcfe4a0c74cd`,
+and `63d4fcd0c625619af1a40e056efc7a7cd5ccc6aafda71c07f1675f625591a29f`.
+
+Focused runtime/topology tests passed `16/16`; focused soak/runtime tests passed
+`14/14`; the complete suite at the `a10` option state passed `1079/1079` with
+one third-party
+Starlette deprecation warning. Bash syntax, Ruff on Python sources, and
+`git diff --check` passed. A prior command incorrectly sent the Bash topology
+script to Ruff and returned syntax errors from the wrong parser; the corrected
+language-specific checks passed.
+
+The `a10` admission and `b4` smoke do not satisfy the real ten-hour run, sealed
+blind non-inferiority panels, breadth evaluation, cost/telemetry completeness,
+or production rollback gates. Candidate containers remain isolated on
+loopback ports `18101` and `18102`; merge, deployment, production transition,
+and Goal completion remain prohibited.
+
+## Approved SGLang runtime transition trial — 2026-07-27
+
+The operator explicitly approved the SGLang transition. This approval covered
+the runtime transition only; it did not approve a `main` merge or Goal
+completion. Before changing the runtime, the production `models.yaml` and
+ignored `.env.local` were copied to
+`data/state/backups/sglang-transition-20260727-0125` in the production
+worktree. The backup directory is mode `0700`, its files are mode `0600`, and
+the original SHA-256 values are
+`0237e3d55ee8d0a49096589f931624a7f57cde26def106c9792a6eed8bef8c7e`
+and
+`8bacb56ccf2da12129226a7579c07cd7d9766be2d098246dd1582aff6c5d88cd`.
+No secret value was copied into this document.
+
+During the approved runtime-only trial, the authenticated production gateway
+temporarily routed Executor requests to the loopback-only
+`Cirrascale/Qwen3-Coder-Next-NVFP4` SGLang candidate on port `18101`, and both
+Planner and Reviewer to the shared loopback-only
+`nvidia/Gemma-4-31B-IT-NVFP4` SGLang candidate on port `18102`. The local
+Reasoner endpoint was corrected to the same machine's current tailnet address,
+`100.90.167.128`. Because Planner and Reviewer intentionally shared one
+container, lifecycle automation was disabled with an empty unit map while both
+candidate containers remained resident. The old Executor, Planner, and
+Reviewer model units were inactive during that trial. The gateway stayed
+authenticated, returned ready, and left drain mode with zero active requests.
+This paragraph records that trial, not the later current production state
+reported below.
+
+Fresh physical transition validation
+`sglang-transition-20260727-012036/result.json` passed every 65,536-token
+capacity, real readiness inference, tool parser, separated reasoning,
+Planner/Reviewer schema, streaming, Radix cache, memory, and OOM contract in
+253.723 seconds. The mode-`0600` result SHA-256 is
+`6bff1a66c9db9b8343c29ff33fee75711caa905af9f41cf7af31f74ce3c09703`.
+
+The initial continuous-load epoch `20260727-performance-c4` is intentionally
+retained as a failure. Cycle 1 passed, then the Executor returned failures in
+cycles 2 through 4. Its logs identify an SGLang Qwen3 overlap scheduler
+failure—`CUBLAS_STATUS_EXECUTION_FAILED` in `shared_expert_gate`—followed by a
+process restart; Docker recorded no OOM. The mode-`0600` JSONL SHA-256 is
+`bbbfebb8c35e0c077ed363a32f7149b2e7cc618f8ea7a69241bbae6b753cfe63`.
+The fix disables overlap scheduling for the Executor only. Gemma retains
+overlap scheduling.
+
+The first post-fix static attempt
+`sglang-overlap-fix-20260727-0144/result.json` failed because the validator's
+expected Specialist option omitted the newly recorded `overlap-schedule=true`;
+it performed no inference and remains immutable. Its SHA-256 is
+`395568b1969860b84b3da0348c13ae306ff3ab80e8a68c38e0c98009ab7f0a8e`.
+Fresh attempt `sglang-overlap-fix-20260727-0145-r2/result.json` then passed the
+complete physical contract in 252.007 seconds. Executor overlap was false,
+Specialist overlap was true, both exposed 65,536 tokens, Executor Radix reuse
+reported 8,192 cached tokens, host availability remained about 15.65 GiB, and
+neither container was OOM-killed or restarted. The mode-`0600` result SHA-256
+is
+`d5f53c5a46b700c0e52489440003a2fa6a0e663ac3f47acd7b4a81e06f21bbb8`.
+
+An actual installed OpenCode 1.17.18 request after the fix exited `0`, returned
+the exact marker, and contained neither `Gateway is draining` nor `Bad
+Gateway`. Provenance recorded a completed local
+`Qwythos-v2-9B:Q4` Reasoner call and a completed local
+`dgx-moa-executor-candidate` call. The OpenCode key dashboard and the database
+both reported 1,821 requests and 17,520,883 tokens after this request. Direct
+candidate-port validation is deliberately absent from API-key accounting
+because it bypasses the authenticated gateway; gateway and OpenCode traffic is
+accounted.
+
+The complete repository suite at this state passed `1080/1080` in 26.52
+seconds with one third-party Starlette deprecation warning, and
+`git diff --check` passed. Epoch `20260727-performance-c5-overlap-fix` is
+retained as an invocation error because the runner subcommand was omitted and
+the process exited before producing model evidence. A new immutable ten-hour
+continuous-load epoch, `20260727-performance-c6-overlap-fix`, started through
+a tracked user service with the correct `run` subcommand and one concurrent
+client per role. Its admission passed, and the first 10 cycles completed 20/20
+requests with zero failure, 45,059 cached tokens, zero container restart, zero
+OOM, and about 95% observed GPU utilization. This is only an initial
+checkpoint. It is not a pass until the full 36,000 seconds finish with zero
+request, runtime, OOM, restart, memory-headroom, or interruption failure.
+
+The corrected production-baseline rollback script now probes Planner and
+Reviewer sequentially rather than loading both simultaneously, and its focused
+tests pass. A complete physical rollback followed by SGLang restoration remains
+required. The sealed confirmatory panels, Hermes evidence, breadth categories,
+cost/telemetry completeness, ten-hour epoch, and physical rollback gates remain
+open. Therefore this transition is running but the Goal remains incomplete.
+
+### Post-transition harness and telemetry checkpoint
+
+The missing `rate-limiter` result in immutable Codex diagnostic
+`20260726-codex-five-postfix` was an orchestration omission, not a model or
+gateway crash: the original preparation command explicitly named only
+`atomic-store`, `dag-runner`, `webhook-verifier`, and `log-report`. The original
+run remains unchanged and incomplete. Recovery attempts use new run IDs.
+
+Production-routed diagnostic `20260727-codex-five-sglang-d1` prepared all five
+tasks. Its first two completed tasks both passed their public and hidden
+functional tests, but failed the quality score. `rate-limiter` repeated a
+generic progress marker and therefore failed `no_bad_terminal`; `atomic-store`
+failed the same check and recorded one provider error. The production database
+also predates the new cache/cost columns, so both rows have incomplete
+telemetry and the old scorer falsely groups sequential Executor calls as one
+provider switch. This run is diagnostic evidence only.
+
+The quality and long-horizon collectors now identify provider pinning by the
+per-call `invocation_id` when that schema is available. Codex OAuth, OpenCode Go,
+local, primary, secondary, default, remote, and Frontier subscription paths
+have zero incremental request cost; only `openrouter:*` calls fail closed when
+their measured variable cost is absent. Missing cache or token telemetry still
+fails closed. Long-horizon failures now distinguish subprocess exit `124` as
+`client_checkpoint_timeout` rather than collapsing it into a generic client
+failure. The focused long-horizon suite passed `12/12`, Ruff passed, and the
+complete repository suite passed `1084/1084` in 31.61 seconds with the existing
+single third-party Starlette deprecation warning.
+
+An isolated branch-code gateway is active on loopback port `19404` with a fresh
+state database, lifecycle disabled, an empty unit map, and training, weekly,
+runtime-evolution, runtime-knowledge, runtime-skills, live-observation, and
+loop-engineering features disabled. Its authenticated non-streaming smoke
+returned the exact expected marker in 4.336 seconds. Provenance contains a
+completed local `Qwythos-v2-9B:Q4` Reasoner call and a completed local
+`dgx-moa-executor-candidate` call. The fresh invocation schema contains unique
+invocation identity, cache, and cost fields.
+
+Long-horizon Codex attempt `d2` is retained as a failed diagnostic at
+checkpoint zero with no fabricated evidence. Its private mode-`0600` failure
+record reports `client_checkpoint_failed`; the worktree remained clean at the
+frozen baseline commit. Attempt `d3` reached implementation and testing but is
+diagnostic-only for two independent reasons: a concurrently started quality
+panel shared its time-window telemetry database, and the Docker mount exposed a
+Git worktree without its external common Git directory. The client therefore
+reinitialized Git inside the mounted directory and invalidated the frozen
+baseline identity. It was stopped without manufacturing a checkpoint. Attempt
+`d4` was stopped before evidence for the same worktree-mount flaw.
+
+The collector now joins `model_invocation_usage.request_id` to
+`request_usage.session_id` and limits provenance, pinning, token, and cost
+metrics to the exact long-horizon session. A regression fixture proves that a
+concurrent paid-provider row from another session is excluded. Focused tests
+pass `13/13`. The current staged repository state—including the deliberate
+context-tuning/profile-mutation cleanup—collects and passes `1073/1073` tests in
+33.49 seconds with the same third-party warning; Ruff and `git diff --check`
+pass.
+
+Fresh attempt `d5` uses its own loopback port `19406`, fresh database, private
+state and evidence paths, and a standalone local clone whose `.git` directory
+is inside the Docker-mounted workspace. The host and the running client
+container both resolved the exact frozen baseline commit before work began.
+`d5` is active and has not yet produced a checkpoint, so it is not a pass.
+
+Two isolated quality-panel launch attempts (`d2` and `d3`) failed before any
+model call because `systemd-run` expanded Bash array expressions such as
+`${common[@]}` as unit environment references. The immutable failed attempts
+remain preserved. Adding `--expand-environment=no` allowed `d4` to start, but
+it was deliberately stopped when its shared database was found to contaminate
+the then-running long-horizon diagnostic. The next quality panel must use its
+own gateway database.
+
+At this checkpoint the immutable `20260727-performance-c6-overlap-fix` soak had
+completed 167 cycles and 334 role requests over 1,616.590 seconds with zero
+request failure, 831,213 cached tokens, no observed OOM, no container restart,
+minimum `MemAvailable` of 14,415,060 KiB, and maximum observed swap use of
+4,018,320 KiB. Both SGLang containers remained running. This remains an
+intermediate checkpoint; the full 36,000 seconds, sealed panels, breadth
+evaluation, actual 10-hour client run, and physical rollback remain required.
+
+### External specialist readiness and routing correction
+
+Long-horizon attempt `d5` was stopped and retained as failed diagnostic
+evidence. Its fresh database proves that three Planner turns selected
+`deepseek-v4-pro` remotely because the isolated lifecycle records were
+`UNLOADED` or `FAILED`, even though the shared SGLang Specialist container was
+physically ready. Each initial and retry response stopped at 4,095 or 4,096
+completion tokens with `finish_reason=length`; hidden reasoning consumed
+11,009–17,607 characters and the public JSON was empty or incomplete. The
+three final failures were `JSONDecodeError`. The old failure telemetry
+incorrectly labeled these calls as local
+`dgx-moa-specialist-candidate` because the failure path discarded the completed
+routing decision.
+
+Two independent causes were corrected in the experiment branch. Planner and
+Reviewer are now declared `lifecycle_control: external` while the checked-in
+lifecycle mode remains disabled with an empty unit map. When specialist
+routing is enabled, gateway startup performs a real inference health probe for
+each external specialist and recovers the local state as `READY` only after
+that probe succeeds; a failed probe records `FAILED` with
+`external_unavailable`. Failed Planner telemetry now preserves the selected
+provider, model, routing reason, prompt/completion/total/cache tokens, and cost
+from the pinned routing decision, and uses `unknown` rather than inventing a
+local provider when no decision exists.
+
+The 4,096-token Planner failure was a runtime configuration limit rather than
+an OpenCode Go model limit. A private synthetic-schema comparison using the
+actual configured credential returned schema-valid `deepseek-v4-pro` JSON at
+4,556 completion tokens for the baseline and 4,210 tokens with
+`reasoning_effort=low`; no raw response or credential was retained. The
+experiment configuration keeps the remote Planner minimum at 16,384 tokens.
+The fixed quality and long-horizon epochs must use this experiment
+configuration rather than the production environment's old 4,096-token
+override.
+
+Codex quality attempt `d6` and the stray confirmatory `d2` gateway were stopped
+without deleting their artifacts after inspection proved they used lifecycle
+disabled plus cold fresh databases and therefore routed specialists remotely.
+They are setup diagnostics, not SGLang quality evidence. The unused long
+gateway `d4` was also stopped. Gateway attempt `d7` is retained as a startup
+failure caused by a missing transient-service working directory; it never
+opened its listener or produced model evidence.
+
+Fresh gateway `d8` used a private database and correct repository working
+directory. Both external roles passed real startup inference probes and were
+stored as `READY`. A synthetic architecture request selected local
+`dgx-moa-specialist-candidate` for Planner with routing reason `local_ready`;
+the Planner completed in 109.387 seconds and the complete authenticated request
+returned HTTP 200 in 149.950 seconds. A separate review request timed out at
+123.929 seconds before Reviewer dispatch because the 120-second Planner timeout
+also bounded Executor orchestration. This is retained as a timeout failure, not
+Reviewer evidence.
+
+The experiment stage ceilings were consequently raised from 120 to 300 seconds
+for Planner, Reviewer, Executor first byte, and specialist routing only. The
+900-second Executor total ceiling and 120-second Remote Judge ceiling remain
+unchanged, and the sealed quality scorer's latency gates were not relaxed.
+Fresh gateway `d9` again recovered both specialists as `READY`. Its synthetic
+review request pinned Planner and Reviewer to the local shared Gemma SGLang
+provider. Reviewer calls completed locally in 135.504 and 22.311 seconds with
+no provider switch. The request ultimately returned HTTP 409 after the
+Reviewer rejected the intentionally synthetic evidence and the Judge ran, so
+`d9` is a routing pass but not a task-quality pass.
+
+Focused readiness, provenance, and specialist tests passed `12/12`; focused
+configuration tests passed `16/16`. The complete repository suite passed
+`1077/1077` in 33.98 seconds with the existing third-party Starlette warning;
+Ruff and `git diff --check` passed.
+
+At the latest checkpoint, immutable soak
+`20260727-performance-c6-overlap-fix` remained active with 494 cycles and 988
+role requests over 4,716.457 seconds, zero request failures, 2,458,783 cached
+tokens, zero observed container restart, zero OOM observation, minimum
+`MemAvailable` of 13,613,776 KiB, and maximum observed swap use of 4,018,320
+KiB. Both loopback-only SGLang containers remained running. The ten-hour soak,
+new isolated Codex/OpenCode/Hermes task panels, sealed 200 coding and 160
+breadth trials, actual ten-hour client run, and physical rollback remain open;
+the Goal is not complete.
+
+Production inspection then found an important runtime-state gap: `/readyz`
+reported both Specialist endpoints ready, but the production lifecycle database
+still held Planner generation 35 and Reviewer generation 60 in `FAILED` with
+`load_failed`. Recent production routing therefore selected remote
+`deepseek-v4-pro` and `deepseek-v4-flash` despite the resident local SGLang
+container. No production source, `main`, or `dev` worktree was changed. Under
+the explicit SGLang runtime-transition approval, fresh real inference probes
+against the loopback Specialist endpoint succeeded for Planner in 2.110
+seconds and Reviewer in 1.026 seconds. Only then were the two production
+lifecycle rows recovered to `READY`, retaining their generations and clearing
+the failure class. A new authenticated production planning request selected
+local `dgx-moa-specialist-candidate` with routing reason `local_ready`, the
+Planner completed in 73.937 seconds, and the request returned HTTP 200 in
+110.372 seconds. This state repair is immediately effective but remains
+provisional across database replacement until the validated startup-probe code
+is deployed through the separately approved merge path.
+
+Production diagnostic `20260727-codex-five-sglang-d1` eventually produced
+scores for all five tasks, including the formerly omitted `rate-limiter`, so
+the original orchestration omission is closed diagnostically. It passed 0/5
+quality gates. `rate-limiter`, `atomic-store`, and `dag-runner` passed public
+and hidden functional tests but failed `no_bad_terminal`; `webhook-verifier`
+timed out with functional tests passing; `log-report` timed out and failed both
+functional validations. All five had incomplete legacy telemetry. This remains
+diagnostic-only and is not non-inferiority evidence.
+
+Isolated Codex attempt `d10` failed before model dispatch because its fresh
+fixtures had not been prepared. The immutable run ID remains a setup failure.
+Fresh attempt `d11` prepared all five Codex fixtures successfully, verified
+that every starter test failed as intended, and started through tracked service
+`dgx-moa-codex-five-sglang-isolated-d11` against the branch-code gateway and a
+database that contained zero prior quality requests. The gateway recovered
+both external Specialists as `READY`, uses 300-second stage ceilings and the
+16,384-token remote Planner fallback, and remains isolated on loopback port
+`19412`. `d11` is active and has no PASS claim yet.
+
+## Codex d11 completion and gateway telemetry correction — 2026-07-27
+
+Immutable diagnostic attempt `20260727-codex-five-sglang-isolated-d11`
+finished all five Codex tasks. `rate-limiter`, `atomic-store`, `dag-runner`,
+`webhook-verifier`, and `log-report` each passed their public and hidden
+functional validators with no hidden-validation failure. The attempt is still
+not confirmation evidence: its summary correctly remains `complete=false`
+because no sealed baseline was present and every task reported
+`cache_usage_missing`.
+
+The isolated gateway recorded 15 Frontier final-synthesis calls selected for
+`local_busy`, five Frontier Executor orchestration calls, and seven independent
+Frontier code reviews. Local calls comprised 31 Executor, five Planner, seven
+Reviewer, and 16 Reasoner invocations. This workload overlapped the dual-SGLang
+soak and therefore demonstrates provider pinning and recovery under contention,
+not representative Frontier efficiency or non-inferiority.
+
+Two common defects were corrected without changing production. First, a timed
+out `docker run --rm` only terminated the Docker CLI while its daemon-owned
+container continued running. Quality and long-horizon containers now receive
+deterministic names; the shared timeout path removes exactly that named
+container, and final validation cleanup runs in `finally`. Existing failed
+artifacts and score rows were preserved. Second, SGLang with cache reporting
+returns `prompt_tokens_details=null` for an explicit zero cache hit. Streaming
+local Executor usage now records zero only when prompt usage is present and the
+provider is local; unknown remote cache usage remains unknown.
+
+The focused timeout, streaming-cache, quality-matrix, and long-horizon suite
+passed `30/30`. Ruff and `git diff --check` passed. The complete repository
+suite passed `1079/1079` in 34.28 seconds with the existing third-party
+Starlette deprecation warning.
+
+Fresh gateway `d12` is retained as a failed setup attempt: its caller supplied
+the unsupported trace origin `validation-d12`, so requests failed before model
+dispatch with `invalid trace_origin`. No result was reclassified. Gateway
+`d13` used the valid `validation` origin and a new database on loopback port
+`19413`. An authenticated `dgx-moa-fast` streaming request completed through
+the local `dgx-moa-executor-candidate` in 1.793 seconds and persisted 1,082
+prompt tokens, four completion tokens, and `cached_tokens=0`. This physically
+closes the local zero-cache telemetry defect.
+
+Frontier remains unable to mutate the host directly. It may emit only supplied,
+schema-validated client tool calls; path normalization removes gateway-host
+paths before the Executor/client can execute them. To permit more Codex OAuth
+collaboration without removing that ownership boundary, the experiment
+configuration sets the task invocation limit to `null` and the recursive-cycle
+limit to eight. With that explicit `null`, only the Frontier-specific loop
+counter is skipped; common iteration, wall-clock, token, and USD 10
+external-cost budgets remain. This does not make paid OpenRouter fallback
+unbounded. The focused Frontier/config/controller suite passed `47/47`; Ruff
+and strict mypy also passed. Production configuration and service state were
+not changed.
+
+At this checkpoint, soak `20260727-performance-c6-overlap-fix` remained active
+after 7,188.609 seconds with 770 cycles and 1,540 role requests, zero request
+failures, both pinned SGLang images and revisions unchanged, no observed OOM,
+15,443,592 KiB `MemAvailable`, and 13,119,264 KiB free swap. The complete
+ten-hour soak, Hermes/OpenCode five-task panels, sealed confirmation trials,
+actual ten-hour client run, and rollback gate remain open. The Goal is not
+complete.
+
+## 2026-07-27 Hermes evidence and telemetry attribution correction
+
+The immutable diagnostic run
+`20260727-hermes-five-sglang-isolated-d1` remains unchanged at its original
+`3/5` result. Read-only inspection established two separate causes:
+
+- `dag-runner` produced passing public and hidden validation and an installed
+  Hermes `execute_code` result under the real `tests` key. The scorer accepted
+  only the older `unittest` key, so its tool-evidence failure was a schema
+  mismatch.
+- The cancelled local Executor invocation inside the `dag-runner` wall-clock
+  interval belonged to the previous Hermes session's eleventh request. The
+  evaluator selected invocations only by `invoked_at`, so a late stream cleanup
+  from another task contaminated the next task. `webhook-verifier`, by
+  contrast, made no source change or test call and remains a genuine agent
+  failure.
+
+The evaluator now supplies one deterministic `X-Session-ID` per Codex,
+OpenCode, and Hermes task and joins model invocations, routing events, and
+retry telemetry to that session. The fallback wall-clock query joins through
+the request acceptance time instead of the later invocation time. Hermes
+profiles continue to receive credentials only through
+`DGX_MOA_API_KEY`; no raw key or source `.env` is copied.
+
+Read-only recalculation of the old `dag-runner` evidence found one successful
+test result and complete, pinned telemetry with zero provider errors after
+excluding the prior session. It did not overwrite or reclassify the original
+score. The focused quality-matrix suite passed `18/18`; Ruff and
+`git diff --check` passed; the complete repository suite passed `1081/1081` in
+34.92 seconds with the existing third-party Starlette warning. Because the
+scorer and correlation contract changed, any subsequent panel must use a new
+immutable run ID; the existing diagnostic epoch cannot become confirmation
+evidence.
+
+## 2026-07-27 importable evaluation tooling checkpoint
+
+The evaluation runners, blinded seal/scorer, coding and breadth analyzers,
+long-horizon runner/analyzer, live-client validator, and isolated-SGLang
+validator/soak are now ordinary `dgx_moa` modules. Their established script
+paths remain thin CLI entry points. Breadth task and bootstrap selection are
+passed explicitly; no evaluator mutates another module's `TASKS`,
+`HIDDEN_CHECKS`, or `SEED` globals. Repository-wide search across
+`gateway/src`, `scripts`, and `tests` reports zero `runpy` or
+`spec_from_file_location` references.
+
+The seal hashes the actual implementation modules rather than the compatibility
+CLI wrappers. All eleven retained CLI `--help` paths exited zero. Repository
+Ruff and `git diff --check` passed, strict mypy reported zero errors across 55
+package source files, and the complete suite passed `1081/1081` in 35.27
+seconds with the existing third-party Starlette warning. No production
+worktree, service, branch, evidence artifact, or running soak process was
+modified or restarted. This closes only the evaluation-tool dynamic-loading
+subgate; the broader API/Controller/router/SQLite cleanup remains open.
+
+## 2026-07-27 Frontier budget and router extraction checkpoint
+
+Direct Frontier host mutation remains prohibited: Codex OAuth runs read-only
+and returns schema-validated tool calls for the Executor/client to execute.
+Absolute host working directories are removed and patch paths inside the
+client workspace are normalized before return. The candidate configuration now
+uses no separate Codex OAuth invocation limit and permits eight recursive
+cycles per task, while common iteration, wall-clock, token, and USD 10
+external-cost budgets remain.
+
+Training and admin endpoints are registered through focused routers rather
+than duplicated inline in `api.py`. The first complete test run exposed the
+unfinished extraction because the old admin block still referenced a removed
+`HTMLResponse` import; it failed `227` tests and was retained as failed
+diagnostic evidence in this report. Removing only that duplicated block fixed
+the shared cause. Focused admin tests then passed `39/39`, the Frontier/config
+suite passed `47/47`, and a fresh complete suite passed `1082/1082` in 37.14
+seconds with the existing Starlette warning. Repository Ruff and
+`git diff --check` passed, and strict mypy reported zero errors across 57
+package source files. Production services and configuration were not changed.
+
+## 2026-07-27 GPU, fallback, cleanup, and image capability checkpoint
+
+The dual-SGLang soak `20260727-performance-c6-overlap-fix` did not complete its
+36,000-second gate. It received a stop request after 12,878.0 seconds and
+retains an immutable `interrupted=true`, `passed=false` footer. Before the
+interruption it completed 1,579 cycles and 3,158 requests with zero request
+failure, no OOM or container failure, 7,832,826 cached tokens, 5.416-second p50
+and 8.905-second p95 cycle latency, minimum `MemAvailable` of 13,519,660 KiB,
+and maximum observed swap use of 4,080,420 KiB. The existing logger did not
+record the signal number, so the sender cannot be proven from this attempt.
+New attempts record `stop_signal` and reset process-global stop state before
+starting. This old attempt remains failed diagnostic evidence and is not
+resumed, overwritten, or counted toward the ten-hour gate.
+
+After the interruption both loopback candidate containers remained resident.
+Inspection at `2026-07-27T05:36:23+09:00` showed zero GPU utilization and
+12.76 W GPU power, but each SGLang scheduler retained approximately one CPU
+core while idle. This explains the continuing host activity: it was not an
+OpenRouter fallback or hidden model request. The containers were not stopped
+because the physical candidate work is still open; no production service was
+changed.
+
+Codex OAuth routing now has no separate per-task invocation limit in the
+candidate configuration. The manual Frontier path and normal collaboration
+path both honor the configured optional limit. With `null`, they skip only the
+Frontier-specific loop counter; common safety budgets remain. OpenRouter is
+still configured but is eligible only after the Codex OAuth profiles and
+approved retries fail with a permitted provider/context/timeout class, and only
+for a mandatory review or an already-selected remote Executor fallback.
+Ordinary optional code review no longer automatically enables the paid
+fallback.
+
+Read-only inspection of the running production gateway showed that it still
+uses the stable `/home/kotori9/dgx-moa-agent` worktree with Codex OAuth
+profiles `primary`, `secondary`, and `default`, task limit four, recursive
+limit three, one retry, and OpenRouter fallback enabled. It has no image
+generation configuration. These are the pre-change production settings; the
+candidate's unlimited OAuth policy, narrowed paid fallback, and image
+capability have not been deployed because the remaining physical and quality
+gates are not complete.
+
+The production invocation table contained 418 calls in the inspected trailing
+24-hour window and zero OpenRouter provider rows. Across the inspected
+seven-day window it contained 4,634 calls, of which 41
+(`openrouter:anthropic/claude-sonnet-4.6`) were OpenRouter, approximately
+0.88%. This supports infrequent historical use, but the deployed table has no
+cost column; cost is missing evidence and was not treated as zero.
+
+API cleanup added focused admin and training routers, an inference helper
+module, and one shared secure SQLite connection boundary for state, usage, and
+API-key stores. The earlier duplicate-admin diagnostic failure remains
+preserved; the corrected full suite is reported below.
+
+The frozen image capability addendum is
+`docs/DYNAMIC_MOA_IMAGEGEN_ADDENDUM.md` with SHA-256
+`65bf50bc3a4ef9fb0176aedeaa87014aca263e37c83a037cb9196ca541dbe23d`.
+Before the first commit and before sealed quality evaluation, format-only freeze
+epoch 2 removed four Markdown trailing-space characters without changing
+protocol text. Epoch 1 plan hash
+`14d342ac546497c69325b038ca69dafb08daf53e1e5b7125ea112dc3c99e3841`
+and image addendum hash
+`9022cb658fcda78fafe821a44bd5ae0b6a4fde7dc791891da037d151466f32d6`
+remain historical evidence. Authoritative epoch 2 plan hash is
+`44afc58b2732bc666ed22e893d68ac65a3aabf1680e2d1b3a67243e9fda9257c`;
+the quality protocol hash remains
+`9f3edd4e0862cc88b8d0bd167425ab98972208b3979c1274a50fe1f0ed25df22`.
+The implementation keeps `generate_image` separate from read-only Frontier and
+injects it only into a non-streaming local Executor request after a pinned,
+checksummed physical probe reports `ready`. It uses Codex OAuth only, passes the
+private prompt over stdin, shares the existing profile lock with Frontier,
+allows one image tool call, applies a separate per-key daily quota, stores only
+content-free audit fields, validates root ownership, regular-file/link count,
+canonical containment, PNG/JPEG/WebP magic, dimensions, bytes, and mode `0600`,
+and returns only an opaque artifact ID. An authenticated download endpoint
+requires the same API-token owner. Planner, Reviewer, Reasoner, remote
+Frontier, streaming requests, OpenRouter, and API-key OpenAI Image calls never
+receive this tool.
+
+A real Codex OAuth probe created one 799,457-byte 1,254×1,254 PNG and passed
+artifact checks. However, the Codex JSONL events exposed only agent messages,
+not trustworthy tool/model metadata proving that the image provider was
+`gpt-image-2`. C2PA bytes referenced OpenAI and `gpt-image` version `2.0`, but
+that inference does not satisfy the addendum's explicit provenance gate.
+Therefore the retained probe summary is `passed=false`, checked-in
+configuration remains `enabled=false`, `/v1/model-status` reports
+`disabled_unverified`, and production cannot invoke the tool. Timeout and
+request-cancellation process termination also remain physical gates before
+activation.
+
+The synthetic boundary tests cover hash pinning, disabled default, strict tool
+arguments, secret-shaped prompt rejection, separate quota, content-free audit,
+symlink/non-image rejection, validated OAuth artifact copying, two-turn local
+Executor continuation, cross-key artifact denial, subprocess timeout, and
+request-cancellation termination.
+
+The fresh ten-hour attempt `20260727-performance-c7-signal-audit` failed
+admission after 451.683 seconds because only `planner_structured_output`
+failed. It ran zero soak cycles, did not OOM, and remains immutable with mode
+`0600` SHA-256
+`fe32ea2be589488532f7afc002f811b2cba1500f28aff04f17eb7d79faee4481`.
+The log showed Gemma consumed the full 2,048-token thinking-plus-JSON budget
+before producing schema-valid Planner output. This failure is not counted as a
+ten-hour pass.
+
+The candidate provider and physical validator now use the same bounded
+two-pass specialist contract for Gemma Planner and Reviewer: up to 768 tokens
+of private English analysis followed by a thinking-disabled, schema-constrained
+final JSON pass capped at 1,536 tokens. No private analysis is retained in
+validation evidence. Fresh physical attempt
+`20260727-structured-two-pass-r1` passed the complete dual-SGLang contract in
+359.236 seconds. Planner passed in 198.355 seconds with 768 analysis completion
+tokens; Reviewer passed in 122.8 seconds with 648 analysis completion tokens.
+Executor Radix reuse reported 8,192 cached tokens, both containers remained
+running without OOM, final `MemAvailable` was 15,481,896 KiB, and the mode
+`0600` result SHA-256 is
+`00f1110946bfb1aff16181d0e7ea25ccf9d3cd9159308ad1b40b4a5031b964b1`.
+
+OpenRouter remains ineligible for an optional review even when the Codex OAuth
+circuit is open. A direct regression requires `FRONTIER_CIRCUIT_OPEN` without
+constructing an HTTP client; paid fallback remains limited to mandatory review
+or an already-selected remote Executor after eligible OAuth failures.
+
+The complete repository suite passed `1100/1100` in 42.80 seconds with the
+existing third-party Starlette warning. Repository Ruff passed, strict mypy
+reported zero errors across 60 package source files, shell syntax and
+`git diff --check` passed, and all three frozen document checksums passed.
+New immutable ten-hour attempt `20260727-performance-c8-two-pass` started at
+`2026-07-27T06:08:20+09:00` under systemd invocation
+`d7700bbaf3bb4e6f964fbd26a7154da9`; it is running and is not yet evidence of a
+pass. The ten-hour SGLang completion, physical image cancellation/provenance
+gates, sealed quality panels, 200 confirmation attempts, actual ten-hour client
+run, and physical rollback remain open. The Goal is not complete.
