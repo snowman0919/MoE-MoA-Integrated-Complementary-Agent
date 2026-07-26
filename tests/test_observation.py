@@ -9,7 +9,6 @@ from pathlib import Path
 import httpx
 import pytest
 from dgx_moa.observation import (
-    DiscordProvider,
     ObservationBus,
     ObservationCommandStore,
     ObservationEvent,
@@ -22,7 +21,7 @@ from dgx_moa.state import StateStore
 
 
 class RecordingProvider:
-    name = "discord"
+    name = "telegram"
 
     def __init__(self) -> None:
         self.batches: list[list[ObservationEvent]] = []
@@ -190,7 +189,7 @@ def test_bus_drops_when_bounded_queue_is_full() -> None:
 
 
 @pytest.mark.asyncio
-async def test_discord_and_telegram_use_configured_thread_targets() -> None:
+async def test_telegram_uses_configured_thread_target() -> None:
     requests: list[httpx.Request] = []
 
     async def handle(request: httpx.Request) -> httpx.Response:
@@ -198,11 +197,6 @@ async def test_discord_and_telegram_use_configured_thread_targets() -> None:
         return httpx.Response(200)
 
     transport = httpx.MockTransport(handle)
-    await DiscordProvider(
-        "https://discord.invalid/webhook",
-        thread_id="thread-1",
-        transport=transport,
-    ).send([event()])
     await TelegramProvider(
         "synthetic-token",
         "chat-1",
@@ -210,9 +204,8 @@ async def test_discord_and_telegram_use_configured_thread_targets() -> None:
         transport=transport,
     ).send([event()])
 
-    assert requests[0].url.params["thread_id"] == "thread-1"
-    assert b'"message_thread_id":42' in requests[1].content
-    assert b"private" not in requests[0].content + requests[1].content
+    assert b'"message_thread_id":42' in requests[0].content
+    assert b"private" not in requests[0].content
 
 
 @pytest.mark.asyncio
@@ -225,8 +218,10 @@ async def test_provider_rate_limit_and_outage_are_isolated() -> None:
 
     bus = ObservationBus(
         [
-            DiscordProvider(
-                "https://discord.invalid/webhook", transport=httpx.MockTransport(rate_limited)
+            TelegramProvider(
+                "rate-token",
+                "rate-chat",
+                transport=httpx.MockTransport(rate_limited),
             ),
             TelegramProvider(
                 "synthetic-token",
@@ -242,13 +237,12 @@ async def test_provider_rate_limit_and_outage_are_isolated() -> None:
     await asyncio.wait_for(bus.queue.join(), 1)
     await bus.close()
 
-    assert bus.metrics["discord_errors"] == 1
-    assert bus.metrics["telegram_errors"] == 1
+    assert bus.metrics["telegram_errors"] == 2
     assert bus.metrics["sent"] == 0
 
 
 @pytest.mark.asyncio
-async def test_providers_use_real_loopback_http_and_surface_rate_limit_and_outage() -> None:
+async def test_telegram_uses_real_loopback_http_and_surfaces_failures() -> None:
     received: list[tuple[str, bytes]] = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -265,23 +259,23 @@ async def test_providers_use_real_loopback_http_and_surface_rate_limit_and_outag
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{server.server_port}"
-    discord = DiscordProvider(f"{base}/discord", thread_id="thread-1", timeout=1)
     telegram = TelegramProvider("synthetic-token", "chat-1", message_thread_id=42, timeout=1)
     telegram.url = f"{base}/telegram"
 
-    await discord.send([event()])
     await telegram.send([event()])
+    rate_limited = TelegramProvider("synthetic-token", "chat-1", timeout=1)
+    rate_limited.url = f"{base}/rate"
     with pytest.raises(httpx.HTTPStatusError):
-        await DiscordProvider(f"{base}/rate", timeout=1).send([event()])
+        await rate_limited.send([event()])
     server.shutdown()
     server.server_close()
     thread.join(timeout=1)
     with pytest.raises(httpx.ConnectError):
-        await discord.send([event()])
+        await telegram.send([event()])
 
-    assert received[0][0] == "/discord?thread_id=thread-1"
-    assert b'"message_thread_id":42' in received[1][1]
-    assert received[2][0] == "/rate"
+    assert received[0][0] == "/telegram"
+    assert b'"message_thread_id":42' in received[0][1]
+    assert received[1][0] == "/rate"
 
 
 def test_state_store_listener_failure_never_breaks_event_persistence(tmp_path: Path) -> None:
@@ -295,15 +289,15 @@ def test_state_store_listener_failure_never_breaks_event_persistence(tmp_path: P
 
 def test_control_command_is_scoped_authorized_audited_and_idempotent(tmp_path: Path) -> None:
     store = ObservationCommandStore(tmp_path / "state.db")
-    nonce = store.issue_nonce("discord", "user-1", "request-1", 300)
+    nonce = store.issue_nonce("telegram", "user-1", "request-1", 300)
     arguments = {
-        "provider": "discord",
+        "provider": "telegram",
         "user_id": "user-1",
         "request_id": "request-1",
         "command": "pause",
         "nonce": nonce,
         "idempotency_key": "command-1",
-        "allowed_users": {"discord:user-1": "operator"},
+        "allowed_users": {"telegram:user-1": "operator"},
         "role_permissions": {"operator": ["pause", "resume"]},
     }
 

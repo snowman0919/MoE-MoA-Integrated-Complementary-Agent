@@ -318,7 +318,7 @@ class ObservationEvent(BaseModel):
 
 
 class ObservationNonceRequest(BaseModel):
-    provider: Literal["discord", "telegram"]
+    provider: Literal["telegram"]
     user_id: str = Field(min_length=1, max_length=128)
     request_id: str = Field(min_length=1, max_length=128)
 
@@ -447,31 +447,6 @@ def render_telegram_events(events: Sequence[ObservationEvent], max_characters: i
     return rendered[: max_characters - 20].rstrip() + "\n… (길이 제한으로 생략)"
 
 
-class DiscordProvider:
-    name = "discord"
-
-    def __init__(
-        self,
-        webhook_url: str,
-        *,
-        thread_id: str | None = None,
-        timeout: float = 10,
-        transport: httpx.AsyncBaseTransport | None = None,
-    ):
-        self.webhook_url = webhook_url
-        self.thread_id = thread_id
-        self.timeout = timeout
-        self.transport = transport
-
-    async def send(self, events: Sequence[ObservationEvent]) -> None:
-        params = {"thread_id": self.thread_id} if self.thread_id else None
-        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
-            response = await client.post(
-                self.webhook_url, params=params, json={"content": render_events(events)}
-            )
-            response.raise_for_status()
-
-
 class TelegramProvider:
     name = "telegram"
 
@@ -522,7 +497,7 @@ class ObservationBus:
         self.include_reasoner_artifact = include_reasoner_artifact
         self.max_content_characters = max_content_characters
         self.task: asyncio.Task[None] | None = None
-        self.metrics = {"sent": 0, "dropped": 0, "discord_errors": 0, "telegram_errors": 0}
+        self.metrics = {"sent": 0, "dropped": 0, "telegram_errors": 0}
 
     def publish_store_event(
         self, request_id: str, event_type: str, payload: dict[str, Any], created_at: str

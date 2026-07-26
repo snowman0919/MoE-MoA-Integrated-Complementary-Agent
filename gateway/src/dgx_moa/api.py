@@ -78,7 +78,6 @@ from .lifecycle import (
 )
 from .metrics import RuntimeMetrics
 from .observation import (
-    DiscordProvider,
     ObservationBus,
     ObservationCommandRequest,
     ObservationCommandStore,
@@ -283,14 +282,6 @@ def create_app(
         store.subscribe_events(app.state.runtime_metrics.observe_event)
         observation_providers: list[ObservationProvider] = []
         observation = configured.live_observation
-        if observation.enabled and observation.discord is not None:
-            observation_providers.append(
-                DiscordProvider(
-                    observation.discord.webhook_url.get_secret_value(),
-                    thread_id=observation.discord.thread_id,
-                    timeout=observation.request_timeout_seconds,
-                )
-            )
         if observation.enabled and observation.telegram is not None:
             observation_providers.append(
                 TelegramProvider(
@@ -1253,7 +1244,6 @@ def create_app(
             overlays.update(
                 observer_events_sent_total=observation_bus.metrics["sent"],
                 observer_events_dropped_total=observation_bus.metrics["dropped"],
-                discord_errors_total=observation_bus.metrics["discord_errors"],
                 telegram_errors_total=observation_bus.metrics["telegram_errors"],
             )
         collector = request.app.state.training_collector

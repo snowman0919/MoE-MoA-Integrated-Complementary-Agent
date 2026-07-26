@@ -5957,7 +5957,7 @@ def test_observation_control_api_is_allowlisted_scoped_and_idempotent(
                 "enabled": False,
                 "controls": {
                     "enabled": True,
-                    "allowed_users": {"discord:user-1": "operator"},
+                    "allowed_users": {"telegram:user-1": "operator"},
                     "role_permissions": {"operator": ["pause", "resume", "show-status"]},
                 },
             },
@@ -5971,15 +5971,19 @@ def test_observation_control_api_is_allowlisted_scoped_and_idempotent(
         denied = client.post(
             "/v1/admin/observation/nonces",
             headers=headers,
-            json={"provider": "discord", "user_id": "stranger", "request_id": "controlled-request"},
+            json={
+                "provider": "telegram",
+                "user_id": "stranger",
+                "request_id": "controlled-request",
+            },
         )
         nonce_response = client.post(
             "/v1/admin/observation/nonces",
             headers=headers,
-            json={"provider": "discord", "user_id": "user-1", "request_id": "controlled-request"},
+            json={"provider": "telegram", "user_id": "user-1", "request_id": "controlled-request"},
         )
         command = {
-            "provider": "discord",
+            "provider": "telegram",
             "user_id": "user-1",
             "request_id": "controlled-request",
             "command": "pause",

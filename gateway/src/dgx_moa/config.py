@@ -403,13 +403,6 @@ class DeclarativePolicyConfig(BaseModel):
         return PolicySet(version=self.version, policies=self.policies)
 
 
-class DiscordObservationConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    webhook_url: SecretStr
-    thread_id: str | None = None
-
-
 class TelegramObservationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -439,7 +432,6 @@ class LiveObservationConfig(BaseModel):
     batch_size: int = Field(default=10, ge=1, le=50)
     batch_interval_seconds: float = Field(default=2, ge=0.1, le=60)
     request_timeout_seconds: float = Field(default=10, gt=0, le=60)
-    discord: DiscordObservationConfig | None = None
     telegram: TelegramObservationConfig | None = None
     controls: ObservationControlConfig = Field(default_factory=ObservationControlConfig)
 

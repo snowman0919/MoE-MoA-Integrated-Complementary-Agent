@@ -211,15 +211,14 @@ def test_live_observation_secrets_are_external_and_hidden(monkeypatch, tmp_path:
     monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
     monkeypatch.setenv(
         "DGX_MOA_LIVE_OBSERVATION",
-        '{"enabled":true,"discord":{"webhook_url":"https://discord.invalid/secret"},'
-        '"telegram":{"bot_token":"synthetic-token","chat_id":"chat-1"}}',
+        '{"enabled":true,"telegram":{"bot_token":"synthetic-token","chat_id":"chat-1"}}',
     )
 
     settings = load_settings(config)
 
     assert settings.live_observation.enabled is True
-    assert settings.live_observation.discord is not None
-    assert "discord.invalid" not in repr(settings.live_observation.discord.webhook_url)
+    assert settings.live_observation.telegram is not None
+    assert "synthetic-token" not in repr(settings.live_observation.telegram.bot_token)
     assert Settings(auth_enabled=False).live_observation.enabled is False
 
 
