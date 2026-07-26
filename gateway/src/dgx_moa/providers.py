@@ -11,6 +11,12 @@ from .config import ModelConfig
 
 PLANNER_REASONING_TOKENS = 768
 PLANNER_FINAL_TOKENS = 1_536
+BACKEND_BUSY_METRICS = {
+    "sglang:num_queue_reqs",
+    "sglang:num_running_reqs",
+    "vllm:num_requests_running",
+    "vllm:num_requests_waiting",
+}
 
 
 class StageTimeout(TimeoutError):
@@ -129,6 +135,43 @@ class ModelProvider:
             return
         available = max(1, context_length - prompt_tokens - 8)
         body["max_tokens"] = min(requested, available)
+
+    @staticmethod
+    async def backend_busy(
+        model: ModelConfig,
+        *,
+        timeout_seconds: float = 0.5,
+    ) -> bool | None:
+        """Return measured shared-backend occupancy, or None when unavailable."""
+        base_url = model.base_url.rstrip("/")
+        if base_url.endswith("/v1"):
+            base_url = base_url[:-3]
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                async with httpx.AsyncClient(timeout=None) as client:
+                    response = await client.get(f"{base_url}/metrics")
+                    response.raise_for_status()
+        except (TimeoutError, httpx.HTTPError):
+            return None
+
+        measured = False
+        for line in response.text.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            metric, separator, raw_value = line.rpartition(" ")
+            if not separator:
+                continue
+            metric_name = metric.split("{", 1)[0]
+            if metric_name not in BACKEND_BUSY_METRICS:
+                continue
+            try:
+                value = float(raw_value)
+            except ValueError:
+                continue
+            measured = True
+            if value > 0:
+                return True
+        return False if measured else None
 
     @staticmethod
     async def context_fits(

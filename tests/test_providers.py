@@ -172,6 +172,44 @@ async def test_executor_context_fit_uses_served_tokenizer_limit(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("metrics", "expected"),
+    [
+        (
+            'vllm:num_requests_running{engine="0"} 1.0\n'
+            'vllm:num_requests_waiting{engine="0"} 0.0\n',
+            True,
+        ),
+        (
+            'sglang:num_running_reqs{model_name="executor"} 0\n'
+            'sglang:num_queue_reqs{model_name="executor"} 2\n',
+            True,
+        ),
+        (
+            'sglang:num_running_reqs{model_name="executor"} 0\n'
+            'sglang:num_queue_reqs{model_name="executor"} 0\n',
+            False,
+        ),
+        ("unrelated_metric 1\n", None),
+    ],
+)
+async def test_backend_busy_uses_shared_runtime_metrics(
+    settings,
+    monkeypatch: pytest.MonkeyPatch,
+    metrics: str,
+    expected: bool | None,
+) -> None:  # type: ignore[no-untyped-def]
+    transport = httpx.MockTransport(lambda _request: httpx.Response(200, text=metrics))
+    async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "dgx_moa.providers.httpx.AsyncClient",
+        lambda **kwargs: async_client(transport=transport, **kwargs),
+    )
+
+    assert await ModelProvider.backend_busy(settings.models["executor"]) is expected
+
+
+@pytest.mark.asyncio
 async def test_local_specialist_completion_fits_served_context(settings, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     completion_bodies: list[dict[str, object]] = []
 

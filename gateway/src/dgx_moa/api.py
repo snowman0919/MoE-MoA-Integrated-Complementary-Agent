@@ -2203,8 +2203,25 @@ def create_app(
         ensured_roles = list(roles)
         try:
             async with request.app.state.executor_admission_lock:
+                backend_busy_probe = getattr(
+                    request.app.state.provider,
+                    "backend_busy",
+                    None,
+                )
+                backend_busy = (
+                    await backend_busy_probe(configured.models["executor"]) is True
+                    if request.app.state.frontier is not None
+                    and callable(backend_busy_probe)
+                    else False
+                )
                 executor_remote = (
-                    request.app.state.lifecycle_store.get("executor").active_request_count > 0
+                    (
+                        request.app.state.lifecycle_store.get(
+                            "executor"
+                        ).active_request_count
+                        > 0
+                        or backend_busy
+                    )
                     and request.app.state.frontier is not None
                 )
                 if executor_remote:

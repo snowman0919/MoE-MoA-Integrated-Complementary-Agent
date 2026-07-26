@@ -104,6 +104,65 @@ def test_busy_executor_routes_new_session_to_frontier(
     assert started["payload"]["routing_reason"] == "local_busy"
 
 
+def test_shared_backend_busy_routes_new_session_to_frontier(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "frontier-shared-busy.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\n"
+        "collaboration_retries: 0\n"
+    )
+    app = create_app(
+        settings.model_copy(
+            update={"frontier_enabled": True, "frontier_config": frontier_config}
+        )
+    )
+
+    async def backend_busy(*_args, **_kwargs) -> bool:  # type: ignore[no-untyped-def]
+        return True
+
+    async def remote_execute(
+        _remote_request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        return {
+            "id": "chatcmpl-shared-busy",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "원격 처리 완료"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 7},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "primary", "cost_usd": None},
+        }
+
+    with TestClient(app) as client:
+        stub_provider.backend_busy = backend_busy  # type: ignore[attr-defined]
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "shared-backend-busy",
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "간단히 답해"}],
+            },
+        )
+        events = app.state.store.events("shared-backend-busy")
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "원격 처리 완료"
+    assert "executor" not in stub_provider.calls
+    started = next(event for event in events if event["event_type"] == "executor_started")
+    assert started["payload"]["provider"] == "frontier"
+    assert started["payload"]["routing_reason"] == "local_busy"
+
+
 def test_busy_executor_remote_stream_failure_is_observable(
     settings: Settings, stub_provider: StubProvider
 ) -> None:
