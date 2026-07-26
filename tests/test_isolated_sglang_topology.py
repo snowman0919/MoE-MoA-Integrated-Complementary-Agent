@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "isolated-sglang-topology.sh"
+EXECUTOR_MANIFEST = ROOT / "config" / "sglang-executor.sha256"
+SPECIALIST_MANIFEST = ROOT / "config" / "sglang-specialist.sha256"
 
 
 def test_candidate_commands_pin_safe_two_model_topology() -> None:
@@ -49,6 +52,9 @@ def test_candidate_commands_pin_safe_two_model_topology() -> None:
         "DBUS_SESSION_BUS_ADDRESS",
         "run_as_runtime_user systemctl --user is-active",
         ".State.Running",
+        'check_content "$executor_model" "$repository_root/config/sglang-executor.sha256"',
+        'check_content "$specialist_model" "$repository_root/config/sglang-specialist.sha256"',
+        "sha256sum --strict --status -c",
     ):
         assert required in source
     assert "systemctl --user stop" not in source
@@ -57,3 +63,19 @@ def test_candidate_commands_pin_safe_two_model_topology() -> None:
     assert start.index('wait_server "$executor_container"') < start.index(
         '"${specialist_command[@]}"'
     )
+
+
+def test_candidate_manifests_pin_every_weight_shard() -> None:
+    pattern = re.compile(r"^[0-9a-f]{64}  (model-[0-9]{5}-of-[0-9]{5}\.safetensors)$")
+
+    executor = [pattern.fullmatch(line) for line in EXECUTOR_MANIFEST.read_text().splitlines()]
+    specialist = [pattern.fullmatch(line) for line in SPECIALIST_MANIFEST.read_text().splitlines()]
+
+    assert all(executor) and len(executor) == 10
+    assert all(specialist) and len(specialist) == 4
+    assert {match.group(1) for match in executor if match} == {
+        f"model-{index:05d}-of-00010.safetensors" for index in range(1, 11)
+    }
+    assert {match.group(1) for match in specialist if match} == {
+        f"model-{index:05d}-of-00004.safetensors" for index in range(1, 5)
+    }

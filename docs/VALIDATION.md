@@ -5616,3 +5616,21 @@ candidate suite passed `1077/1077` in 28.58 seconds with one third-party
 Starlette deprecation warning. No candidate was started and no model service,
 production file, main, or dev branch was changed. Physical PASS remains pending
 an explicitly approved maintenance window.
+
+## Candidate model content integrity — 2026-07-26
+
+Every candidate weight shard was read and hashed directly without stopping or
+restarting a service. All ten Executor shards (`47,566,688,792` bytes) matched
+the Hugging Face LFS digests at revision
+`27a8f16f463b9a13c91c332c40cf93e09717347e`; all four Gemma shards
+(`32,633,477,808` bytes) matched revision
+`4135a98a9b728a548947683219633b25682223ac`.
+
+The 14 measured digests are pinned in `config/sglang-executor.sha256` and
+`config/sglang-specialist.sha256`. The approved maintenance preflight now runs
+native `sha256sum --strict --status` against both manifests after revision
+validation and before starting a candidate container. The manifests passed
+directly against the installed weights (`14/14`), and focused
+topology/runtime/rollback tests passed `14/14`. The complete candidate suite
+passed `1078/1078` in 27.77 seconds with one third-party Starlette deprecation
+warning. No model, service, production file, main, or dev branch was changed.
