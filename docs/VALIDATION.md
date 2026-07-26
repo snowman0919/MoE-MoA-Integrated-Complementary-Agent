@@ -5559,10 +5559,14 @@ The actual breadth CLI prepared exactly four isolated fixtures. Each starter
 test exited one as required, and the task names were the two registered
 Scientific and two registered General fixtures. Focused breadth, seal, blind
 judge, and non-inferiority tests passed `16/16`. The complete candidate suite
-then passed `1073/1073` in 27.62 seconds with one third-party Starlette
+then passed `1074/1074` in 29.79 seconds with one third-party Starlette
 deprecation warning; Ruff and `git diff --check` also passed.
 
 No breadth inference attempt or confirmatory result is claimed by this entry.
+The immutable diagnostic seal `20260726-breadth-seal-smoke-a1` prepared all 160
+fixtures, but verification failed its single public `panel` metadata check.
+That failed seal remains unchanged. The seal now records the selected panel in
+both public and private metadata, with a regression test covering creation.
 The real breadth epoch cannot start until the strict cache telemetry and
 provider stability gates are satisfied. Dual-SGLang physical validation remains
 blocked pending explicit maintenance approval, and production, main, dev,

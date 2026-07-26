@@ -202,6 +202,7 @@ def create_seal(args: argparse.Namespace) -> dict[str, Any]:
     seal = {
         "protocol_id": args.protocol_id,
         "protocol_version": "frontier-confirmation-v1",
+        "panel": getattr(args, "panel", "coding"),
         "analysis_commit": revision,
         "repeats": REPEATS,
         "attempts_total": len(manifests),

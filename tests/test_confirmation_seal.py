@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import runpy
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
@@ -52,3 +53,27 @@ def test_exclusive_json_refuses_overwrite_and_protects_routing(tmp_path: Path) -
     assert path.stat().st_mode & 0o777 == 0o600
     with pytest.raises(FileExistsError):
         MODULE["exclusive_json"](path, {"secret": "replacement"}, mode=0o600)
+
+
+def test_created_seal_records_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    globals_ = MODULE["create_seal"].__globals__
+    monkeypatch.setitem(globals_, "configure_panel", lambda _panel: None)
+    monkeypatch.setitem(globals_, "repository_revision", lambda: "revision")
+    monkeypatch.setitem(globals_, "attempt_plan", lambda _protocol: ([], {}))
+    monkeypatch.setitem(globals_, "client_metadata", lambda: {})
+    monkeypatch.setitem(globals_, "provider_fingerprints", lambda: {})
+    monkeypatch.setitem(globals_, "container_image_digest", lambda: "image-digest")
+    monkeypatch.setitem(globals_, "RUNNER", {"TASKS": (), "DOCKER_IMAGE": "test-image"})
+    args = Namespace(
+        panel="breadth",
+        protocol_id="panel-metadata",
+        output_root=tmp_path,
+        workspace_root=tmp_path / "work",
+        gateway="http://127.0.0.1:9000",
+    )
+
+    seal = MODULE["create_seal"](args)
+    routing = json.loads((tmp_path / "panel-metadata/confirmation-routing.json").read_text())
+
+    assert seal["panel"] == "breadth"
+    assert routing["panel"] == "breadth"
