@@ -7140,3 +7140,19 @@ legacy sessions without an active-turn hash retain objective-based inference.
 Regression coverage proves mutation recovery remains active for implementation
 turns while a planning-only turn keeps its inspection tools and emits no
 stall-restriction event.
+
+V54 physically confirmed that v36 initially kept the planning-only worktree
+clean through four completed requests and six host-tool results. A later
+Responses continuation then placed a synthetic user item after a valid pending
+tool result. The session treated it as a new mutation turn, changed
+`active_turn_requires_change` from false to true, and began two repository
+changes before the invalid epoch was stopped. The immutable mode-`0600`
+interruption sidecar SHA-256 is
+`21eb46afd7d9f65768cc6ba6903fd570c12a56bb717ee26c9a4d87c17f304306`.
+
+Protocol v37 recognizes a request containing a result for a currently pending
+tool call as the same active turn regardless of a trailing synthetic user
+item. Once no pending call matches, a real subsequent user message retains the
+existing new-turn behavior. Regression coverage includes both the earlier
+user-before-tool ordering and the physically observed tool-before-synthetic-
+user ordering.

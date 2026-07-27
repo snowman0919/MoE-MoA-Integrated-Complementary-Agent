@@ -1048,10 +1048,19 @@ class Controller:
             if latest_user_index >= 0
             else ""
         )
+        supplied_tool_results = {
+            str(message.get("tool_call_id"))
+            for message in messages
+            if message.get("role") == "tool" and message.get("tool_call_id")
+        }
+        active_tool_continuation = bool(
+            set(state.pending_tool_call_ids).intersection(supplied_tool_results)
+        )
         latest_user_sha256 = hashlib.sha256(latest_user.encode()).hexdigest() if latest_user else ""
         if (
             latest_user_sha256
             and latest_user_index > latest_tool_index
+            and not active_tool_continuation
             and latest_user_sha256 != state.active_user_turn_sha256
         ):
             subsequent_turn = bool(state.active_user_turn_sha256)

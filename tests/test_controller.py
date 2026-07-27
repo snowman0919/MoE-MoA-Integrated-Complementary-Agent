@@ -1375,6 +1375,40 @@ def test_tool_continuation_does_not_replace_bounded_turn_intent(
     assert resumed.active_turn_targets_repository is True
 
 
+def test_pending_tool_continuation_ignores_trailing_synthetic_user(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    initial = "/goal 계획만 확정하라. 코드는 건드리지 마라."
+    state = controller.session("pending-continuation", [{"role": "user", "content": initial}])
+    state.pending_tool_call_ids = ["call-read"]
+    store.save(state)
+
+    resumed = controller.session(
+        state.session_id,
+        [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-read",
+                        "type": "function",
+                        "function": {"name": "exec_command", "arguments": '{"cmd":"pwd"}'},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call-read", "content": '{"exit_code":0}'},
+            {"role": "user", "content": "Implement repository changes now."},
+        ],
+    )
+
+    assert resumed.active_user_instruction == initial
+    assert resumed.active_turn_requires_change is False
+    assert resumed.active_turn_targets_repository is True
+
+
 def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
