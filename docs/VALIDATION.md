@@ -6891,3 +6891,30 @@ three for a planned repository mutation with no implementation evidence. This
 uses the existing current-turn execution boundary, so planning-phase reads do
 not consume the implementation allowance. Existing stall provenance and
 provider pinning tests remain unchanged. No v24 physical result exists.
+
+V40 physically passed the v24 planning checkpoint through a real Codex client,
+authenticated loopback Gateway, and Dynamic MoA in 557.216 seconds. It was
+clean and terminal with five host-tool calls, provider pinning, zero provider
+errors, zero unjustified repeated reads, zero variable cost, and observed
+Reasoner, Planner, Executor, and Frontier provenance. During the implementation
+checkpoint, an external host-tool session loss was resumed from the same
+private control, Gateway database, client session, and dirty workspace.
+
+The resumed implementation did not pass. It issued 45 host-tool calls across
+18 inspections, 10 patches, four tests, eight Git-status checks, two commit
+attempts, and four invalid `cd` targets. It recovered an initially missing
+container-local Git identity, committed the implementation once, reduced an
+independent 18-test failure count from 11 to one, and removed one unused
+alternate source helper. It still retained the test under an alternate test
+root, left the worktree dirty, and timed out at checkpoint 1 after 1,800
+seconds with a sequence-gap fail-closed test unresolved. Immutable evidence,
+timeout, and interruption sidecars are mode `0600` with SHA-256
+`09f2c316f6821b52b3df0b6ff26a97067a8a94feadc5d700407903e96420863d`,
+`3692b59c4ccb7b2a81d6b86a2d67282f8b14f8c733bf3d2281c88c5ebf983919`,
+and `de3f4836872e45c99fb5b0c08aa918f5fc5184acea302f1b6bf7a311aa0c709c`.
+
+Protocol v25 fixes only the common harness causes exposed by V40. Every turn
+now repeats the exact repository root and frozen validation command, forbids
+guessed working directories and alternate source/test roots, and supplies a
+private clone-local Git identity only when one is absent. Existing local
+identity is preserved. No v25 physical result exists.

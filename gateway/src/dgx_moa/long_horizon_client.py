@@ -21,7 +21,7 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-goal-v24"
+PROTOCOL = "frontier-long-goal-v25"
 PHASES = (
     "intake_and_plan",
     "core_implementation",
@@ -159,6 +159,23 @@ def git_snapshot(workspace: Path) -> dict[str, str]:
     }
 
 
+def ensure_local_git_identity(workspace: Path) -> None:
+    for key, value in (
+        ("user.name", "DGX MoA Evaluation"),
+        ("user.email", "evaluation@localhost"),
+    ):
+        result = subprocess.run(
+            ["git", "-C", str(workspace), "config", "--local", "--get", key],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode == 1:
+            git(workspace, "config", "--local", key, value)
+        elif result.returncode:
+            raise RuntimeError("git_command_failed")
+
+
 def stable_hashes(
     args: argparse.Namespace,
     session: str,
@@ -175,7 +192,7 @@ def stable_hashes(
     }
 
 
-def client_prompt(index: int) -> str:
+def client_prompt(index: int, workspace: Path, validation_command: str) -> str:
     phase = PHASES[index]
     final = index == CHECKPOINTS - 1
     phase_rule = (
@@ -204,6 +221,10 @@ def client_prompt(index: int) -> str:
     )
     return (
         f"장기 작업 단계 {index}/{CHECKPOINTS - 1}({phase})를 수행하라. "
+        f"현재 저장소 루트는 {workspace}이고 모든 도구의 현재 작업 디렉터리도 이 경로다. "
+        "추측한 경로로 cd하지 말고 입력 문서가 지정한 source/test 경로를 정확히 사용하며 "
+        "별도 대체 src 또는 tests 루트는 허용되지 않는다. "
+        f"검증 명령은 정확히 `{validation_command}`이다. "
         "첫 단계에서만 /inputs/OBJECTIVE.md, /inputs/ACCEPTANCE.md, "
         "/inputs/PLAN.md와 저장소 운영 문서를 읽고 이후에는 같은 세션 맥락을 사용하라. "
         f"{phase_rule[index]}"
@@ -290,7 +311,7 @@ def client_command(
     index: int,
     gateway_session: str,
 ) -> tuple[list[str], dict[str, str], Path | None]:
-    prompt = client_prompt(index)
+    prompt = client_prompt(index, args.workspace, args.validation_command)
     environment = QUALITY.filtered_env({args.api_key_env: os.environ[args.api_key_env]})
     inputs = (
         (args.objective, "/inputs/OBJECTIVE.md"),
@@ -964,6 +985,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    ensure_local_git_identity(args.workspace)
     state = args.state_dir
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(state, 0o700)

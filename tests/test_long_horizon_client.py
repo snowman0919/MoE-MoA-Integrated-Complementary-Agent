@@ -11,15 +11,22 @@ from dgx_moa.controller import user_turn_intent
 
 
 def test_phase_prompts_require_changes_only_during_core_implementation() -> None:
+    workspace = Path("/tmp/exact-workspace")
+    validation = "python -m unittest -v tests.test_job_journal"
     assert [
-        user_turn_intent(MODULE.client_prompt(index))[0]
+        user_turn_intent(MODULE.client_prompt(index, workspace, validation))[0]
         for index in range(MODULE.CHECKPOINTS)
     ] == [False, True, False, False, False]
     assert all(
-        "/state/long-review.json" not in MODULE.client_prompt(index)
+        "/state/long-review.json"
+        not in MODULE.client_prompt(index, workspace, validation)
         for index in range(MODULE.CHECKPOINTS - 1)
     )
-    assert "/state/long-review.json" in MODULE.client_prompt(MODULE.CHECKPOINTS - 1)
+    final = MODULE.client_prompt(MODULE.CHECKPOINTS - 1, workspace, validation)
+    assert "/state/long-review.json" in final
+    assert str(workspace) in final
+    assert validation in final
+    assert "추측한 경로로 cd하지 말고" in final
 
 
 def arguments(tmp_path: Path, harness: str) -> argparse.Namespace:
@@ -49,6 +56,24 @@ def arguments(tmp_path: Path, harness: str) -> argparse.Namespace:
         api_key_env="TEST_LONG_API_KEY",
         provider_manifest=provider_manifest,
         provider_manifest_sha256=MODULE.sha256_file(provider_manifest),
+        validation_command="python -m unittest -v tests.test_job_journal",
+    )
+
+
+def test_missing_local_git_identity_is_added_without_overwriting_existing(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    MODULE.git(workspace, "init", "-q")
+    MODULE.git(workspace, "config", "--local", "user.name", "Existing User")
+
+    MODULE.ensure_local_git_identity(workspace)
+
+    assert MODULE.git(workspace, "config", "--local", "--get", "user.name") == "Existing User"
+    assert (
+        MODULE.git(workspace, "config", "--local", "--get", "user.email")
+        == "evaluation@localhost"
     )
 
 
