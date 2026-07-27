@@ -21,7 +21,7 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-goal-v15"
+PROTOCOL = "frontier-long-goal-v16"
 PHASES = (
     "intake_and_plan",
     "core_implementation",
@@ -188,11 +188,11 @@ def client_prompt(index: int) -> str:
             "논리 단위로 commit하라. 통합 검증과 독립 검토는 이후 단계에 남겨라. "
         ),
         (
-            "구현을 통합해 자동 테스트를 실제로 실행하라. 실패가 있으면 원인을 고치고 "
+            "결과물을 통합해 자동 테스트를 실제로 실행하라. 실패가 있으면 원인을 고치고 "
             "재실행하며, 변경이 생긴 경우에만 commit하라. 독립 검토는 다음 단계에 남겨라. "
         ),
         (
-            "구현·보안·동시성·누락 테스트를 독립적으로 검토하고 실제 검증 명령을 실행하라. "
+            "결과물·보안·동시성·누락 테스트를 독립적으로 검토하고 실제 검증 명령을 실행하라. "
             "중요한 지적이 있으면 고치고 재검증하며, 변경이 생긴 경우에만 commit하라. "
             "전체 완료 선언은 다음 단계에 남겨라. "
         ),
@@ -207,13 +207,13 @@ def client_prompt(index: int) -> str:
         "/inputs/PLAN.md와 저장소 운영 문서를 읽고 이후에는 같은 세션 맥락을 사용하라. "
         f"{phase_rule[index]}"
         "각 단계는 최소 한 번의 실제 호스트 도구를 사용하고 단계 종료 시 worktree를 "
-        "clean으로 만들어라. 계획·검토 전용 단계는 새 커밋을 강제하지 않는다. "
+        "clean으로 유지해야 한다. 계획·검토 전용 단계는 새 커밋을 강제하지 않는다. "
         "같은 파일을 근거 없이 반복해서 읽지 마라. "
         "최종 검토 파일은 "
         '{"status":"approved|changes_requested","unresolved_critical_findings":0,'
         '"evidence":"..."} 형식이어야 한다. 최종 응답 직전 반드시 실제 도구로 '
-        "(1) 해당 단계 검증 통과, (2) 구현 변경이 있다면 Git commit과 clean worktree, "
-        "이 순서로 완료하라. 하나라도 미완료면 응답을 끝내지 마라. "
+        "해당 단계의 증거와 clean worktree를 확인하라. 하나라도 미완료면 응답을 "
+        "끝내지 마라. "
         "사용자에게 보이는 설명은 한국어로 간결하게 하라."
     )
 

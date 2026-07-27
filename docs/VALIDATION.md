@@ -6726,3 +6726,20 @@ same turn, does not clear an unresolved Frontier correction, and gives each
 five-phase prompt only its own work. The connected
 controller/API/streaming/long-horizon suite passed `427/427`; Ruff and strict
 mypy passed. No v15 physical result exists yet.
+
+Three launch-only diagnostics followed without a v15 result. V28 exited zero
+before binding because the module invocation did not call the installed
+entrypoint. V29 stopped before service creation because zsh did not split a
+scalar environment-name list; no credential entered the systemd manager.
+V30 started both isolated services and reached the real Gateway, Planner,
+Reasoner, Executor, Frontier, and three host tools without changing the
+workspace. It then showed that the common phase prompt still contained
+mutation wording, so the conservative turn-intent classifier treated the
+planning-only phase as mutation work and repeatedly required an implementation
+tool. V30 was stopped before checkpoint creation; its isolated database and
+workspace remain diagnostic evidence.
+
+Protocol v16 removes that common mutation wording and preregisters a direct
+prompt-intent regression: only `core_implementation` may classify as requiring
+a repository change. Every phase still requires a real host tool and clean
+terminal worktree. No v16 physical result exists yet.

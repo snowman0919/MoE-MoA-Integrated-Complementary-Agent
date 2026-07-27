@@ -7,6 +7,14 @@ from pathlib import Path
 
 import pytest
 from dgx_moa import long_horizon_client as MODULE
+from dgx_moa.controller import user_turn_intent
+
+
+def test_phase_prompts_require_changes_only_during_core_implementation() -> None:
+    assert [
+        user_turn_intent(MODULE.client_prompt(index))[0]
+        for index in range(MODULE.CHECKPOINTS)
+    ] == [False, True, False, False, False]
 
 
 def arguments(tmp_path: Path, harness: str) -> argparse.Namespace:
