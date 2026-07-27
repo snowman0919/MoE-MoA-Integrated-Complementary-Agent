@@ -451,7 +451,7 @@ async def test_responses_sse_maps_unsupported_read_file_to_exec_command() -> Non
         yield (
             b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
             b'"id":"call-read","function":{"name":"read_file",'
-            b'"arguments":"{\\"path\\":\\"/tmp/goal objective.md\\"}"}}]},'
+            b'"arguments":"{\\"file\\":\\"/tmp/goal objective.md\\"}"}}]},'
             b'"finish_reason":"tool_calls"}]}\n\n'
         )
         yield b"data: [DONE]\n\n"

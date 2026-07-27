@@ -7032,4 +7032,19 @@ client container and names those host/client-common paths in the prompt. It
 also forbids the obsolete `/inputs` alias and source-environment paths quoted
 inside input documents. Regression coverage verifies this contract for Codex,
 OpenCode, and Hermes; the same-path bind mount was physically readable in the
-quality image. No v30 end-to-end physical result exists yet.
+quality image.
+
+V46 physically confirmed the v30 input-path fix: all three expected documents
+were reached through the common absolute paths, with no `NONEXISTENT_PATH`
+failure. It then failed the first checkpoint because Qwen emitted four
+`read_file` calls using the common `file` argument key while the Responses
+compatibility adapter accepted only `path`. Codex advertised `exec_command`
+but not `read_file`, so the unconverted calls correctly failed as
+`UNSUPPORTED_TOOL`; no checkpoint passed. The immutable mode-`0600` failure
+sidecar SHA-256 is
+`07cbc9b1b8fe28fcbd52bbcb0661a1289981e87122df5330cbf4312ff39b2093`.
+
+Protocol v31 accepts the observed `file` key in the existing
+`read_file`-to-`exec_command` adapter. The shell path remains safely quoted,
+and existing coverage continues to exercise the `path` form. No v31
+end-to-end physical result exists yet.

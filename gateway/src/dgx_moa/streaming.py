@@ -772,7 +772,7 @@ async def responses_sse(
                             else ""
                         )
                     else:
-                        path = arguments["path"]
+                        path = arguments.get("path") or arguments["file"]
                     if not isinstance(path, str) or not path:
                         raise TypeError
                 except (KeyError, TypeError, ValueError):
