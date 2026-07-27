@@ -6840,6 +6840,11 @@ This is a real reliability/speed failure, not sustained-Goal evidence.
 
 V36 also exposed Codex shell snapshots containing the Gateway credential with
 mode `0644`. Existing isolated snapshots were immediately restricted to
-`0600`. Protocol v21 makes the harness set the snapshot directory to `0700`
-and every shell snapshot to `0600` after each client checkpoint. This security
-change invalidates v20 for new confirmatory runs; no v21 physical result exists.
+`0600`. Protocol v21 made the harness set the snapshot directory to `0700` and
+every shell snapshot to `0600` after each client checkpoint. V37 startup then
+showed that post-checkpoint repair still left a live exposure window before the
+client returned; no V37 evidence header or workspace mutation was produced.
+Protocol v22 additionally starts every isolated client and validator with
+`umask 077`, closing the creation-time window. The post-checkpoint restriction
+remains defense in depth. This security change invalidates v20 and v21 for new
+confirmatory runs; no v22 physical result exists.

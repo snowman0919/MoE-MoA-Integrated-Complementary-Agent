@@ -477,6 +477,24 @@ def test_secure_client_state_restricts_shell_snapshots(tmp_path: Path) -> None:
     assert snapshot.stat().st_mode & 0o777 == 0o600
 
 
+def test_client_container_starts_with_private_umask(tmp_path: Path) -> None:
+    command = MODULE.QUALITY.docker_command(
+        tmp_path / "workspace",
+        tmp_path / "state",
+        ["python", "-c", "pass"],
+    )
+
+    assert command[-6:] == [
+        "-c",
+        'umask 077; exec "$@"',
+        "sh",
+        "python",
+        "-c",
+        "pass",
+    ]
+    assert command[command.index("--entrypoint") + 1] == "/bin/sh"
+
+
 @pytest.mark.parametrize(
     ("returncode", "session", "terminal", "failure"),
     (

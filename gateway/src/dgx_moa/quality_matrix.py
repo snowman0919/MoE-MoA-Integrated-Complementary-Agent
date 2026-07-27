@@ -1099,7 +1099,16 @@ def docker_command(
         command.extend(("--env", value))
     for source, target in read_only_mounts:
         command.extend(("--volume", f"{source}:{target}:ro"))
-    return [*command, DOCKER_IMAGE, *inner]
+    return [
+        *command,
+        "--entrypoint",
+        "/bin/sh",
+        DOCKER_IMAGE,
+        "-c",
+        'umask 077; exec "$@"',
+        "sh",
+        *inner,
+    ]
 
 
 def opencode_runtime_mounts(state: Path) -> tuple[tuple[Path, str], ...]:
