@@ -6654,3 +6654,18 @@ commits or any minimum elapsed time. The focused long-horizon suite passed
 `31/31`, Ruff and strict mypy passed, and the complete suite passed
 `1115/1115` with the existing Starlette warning. No v11 physical result exists
 yet, so the sustained-Goal gate remains open.
+
+V24 was the first physical v11 run through the real Codex client, authenticated
+isolated Gateway, Dynamic MoA, and host tools. Phase zero completed with a new
+clean commit, ten host tools, pinned providers, no provider error, and observed
+Reasoner, Executor, Planner, Reviewer, Codex OAuth Frontier, and secondary
+Executor provenance. Phase one then completed five additional host tools and
+review activity but retained phase zero in the private progress state. The
+client failed closed with `invalid_progress_state`; the immutable mode-`0600`
+failure SHA-256 is
+`19f6caae9a0c72ffe808b032117eef20ba1ef2cb122c70c173558f239d1a6824`.
+Protocol v12 permits one bounded same-session contract-repair turn and includes
+its latency, tools, tokens, retries, providers, and cost in the phase totals.
+It never synthesizes progress and fails on a second contract error. The focused
+long-horizon suite passed `32/32`, Ruff passed, and strict mypy passed. No v12
+physical result exists yet.

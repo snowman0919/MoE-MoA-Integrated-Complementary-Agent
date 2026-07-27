@@ -404,7 +404,7 @@ def test_checkpoint_interrupt_removes_only_its_named_container(
     monkeypatch.setitem(
         globals_,
         "client_command",
-        lambda *_args: (["docker", "run", "--rm", "image", "command"], {}, None),
+        lambda *_args, **_kwargs: (["docker", "run", "--rm", "image", "command"], {}, None),
     )
     monkeypatch.setitem(globals_, "wait_until", lambda _target: None)
     monkeypatch.setitem(globals_, "container_exists", lambda _name: next(existence))
@@ -457,7 +457,7 @@ def test_checkpoint_failures_are_distinguished(
     monkeypatch.setitem(
         globals_,
         "client_command",
-        lambda *_args: (["docker", "run", "--rm", "image", "command"], {}, None),
+        lambda *_args, **_kwargs: (["docker", "run", "--rm", "image", "command"], {}, None),
     )
     monkeypatch.setitem(globals_, "wait_until", lambda _target: None)
     monkeypatch.setitem(globals_, "container_exists", lambda _name: False)
@@ -478,3 +478,107 @@ def test_checkpoint_failures_are_distinguished(
 
     with pytest.raises(RuntimeError, match=failure):
         MODULE.run_checkpoint(args, state, control, 0)
+
+
+def test_checkpoint_repairs_contract_once_in_the_same_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = arguments(tmp_path, "codex")
+    args.state_db = tmp_path / "unused.db"
+    args.timeout = 1
+    state = tmp_path / "state"
+    state.mkdir()
+    (args.workspace / "seed").write_text("seed")
+    MODULE.subprocess.run(["git", "init", "-q", args.workspace], check=True)
+    MODULE.subprocess.run(["git", "-C", args.workspace, "add", "seed"], check=True)
+    MODULE.subprocess.run(
+        [
+            "git",
+            "-C",
+            args.workspace,
+            "-c",
+            "user.name=Validation",
+            "-c",
+            "user.email=validation@localhost",
+            "commit",
+            "-qm",
+            "seed",
+        ],
+        check=True,
+    )
+    baseline = MODULE.git_snapshot(args.workspace)
+    control = {
+        "started_at_epoch": 1,
+        "baseline": baseline,
+        "gateway_session": "private-gateway",
+        "client_session": None,
+    }
+    prompts: list[str | None] = []
+    runs = 0
+
+    def fake_client_command(*_args, prompt_override=None):  # type: ignore[no-untyped-def]
+        prompts.append(prompt_override)
+        return ["docker", "run", "--rm", "image", "command"], {}, None
+
+    def fake_run(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        nonlocal runs
+        runs += 1
+        if runs == 2:
+            (state / "long-progress.json").write_text(
+                json.dumps(
+                    {
+                        "phase_index": 0,
+                        "phase": MODULE.PHASES[0],
+                        "next_action": "next",
+                        "context_summary": "summary",
+                        "evidence": "evidence",
+                        "premature_completion": False,
+                        "unjustified_repeated_reads": 0,
+                    }
+                )
+            )
+        return MODULE.subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
+    monkeypatch.setattr(MODULE.QUALITY, "run_process", fake_run)
+    monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
+    monkeypatch.setattr(MODULE, "client_command", fake_client_command)
+    monkeypatch.setattr(MODULE, "wait_until", lambda _target: None)
+    monkeypatch.setattr(MODULE, "container_exists", lambda _name: False)
+    monkeypatch.setattr(
+        MODULE,
+        "client_metrics",
+        lambda *_args: {
+            "session": "private-session",
+            "terminal": True,
+            "context_tokens": runs,
+            "cached_tokens": runs,
+            "tool_calls": 1,
+            "retries": 0,
+            "unjustified_repeated_reads": 0,
+            "output_sha256": str(runs) * 64,
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "provider_metrics",
+        lambda *_args: {
+            "provider_pinned": True,
+            "provider_provenance": [
+                {"role": "executor", "provider": "local", "model": "candidate"}
+            ],
+            "provider_errors": 0,
+            "context_tokens": 0,
+            "variable_cost_usd": 0,
+        },
+    )
+
+    checkpoint, _ = MODULE.run_checkpoint(args, state, control, 0)
+
+    assert runs == 2
+    assert prompts[0] is None
+    assert "progress_state_missing" in str(prompts[1])
+    assert checkpoint["tool_calls"] == 2
+    assert checkpoint["context_tokens"] == 2
+    assert control["client_session"] == "private-session"

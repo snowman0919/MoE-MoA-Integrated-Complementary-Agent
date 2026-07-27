@@ -246,7 +246,7 @@ implementation, independent review, passing validation, and a terminal
 response. Elapsed wall time is reported but is not a pass criterion.
 
 `scripts/analyze-long-horizon.py` freezes the machine-readable gate. Evidence
-uses protocol `frontier-long-goal-v11` and contains one header, consecutive
+uses protocol `frontier-long-goal-v12` and contains one header, consecutive
 phases `intake_and_plan`, `core_implementation`, `integration_and_tests`,
 `independent_review_and_repair`, and `full_validation_and_final`, followed by
 one final record. It requires stable SHA-256
@@ -269,8 +269,13 @@ per-run $10 ceiling. OpenRouter remains eligible only after the bounded Codex
 OAuth profile chain is unavailable and a mandatory specialist/Executor path
 requires fallback. The analyzer records no prompt, hidden reasoning, provider
 output, request ID, key, cookie, authorization value, or repository name.
+If an otherwise terminal phase leaves only the private progress or clean
+worktree contract incomplete, the harness may issue exactly one same-session
+repair turn naming only the safe failure codes. The repair must use host tools,
+cannot redesign the implementation, and is included in latency, tool, token,
+retry, provider, and cost totals. A second contract failure fails the phase.
 Earlier epochs remain immutable diagnostic history and cannot be relabeled as
-v11 confirmation. Elapsed time and direct local-model activity cannot replace
+v12 confirmation. Elapsed time and direct local-model activity cannot replace
 evidence from the authenticated client-to-Gateway-to-MoA path.
 
 The isolated candidate runtime must reserve the sustained task, rather than
