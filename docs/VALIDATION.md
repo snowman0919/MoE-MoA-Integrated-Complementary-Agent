@@ -7076,5 +7076,24 @@ and
 Protocol v33 recognizes a new active user turn only when the latest user
 message follows the latest tool result. Tool-result continuations therefore
 retain the already recorded bounded intent, while a real subsequent user
-message still resets completion and review latches. No v33 end-to-end physical
-result exists yet.
+message still resets completion and review latches.
+
+V49 and V50 physically confirmed that v33 preserves the bounded planning
+intent across tool continuations: both remained non-mutating with zero changed
+paths. Neither attempt completed the first checkpoint. In both attempts the
+local Reasoner later returned unusable structured output and its Codex OAuth
+fallback was unavailable after the earlier Frontier call failed to complete.
+V50 returned explicit `reasoner_required_unavailable`; this is a repeated
+provider-chain reliability failure rather than an application test failure.
+The immutable mode-`0600` failure sidecar SHA-256 values are
+`d6400867263fe427a75195e6078230cbd08c8c7b7419bed479c6e9c38bf29e2c`
+and
+`fdc4f4522dd8280990bcdcae1ffe08a3e11170232a935b55a91c01b8e175428c`.
+
+Protocol v34 keeps the required-Reasoner fail-closed contract and adds one
+bounded local structured-output retry: three total Ollama attempts before the
+existing Codex OAuth Frontier fallback. Three direct schema probes produced
+valid JSON without parser relaxation. Regression coverage proves two invalid
+local responses followed by a valid third response complete locally, while a
+real provider outage still never degrades to Executor. No v34 end-to-end
+physical result exists yet.

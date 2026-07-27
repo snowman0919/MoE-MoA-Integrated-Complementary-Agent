@@ -2169,6 +2169,51 @@ async def test_reasoner_budget_is_admitted_before_provider_call(
 
 
 @pytest.mark.asyncio
+async def test_reasoner_structured_output_gets_three_bounded_local_attempts(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.models["reasoner"].provider = "ollama"
+    original = stub_provider.complete
+    attempts = 0
+
+    async def flaky_reasoner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal attempts
+        if role == "reasoner":
+            attempts += 1
+            if attempts < 3:
+                return {"choices": [{"message": {"content": "invalid"}}]}
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = flaky_reasoner  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session("reasoner-retry", [{"role": "user", "content": "work"}])
+    controller.select_route(state, {})
+
+    await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-orchestrated",
+            "messages": [{"role": "user", "content": "work"}],
+            "metadata": {},
+        },
+        ("reasoner", "executor"),
+    )
+    retries = [
+        event["payload"]["attempt"]
+        for event in store.events(state.session_id)
+        if event["event_type"] == "reasoner_structured_retry"
+    ]
+
+    assert attempts == 3
+    assert retries == [2, 3]
+    assert not any(
+        event["event_type"] == "reasoner_unavailable"
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
 async def test_reasoner_provider_failure_uses_bounded_frontier_fallback(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

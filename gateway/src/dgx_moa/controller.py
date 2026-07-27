@@ -2677,7 +2677,7 @@ class Controller:
             reasoner_provider = "local"
             reasoner_model = reasoner.served_name
             try:
-                for attempt in range(2):
+                for attempt in range(3):
                     try:
                         self.admit_loop_action(state, "reasoner_reentries")
                         reasoner_response = await self.provider.complete(
@@ -2692,12 +2692,12 @@ class Controller:
                         )
                         break
                     except ValueError as error:
-                        if attempt or reasoner.provider != "ollama":
+                        if attempt >= 2 or reasoner.provider != "ollama":
                             raise
                         self.store.event(
                             state.session_id,
                             "reasoner_structured_retry",
-                            {"attempt": 2, "failure_class": type(error).__name__},
+                            {"attempt": attempt + 2, "failure_class": type(error).__name__},
                         )
             except (httpx.HTTPError, StageTimeout, ValueError) as error:
                 self.record_provider_failure(state, "reasoner", error)
