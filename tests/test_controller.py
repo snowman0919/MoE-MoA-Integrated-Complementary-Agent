@@ -3324,6 +3324,9 @@ def test_new_user_turn_does_not_reuse_prior_completion_latch(
     assert controller.implementation_completion_ready(resumed, {}) is False
     assert controller.requires_implementation_tool_action(resumed, {}) is False
     assert controller.executor_stalled(resumed) is False
+    assert "CURRENT USER INSTRUCTION\nReview concurrency and run the tests." in (
+        controller.prompt_sandwich("executor", resumed, "context", "continue")
+    )
 
 
 def test_frontier_missing_tests_block_approval(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

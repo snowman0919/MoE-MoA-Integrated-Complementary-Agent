@@ -6758,3 +6758,18 @@ stopped with the workspace still clean and is not a pass.
 Protocol v17 exposes `/state/long-review.json` and its schema only during
 `full_validation_and_final`. A direct regression rejects that path in the
 first four phase prompts. No v17 physical result exists yet.
+
+V32 physically reconfirmed a clean v17 planning checkpoint, then entered
+`core_implementation` with mutation intent true. It no longer targeted
+`/state`, but it executed fourteen successful `exec_command` inspections and
+no patch before being stopped. The mode-`0600` partial evidence SHA-256 is
+`cbf75089f3e79e13bac3c33d8444486e4d5768205c33a11c5fb157b1a38c5453`.
+The common defect was that turn hashes and completion scope advanced while
+`effective_objective` still exposed only the first planning instruction to the
+Executor.
+
+Protocol v18 preserves the original or resolved Goal and appends the latest
+distinct user instruction to the effective objective. Tool continuations keep
+the same instruction hash. A regression verifies that a second turn appears in
+the Executor prompt while prior completion evidence remains out of scope. No
+v18 physical result exists yet.

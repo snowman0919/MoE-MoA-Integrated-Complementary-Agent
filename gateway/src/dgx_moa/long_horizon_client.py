@@ -21,7 +21,7 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-goal-v17"
+PROTOCOL = "frontier-long-goal-v18"
 PHASES = (
     "intake_and_plan",
     "core_implementation",
@@ -674,6 +674,7 @@ def gateway_progress_state(database: Path, session: str, index: int) -> dict[str
                 "phase",
                 "completed_steps",
                 "resolved_objective",
+                "active_user_turn_sha256",
             )
         ),
         "evidence_sha256": fingerprint(

@@ -105,6 +105,7 @@ class SessionState(BaseModel):
     objective: str = ""
     resolved_objective: str = ""
     resolved_objective_orchestrated: bool = False
+    active_user_instruction: str = ""
     active_user_turn_sha256: str = ""
     active_turn_after_tool_execution_id: str = ""
     active_turn_requires_change: bool = False

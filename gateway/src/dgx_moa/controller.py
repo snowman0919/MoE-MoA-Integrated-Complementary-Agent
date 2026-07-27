@@ -245,7 +245,10 @@ def has_mcp_server_failure(state: SessionState) -> bool:
 
 
 def effective_objective(state: SessionState) -> str:
-    return state.resolved_objective or state.objective
+    objective = state.resolved_objective or state.objective
+    if state.active_user_instruction and state.active_user_instruction != state.objective:
+        return objective + "\n\nCURRENT USER INSTRUCTION\n" + state.active_user_instruction
+    return objective
 
 
 def current_turn_executions(state: SessionState) -> list[dict[str, Any]]:
@@ -1035,6 +1038,7 @@ class Controller:
         latest_user_sha256 = hashlib.sha256(latest_user.encode()).hexdigest() if latest_user else ""
         if latest_user_sha256 and latest_user_sha256 != state.active_user_turn_sha256:
             subsequent_turn = bool(state.active_user_turn_sha256)
+            state.active_user_instruction = latest_user
             state.active_user_turn_sha256 = latest_user_sha256
             state.active_turn_after_tool_execution_id = (
                 str(state.tool_executions[-1].get("tool_execution_id") or "")
