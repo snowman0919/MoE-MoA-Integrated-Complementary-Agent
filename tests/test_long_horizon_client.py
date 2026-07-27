@@ -27,6 +27,9 @@ def test_phase_prompts_require_changes_only_during_core_implementation() -> None
     assert str(workspace) in final
     assert validation in final
     assert "추측한 경로로 cd하지 말고" in final
+    implementation = MODULE.client_prompt(1, workspace, validation)
+    assert "preliminary Reviewer 승인" in implementation
+    assert "최종 독립 검토는 이후 단계" in implementation
 
 
 def arguments(tmp_path: Path, harness: str) -> argparse.Namespace:

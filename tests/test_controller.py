@@ -3567,6 +3567,21 @@ def test_repeated_successful_inspection_marks_executor_stalled(
     assert controller.executor_stalled(
         distinct.model_copy(update={"tool_executions": distinct.tool_executions[:3]})
     ) is False
+    git_inspection = distinct.model_copy(
+        update={
+            "session_id": "git-inspection",
+            "tool_executions": [
+                {
+                    "tool_name": "exec_command",
+                    "normalized_arguments": {"cmd": command},
+                    "exit_code": 0,
+                }
+                for command in ("git status --short", "git diff --stat", "git log -1")
+            ],
+        }
+    )
+    assert controller.executor_stalled(git_inspection) is False
+    assert controller.executor_stalled(git_inspection, inspection_limit=3) is True
 
     polling = SessionState(
         session_id="valid-polling",

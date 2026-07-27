@@ -6918,3 +6918,30 @@ now repeats the exact repository root and frozen validation command, forbids
 guessed working directories and alternate source/test roots, and supplies a
 private clone-local Git identity only when one is absent. Existing local
 identity is preserved. No v25 physical result exists.
+
+V41 physically passed the v25 planning checkpoint through the same real
+client-to-Gateway-to-MoA path in 951.010 seconds. It was terminal and clean
+with seven host-tool calls, provider pinning, 15,104 cached tokens, zero
+provider errors, zero unjustified repeated reads, zero variable cost, and all
+four required roles observed. The implementation checkpoint proved both v25
+fixes: the exact root test path was used, no alternate source/test root
+survived, clone-local Git identity was already ready, the exact 28-test command
+passed, and two clean implementation commits were created.
+
+V41 still failed checkpoint 1 after 1,800 seconds. A final Reviewer repair
+passed all 28 tests but remained uncommitted at timeout, and the Responses
+stream exhausted progress-only retries with HTTP 502 `incomplete_response`.
+The evaluation prompt deferred Reviewer approval to a later phase while the
+runtime terminal gate required review evidence in the current implementation
+turn. Read-only Git status/history commands were also absent from the common
+inspection detector. Immutable mode-`0600` evidence and failure sidecar
+SHA-256 values are
+`c8b0234c7d909f6154e944c4c874ecf5730756286fbccbd89f4d6526d62669cd`
+and `71d6d19f898a68961a8c9a224da29ca7ae497d5dd63e68cde0899ddd43ea0961`.
+
+Protocol v26 counts read-only Git status/diff/log/show/branch/rev-parse plus
+pwd/wc as inspections, preserving the normal six-call and planned-mutation
+three-call limits. Its implementation checkpoint now requires preliminary
+Reviewer approval while retaining integration and final independent review in
+later phases, matching the runtime terminal contract. No v26 physical result
+exists.

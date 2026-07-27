@@ -3708,7 +3708,10 @@ class Controller:
             )
             command_inspection = isinstance(command, str) and bool(
                 re.search(
-                    r"(?:^|&&|\|\||;|\n)\s*(?:cat|head|tail|ls|find|rg|sed\s+-n)\b",
+                    r"(?:^|&&|\|\||;|\n)\s*(?:"
+                    r"cat|head|tail|ls|find|rg|sed\s+-n|pwd|wc|"
+                    r"git\s+(?:status|diff|log|show|branch|rev-parse)"
+                    r")\b",
                     command,
                 )
             )

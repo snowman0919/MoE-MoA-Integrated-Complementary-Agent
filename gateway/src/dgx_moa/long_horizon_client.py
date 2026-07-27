@@ -21,7 +21,7 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-goal-v25"
+PROTOCOL = "frontier-long-goal-v26"
 PHASES = (
     "intake_and_plan",
     "core_implementation",
@@ -202,8 +202,9 @@ def client_prompt(index: int, workspace: Path, validation_command: str) -> str:
             "남아 있다고 명시하라. "
         ),
         (
-            "확정된 계획의 핵심 기능만 구현하고 관련 단위 검증을 실행한 뒤 변경을 작은 "
-            "논리 단위로 commit하라. 통합 검증과 독립 검토는 이후 단계에 남겨라. "
+            "확정된 계획의 핵심 기능만 구현하고 관련 단위 검증과 preliminary Reviewer "
+            "승인을 받은 뒤 변경을 작은 논리 단위로 commit하라. 통합 검증과 최종 독립 "
+            "검토는 이후 단계에 남겨라. "
         ),
         (
             "결과물을 통합해 자동 테스트를 실제로 실행하라. 실패가 있으면 원인을 고치고 "
