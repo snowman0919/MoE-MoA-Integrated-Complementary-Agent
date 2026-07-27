@@ -21,7 +21,7 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-goal-v8"
+PROTOCOL = "frontier-long-goal-v9"
 CHECKPOINTS = 21
 INTERVAL_SECONDS = 0
 SAFE_HOSTS = {"127.0.0.1", "::1", "localhost"}
@@ -190,7 +190,11 @@ def client_prompt(index: int) -> str:
         '"unjustified_repeated_reads":0}. '
         "최종 검토 파일은 "
         '{"status":"approved|changes_requested","unresolved_critical_findings":0,'
-        '"evidence":"..."} 형식이어야 한다. 사용자에게 보이는 설명은 한국어로 간결하게 하라.'
+        '"evidence":"..."} 형식이어야 한다. 최종 응답 직전 반드시 실제 도구로 '
+        "(1) 테스트 통과, (2) 새 Git commit과 clean worktree, "
+        "(3) exec_command를 통한 /state/long-progress.json 원자적 작성과 JSON 검증을 "
+        "이 순서로 완료하라. 하나라도 미완료면 응답을 끝내지 마라. "
+        "사용자에게 보이는 설명은 한국어로 간결하게 하라."
     )
 
 
@@ -599,7 +603,10 @@ def runtime_metrics(snapshot: dict[str, Any]) -> tuple[int, int]:
 
 
 def progress_state(state: Path, index: int) -> dict[str, Any]:
-    value = json.loads((state / "long-progress.json").read_text())
+    path = state / "long-progress.json"
+    if not path.is_file():
+        raise RuntimeError("progress_state_missing")
+    value = json.loads(path.read_text())
     if not isinstance(value, dict):
         raise RuntimeError("invalid_progress_state")
     required = {"next_action", "context_summary", "evidence"}
@@ -779,6 +786,11 @@ def run_checkpoint(
     control["client_session"] = session
     progress = progress_state(state, index)
     git_state = git_snapshot(args.workspace)
+    if git_state["dirty_state"] != "clean":
+        raise RuntimeError("dirty_checkpoint")
+    if git_state["commit"] == control.get("last_commit", control["baseline"]["commit"]):
+        raise RuntimeError("checkpoint_commit_unchanged")
+    control["last_commit"] = git_state["commit"]
     provider = provider_metrics(
         args.state_db,
         started,
@@ -889,6 +901,7 @@ def main() -> int:
             "baseline": baseline,
             "gateway_session": "long-" + os.urandom(16).hex(),
             "client_session": None,
+            "last_commit": baseline["commit"],
         }
         header = {}
     start_index = sum(event.get("type") == "checkpoint" for event in events)
@@ -942,10 +955,13 @@ def main() -> int:
                     "client_nonzero_exit",
                     "client_session_missing",
                     "client_terminal_missing",
+                    "checkpoint_commit_unchanged",
+                    "dirty_checkpoint",
                     "client_container_already_exists",
                     "client_session_changed",
                     "invalid_progress_state",
                     "premature_completion",
+                    "progress_state_missing",
                 }
                 else "long_horizon_failure",
             },

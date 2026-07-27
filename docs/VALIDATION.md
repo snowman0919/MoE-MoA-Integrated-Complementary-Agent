@@ -6532,7 +6532,7 @@ mode-`0600` evidence SHA-256 is
 `daccd943afd2843e271699db5bdfc1a0f790fefac651ad1bf3ac3321951452f5`.
 It remains diagnostic because only checkpoint zero completed.
 
-Protocol `frontier-long-goal-v8` replaces the v1 elapsed-time gate for new
+Protocol `frontier-long-goal-v9` replaces the v1 elapsed-time gate for new
 epochs. It retains 21 dependency-ordered checkpoints, stable identity hashes,
 same-session resume, intentional reconnect, cache evidence, provider pinning,
 privacy rejection, independent review, final validation, and fail-closed cost
@@ -6589,6 +6589,19 @@ without storing client output, and freezes a candidate-only sustained-task
 budget in `docs/QUALITY_EVALUATION.md`. Production defaults are unchanged.
 The focused long-horizon suite passed `29/29`, Ruff and strict mypy passed,
 and the complete suite passed `1113/1113` with the existing Starlette warning.
+
+V20 applied the frozen sustained-task budget and eliminated loop exhaustion.
+The actual path reached implementation, tests, local Reviewer completion, and
+successful remote fallback, but the agent ended checkpoint zero without the
+required private `long-progress.json` and with a dirty worktree. The client
+therefore failed with `FileNotFoundError` after the terminal turn; its immutable
+mode-`0600` failure SHA-256 is
+`ccd94e3a79f511df3f173ef5f18600c8a7e5801e73cfc07987e7290d93a0f0d9`.
+Protocol v9 does not synthesize the missing context evidence. It makes the
+final tool order explicit and fails early with distinct missing-state, dirty
+checkpoint, or unchanged-commit classes.
+The focused long-horizon suite passed `30/30`, Ruff and strict mypy passed,
+and the complete suite passed `1114/1114` with the existing Starlette warning.
 
 V13 then exposed a provider-pinning ordering defect before checkpoint zero.
 The Gateway detected repeated successful inspection only after

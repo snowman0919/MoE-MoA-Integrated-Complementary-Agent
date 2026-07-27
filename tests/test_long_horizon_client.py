@@ -66,6 +66,11 @@ def test_provider_manifest_hash_rejects_private_fields(tmp_path: Path) -> None:
         MODULE.provider_manifest_hash(manifest)
 
 
+def test_missing_progress_state_is_distinguished(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="progress_state_missing"):
+        MODULE.progress_state(tmp_path, 0)
+
+
 def test_codex_model_catalog_enables_native_patch_tool() -> None:
     model = MODULE.codex_model_catalog()["models"][0]
 
