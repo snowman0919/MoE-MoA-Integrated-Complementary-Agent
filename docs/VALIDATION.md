@@ -6436,3 +6436,46 @@ classification. Seven focused Controller tests passed and the complete suite
 passed `1104/1104` in 41.95 seconds. The next immutable long-horizon attempt
 must use a larger candidate-only engineering-loop iteration budget; no failed
 attempt is resumed or counted as a pass.
+
+Attempt `20260727-long-runtime-v3` did not start its Codex client because its
+workspace preparation step was omitted before the transient unit launch. It
+produced no checkpoint and is retained as a preflight failure. Its mode-`0600`
+launch-failure record SHA-256 is
+`fd4e35bad970984f16da574d3576a2e69b6f4e4c28d026ab463c33c30693d29b`.
+
+A later Docker restart exposed an ordering-dependent SGLang recovery failure.
+The Gemma Specialist started first; the Executor then measured the Specialist's
+allocation while loading its own weights and rejected
+`mem-fraction-static=0.45` before allocating KV cache. The Executor was not
+READY despite its process and loopback listener. With production Gateway drain
+enabled and zero active requests, the Specialist was stopped, the Executor was
+started first and passed a real inference probe, then the Specialist was
+started and passed a reasoning inference probe. Both catalogs again reported
+65,536 tokens, both containers reported zero OOM and zero restart count, and
+host `MemAvailable` was `20,770,484,224` bytes. The Gateway drain was cancelled
+and both a production Gateway MoA canary and an isolated Responses tool
+continuation passed. This recovery is evidence of the required startup order,
+not a completed long-horizon gate.
+
+Attempt `20260727-long-runtime-v5` then exposed an evaluation-instrumentation
+defect before checkpoint zero: unlike the established quality runner, the
+Codex long-horizon provider omitted its deterministic `X-Session-ID` header.
+Requests therefore could not be selected by the frozen session-specific
+provenance query. The attempt was stopped and preserved; its mode-`0600`
+instrumentation-failure record SHA-256 is
+`a157790e55b51923d9030b558946508424660ae6b7c03fe8432614077ee7b1c0`.
+The shared Codex provider configuration now supplies the long-horizon session,
+candidate runtime channel, candidate-evaluation trace origin, and bounded
+workspace class through `http_headers`. The focused long-horizon suite passed
+`13/13`, Ruff lint passed, strict mypy reported zero errors across 59 source
+files, and the complete suite passed `1104/1104` in 40.35 seconds with the
+existing Starlette warning. The new independent stdlib durable-journal fixture
+uses baseline commit `1ba6e057eb36669ee02d10b338634d79206954a2`; objective,
+acceptance, plan, and provider-manifest SHA-256 values are respectively
+`9dda9717da85b91f1db0ca8903bff9412d8cca4385c1b2edb0393c3e0abb4671`,
+`dbc5c0638465a246c6b0fd0e0bb82e09044ad09934aa30558f74d620cab88703`,
+`19124ca3090ff072ef1b832f3c2e31807cd18fbd85e7638dccdea1677a24e70b`,
+and
+`1b9bed4f4630f97b71e965910c6cc16c3844d7f414cf3846b361ac5f7aa91b57`.
+Any run using the fixed instrumentation must use a new immutable variant and
+attempt ID. No long-horizon pass is claimed.

@@ -271,6 +271,14 @@ def client_command(
     if args.harness == "codex":
         write_private(state / "model-catalog.json", codex_model_catalog())
         provider = "dgx_moa_long"
+        headers = (
+            "{ "
+            f'"X-Session-ID" = {json.dumps(gateway_session)}, '
+            f'"X-Runtime-Channel" = "candidate", '
+            f'"X-Trace-Origin" = "candidate_evaluation", '
+            f'"X-Workspace-ID" = "long-horizon"'
+            " }"
+        )
         common = [
             "--json",
             "--dangerously-bypass-approvals-and-sandbox",
@@ -296,6 +304,8 @@ def client_command(
             f"model_providers.{provider}.env_key={json.dumps(args.api_key_env)}",
             "-c",
             f"model_providers.{provider}.wire_api={json.dumps('responses')}",
+            "-c",
+            f"model_providers.{provider}.http_headers={headers}",
         ]
         inner = (
             ["/tools/codex", "exec", *common, prompt]

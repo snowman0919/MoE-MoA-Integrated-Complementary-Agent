@@ -108,6 +108,11 @@ def test_client_commands_resume_the_same_private_session(
         catalog = json.loads((state / "model-catalog.json").read_text())
         assert catalog["models"][0]["apply_patch_tool_type"] == "freeform"
         assert 'model_catalog_json="/state/model-catalog.json"' in inner
+        headers = next(value for value in inner if "http_headers=" in value)
+        assert '"X-Session-ID" = "private-gateway-session"' in headers
+        assert '"X-Runtime-Channel" = "candidate"' in headers
+        assert '"X-Trace-Origin" = "candidate_evaluation"' in headers
+        assert '"X-Workspace-ID" = "long-horizon"' in headers
 
 
 def test_client_metrics_and_provider_pinning_are_aggregated_without_payloads(
@@ -420,9 +425,7 @@ def test_checkpoint_timeout_is_distinguished_from_generic_client_failure(
     monkeypatch.setattr(
         MODULE.QUALITY,
         "run_process",
-        lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
-            [], 124, "", "timeout"
-        ),
+        lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess([], 124, "", "timeout"),
     )
     monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
     monkeypatch.setitem(
