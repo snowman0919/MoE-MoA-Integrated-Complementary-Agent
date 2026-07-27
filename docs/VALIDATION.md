@@ -6384,14 +6384,23 @@ Post-stop `PRAGMA integrity_check` returned `ok`. A focused reproduction
 confirmed the same extended error when WAL/SHM sidecars disappear while a WAL
 connection remains active. The client container could mount only its private
 state directory and workspace, not the sibling Gateway database. No kernel
-storage error occurred in the failure interval. The candidate now retains one
-SQLite anchor connection for the complete Gateway lifespan, preventing
-last-connection WAL/SHM deletion during high-churn request connections, and
-closes it in the lifespan cleanup path.
+storage error occurred in the failure interval.
 
-The regression keeps both sidecars present across 100 short-lived connections
-while the Gateway lifespan is active. Repository Ruff passed, strict mypy
-reported zero errors across 59 source files, and the complete suite passed
-`1102/1102` in 32.55 seconds with the existing Starlette warning. A fresh
-immutable Gateway and long-horizon attempt are still required; this repair does
-not complete the Goal.
+An initial anchor-connection repair passed synthetic tests but failed physical
+Gateway attempt `runtime-v2` and was superseded. After three diagnostic
+requests, the live process held more than 90 SQLite descriptors; many referenced
+deleted WAL files and its SHM descriptor was also deleted. Python's
+`sqlite3.Connection` context manager commits or rolls back but does not close
+the connection. The shared helper had returned a bare connection, so every
+`with store._connect()` call leaked a descriptor until garbage collection.
+Uncoordinated finalizers then produced the observed WAL/SHM deletion and
+`SQLITE_IOERR_SHORT_READ`.
+
+The shared helper is now a real closing context manager: it preserves
+commit/rollback behavior and closes the connection in `finally`. The regression
+asserts that the connection is unusable and the WAL/SHM files are gone after
+context exit. Focused state, API-key, usage, and database tests passed `58/58`.
+Repository Ruff passed, strict mypy reported zero errors across 59 source files,
+and the complete suite passed `1102/1102` in 36.06 seconds with the existing
+Starlette warning. A fresh immutable Gateway and long-horizon attempt are still
+required; this repair does not complete the Goal.

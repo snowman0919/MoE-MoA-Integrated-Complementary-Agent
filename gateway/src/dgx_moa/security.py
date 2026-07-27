@@ -6,6 +6,7 @@ import secrets
 import sqlite3
 import time
 from collections.abc import Callable, Coroutine
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -103,7 +104,7 @@ class ApiKeyStore:
             ).fetchone()[0]
             if admin_count > self.max_admin_keys:
                 raise ValueError("configured admin API keys exceed the limit")
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
         return connect_sqlite(self.path, rows=True, secure=True)
 
     @staticmethod

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -200,7 +201,7 @@ class StateStore:
                 "created_at TEXT NOT NULL)"
             )
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
         return connect_sqlite(self.path, secure=True)
 
     def get(self, session_id: str) -> SessionState | None:

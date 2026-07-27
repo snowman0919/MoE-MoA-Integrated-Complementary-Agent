@@ -10,6 +10,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractContextManager
 from pathlib import Path
 from statistics import fmean
 from typing import Any, Literal, cast
@@ -504,7 +505,7 @@ class UsageStore:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
         return connect_sqlite(self.path, rows=True, secure=True)
 
     def start(self, record: RequestUsageStart) -> None:

@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 
+@contextmanager
 def connect_sqlite(
     path: str | Path,
     *,
     rows: bool = False,
     secure: bool = False,
-) -> sqlite3.Connection:
+) -> Iterator[sqlite3.Connection]:
     database_path = Path(path)
     database_path.parent.mkdir(parents=True, exist_ok=True)
     if secure:
@@ -18,8 +21,12 @@ def connect_sqlite(
         os.close(descriptor)
         os.chmod(database_path, 0o600)
     connection = sqlite3.connect(database_path, timeout=30)
-    connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute("PRAGMA foreign_keys=ON")
-    if rows:
-        connection.row_factory = sqlite3.Row
-    return connection
+    try:
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA foreign_keys=ON")
+        if rows:
+            connection.row_factory = sqlite3.Row
+        with connection:
+            yield connection
+    finally:
+        connection.close()
