@@ -6532,7 +6532,7 @@ mode-`0600` evidence SHA-256 is
 `daccd943afd2843e271699db5bdfc1a0f790fefac651ad1bf3ac3321951452f5`.
 It remains diagnostic because only checkpoint zero completed.
 
-Protocol `frontier-long-goal-v9` replaces the v1 elapsed-time gate for new
+Protocol `frontier-long-goal-v10` replaces the v1 elapsed-time gate for new
 epochs. It retains 21 dependency-ordered checkpoints, stable identity hashes,
 same-session resume, intentional reconnect, cache evidence, provider pinning,
 privacy rejection, independent review, final validation, and fail-closed cost
@@ -6602,6 +6602,20 @@ final tool order explicit and fails early with distinct missing-state, dirty
 checkpoint, or unchanged-commit classes.
 The focused long-horizon suite passed `30/30`, Ruff and strict mypy passed,
 and the complete suite passed `1114/1114` with the existing Starlette warning.
+
+V21 proved the checkpoint contract through physical execution: the client
+created a new clean commit and valid private progress state after 22 host-tool
+continuations. It did not finish checkpoint zero because a pending Frontier
+correction was repeatedly routed as eight architecture collaborations instead
+of the required code review, so the verification latch could not clear.
+Protocol v10 prioritizes correction code review over an orchestration-requested
+architecture collaboration and records the correction trigger on both
+immediate and serialized Frontier dispatch.
+The immutable mode-`0600` V21 diagnostic SHA-256 is
+`094ad8c19f75c4ced082ba1f49019ef814c5369f8a54d2ec8daa64cc6932bd21`.
+The three focused correction/review cases passed, the long-horizon suite passed
+`30/30`, Ruff and strict mypy passed, and the complete suite passed
+`1114/1114` with the existing Starlette warning.
 
 V13 then exposed a provider-pinning ordering defect before checkpoint zero.
 The Gateway detected repeated successful inspection only after

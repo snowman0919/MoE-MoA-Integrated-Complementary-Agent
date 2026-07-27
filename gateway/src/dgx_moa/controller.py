@@ -2740,7 +2740,8 @@ class Controller:
                     "disagreement"
                     if request.get("metadata", {}).get("unresolved_disagreement")
                     else "code_review"
-                    if request.get("metadata", {}).get("code_review")
+                    if state.frontier_correction_pending_verification
+                    or request.get("metadata", {}).get("code_review")
                     or "review" in effective_objective(state).lower()
                     else "architecture"
                 )
@@ -2815,6 +2816,11 @@ class Controller:
                                 "parallel": orchestration.parallelizable,
                                 "provider": "codex_oauth",
                                 "model": self.frontier.config.model,
+                                **(
+                                    {"trigger": "frontier_correction_verification"}
+                                    if state.frontier_correction_pending_verification
+                                    else {}
+                                ),
                             },
                         )
                     else:
@@ -3129,6 +3135,11 @@ class Controller:
                     "parallel": False,
                     "provider": "codex_oauth",
                     "model": self.frontier.config.model,
+                    **(
+                        {"trigger": "frontier_correction_verification"}
+                        if state.frontier_correction_pending_verification
+                        else {}
+                    ),
                 },
             )
         if frontier_task is not None:

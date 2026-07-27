@@ -849,7 +849,7 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
                             "content": json.dumps(
                                 {
                                     "action": "invoke_agents",
-                                    "required_agents": ["reviewer"],
+                                    "required_agents": ["reviewer", "frontier"],
                                     "optional_agents": [],
                                     "reason": {"reviewer": "verify the correction"},
                                     "parallelizable": False,
@@ -925,8 +925,10 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
     await controller.prepare_executor(state, request, ("reasoner", "executor"))
 
     assert frontier.calls == 1
-    assert not any(
-        event["event_type"] == "frontier_unavailable" for event in store.events(state.session_id)
+    assert any(
+        event["event_type"] == "frontier_unavailable"
+        and event["payload"].get("failure_class") == "FRONTIER_INVOCATION_LIMIT"
+        for event in store.events(state.session_id)
     )
 
 
