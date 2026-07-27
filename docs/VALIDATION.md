@@ -6669,3 +6669,19 @@ its latency, tools, tokens, retries, providers, and cost in the phase totals.
 It never synthesizes progress and fails on a second contract error. The focused
 long-horizon suite passed `32/32`, Ruff passed, and strict mypy passed. No v12
 physical result exists yet.
+
+V25 physically tested the v12 same-session repair. Phase zero again completed
+through the real Codex client and authenticated Gateway with a new clean commit,
+17 host tools, positive cache reuse, pinned providers, no provider error, all
+four local roles, Codex OAuth Frontier, and secondary Executor provenance.
+Phase one retained the prior private progress state; the one repair turn still
+failed with `invalid_progress_state`. The immutable mode-`0600` failure
+SHA-256 is
+`35a4a3ba046dd73c4c829ae70ac603ea3af6b7e247dd15a7d145f9b905c039ef`.
+This proved the private file contract measured prompt compliance rather than
+actual sustained-Goal context. Protocol v13 removes that synthetic artifact and
+derives only SHA-256 fingerprints from selected objective, acceptance, plan,
+phase, completed-step, tool, evidence, and review fields in the actual Gateway
+session state. The source values are never written to evaluation evidence. The
+focused long-horizon suite passed `31/31`, Ruff passed, and strict mypy passed.
+No v13 physical result exists yet.

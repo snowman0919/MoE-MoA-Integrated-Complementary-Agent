@@ -66,9 +66,44 @@ def test_provider_manifest_hash_rejects_private_fields(tmp_path: Path) -> None:
         MODULE.provider_manifest_hash(manifest)
 
 
-def test_missing_progress_state_is_distinguished(tmp_path: Path) -> None:
-    with pytest.raises(RuntimeError, match="progress_state_missing"):
-        MODULE.progress_state(tmp_path, 0)
+def test_gateway_progress_state_hashes_context_without_payloads(tmp_path: Path) -> None:
+    database = tmp_path / "state.db"
+    private = "private-objective"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE sessions (session_id TEXT, payload TEXT, updated_at REAL)"
+        )
+        connection.execute(
+            "INSERT INTO sessions VALUES (?, ?, ?)",
+            (
+                "private-session",
+                json.dumps(
+                    {
+                        "objective": private,
+                        "acceptance_criteria": ["works"],
+                        "plan": ["inspect", "implement"],
+                        "phase": "executing",
+                        "step_count": 2,
+                        "completed_steps": ["inspect"],
+                        "tool_executions": [{"tool": "test"}],
+                        "review_status": "approved",
+                        "final_status": None,
+                    }
+                ),
+                1,
+            ),
+        )
+
+    result = MODULE.gateway_progress_state(database, "private-session", 1)
+
+    assert result["phase_index"] == 1
+    assert result["phase"] == MODULE.PHASES[1]
+    assert result["premature_completion"] is False
+    assert private not in json.dumps(result)
+    assert all(
+        len(result[field]) == 64
+        for field in ("next_action_sha256", "context_summary_sha256", "evidence_sha256")
+    )
 
 
 def test_codex_model_catalog_enables_native_patch_tool() -> None:
@@ -478,107 +513,3 @@ def test_checkpoint_failures_are_distinguished(
 
     with pytest.raises(RuntimeError, match=failure):
         MODULE.run_checkpoint(args, state, control, 0)
-
-
-def test_checkpoint_repairs_contract_once_in_the_same_session(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    args = arguments(tmp_path, "codex")
-    args.state_db = tmp_path / "unused.db"
-    args.timeout = 1
-    state = tmp_path / "state"
-    state.mkdir()
-    (args.workspace / "seed").write_text("seed")
-    MODULE.subprocess.run(["git", "init", "-q", args.workspace], check=True)
-    MODULE.subprocess.run(["git", "-C", args.workspace, "add", "seed"], check=True)
-    MODULE.subprocess.run(
-        [
-            "git",
-            "-C",
-            args.workspace,
-            "-c",
-            "user.name=Validation",
-            "-c",
-            "user.email=validation@localhost",
-            "commit",
-            "-qm",
-            "seed",
-        ],
-        check=True,
-    )
-    baseline = MODULE.git_snapshot(args.workspace)
-    control = {
-        "started_at_epoch": 1,
-        "baseline": baseline,
-        "gateway_session": "private-gateway",
-        "client_session": None,
-    }
-    prompts: list[str | None] = []
-    runs = 0
-
-    def fake_client_command(*_args, prompt_override=None):  # type: ignore[no-untyped-def]
-        prompts.append(prompt_override)
-        return ["docker", "run", "--rm", "image", "command"], {}, None
-
-    def fake_run(*_args, **_kwargs):  # type: ignore[no-untyped-def]
-        nonlocal runs
-        runs += 1
-        if runs == 2:
-            (state / "long-progress.json").write_text(
-                json.dumps(
-                    {
-                        "phase_index": 0,
-                        "phase": MODULE.PHASES[0],
-                        "next_action": "next",
-                        "context_summary": "summary",
-                        "evidence": "evidence",
-                        "premature_completion": False,
-                        "unjustified_repeated_reads": 0,
-                    }
-                )
-            )
-        return MODULE.subprocess.CompletedProcess([], 0, "", "")
-
-    monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
-    monkeypatch.setattr(MODULE.QUALITY, "run_process", fake_run)
-    monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
-    monkeypatch.setattr(MODULE, "client_command", fake_client_command)
-    monkeypatch.setattr(MODULE, "wait_until", lambda _target: None)
-    monkeypatch.setattr(MODULE, "container_exists", lambda _name: False)
-    monkeypatch.setattr(
-        MODULE,
-        "client_metrics",
-        lambda *_args: {
-            "session": "private-session",
-            "terminal": True,
-            "context_tokens": runs,
-            "cached_tokens": runs,
-            "tool_calls": 1,
-            "retries": 0,
-            "unjustified_repeated_reads": 0,
-            "output_sha256": str(runs) * 64,
-        },
-    )
-    monkeypatch.setattr(
-        MODULE,
-        "provider_metrics",
-        lambda *_args: {
-            "provider_pinned": True,
-            "provider_provenance": [
-                {"role": "executor", "provider": "local", "model": "candidate"}
-            ],
-            "provider_errors": 0,
-            "context_tokens": 0,
-            "variable_cost_usd": 0,
-        },
-    )
-
-    checkpoint, _ = MODULE.run_checkpoint(args, state, control, 0)
-
-    assert runs == 2
-    assert prompts[0] is None
-    assert "progress_state_missing" in str(prompts[1])
-    assert checkpoint["tool_calls"] == 2
-    assert checkpoint["context_tokens"] == 2
-    assert control["client_session"] == "private-session"

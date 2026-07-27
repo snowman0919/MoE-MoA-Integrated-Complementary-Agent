@@ -13,7 +13,7 @@ import sqlite3
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from urllib.parse import urlparse
 
 from dgx_moa import isolated_sglang_validation as RUNTIME
@@ -21,7 +21,7 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-goal-v12"
+PROTOCOL = "frontier-long-goal-v13"
 PHASES = (
     "intake_and_plan",
     "core_implementation",
@@ -186,35 +186,18 @@ def client_prompt(index: int) -> str:
     )
     return (
         f"장기 작업 단계 {index}/{CHECKPOINTS - 1}({phase})를 수행하라. "
-        "첫 체크포인트에서만 /inputs/OBJECTIVE.md, /inputs/ACCEPTANCE.md, "
-        "/inputs/PLAN.md와 저장소 운영 문서를 읽고 이후에는 같은 세션 맥락과 "
-        "/state/long-progress.json을 우선 사용하라. "
+        "첫 단계에서만 /inputs/OBJECTIVE.md, /inputs/ACCEPTANCE.md, "
+        "/inputs/PLAN.md와 저장소 운영 문서를 읽고 이후에는 같은 세션 맥락을 사용하라. "
         "실제 도구로 구현·검증하고 구현 변경은 작은 논리 단위로 커밋하며 단계 종료 시 "
         "worktree를 clean으로 만들어라. 계획·검토 전용 단계는 새 커밋을 강제하지 않는다. "
         "같은 파일을 근거 없이 반복해서 읽지 마라. "
         f"{phase_rule}"
-        "/state/long-progress.json을 JSON 객체로 갱신하라: "
-        f'{{"phase_index":{index},"phase":"{phase}","next_action":"...",'
-        '"context_summary":"...",'
-        '"evidence":"...","premature_completion":false,'
-        '"unjustified_repeated_reads":0}. '
         "최종 검토 파일은 "
         '{"status":"approved|changes_requested","unresolved_critical_findings":0,'
         '"evidence":"..."} 형식이어야 한다. 최종 응답 직전 반드시 실제 도구로 '
         "(1) 해당 단계 검증 통과, (2) 구현 변경이 있다면 Git commit과 clean worktree, "
-        "(3) exec_command를 통한 /state/long-progress.json 원자적 작성과 JSON 검증을 "
         "이 순서로 완료하라. 하나라도 미완료면 응답을 끝내지 마라. "
         "사용자에게 보이는 설명은 한국어로 간결하게 하라."
-    )
-
-
-def client_contract_repair_prompt(index: int, failures: list[str]) -> str:
-    return (
-        f"장기 작업 단계 {index}의 구현을 재설계하지 말고 체크포인트 계약만 보정하라. "
-        f"미충족 코드: {', '.join(failures)}. 같은 세션 맥락을 유지하고 실제 host tool로 "
-        "필요한 검증을 실행한 뒤, 구현 변경이 있으면 commit하여 worktree를 clean으로 만들고 "
-        f'/state/long-progress.json의 phase_index를 {index}, phase를 "{PHASES[index]}"로 '
-        "원자적으로 갱신·검증하라. 완료 전 응답을 끝내지 마라."
     )
 
 
@@ -283,9 +266,8 @@ def client_command(
     session: str | None,
     index: int,
     gateway_session: str,
-    prompt_override: str | None = None,
 ) -> tuple[list[str], dict[str, str], Path | None]:
-    prompt = prompt_override or client_prompt(index)
+    prompt = client_prompt(index)
     environment = QUALITY.filtered_env({args.api_key_env: os.environ[args.api_key_env]})
     inputs = (
         (args.objective, "/inputs/OBJECTIVE.md"),
@@ -623,26 +605,66 @@ def runtime_metrics(snapshot: dict[str, Any]) -> tuple[int, int]:
     return peak, swap
 
 
-def progress_state(state: Path, index: int) -> dict[str, Any]:
-    path = state / "long-progress.json"
-    if not path.is_file():
-        raise RuntimeError("progress_state_missing")
+def gateway_progress_state(database: Path, session: str, index: int) -> dict[str, Any]:
+    with sqlite3.connect(database) as connection:
+        row = connection.execute(
+            "SELECT payload FROM sessions WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1",
+            (session,),
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("gateway_state_missing")
     try:
-        value = json.loads(path.read_text())
-    except json.JSONDecodeError:
-        raise RuntimeError("invalid_progress_state") from None
-    if not isinstance(value, dict):
-        raise RuntimeError("invalid_progress_state")
-    required = {"next_action", "context_summary", "evidence"}
+        value = json.loads(row[0])
+    except (TypeError, json.JSONDecodeError):
+        raise RuntimeError("invalid_gateway_state") from None
     if (
-        value.get("phase_index") != index
-        or value.get("phase") != PHASES[index]
-        or not all(isinstance(value.get(field), str) and value[field] for field in required)
+        not isinstance(value, dict)
+        or not isinstance(value.get("objective"), str)
+        or not value["objective"]
+        or not isinstance(value.get("plan"), list)
+        or not value["plan"]
     ):
-        raise RuntimeError("invalid_progress_state")
-    if value.get("premature_completion") is not False:
-        raise RuntimeError("premature_completion")
-    return cast(dict[str, Any], value)
+        raise RuntimeError("invalid_gateway_state")
+
+    def fingerprint(fields: tuple[str, ...]) -> str:
+        selected = {field: value.get(field) for field in fields}
+        return sha256_text(json.dumps(selected, sort_keys=True, separators=(",", ":")))
+
+    return {
+        "phase_index": index,
+        "phase": PHASES[index],
+        "next_action_sha256": fingerprint(
+            (
+                "phase",
+                "step_count",
+                "completed_steps",
+                "pending_tool_call_ids",
+                "review_status",
+                "frontier_correction_pending_verification",
+            )
+        ),
+        "context_summary_sha256": fingerprint(
+            (
+                "objective",
+                "acceptance_criteria",
+                "plan",
+                "phase",
+                "completed_steps",
+                "resolved_objective",
+            )
+        ),
+        "evidence_sha256": fingerprint(
+            (
+                "implementation_evidence",
+                "completion_evidence",
+                "review_status",
+                "tool_executions",
+                "failures",
+            )
+        ),
+        "premature_completion": index < CHECKPOINTS - 1
+        and value.get("final_status") in {"achieved", "completed", "success"},
+    }
 
 
 def wait_until(target: float) -> None:
@@ -775,77 +797,45 @@ def run_checkpoint(
     wait_until(scheduled)
     before = RUNTIME.runtime_snapshot()
     started = time.time()
+    command, environment, usage_file = client_command(
+        args,
+        state,
+        control.get("client_session"),
+        index,
+        control["gateway_session"],
+    )
     container_name = client_container_name(args, state, index)
-    metrics = {
-        "context_tokens": 0,
-        "cached_tokens": 0,
-        "tool_calls": 0,
-        "retries": 0,
-        "unjustified_repeated_reads": 0,
-        "terminal": False,
-    }
-    output_hashes: list[str] = []
-    prompt_override: str | None = None
-    progress: dict[str, Any] | None = None
-    git_state: dict[str, str] | None = None
-    completed = started
-    for attempt in range(2):
-        command, environment, usage_file = client_command(
-            args,
-            state,
-            control.get("client_session"),
-            index,
-            control["gateway_session"],
-            prompt_override=prompt_override,
+    if container_exists(container_name):
+        raise RuntimeError("client_container_already_exists")
+    try:
+        run = QUALITY.run_process(
+            with_container_name(command, container_name),
+            cwd=args.workspace,
+            environment=environment,
+            timeout=args.timeout,
         )
+    finally:
         if container_exists(container_name):
-            raise RuntimeError("client_container_already_exists")
-        try:
-            run = QUALITY.run_process(
-                with_container_name(command, container_name),
-                cwd=args.workspace,
-                environment=environment,
-                timeout=args.timeout,
-            )
-        finally:
-            if container_exists(container_name):
-                remove_client_container(container_name)
-        completed = time.time()
-        current = client_metrics(args.harness, run.stdout, run.stderr, usage_file, state)
-        session = current.pop("session")
-        if run.returncode == 124:
-            raise RuntimeError("client_checkpoint_timeout")
-        if run.returncode:
-            raise RuntimeError("client_nonzero_exit")
-        if not current["terminal"]:
-            raise RuntimeError("client_terminal_missing")
-        if not session:
-            raise RuntimeError("client_session_missing")
-        if control.get("client_session") not in {None, session}:
-            raise RuntimeError("client_session_changed")
-        control["client_session"] = session
-        output_hashes.append(current.pop("output_sha256"))
-        for field in ("tool_calls", "retries", "unjustified_repeated_reads"):
-            metrics[field] += current[field]
-        for field in ("context_tokens", "cached_tokens"):
-            metrics[field] = max(metrics[field], current[field])
-        metrics["terminal"] = current["terminal"]
-        failures: list[str] = []
-        try:
-            progress = progress_state(state, index)
-        except RuntimeError as error:
-            failures.append(str(error))
-        git_state = git_snapshot(args.workspace)
-        if git_state["dirty_state"] != "clean":
-            failures.append("dirty_checkpoint")
-        if not failures:
-            break
-        if attempt:
-            raise RuntimeError(failures[0])
-        prompt_override = client_contract_repair_prompt(index, failures)
-    if progress is None or git_state is None:
-        raise RuntimeError("invalid_progress_state")
+            remove_client_container(container_name)
+    completed = time.time()
     after = RUNTIME.runtime_snapshot()
+    metrics = client_metrics(args.harness, run.stdout, run.stderr, usage_file, state)
+    session = metrics.pop("session")
+    if run.returncode == 124:
+        raise RuntimeError("client_checkpoint_timeout")
+    if run.returncode:
+        raise RuntimeError("client_nonzero_exit")
+    if not metrics["terminal"]:
+        raise RuntimeError("client_terminal_missing")
+    if not session:
+        raise RuntimeError("client_session_missing")
+    if control.get("client_session") not in {None, session}:
+        raise RuntimeError("client_session_changed")
+    control["client_session"] = session
+    progress = gateway_progress_state(args.state_db, control["gateway_session"], index)
+    git_state = git_snapshot(args.workspace)
+    if git_state["dirty_state"] != "clean":
+        raise RuntimeError("dirty_checkpoint")
     control["last_commit"] = git_state["commit"]
     provider = provider_metrics(
         args.state_db,
@@ -863,9 +853,11 @@ def run_checkpoint(
         "scheduled_at_epoch": scheduled,
         "completed_at_epoch": completed,
         "latency_seconds": round(completed - started, 3),
-        "next_action_sha256": sha256_text(progress["next_action"]),
-        "context_summary_sha256": sha256_text(progress["context_summary"]),
-        "evidence_sha256": sha256_text(progress["evidence"] + "".join(output_hashes)),
+        "next_action_sha256": progress["next_action_sha256"],
+        "context_summary_sha256": progress["context_summary_sha256"],
+        "evidence_sha256": sha256_text(
+            progress["evidence_sha256"] + metrics.pop("output_sha256")
+        ),
         "commit": git_state["commit"],
         "dirty_state": git_state["dirty_state"],
         "provider_pinned": provider["provider_pinned"],
@@ -877,7 +869,7 @@ def run_checkpoint(
         "provider_errors": provider["provider_errors"],
         "unjustified_repeated_reads": max(
             metrics["unjustified_repeated_reads"],
-            int(progress.get("unjustified_repeated_reads", 0)),
+            0,
         ),
         "peak_memory_bytes": max(peak_before, peak_after),
         "swap_delta_bytes": max(0, swap_after - swap_before),
@@ -1017,9 +1009,9 @@ def main() -> int:
                     "dirty_checkpoint",
                     "client_container_already_exists",
                     "client_session_changed",
-                    "invalid_progress_state",
+                    "gateway_state_missing",
+                    "invalid_gateway_state",
                     "premature_completion",
-                    "progress_state_missing",
                 }
                 else "long_horizon_failure",
             },

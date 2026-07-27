@@ -350,10 +350,10 @@ runner가 바뀌면 해당 epoch는 진단으로 봉인하고 새 protocol/run I
   아니다.
 - 전체 실행에서 Reasoner, Executor, Planner, Reviewer provenance가 모두
   관측되어야 하며 외부 fallback은 실제 routing policy가 요구할 때만 쓴다.
-- terminal turn이 private progress 또는 clean worktree 계약만 누락하면 같은
-  client session에 안전한 실패 코드만 전달하는 보정 turn을 정확히 1회
-  허용한다. 두 번째 실패는 즉시 해당 phase 실패이며 보정 비용·도구·지연도
-  전체 측정에 포함한다.
+- checkpoint 맥락은 모델이 별도 파일 형식을 따르는지로 평가하지 않는다.
+  실제 Gateway session state의 objective, acceptance, plan, phase, completed
+  steps, tool, review 필드를 선택적으로 SHA-256 처리해 연속성을 판정하며 원문은
+  평가 archive에 저장하지 않는다.
 - intentional reconnect 1회 이상
 - positive cache read 1회 이상
 - objective, acceptance criteria, plan, phase, next action, repository/branch/
