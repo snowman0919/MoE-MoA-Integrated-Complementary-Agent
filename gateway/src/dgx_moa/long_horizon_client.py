@@ -21,7 +21,7 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-goal-v20"
+PROTOCOL = "frontier-long-goal-v21"
 PHASES = (
     "intake_and_plan",
     "core_implementation",
@@ -731,6 +731,14 @@ def remove_client_container(name: str) -> None:
     )
 
 
+def secure_client_state(state: Path) -> None:
+    snapshots = state / "shell_snapshots"
+    if snapshots.is_dir():
+        snapshots.chmod(0o700)
+        for path in snapshots.glob("*.sh"):
+            path.chmod(0o600)
+
+
 def run_validation(args: argparse.Namespace, state: Path) -> tuple[int, str]:
     command = shlex.split(args.validation_command)
     name = f"moa-long-validation-{sha256_text(str(state))[:12]}"
@@ -841,6 +849,7 @@ def run_checkpoint(
     finally:
         if container_exists(container_name):
             remove_client_container(container_name)
+        secure_client_state(state)
     completed = time.time()
     after = RUNTIME.runtime_snapshot()
     metrics = client_metrics(args.harness, run.stdout, run.stderr, usage_file, state)

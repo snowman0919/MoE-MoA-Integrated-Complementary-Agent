@@ -6814,4 +6814,32 @@ turn. Goal-file wrappers whose loaded objective still requires implementation
 retain the full completion gate. The bounded-turn and existing progress-only
 regressions passed `14/14`; the complete suite passed `1119/1119` with the
 existing Starlette warning; Ruff and strict mypy passed. No v20 physical result
-exists yet.
+exists.
+
+V35 physically exercised v20 through the real Codex client, authenticated
+loopback Gateway, Dynamic MoA, and host tools. Planning completed cleanly and
+the implementation turn produced local Reasoner, Executor, Planner, Reviewer,
+and Codex OAuth Frontier evidence. The client then failed to commit because
+its Docker workspace was a linked Git worktree whose `.git` pointer targeted
+an unmounted host path. This is an isolation-fixture failure, not a runtime
+pass. The immutable mode-`0600` diagnostic SHA-256 is
+`a16eb6b499fbdb7c01be21c6444bd1288ff51b9b6d379a4cc27544432fbb9676`.
+
+V36 replaced the linked worktree with a self-contained clone and physically
+exercised v20 through the same real client-to-Gateway path. Planning completed
+cleanly. The implementation turn made 36 host-tool executions, used local
+Reasoner, Executor, Planner, and Reviewer plus Codex OAuth Frontier, and its
+two target unit tests passed. Nine distinct test failures were encountered and
+eight were resolved, but the turn did not reach a clean commit before the
+fixed 1800-second checkpoint ceiling and failed as
+`client_checkpoint_timeout`. The immutable mode-`0600` evidence SHA-256 is
+`d275e3260b48c9362c749ca33109df0909b1aa03213449fb4d2f555bd8d5b027`;
+the failure SHA-256 is
+`ad54be72310cd5bd00d474f390be0700ed6bc3f9162e6b2acdd6767181c7a86c`.
+This is a real reliability/speed failure, not sustained-Goal evidence.
+
+V36 also exposed Codex shell snapshots containing the Gateway credential with
+mode `0644`. Existing isolated snapshots were immediately restricted to
+`0600`. Protocol v21 makes the harness set the snapshot directory to `0700`
+and every shell snapshot to `0600` after each client checkpoint. This security
+change invalidates v20 for new confirmatory runs; no v21 physical result exists.

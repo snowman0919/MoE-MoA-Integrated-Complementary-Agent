@@ -464,6 +464,19 @@ def test_checkpoint_interrupt_removes_only_its_named_container(
     assert removed == [MODULE.client_container_name(args, state, 0)]
 
 
+def test_secure_client_state_restricts_shell_snapshots(tmp_path: Path) -> None:
+    snapshots = tmp_path / "shell_snapshots"
+    snapshots.mkdir(mode=0o755)
+    snapshot = snapshots / "session.sh"
+    snapshot.write_text("export PRIVATE=value\n")
+    snapshot.chmod(0o644)
+
+    MODULE.secure_client_state(tmp_path)
+
+    assert snapshots.stat().st_mode & 0o777 == 0o700
+    assert snapshot.stat().st_mode & 0o777 == 0o600
+
+
 @pytest.mark.parametrize(
     ("returncode", "session", "terminal", "failure"),
     (
