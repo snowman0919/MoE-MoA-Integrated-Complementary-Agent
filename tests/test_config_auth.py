@@ -46,9 +46,11 @@ def test_bind_environment_overrides(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("DGX_MOA_API_KEY", raising=False)
     monkeypatch.setenv("DGX_MOA_BIND_HOST", "100.64.1.2")
     monkeypatch.setenv("DGX_MOA_BIND_PORT", "9100")
+    monkeypatch.setenv("DGX_MOA_RUN_DIR", str(tmp_path / "run"))
     settings = load_settings(config)
     assert settings.bind_host == "100.64.1.2"
     assert settings.bind_port == 9100
+    assert settings.run_dir == tmp_path / "run"
 
 
 def test_admin_key_authority_environment_is_bounded(monkeypatch, tmp_path: Path) -> None:

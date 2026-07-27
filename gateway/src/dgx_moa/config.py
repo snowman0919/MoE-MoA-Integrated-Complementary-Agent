@@ -650,6 +650,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
     gateway["state_db"] = os.getenv(
         "DGX_MOA_STATE_DB", gateway.get("state_db", "data/state/gateway.db")
     )
+    gateway["run_dir"] = os.getenv("DGX_MOA_RUN_DIR", gateway.get("run_dir", "data/run"))
     gateway["runtime_channel"] = os.getenv(
         "DGX_MOA_RUNTIME_CHANNEL", gateway.get("runtime_channel", "dev")
     )
