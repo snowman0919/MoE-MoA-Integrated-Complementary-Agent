@@ -548,8 +548,11 @@ def test_busy_executor_remote_stream_records_cost_and_cache(
                 "total_tokens": 10,
                 "prompt_tokens_details": {"cached_tokens": 4},
             },
-            "model": "gpt-5.6-sol",
-            "provider_provenance": {"provider": "primary", "cost_usd": 0.25},
+            "model": "anthropic/claude-sonnet-4.6",
+            "provider_provenance": {
+                "provider": "openrouter:anthropic/claude-sonnet-4.6",
+                "cost_usd": 0.25,
+            },
         }
 
     with TestClient(app) as client:
@@ -576,12 +579,18 @@ def test_busy_executor_remote_stream_records_cost_and_cache(
             app.state.lifecycle_store.release_leases(lease.lease_id for lease in held)
         with sqlite3.connect(settings.state_db) as database:
             invocation = database.execute(
-                "SELECT provider, cached_tokens, cost_usd, status "
+                "SELECT provider, model, cached_tokens, cost_usd, status "
                 "FROM model_invocation_usage WHERE role = 'executor'"
             ).fetchone()
 
     assert response.status_code == 200
-    assert invocation == ("frontier", 4, 0.25, "completed")
+    assert invocation == (
+        "openrouter:anthropic/claude-sonnet-4.6",
+        "anthropic/claude-sonnet-4.6",
+        4,
+        0.25,
+        "completed",
+    )
 
 
 def test_oversized_executor_context_routes_to_frontier_before_dispatch(

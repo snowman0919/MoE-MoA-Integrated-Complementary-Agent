@@ -6532,7 +6532,7 @@ mode-`0600` evidence SHA-256 is
 `daccd943afd2843e271699db5bdfc1a0f790fefac651ad1bf3ac3321951452f5`.
 It remains diagnostic because only checkpoint zero completed.
 
-Protocol `frontier-long-goal-v4` replaces the v1 elapsed-time gate for new
+Protocol `frontier-long-goal-v5` replaces the v1 elapsed-time gate for new
 epochs. It retains 21 dependency-ordered checkpoints, stable identity hashes,
 same-session resume, intentional reconnect, cache evidence, provider pinning,
 privacy rejection, independent review, final validation, and fail-closed cost
@@ -6554,3 +6554,13 @@ The shared stall detector now runs before `prepare_executor`; prior stall
 evidence pins the new call to remote, while a stall discovered after dispatch
 still records `executor_provider_switch_prevented` and keeps the current call
 local.
+
+V14 confirmed that pre-dispatch fallback selected remote and that OpenRouter
+was used only after the Codex OAuth profile chain returned its usage limit. It
+also exposed a stream-only telemetry defect: non-stream orchestration recorded
+the actual OpenRouter provider/model, while final stream synthesis hardcoded
+`frontier` and `gpt-5.6-sol` despite carrying the same response provenance.
+The mode-`0600` diagnostic SHA-256 is
+`405d2f0d6074fd5800b113ea94efc861d5d369cf0048bc551321c76d2cf08770`.
+Stream finalization now records the response provider and model and retains the
+routing decision separately as the fallback reason.

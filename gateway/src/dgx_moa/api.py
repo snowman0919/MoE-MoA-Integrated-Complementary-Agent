@@ -2476,6 +2476,8 @@ def create_app(
                         provenance = remote_response.get("provider_provenance")
                         if isinstance(provenance, dict):
                             remote_invocation_provenance.update(provenance)
+                        if isinstance(remote_response.get("model"), str):
+                            remote_invocation_provenance["model"] = remote_response["model"]
                         async for chunk in completed_chat_sse(remote_response):
                             yield chunk
 
@@ -2554,9 +2556,15 @@ def create_app(
                                 state,
                                 {
                                     "role": "executor",
-                                    "provider": "frontier" if executor_remote else "local",
+                                    "provider": (
+                                        remote_invocation_provenance.get("provider", "frontier")
+                                        if executor_remote
+                                        else "local"
+                                    ),
                                     "model": (
-                                        request.app.state.frontier.config.model
+                                        remote_invocation_provenance.get(
+                                            "model", request.app.state.frontier.config.model
+                                        )
                                         if executor_remote
                                         else configured.models["executor"].served_name
                                     ),
