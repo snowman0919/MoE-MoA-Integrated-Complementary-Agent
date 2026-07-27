@@ -3685,7 +3685,7 @@ class Controller:
             for execution in current_turn_executions(state)
         ) and not self.requires_implementation_tool_action(state, metadata)
 
-    def executor_stalled(self, state: SessionState) -> bool:
+    def executor_stalled(self, state: SessionState, *, inspection_limit: int = 6) -> bool:
         """Detect repeated successful inspection since the latest file change."""
         counts: dict[str, int] = {}
         inspections = 0
@@ -3728,7 +3728,7 @@ class Controller:
             }
             if command_inspection or no_progress_tool:
                 inspections += 1
-                if inspections >= 6:
+                if inspections >= inspection_limit:
                     return True
             if not command_inspection and not no_progress_tool and tool_name != "write_stdin":
                 continue

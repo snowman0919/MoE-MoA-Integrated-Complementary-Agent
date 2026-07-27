@@ -2222,13 +2222,19 @@ def create_app(
                 )
                 return cast(dict[str, Any], response)
 
-            preparation_stalled = request.app.state.controller.executor_stalled(state)
+            planned_change = (
+                state.active_turn_requires_change
+                and bool(state.plan)
+                and not state.implementation_evidence
+            )
+            preparation_stalled = request.app.state.controller.executor_stalled(
+                state,
+                inspection_limit=3 if planned_change else 6,
+            )
             planned_change_needs_frontier = (
                 not executor_remote
                 and request.app.state.frontier is not None
-                and state.active_turn_requires_change
-                and bool(state.plan)
-                and not state.implementation_evidence
+                and planned_change
                 and not preparation_stalled
                 and not duplicate_failure_recovery
                 and not state.frontier_correction_required

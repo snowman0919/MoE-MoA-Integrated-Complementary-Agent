@@ -879,6 +879,7 @@ def test_orchestrated_stalled_executor_routes_before_local_dispatch(
         session_id="orchestrated-stalled-executor",
         objective="Implement the requested source.",
         phase=Phase.EXECUTING,
+        active_turn_requires_change=True,
         plan=[
             {
                 "step_id": "implement",
@@ -890,11 +891,11 @@ def test_orchestrated_stalled_executor_routes_before_local_dispatch(
         tool_executions=[
             {
                 "tool_name": "exec_command",
-                "normalized_arguments": {"cmd": f"cat app.py | head -{lines}"},
+                "normalized_arguments": {"cmd": f"cat file-{index}.py"},
                 "exit_code": 0,
                 "filesystem_effect": {"unknown_effect": True},
             }
-            for lines in (20, 40, 80)
+            for index in range(3)
         ],
     )
     with TestClient(app) as client:

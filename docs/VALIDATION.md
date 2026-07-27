@@ -6874,4 +6874,20 @@ planned change. It pins the first implementation call to the Codex OAuth
 Executor before local dispatch. Existing busy, context-limit, correction,
 duplicate-failure, and proven-stall reasons retain precedence and their prior
 provenance. A focused routing regression verifies that the local Executor is
-not dispatched for the new case. No v23 physical result exists.
+not dispatched for the new case.
+
+V39 physically proved the v23 planning checkpoint with a real Codex client,
+authenticated loopback Gateway, Dynamic MoA, four host-tool calls, provider
+pinning, no provider error, and zero variable cost. The first implementation
+request was correctly selected as `planned_complex_change` before local
+Executor dispatch. The Codex OAuth Executor then made three consecutive
+read-only tool calls without implementation evidence. V39 was stopped with a
+clean workspace rather than mix a changed stall policy into the active epoch.
+Its immutable mode-`0600` partial evidence SHA-256 is
+`80fd78d6ae7caf04ddcae94005bc735ae10318ce8c98e271d34e19075b5e95a3`.
+
+Protocol v24 retains the normal six-inspection stall threshold but lowers it to
+three for a planned repository mutation with no implementation evidence. This
+uses the existing current-turn execution boundary, so planning-phase reads do
+not consume the implementation allowance. Existing stall provenance and
+provider pinning tests remain unchanged. No v24 physical result exists.

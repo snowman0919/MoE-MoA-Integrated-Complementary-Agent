@@ -3564,6 +3564,9 @@ def test_repeated_successful_inspection_marks_executor_stalled(
         ],
     )
     assert controller.executor_stalled(distinct) is True
+    assert controller.executor_stalled(
+        distinct.model_copy(update={"tool_executions": distinct.tool_executions[:3]})
+    ) is False
 
     polling = SessionState(
         session_id="valid-polling",
