@@ -1,8 +1,12 @@
+import os
 import sqlite3
 from pathlib import Path
 
 import pytest
+from dgx_moa.api import create_app
+from dgx_moa.config import Settings
 from dgx_moa.database import connect_sqlite
+from fastapi.testclient import TestClient
 
 
 def test_secure_sqlite_connection_policy(tmp_path: Path) -> None:
@@ -31,3 +35,21 @@ def test_sqlite_context_closes_connection_and_sidecars(tmp_path: Path) -> None:
     assert not Path(f"{path}-shm").exists()
     with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
         database.execute("SELECT 1")
+
+
+def test_gateway_startup_leaves_no_database_descriptors(settings: Settings) -> None:
+    database = str(settings.state_db)
+
+    with TestClient(create_app(settings)):
+        descriptors = []
+        for descriptor in Path("/proc/self/fd").iterdir():
+            try:
+                descriptors.append(os.readlink(descriptor))
+            except FileNotFoundError:
+                continue
+
+    assert not [
+        descriptor
+        for descriptor in descriptors
+        if descriptor == database or descriptor.startswith(f"{database}-")
+    ]

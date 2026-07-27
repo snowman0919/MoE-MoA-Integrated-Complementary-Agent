@@ -6397,10 +6397,12 @@ Uncoordinated finalizers then produced the observed WAL/SHM deletion and
 `SQLITE_IOERR_SHORT_READ`.
 
 The shared helper is now a real closing context manager: it preserves
-commit/rollback behavior and closes the connection in `finally`. The regression
-asserts that the connection is unusable and the WAL/SHM files are gone after
-context exit. Focused state, API-key, usage, and database tests passed `58/58`.
+commit/rollback behavior and closes the connection in `finally`. Lifecycle,
+observation, evolution, training, weekly, Skill, and Knowledge stores now use
+the same boundary. Regressions assert that a closed connection is unusable,
+WAL/SHM files disappear after context exit, and Gateway startup retains zero
+shared-database descriptors. The focused storage suites passed `349/349`.
 Repository Ruff passed, strict mypy reported zero errors across 59 source files,
-and the complete suite passed `1102/1102` in 36.06 seconds with the existing
+and the complete suite passed `1103/1103` in 42.72 seconds with the existing
 Starlette warning. A fresh immutable Gateway and long-horizon attempt are still
 required; this repair does not complete the Goal.

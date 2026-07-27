@@ -6,12 +6,14 @@ import secrets
 import sqlite3
 import time
 from collections.abc import Sequence
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from .database import connect_sqlite
 from .security import redact
 
 PUBLISHED_EVENTS = {
@@ -592,10 +594,8 @@ class ObservationCommandStore:
                     "TEXT NOT NULL DEFAULT ''"
                 )
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.execute("PRAGMA journal_mode=WAL")
-        return connection
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
+        return connect_sqlite(self.path, secure=True)
 
     def issue_nonce(self, provider: str, user_id: str, request_id: str, ttl_seconds: int) -> str:
         nonce = secrets.token_urlsafe(24)

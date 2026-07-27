@@ -9,11 +9,14 @@ import tempfile
 import zipfile
 from collections import Counter
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from .database import connect_sqlite
 
 SkillStore = Literal[
     "core",
@@ -305,10 +308,8 @@ class SkillRegistry:
                 if column not in columns:
                     database.execute(f"ALTER TABLE skill_metrics ADD COLUMN {column} {definition}")
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.metrics_db, timeout=30)
-        connection.execute("PRAGMA journal_mode=WAL")
-        return connection
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
+        return connect_sqlite(self.metrics_db, secure=True)
 
     def _path(self, skill: RuntimeSkill) -> Path:
         return self.root / skill.store / skill.skill_id / f"{skill.version}.json"

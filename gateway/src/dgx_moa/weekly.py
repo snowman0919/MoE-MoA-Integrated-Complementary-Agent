@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .database import connect_sqlite
 from .knowledge import KnowledgeMetrics, KnowledgeRegistry, RuntimeKnowledge
 from .skills import RuntimeSkill, SkillMetrics, SkillRegistry
 from .training import TrainingCandidate, assess_candidate, near_duplicate, sanitize
@@ -768,10 +770,8 @@ class ArchiveRegistry:
                 "reason TEXT NOT NULL, expires_at TEXT, released_at TEXT, created_at TEXT NOT NULL)"
             )
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.execute("PRAGMA journal_mode=WAL")
-        return connection
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
+        return connect_sqlite(self.path, secure=True)
 
     def get(self, key: str) -> dict[str, Any] | None:
         with self._connect() as database:

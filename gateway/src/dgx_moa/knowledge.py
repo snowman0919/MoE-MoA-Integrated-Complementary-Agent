@@ -5,11 +5,13 @@ import json
 import re
 import sqlite3
 from collections import Counter
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .database import connect_sqlite
 from .state import now
 
 KnowledgeState = Literal["candidate", "active", "conflicted", "deprecated", "disabled", "archived"]
@@ -190,11 +192,8 @@ class KnowledgeRegistry:
             if "last_retrieved_at" not in columns:
                 database.execute("ALTER TABLE knowledge_metrics ADD COLUMN last_retrieved_at TEXT")
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA foreign_keys=ON")
-        return connection
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
+        return connect_sqlite(self.path, secure=True)
 
     def put(self, entry: RuntimeKnowledge) -> None:
         payload = entry.model_dump_json(by_alias=True)

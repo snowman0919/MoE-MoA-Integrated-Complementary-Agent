@@ -8,7 +8,7 @@ import sqlite3
 import subprocess
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from contextlib import AsyncExitStack
+from contextlib import AbstractContextManager, AsyncExitStack
 from pathlib import Path
 from typing import Any, Literal, Protocol, TypeVar, cast
 from uuid import UUID, uuid4, uuid5
@@ -22,6 +22,7 @@ from .config import (
     LifecycleRolePolicy,
     Limits,
 )
+from .database import connect_sqlite
 from .usage import UsageStore
 
 LifecycleState = Literal[
@@ -748,11 +749,8 @@ class LifecycleStore:
                         (self._unit_map[role], role),
                     )
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.row_factory = sqlite3.Row
-        return connection
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
+        return connect_sqlite(self.path, rows=True, secure=True)
 
     def _require_role(self, role: str) -> None:
         if role not in self._role_set:

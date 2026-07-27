@@ -3,11 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .database import connect_sqlite
 from .state import now
 from .training import sanitize
 
@@ -217,11 +219,8 @@ class EvolutionRegistry:
                 "REFERENCES evolution_artifacts(artifact_id, version));"
             )
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA foreign_keys=ON")
-        return connection
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
+        return connect_sqlite(self.path, secure=True)
 
     def put(self, artifact: EvolutionArtifact) -> None:
         payload = artifact.model_dump_json()

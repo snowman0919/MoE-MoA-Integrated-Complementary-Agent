@@ -11,6 +11,7 @@ import sqlite3
 import tempfile
 import uuid
 from collections import Counter
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -18,6 +19,7 @@ from typing import Any, Literal, cast
 import zstandard
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .database import connect_sqlite
 from .security import is_sensitive_key
 from .state import StateStore
 
@@ -410,11 +412,8 @@ class TrainingStore:
                     "ON training_candidates(dedup_hash)"
                 )
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA foreign_keys=ON")
-        return connection
+    def _connect(self) -> AbstractContextManager[sqlite3.Connection]:
+        return connect_sqlite(self.path, secure=True)
 
     def _guard_capacity(self) -> None:
         if shutil.disk_usage(self.path.parent).free < self.minimum_free_bytes:
