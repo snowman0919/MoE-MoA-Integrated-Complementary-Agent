@@ -2206,15 +2206,22 @@ def create_app(
                 )
                 return cast(dict[str, Any], response)
 
+            preparation_stalled = request.app.state.controller.executor_stalled(state)
             if (
                 not executor_remote
                 and request.app.state.frontier is not None
-                and (state.frontier_correction_required or duplicate_failure_recovery)
+                and (
+                    state.frontier_correction_required
+                    or duplicate_failure_recovery
+                    or preparation_stalled
+                )
             ):
                 executor_remote = True
                 executor_routing_reason = (
                     "local_duplicate_failure"
                     if duplicate_failure_recovery
+                    else "local_no_progress"
+                    if preparation_stalled
                     else "frontier_correction_required"
                 )
                 executor_lease_id = str(

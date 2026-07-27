@@ -756,6 +756,103 @@ def test_orchestrated_executor_provider_is_pinned_after_first_dispatch(
     }
 
 
+def test_orchestrated_stalled_executor_routes_before_local_dispatch(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "pre-dispatch-stalled-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    app = create_app(
+        settings.model_copy(
+            update={"frontier_enabled": True, "frontier_config": frontier_config}
+        )
+    )
+    remote_calls: list[str] = []
+
+    async def remote_execute(
+        _remote_request: dict[str, object], correlation_id: str
+    ) -> dict[str, object]:
+        remote_calls.append(correlation_id)
+        response_format = _remote_request.get("response_format", {})
+        if (
+            isinstance(response_format, dict)
+            and response_format.get("json_schema", {}).get("name")
+            == "orchestration_decision"
+        ):
+            content = json.dumps(
+                {
+                    "action": "respond",
+                    "required_agents": [],
+                    "optional_agents": [],
+                    "reason": {},
+                    "parallelizable": False,
+                    "continue_after": "respond",
+                    "confidence": 0.9,
+                }
+            )
+        else:
+            content = "원격 정체 복구"
+        return {
+            "id": "chatcmpl-frontier-pre-dispatch",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": content},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 8},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "primary", "cost_usd": 0},
+        }
+
+    state = SessionState(
+        session_id="orchestrated-stalled-executor",
+        objective="Implement the requested source.",
+        phase=Phase.EXECUTING,
+        plan=[
+            {
+                "step_id": "implement",
+                "action": "Implement the requested source.",
+                "dependencies": [],
+                "expected_evidence": ["changed source"],
+            }
+        ],
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": f"cat app.py | head -{lines}"},
+                "exit_code": 0,
+                "filesystem_effect": {"unknown_effect": True},
+            }
+            for lines in (20, 40, 80)
+        ],
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        app.state.store.save(state)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": state.session_id,
+            },
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": state.objective}],
+            },
+        )
+        events = app.state.store.events(state.session_id)
+
+    assert response.status_code == 200, response.text
+    assert remote_calls
+    assert "executor" not in stub_provider.calls
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
+    assert selected["payload"]["routing_reason"] == "local_no_progress"
+
+
 def test_duplicate_failed_call_routes_once_to_frontier(
     settings: Settings, stub_provider: StubProvider
 ) -> None:

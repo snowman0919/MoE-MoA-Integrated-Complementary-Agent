@@ -6532,7 +6532,7 @@ mode-`0600` evidence SHA-256 is
 `daccd943afd2843e271699db5bdfc1a0f790fefac651ad1bf3ac3321951452f5`.
 It remains diagnostic because only checkpoint zero completed.
 
-Protocol `frontier-long-goal-v3` replaces the v1 elapsed-time gate for new
+Protocol `frontier-long-goal-v4` replaces the v1 elapsed-time gate for new
 epochs. It retains 21 dependency-ordered checkpoints, stable identity hashes,
 same-session resume, intentional reconnect, cache evidence, provider pinning,
 privacy rejection, independent review, final validation, and fail-closed cost
@@ -6542,3 +6542,15 @@ a unique clean commit. The preregistered total variable-cost ceiling is $10;
 OpenRouter remains eligible only after bounded Codex OAuth failover is
 unavailable and mandatory fallback is required. Existing evidence is not
 reclassified.
+
+V13 then exposed a provider-pinning ordering defect before checkpoint zero.
+The Gateway detected repeated successful inspection only after
+`prepare_executor` had already dispatched the next local call, so every
+continuation correctly prevented a mid-call switch but could never select the
+remote provider at the following call boundary. The mode-`0600` diagnostic
+SHA-256 is
+`53c848d5cfcd2cabc1ee7fc549dd95133d629f65377e7895f7da6459d017ca6a`.
+The shared stall detector now runs before `prepare_executor`; prior stall
+evidence pins the new call to remote, while a stall discovered after dispatch
+still records `executor_provider_switch_prevented` and keeps the current call
+local.
