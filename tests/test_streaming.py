@@ -70,6 +70,33 @@ def test_unified_new_file_diff_is_normalized_for_apply_patch() -> None:
     )
 
 
+def test_non_native_patch_variants_are_normalized() -> None:
+    assert normalize_apply_patch_input(
+        "apply_patch",
+        "*** Begin Patch\n*** Create File: state.json\n{}\n*** End Patch",
+    ) == "*** Begin Patch\n*** Add File: state.json\n+{}\n*** End Patch"
+    assert normalize_apply_patch_input(
+        "apply_patch",
+        (
+            "*** Begin Patch\n"
+            "*** Update File: state.json\n"
+            "--- state.json\n"
+            "+++ state.json\n"
+            "@@ -1 +1 @@\n"
+            "-{}\n"
+            '+{\"done\":true}\n'
+            "*** End Patch"
+        ),
+    ) == (
+        "*** Begin Patch\n"
+        "*** Update File: state.json\n"
+        "@@\n"
+        "-{}\n"
+        '+{\"done\":true}\n'
+        "*** End Patch"
+    )
+
+
 @pytest.mark.asyncio
 async def test_responses_sse_translates_chat_text_and_usage() -> None:
     async def upstream():

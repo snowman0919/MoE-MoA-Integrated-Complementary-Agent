@@ -103,7 +103,22 @@ def normalize_apply_patch_input(name: str, value: str) -> str:
     stripped = value.strip()
     if stripped.startswith("```") and stripped.endswith("```"):
         stripped = stripped.split("\n", 1)[-1].rsplit("\n", 1)[0]
+    stripped = re.sub(r"(?m)^\*\*\* Create File: ", "*** Add File: ", stripped)
     lines = stripped.splitlines()
+    index = 0
+    while index < len(lines) - 2:
+        if (
+            lines[index].startswith("*** Update File: ")
+            and lines[index + 1].startswith("--- ")
+            and lines[index + 2].startswith("+++ ")
+        ):
+            del lines[index + 1 : index + 3]
+        index += 1
+    lines = [
+        "@@" if re.match(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", line) else line
+        for line in lines
+    ]
+    stripped = "\n".join(lines)
     old_header = next(
         (
             index
@@ -146,6 +161,16 @@ def normalize_apply_patch_input(name: str, value: str) -> str:
                     "*** End Patch",
                 )
             )
+    lines = stripped.splitlines()
+    in_add_file = False
+    for index, line in enumerate(lines):
+        if line.startswith("*** Add File: "):
+            in_add_file = True
+        elif line.startswith("*** "):
+            in_add_file = False
+        elif in_add_file and not line.startswith("+"):
+            lines[index] = f"+{line}"
+    stripped = "\n".join(lines)
     if (
         stripped.startswith("*** Begin Patch")
         and "*** End Patch" not in stripped

@@ -6532,7 +6532,7 @@ mode-`0600` evidence SHA-256 is
 `daccd943afd2843e271699db5bdfc1a0f790fefac651ad1bf3ac3321951452f5`.
 It remains diagnostic because only checkpoint zero completed.
 
-Protocol `frontier-long-goal-v6` replaces the v1 elapsed-time gate for new
+Protocol `frontier-long-goal-v7` replaces the v1 elapsed-time gate for new
 epochs. It retains 21 dependency-ordered checkpoints, stable identity hashes,
 same-session resume, intentional reconnect, cache evidence, provider pinning,
 privacy rejection, independent review, final validation, and fail-closed cost
@@ -6555,6 +6555,24 @@ The immutable mode-`0600` V15 diagnostic SHA-256 is
 Focused controller checks passed `2/2`, the connected controller/API/long
 horizon subset passed `347/347`, Ruff and strict mypy passed, and the complete
 suite passed `1109/1109` with the existing Starlette warning.
+
+V18 physically exercised the corrected progress classification through the
+authenticated Gateway: local Planner and Reasoner calls completed, repeated
+inspection selected remote Executor fallback, and five host-tool continuations
+ran. It then exposed three patch-input compatibility variants before any
+workspace change: `Create File`, an Add body without `+` prefixes, and unified
+headers nested inside a native Update wrapper. Protocol v7 normalizes only
+those variants in the existing shared streaming adapter. V16 and V17 remain
+pre-client launch diagnostics; none of these attempts is confirmation.
+Their mode-`0600` diagnostic SHA-256 values are V16
+`3295a8f03087efb2564f67c5ff8f10e844fb426cb828343ee80384c9b962aff5`,
+V17
+`3c5362345ae4cd86a00382e2c5d498368c833f2833ddf6885153aee70c488003`,
+and V18
+`a9e291c2ba448d3ef2c728b6b5fa86a65fb140d1ead8ed34f715e8b79289719d`.
+Focused patch tests passed `6/6`, the connected streaming/API/controller/long
+horizon subset passed `408/408`, Ruff and strict mypy passed, and the complete
+suite passed `1110/1110` with the existing Starlette warning.
 
 V13 then exposed a provider-pinning ordering defect before checkpoint zero.
 The Gateway detected repeated successful inspection only after

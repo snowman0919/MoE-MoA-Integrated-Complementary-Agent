@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-PROTOCOL = "frontier-long-goal-v6"
+PROTOCOL = "frontier-long-goal-v7"
 CHECKPOINTS = 21
 INTERVAL_SECONDS = 0
 MAX_VARIABLE_COST_USD = 10.0
