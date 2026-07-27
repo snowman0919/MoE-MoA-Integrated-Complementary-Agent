@@ -2069,6 +2069,7 @@ def create_app(
             async def remote_executor_correction(
                 executor_request: dict[str, Any], stage: str
             ) -> dict[str, Any]:
+                completed_retries: list[int] = []
                 if state.frontier_correction_required:
                     correction_events = request.app.state.store.events(state_session_id)
                     last_rejection = max(
@@ -2079,15 +2080,20 @@ def create_app(
                         ),
                         default=-1,
                     )
-                    last_retry = max(
-                        (
-                            index
-                            for index, event in enumerate(correction_events)
-                            if event["event_type"] == "frontier_correction_tool_retry_completed"
-                        ),
-                        default=-1,
+                    completed_retries = [
+                        index
+                        for index, event in enumerate(correction_events)
+                        if event["event_type"] == "frontier_correction_tool_retry_completed"
+                        and index > last_rejection
+                    ]
+                    last_retry = completed_retries[-1] if completed_retries else -1
+                    tool_executed_after_retry = any(
+                        index > last_retry and event["event_type"] == "tool_execution_recorded"
+                        for index, event in enumerate(correction_events)
                     )
-                    if last_retry > last_rejection:
+                    if len(completed_retries) >= 2 or (
+                        completed_retries and not tool_executed_after_retry
+                    ):
                         request.app.state.store.event(
                             state_session_id,
                             "frontier_correction_tool_retry_exhausted",
@@ -2135,7 +2141,13 @@ def create_app(
                         "role": "user",
                         "content": (
                             "A required code correction remains unresolved. The prior response "
-                            "did not call a tool and cannot complete this request. Call exactly "
+                            + (
+                                "called a tool but did not resolve the correction. Use a "
+                                "mutation-capable tool and change the affected file now. "
+                                if completed_retries
+                                else "did not call a tool and cannot complete this request. "
+                            )
+                            + "Call exactly "
                             "one available client tool now to apply the concrete correction "
                             "listed in the prior Frontier contribution. Do not repeat an "
                             "inspection or validation that already succeeded unless the prior "
@@ -2151,7 +2163,11 @@ def create_app(
                 request.app.state.store.event(
                     state_session_id,
                     "frontier_correction_tool_retry_requested",
-                    {"provider": "frontier", "tools": tool_names},
+                    {
+                        "provider": "frontier",
+                        "tools": tool_names,
+                        "attempt": len(completed_retries) + 1,
+                    },
                 )
                 response = await remote_executor_complete(
                     retry_request, f"{stage}_correction_tool_retry"

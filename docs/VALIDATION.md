@@ -6685,3 +6685,19 @@ phase, completed-step, tool, evidence, and review fields in the actual Gateway
 session state. The source values are never written to evaluation evidence. The
 focused long-horizon suite passed `31/31`, Ruff passed, and strict mypy passed.
 No v13 physical result exists yet.
+
+V26 physically exercised v13 without the synthetic progress file. The real
+Codex/Gateway/MoA path produced a new clean commit, eleven completed host tools,
+two local Reviewer completions, six Codex OAuth Frontier completions, and local
+plus secondary Executor calls. It then failed checkpoint zero because a
+required Frontier correction returned a client tool that executed without
+clearing the correction latch; the next continuation immediately exhausted the
+single retry. The Gateway failed closed with
+`FrontierRequiredUnavailable`/`frontier_correction_tool_retry_exhausted`, and
+the client retained `client_nonzero_exit`. The immutable mode-`0600` failure
+SHA-256 is
+`718ab952bf067bd5b974fc09f52c319cc80b3f45239e7f3181b8f5a1bbf7021a`.
+Protocol v14 preserves immediate exhaustion when the client does not execute
+the returned tool, but permits one second mutation-explicit retry after a real
+tool execution. Two completed retries still fail closed. The focused API case,
+Ruff, and strict mypy passed. No v14 physical result exists yet.

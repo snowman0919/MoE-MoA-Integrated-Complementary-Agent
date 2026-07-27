@@ -354,6 +354,9 @@ runner가 바뀌면 해당 epoch는 진단으로 봉인하고 새 protocol/run I
   실제 Gateway session state의 objective, acceptance, plan, phase, completed
   steps, tool, review 필드를 선택적으로 SHA-256 처리해 연속성을 판정하며 원문은
   평가 archive에 저장하지 않는다.
+- 필수 Frontier correction은 반환된 도구를 클라이언트가 실제 실행하지 않으면
+  즉시 fail closed한다. 실행했지만 correction이 남은 경우에만 mutation을
+  명시한 두 번째 retry를 허용하며, 두 번 후에는 반드시 fail closed한다.
 - intentional reconnect 1회 이상
 - positive cache read 1회 이상
 - objective, acceptance criteria, plan, phase, next action, repository/branch/

@@ -1111,6 +1111,51 @@ def test_repeated_inspection_routes_executor_to_frontier(
         )
         exhausted_events = app.state.store.events(rejected_id)
         assert len(remote_requests) == correction_remote_calls
+        executed_retry_id = "frontier-correction-executed-unresolved"
+        executed_retry = rejected.model_copy(update={"session_id": executed_retry_id})
+        app.state.store.save(executed_retry)
+        executed_retry_first = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": executed_retry_id,
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": executed_retry.objective}],
+                "tools": [correction_tool],
+            },
+        )
+        app.state.store.event(
+            executed_retry_id,
+            "tool_execution_recorded",
+            {"step": 1},
+        )
+        executed_retry_second = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": executed_retry_id,
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": executed_retry.objective}],
+                "tools": [correction_tool],
+            },
+        )
+        executed_retry_exhausted = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": executed_retry_id,
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": executed_retry.objective}],
+                "tools": [correction_tool],
+            },
+        )
+        executed_retry_events = app.state.store.events(executed_retry_id)
         reviewer_calls_after_correction = stub_provider.calls.count("reviewer")
         newly_rejected_id = "newly-rejected-executor"
         newly_rejected = SessionState(
@@ -1213,6 +1258,14 @@ def test_repeated_inspection_routes_executor_to_frontier(
         event["event_type"] == "frontier_correction_tool_retry_completed"
         for event in correction_events
     )
+    assert executed_retry_first.status_code == 200
+    assert executed_retry_second.status_code == 200
+    assert executed_retry_exhausted.status_code == 503
+    assert [
+        event["payload"]["attempt"]
+        for event in executed_retry_events
+        if event["event_type"] == "frontier_correction_tool_retry_requested"
+    ] == [1, 2]
     correction_retry = next(
         request
         for request in remote_requests
