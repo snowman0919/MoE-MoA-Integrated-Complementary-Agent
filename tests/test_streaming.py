@@ -445,15 +445,34 @@ async def test_responses_sse_batches_named_goal_prerequisites() -> None:
     assert "/work/docs/TRACE_SCHEMA.md" in command
 
 
+@pytest.mark.parametrize("path_key", ("file", "full_path"))
 @pytest.mark.asyncio
-async def test_responses_sse_maps_unsupported_read_file_to_exec_command() -> None:
+async def test_responses_sse_maps_unsupported_read_file_to_exec_command(
+    path_key: str,
+) -> None:
     async def upstream():
-        yield (
-            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
-            b'"id":"call-read","function":{"name":"read_file",'
-            b'"arguments":"{\\"file\\":\\"/tmp/goal objective.md\\"}"}}]},'
-            b'"finish_reason":"tool_calls"}]}\n\n'
-        )
+        payload = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-read",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps(
+                                        {path_key: "/tmp/goal objective.md"}
+                                    ),
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+        yield f"data: {json.dumps(payload)}\n\n".encode()
         yield b"data: [DONE]\n\n"
 
     events = [

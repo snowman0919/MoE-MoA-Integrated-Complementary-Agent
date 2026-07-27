@@ -7046,5 +7046,16 @@ sidecar SHA-256 is
 
 Protocol v31 accepts the observed `file` key in the existing
 `read_file`-to-`exec_command` adapter. The shell path remains safely quoted,
-and existing coverage continues to exercise the `path` form. No v31
-end-to-end physical result exists yet.
+and existing coverage continues to exercise the `path` form.
+
+V47 did not complete its first v31 checkpoint. The same Qwen tool intent used
+`full_path` rather than `file`, so seven unconverted `read_file` calls
+correctly failed as `UNSUPPORTED_TOOL`. This confirms a narrow argument-schema
+compatibility defect rather than a provider, mount, or host-tool failure. The
+immutable mode-`0600` failure sidecar SHA-256 is
+`2131659edaa39b51c70ef63d11806b1c987d826d2f86ea1a7c6d2a992350c39e`.
+
+Protocol v32 accepts the common `path`, `file`, `full_path`, `file_path`, and
+`filePath` keys in the existing adapter and still rejects empty or non-string
+paths before shell quoting. Parameterized coverage includes both physically
+observed variants. No v32 end-to-end physical result exists yet.
