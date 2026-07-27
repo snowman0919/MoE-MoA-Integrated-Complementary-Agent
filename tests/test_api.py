@@ -706,6 +706,66 @@ def test_repeated_failure_routes_executor_to_frontier(
     assert selected["payload"]["routing_reason"] == "local_repeated_failure"
 
 
+def test_planned_complex_change_routes_executor_to_frontier_before_dispatch(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "planned-change-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    app = create_app(
+        settings.model_copy(
+            update={"frontier_enabled": True, "frontier_config": frontier_config}
+        )
+    )
+
+    async def remote_execute(
+        _remote_request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        return {
+            "id": "chatcmpl-frontier-planned-change",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "원격 계획 구현"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 8},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "primary", "cost_usd": None},
+        }
+
+    state = SessionState(
+        session_id="planned-complex-change",
+        objective="Implement the dependency-ordered plan.",
+        active_turn_requires_change=True,
+        plan=[{"step_id": "one", "action": "Implement", "dependencies": []}],
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        app.state.store.save(state)
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": state.session_id,
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": state.objective}],
+            },
+        )
+        events = app.state.store.events(state.session_id)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["choices"][0]["message"]["content"] == "원격 계획 구현"
+    assert "executor" not in stub_provider.calls
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
+    assert selected["payload"]["routing_reason"] == "planned_complex_change"
+
+
 def test_orchestrated_executor_provider_is_pinned_after_first_dispatch(
     settings: Settings, stub_provider: StubProvider
 ) -> None:

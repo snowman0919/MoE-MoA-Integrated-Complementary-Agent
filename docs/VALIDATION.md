@@ -6847,4 +6847,31 @@ client returned; no V37 evidence header or workspace mutation was produced.
 Protocol v22 additionally starts every isolated client and validator with
 `umask 077`, closing the creation-time window. The post-checkpoint restriction
 remains defense in depth. This security change invalidates v20 and v21 for new
-confirmatory runs; no v22 physical result exists.
+confirmatory runs.
+
+V38 physically proved v22 through a real Codex client, authenticated loopback
+Gateway, Dynamic MoA, and host tools. Planning passed cleanly with local
+Reasoner, Planner, and Executor plus Codex OAuth Frontier. During the
+implementation checkpoint, the local Executor performed ten read-only tool
+calls before the existing stall detector selected the Codex OAuth Executor.
+The run then produced and twice committed
+`gateway/src/dgx_moa/job_journal.py`, resolved its observed test failure, and
+obtained local Reviewer approval after six review calls. It nevertheless
+crossed the fixed 1800-second checkpoint ceiling before returning the clean
+terminal and failed as `client_checkpoint_timeout`. The mode-`0600` evidence
+SHA-256 is
+`58bea979c316974afb809d023ac22f8d2f6fe10aed41c162bf52febf0e4eff64`;
+the failure SHA-256 is
+`ec1790f6fb73384dee5de0847a2a0c2057770e327a8f7c4557456b373f4f7c3f`.
+The measured bottlenecks were six local Reviewer calls totaling 849.3 seconds,
+thirteen Codex Frontier reviews totaling 437.6 seconds, and late remote
+Executor selection. This remains a speed/reliability failure despite the
+functional implementation and approval.
+
+Protocol v23 treats a dependency-ordered Planner result plus an active
+repository mutation requirement and no implementation evidence as a complex
+planned change. It pins the first implementation call to the Codex OAuth
+Executor before local dispatch. Existing busy, context-limit, correction,
+duplicate-failure, and proven-stall reasons retain precedence and their prior
+provenance. A focused routing regression verifies that the local Executor is
+not dispatched for the new case. No v23 physical result exists.

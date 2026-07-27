@@ -2223,6 +2223,16 @@ def create_app(
                 return cast(dict[str, Any], response)
 
             preparation_stalled = request.app.state.controller.executor_stalled(state)
+            planned_change_needs_frontier = (
+                not executor_remote
+                and request.app.state.frontier is not None
+                and state.active_turn_requires_change
+                and bool(state.plan)
+                and not state.implementation_evidence
+                and not preparation_stalled
+                and not duplicate_failure_recovery
+                and not state.frontier_correction_required
+            )
             if (
                 not executor_remote
                 and request.app.state.frontier is not None
@@ -2230,12 +2240,15 @@ def create_app(
                     state.frontier_correction_required
                     or duplicate_failure_recovery
                     or preparation_stalled
+                    or planned_change_needs_frontier
                 )
             ):
                 executor_remote = True
                 executor_routing_reason = (
                     "local_duplicate_failure"
                     if duplicate_failure_recovery
+                    else "planned_complex_change"
+                    if planned_change_needs_frontier
                     else "local_no_progress"
                     if preparation_stalled
                     else "frontier_correction_required"
