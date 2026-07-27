@@ -2100,10 +2100,28 @@ class Controller:
                 "objective explicitly requests detail."
             )
         )
+        bounded_nonmutation_turn = (
+            role == "executor"
+            and not state.active_turn_requires_change
+            and state.active_turn_targets_repository
+            and not (
+                state.resolved_objective
+                and user_turn_intent(state.resolved_objective)[0]
+            )
+        )
         goal_constraints = (
             "For /goal requests, reading or summarizing the objective is not completion. "
-            "Continue with tool calls while required work remains, and give a final answer only "
-            "after the objective's validation criteria have verified evidence. Do not reread an "
+            + (
+                "This user turn is explicitly bounded to a non-mutation repository phase. "
+                "Complete that current turn after its requested tool evidence, then return a "
+                "concrete multi-line phase result naming the evidence and remaining Goal work. "
+                "Do not claim that work outside this turn is complete and do not call "
+                "update_goal. "
+                if bounded_nonmutation_turn
+                else "Continue with tool calls while required work remains, and give a final "
+                "answer only after the objective's validation criteria have verified evidence. "
+            )
+            + "Do not reread an "
             "unchanged objective file after a successful read. When CURRENT OBJECTIVE contains "
             "the loaded objective, do not call filesystem or MCP tools for that objective again. "
             "Before update_goal, call get_goal; when no goal exists, call create_goal first. "
@@ -2137,12 +2155,12 @@ class Controller:
             else ""
         )
         progress_constraint = (
-            "When work remains, call the required tool in the same response; never return only a "
-            "progress marker. Once recorded file changes, successful validation, and every "
-            "required review are complete, return the final response immediately without more "
+            "When work remains in the current user turn, call the required tool in the same "
+            "response; never return only a progress marker. Once the current turn's recorded "
+            "evidence is complete, return its concrete result immediately without more "
             "inspection or validation calls. Do not expose hidden reasoning. Never request "
-            "elevated permissions or install missing system dependencies; use available tools or "
-            "report the blocker."
+            "elevated permissions or install missing system dependencies; use available tools "
+            "or report the blocker."
             if role == "executor"
             else ""
         )

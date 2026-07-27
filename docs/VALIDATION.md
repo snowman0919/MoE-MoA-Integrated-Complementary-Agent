@@ -6789,7 +6789,29 @@ call when a Responses tool result arrives. Distinct parallel commands now keep
 distinct failure fingerprints while truly identical retries remain blocked.
 The focused continuation and loop suite passed `8/8`; the complete suite passed
 `1118/1118` with the existing Starlette warning; Ruff and strict mypy passed.
-No v19 physical result exists yet. This gate measures a real
+No v19 physical pass exists. This gate measures a real
 Codex/OpenCode/Hermes-to-authenticated-Gateway-to-Dynamic-MoA Goal, including
 host tools, review, validation, and reconnect state. Its wall-clock limit is a
 fail-safe, not a substitute for that path or a pass criterion.
+
+V34 physically exercised v19 through the real Codex client, authenticated
+loopback Gateway, Dynamic MoA, and host tools. It confirmed local Reasoner,
+Executor, Planner, SGLang cache reuse, and Codex OAuth Frontier provenance. The
+parallel-call fingerprint defect did not recur. The planning-only turn then
+made six host tool calls but could not close checkpoint zero: the Executor
+contract treated the remaining whole Goal as remaining work in the current
+turn, so the Responses adapter rejected bounded phase summaries as
+progress-only and repeatedly re-entered orchestration. V34 was stopped with a
+clean workspace after nine Frontier completions; the loop recorded
+`CLIENT_CANCELLED`. Its immutable mode-`0600` diagnostic SHA-256 is
+`9301cc2ff157d1f209d17158828c1931720b862bf4fe3407c7c28b9b5db9dc1a`.
+
+Protocol v20 scopes the Executor's progress contract to the current user turn.
+An explicitly non-mutation repository phase may terminate after requested host
+tool evidence, but must return a concrete multi-line phase result, name
+remaining Goal work, avoid `update_goal`, and never claim work outside that
+turn. Goal-file wrappers whose loaded objective still requires implementation
+retain the full completion gate. The bounded-turn and existing progress-only
+regressions passed `14/14`; the complete suite passed `1119/1119` with the
+existing Starlette warning; Ruff and strict mypy passed. No v20 physical result
+exists yet.

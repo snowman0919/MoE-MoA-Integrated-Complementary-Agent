@@ -1212,6 +1212,34 @@ def test_goal_file_wrapper_gets_full_completion_constraints(
     assert "client-visible final answer is absent" in reviewer_prompt
 
 
+def test_bounded_goal_planning_turn_returns_phase_result_without_goal_completion(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session(
+        "bounded-planning",
+        [
+            {
+                "role": "user",
+                "content": (
+                    "/goal 저장소 운영 문서를 읽고 의존 순서 계획만 확정하라. "
+                    "코드는 건드리지 말고 이후 단계가 남아 있다고 명시하라."
+                ),
+            }
+        ],
+    )
+
+    prompt = controller.prompt_sandwich("executor", state, "documents inspected", "finish")
+
+    assert state.active_turn_requires_change is False
+    assert state.active_turn_targets_repository is True
+    assert "explicitly bounded to a non-mutation repository phase" in prompt
+    assert "concrete multi-line phase result" in prompt
+    assert "remaining Goal work" in prompt
+    assert "do not call update_goal" in prompt
+    assert "work remains in the current user turn" in prompt
+
+
 def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
