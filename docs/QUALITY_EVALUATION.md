@@ -246,7 +246,7 @@ implementation, independent review, passing validation, and a terminal
 response. Elapsed wall time is reported but is not a pass criterion.
 
 `scripts/analyze-long-horizon.py` freezes the machine-readable gate. Evidence
-uses protocol `frontier-long-goal-v16` and contains one header, consecutive
+uses protocol `frontier-long-goal-v17` and contains one header, consecutive
 phases `intake_and_plan`, `core_implementation`, `integration_and_tests`,
 `independent_review_and_repair`, and `full_validation_and_final`, followed by
 one final record. It requires stable SHA-256
@@ -274,7 +274,7 @@ fields in the actual Gateway session state. It never stores those source
 fields, prompts, repository values, or provider output. A model-authored
 checkpoint file and a minimum elapsed time are not required.
 Earlier epochs remain immutable diagnostic history and cannot be relabeled as
-v16 confirmation. Elapsed time and direct local-model activity cannot replace
+v17 confirmation. Elapsed time and direct local-model activity cannot replace
 evidence from the authenticated client-to-Gateway-to-MoA path.
 
 The isolated candidate runtime must reserve the sustained task, rather than

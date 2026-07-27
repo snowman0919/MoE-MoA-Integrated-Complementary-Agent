@@ -21,7 +21,7 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-goal-v16"
+PROTOCOL = "frontier-long-goal-v17"
 PHASES = (
     "intake_and_plan",
     "core_implementation",
@@ -177,6 +177,7 @@ def stable_hashes(
 
 def client_prompt(index: int) -> str:
     phase = PHASES[index]
+    final = index == CHECKPOINTS - 1
     phase_rule = (
         (
             "운영 문서와 입력 문서를 서로 독립적인 묶음으로 한 번만 읽고, 저장소 상태를 "
@@ -209,9 +210,14 @@ def client_prompt(index: int) -> str:
         "각 단계는 최소 한 번의 실제 호스트 도구를 사용하고 단계 종료 시 worktree를 "
         "clean으로 유지해야 한다. 계획·검토 전용 단계는 새 커밋을 강제하지 않는다. "
         "같은 파일을 근거 없이 반복해서 읽지 마라. "
-        "최종 검토 파일은 "
-        '{"status":"approved|changes_requested","unresolved_critical_findings":0,'
-        '"evidence":"..."} 형식이어야 한다. 최종 응답 직전 반드시 실제 도구로 '
+        + (
+            "최종 검토 파일은 "
+            '{"status":"approved|changes_requested","unresolved_critical_findings":0,'
+            '"evidence":"..."} 형식이어야 한다. '
+            if final
+            else ""
+        )
+        + "최종 응답 직전 반드시 실제 도구로 "
         "해당 단계의 증거와 clean worktree를 확인하라. 하나라도 미완료면 응답을 "
         "끝내지 마라. "
         "사용자에게 보이는 설명은 한국어로 간결하게 하라."

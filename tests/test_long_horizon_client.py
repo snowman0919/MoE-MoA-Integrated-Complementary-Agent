@@ -15,6 +15,11 @@ def test_phase_prompts_require_changes_only_during_core_implementation() -> None
         user_turn_intent(MODULE.client_prompt(index))[0]
         for index in range(MODULE.CHECKPOINTS)
     ] == [False, True, False, False, False]
+    assert all(
+        "/state/long-review.json" not in MODULE.client_prompt(index)
+        for index in range(MODULE.CHECKPOINTS - 1)
+    )
+    assert "/state/long-review.json" in MODULE.client_prompt(MODULE.CHECKPOINTS - 1)
 
 
 def arguments(tmp_path: Path, harness: str) -> argparse.Namespace:

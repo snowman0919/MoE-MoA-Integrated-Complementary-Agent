@@ -6743,3 +6743,18 @@ Protocol v16 removes that common mutation wording and preregisters a direct
 prompt-intent regression: only `core_implementation` may classify as requiring
 a repository change. Every phase still requires a real host tool and clean
 terminal worktree. No v16 physical result exists yet.
+
+V31 physically confirmed the v16 planning phase through the real Codex,
+authenticated Gateway, Dynamic MoA, and five host tools. It produced a clean
+terminal phase-zero checkpoint with pinned providers, zero provider error, and
+zero variable cost; its mode-`0600` partial evidence SHA-256 is
+`017ba5fdc0f5297f43d719496f2ada58a7fb7559690f7d96e95bafedfbbd334a`.
+The next `core_implementation` turn correctly classified as mutation work, but
+five successful `apply_patch` continuations all targeted private `/state`
+instead of the workspace. The harness had exposed the final review-file path
+and schema in every phase, so the model followed that nearer target. V31 was
+stopped with the workspace still clean and is not a pass.
+
+Protocol v17 exposes `/state/long-review.json` and its schema only during
+`full_validation_and_final`. A direct regression rejects that path in the
+first four phase prompts. No v17 physical result exists yet.
