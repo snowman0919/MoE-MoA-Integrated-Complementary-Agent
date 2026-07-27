@@ -752,28 +752,36 @@ async def test_responses_sse_exposes_upstream_keepalive_as_progress() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "terminal",
+    ("terminal", "failure_class"),
     [
-        b'data: {"error":{"message":"private backend detail"}}\n\n',
-        b"",
+        (
+            b'data: {"error":{"message":"private backend detail"}}\n\n',
+            "upstream_error_frame",
+        ),
+        (b"", "missing_terminal_marker"),
     ],
 )
-async def test_responses_sse_rejects_error_frames_and_unterminated_eof(terminal: bytes) -> None:
+async def test_responses_sse_rejects_error_frames_and_unterminated_eof(
+    terminal: bytes, failure_class: str, caplog
+) -> None:  # type: ignore[no-untyped-def]
     async def upstream():
         yield b'data: {"choices":[{"delta":{"content":"private plan"}}]}\n\n'
         if terminal:
             yield terminal
 
-    events = [
-        json.loads(line[6:])
-        async for chunk in responses_sse(upstream(), "dgx-moa")
-        for line in chunk.decode().splitlines()
-        if line.startswith("data: ")
-    ]
+    with caplog.at_level(logging.WARNING):
+        events = [
+            json.loads(line[6:])
+            async for chunk in responses_sse(upstream(), "dgx-moa")
+            for line in chunk.decode().splitlines()
+            if line.startswith("data: ")
+        ]
 
     assert events[-1]["type"] == "response.failed"
     assert all(event.get("delta") != "private plan" for event in events)
     assert not any(event["type"] == "response.completed" for event in events)
+    assert f"failure_class={failure_class}" in caplog.text
+    assert "private backend detail" not in caplog.text
 
 
 @pytest.mark.asyncio

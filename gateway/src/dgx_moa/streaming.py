@@ -425,6 +425,23 @@ def _is_done(event: bytes) -> bool:
     return any(line == b"data: [DONE]" for line in event.splitlines())
 
 
+def _stream_failure_class(error: Exception) -> str:
+    message = str(error)
+    if message.startswith("SSE event exceeds "):
+        return "sse_event_size_limit"
+    return {
+        "incomplete SSE event at EOF": "incomplete_sse_event",
+        "upstream stream reported an error": "upstream_error_frame",
+        "upstream response exceeds buffer limit": "response_buffer_limit",
+        "upstream stream ended before terminal marker": "missing_terminal_marker",
+    }.get(
+        message,
+        "unclassified_value_error"
+        if isinstance(error, ValueError)
+        else type(error).__name__,
+    )
+
+
 async def forward_sse(
     upstream: AsyncIterator[bytes],
     observation: StreamObservation,
@@ -962,10 +979,11 @@ async def responses_sse(
         }
         LOGGER.warning(
             "responses_stream_terminal session_id=%s model=%s status=failed "
-            "source=upstream_iterator error_type=%s",
+            "source=upstream_iterator error_type=%s failure_class=%s",
             _log_token(session_id),
             _log_token(model),
             type(error).__name__,
+            _stream_failure_class(error),
         )
         yield event("response.failed", response=response_payload("failed", []))
     finally:

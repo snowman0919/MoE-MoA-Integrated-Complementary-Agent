@@ -7097,3 +7097,29 @@ valid JSON without parser relaxation. Regression coverage proves two invalid
 local responses followed by a valid third response complete locally, while a
 real provider outage still never degrades to Executor. No v34 end-to-end
 physical result exists yet.
+
+V51 did not complete the first v34 checkpoint. The bounded, non-mutating turn
+encountered a Codex OAuth usage limit followed by backend/upstream failures.
+The configured last-resort OpenRouter fallback was not physically eligible in
+the isolated candidate checkout because no key was injected there; no secret
+was copied. The immutable mode-`0600` failure sidecar SHA-256 is
+`1d99d83c1cfc69fbd7d273f2bdf93422e9d2ff5273377d25fcb4d6edf216f7e0`.
+
+V52 injected the existing OpenRouter credential only into the candidate
+Gateway process environment, without copying or logging it. The real Codex
+client completed six host-tool calls with zero changed paths and zero tool
+failures, but repeated Responses streams ended with an unclassified
+`ValueError`; the client eventually cancelled after reconnect exhaustion.
+Simple direct Executor streaming probes all produced a terminal marker, so
+the failure remains localized to the full Gateway translation path rather
+than proven SGLang transport failure. The immutable mode-`0600` failure
+sidecar SHA-256 is
+`d2127e08a252195ec02782b13856a77f41ecd90dc68b621eb3b61161355bdeba`.
+
+Protocol v35 adds a fixed, payload-free failure class at the common Responses
+stream boundary. It distinguishes size limits, incomplete events, upstream
+error frames, response-buffer limits, missing terminal markers, and unknown
+value errors without logging exception messages or provider output. It also
+clarifies that ten elapsed hours alone are neither required nor sufficient:
+the sustained-Goal gate is actual dependency-ordered completion through a
+real client, authenticated Gateway, Dynamic MoA, and host tools.
