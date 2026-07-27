@@ -411,9 +411,22 @@ def test_checkpoint_interrupt_removes_only_its_named_container(
     assert removed == [MODULE.client_container_name(args, state, 0)]
 
 
-def test_checkpoint_timeout_is_distinguished_from_generic_client_failure(
+@pytest.mark.parametrize(
+    ("returncode", "session", "terminal", "failure"),
+    (
+        (124, None, False, "client_checkpoint_timeout"),
+        (1, "private-session", False, "client_nonzero_exit"),
+        (0, "private-session", False, "client_terminal_missing"),
+        (0, None, True, "client_session_missing"),
+    ),
+)
+def test_checkpoint_failures_are_distinguished(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    session: str | None,
+    terminal: bool,
+    failure: str,
 ) -> None:
     args = arguments(tmp_path, "codex")
     args.state_db = tmp_path / "unused.db"
@@ -431,7 +444,9 @@ def test_checkpoint_timeout_is_distinguished_from_generic_client_failure(
     monkeypatch.setattr(
         MODULE.QUALITY,
         "run_process",
-        lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess([], 124, "", "timeout"),
+        lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
+            [], returncode, "", "failure"
+        ),
     )
     monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
     monkeypatch.setitem(
@@ -445,8 +460,8 @@ def test_checkpoint_timeout_is_distinguished_from_generic_client_failure(
         globals_,
         "client_metrics",
         lambda *_args: {
-            "session": None,
-            "terminal": False,
+            "session": session,
+            "terminal": terminal,
             "context_tokens": 0,
             "cached_tokens": 0,
             "tool_calls": 0,
@@ -456,5 +471,5 @@ def test_checkpoint_timeout_is_distinguished_from_generic_client_failure(
         },
     )
 
-    with pytest.raises(RuntimeError, match="client_checkpoint_timeout"):
+    with pytest.raises(RuntimeError, match=failure):
         MODULE.run_checkpoint(args, state, control, 0)

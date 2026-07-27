@@ -246,7 +246,7 @@ implementation, independent review, passing validation, and a terminal
 response. Elapsed wall time is reported but is not a pass criterion.
 
 `scripts/analyze-long-horizon.py` freezes the machine-readable gate. Evidence
-uses protocol `frontier-long-goal-v7` and contains one header, consecutive
+uses protocol `frontier-long-goal-v8` and contains one header, consecutive
 checkpoints `0` through `20`, and one final record. It requires stable SHA-256
 identities for the session, objective, acceptance criteria, plan, repository,
 branch, and provider configuration; every checkpoint additionally requires a
@@ -267,7 +267,16 @@ OAuth profile chain is unavailable and a mandatory specialist/Executor path
 requires fallback. The analyzer records no prompt, hidden reasoning, provider
 output, request ID, key, cookie, authorization value, or repository name.
 Earlier epochs remain immutable diagnostic history and cannot be relabeled as
-v7 confirmation.
+v8 confirmation.
+
+The isolated candidate runtime must reserve the sustained task, rather than
+production defaults, with the following frozen Loop Engineering ceilings:
+`iterations=256`, `tool_calls=1000`, `reasoner_reentries=256`,
+`planner_calls=32`, `reviewer_calls=64`, `frontier_calls=128`,
+`tokens=8000000`, `external_cost_usd=10`, and
+`wall_clock_seconds=43200`. These are fail-safe ceilings, not work targets;
+the task still ends as soon as its checkpoint contract is satisfied. OpenRouter
+remains eligible only under the fallback and total-cost rules above.
 
 ## Change control
 

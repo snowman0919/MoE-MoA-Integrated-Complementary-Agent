@@ -6532,7 +6532,7 @@ mode-`0600` evidence SHA-256 is
 `daccd943afd2843e271699db5bdfc1a0f790fefac651ad1bf3ac3321951452f5`.
 It remains diagnostic because only checkpoint zero completed.
 
-Protocol `frontier-long-goal-v7` replaces the v1 elapsed-time gate for new
+Protocol `frontier-long-goal-v8` replaces the v1 elapsed-time gate for new
 epochs. It retains 21 dependency-ordered checkpoints, stable identity hashes,
 same-session resume, intentional reconnect, cache evidence, provider pinning,
 privacy rejection, independent review, final validation, and fail-closed cost
@@ -6573,6 +6573,22 @@ and V18
 Focused patch tests passed `6/6`, the connected streaming/API/controller/long
 horizon subset passed `408/408`, Ruff and strict mypy passed, and the complete
 suite passed `1110/1110` with the existing Starlette warning.
+
+V19 verified that the v7 patch normalizer reached real implementation: the
+client completed one local Planner call, eight local Reasoner calls, 30 local
+Executor calls, three remote Executor fallbacks, 25 host-tool continuations,
+and six successful patches. It created the implementation and tests, then the
+manually launched candidate repeated the already documented eight-iteration
+configuration error. The Gateway returned terminal
+`loop_budget_exhausted`; Codex recorded a stream-disconnect task error and the
+client retained only generic `client_checkpoint_failed`. The immutable
+mode-`0600` failure SHA-256 is
+`53d382e632a0db0c8e89f9a142a52126b001e513cdd6ddbe7f62231eb3118946`.
+Protocol v8 separates nonzero exit, missing terminal, and missing session
+without storing client output, and freezes a candidate-only sustained-task
+budget in `docs/QUALITY_EVALUATION.md`. Production defaults are unchanged.
+The focused long-horizon suite passed `29/29`, Ruff and strict mypy passed,
+and the complete suite passed `1113/1113` with the existing Starlette warning.
 
 V13 then exposed a provider-pinning ordering defect before checkpoint zero.
 The Gateway detected repeated successful inspection only after

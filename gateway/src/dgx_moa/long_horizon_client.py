@@ -21,7 +21,7 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-goal-v7"
+PROTOCOL = "frontier-long-goal-v8"
 CHECKPOINTS = 21
 INTERVAL_SECONDS = 0
 SAFE_HOSTS = {"127.0.0.1", "::1", "localhost"}
@@ -768,8 +768,12 @@ def run_checkpoint(
     session = metrics.pop("session")
     if run.returncode == 124:
         raise RuntimeError("client_checkpoint_timeout")
-    if run.returncode or not metrics["terminal"] or not session:
-        raise RuntimeError("client_checkpoint_failed")
+    if run.returncode:
+        raise RuntimeError("client_nonzero_exit")
+    if not metrics["terminal"]:
+        raise RuntimeError("client_terminal_missing")
+    if not session:
+        raise RuntimeError("client_session_missing")
     if control.get("client_session") not in {None, session}:
         raise RuntimeError("client_session_changed")
     control["client_session"] = session
@@ -935,6 +939,9 @@ def main() -> int:
                 in {
                     "client_checkpoint_failed",
                     "client_checkpoint_timeout",
+                    "client_nonzero_exit",
+                    "client_session_missing",
+                    "client_terminal_missing",
                     "client_container_already_exists",
                     "client_session_changed",
                     "invalid_progress_state",
