@@ -47,6 +47,29 @@ def test_fenced_unified_diff_is_normalized_for_apply_patch() -> None:
     )
 
 
+def test_unified_new_file_diff_is_normalized_for_apply_patch() -> None:
+    unified = (
+        "```diff\n"
+        "diff --git a/durable_journal/errors.py b/durable_journal/errors.py\n"
+        "new file mode 100644\n"
+        "index 0000000..1234567\n"
+        "--- /dev/null\n"
+        "+++ b/durable_journal/errors.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+class JournalError(Exception):\n"
+        "+    pass\n"
+        "```\n"
+    )
+
+    assert normalize_apply_patch_input("apply_patch", unified) == (
+        "*** Begin Patch\n"
+        "*** Add File: durable_journal/errors.py\n"
+        "+class JournalError(Exception):\n"
+        "+    pass\n"
+        "*** End Patch"
+    )
+
+
 @pytest.mark.asyncio
 async def test_responses_sse_translates_chat_text_and_usage() -> None:
     async def upstream():

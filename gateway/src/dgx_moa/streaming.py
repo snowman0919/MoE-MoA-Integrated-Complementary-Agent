@@ -108,14 +108,32 @@ def normalize_apply_patch_input(name: str, value: str) -> str:
         (
             index
             for index, line in enumerate(lines[:-1])
-            if line.startswith("--- a/") and lines[index + 1].startswith("+++ b/")
+            if (line.startswith("--- a/") or line == "--- /dev/null")
+            and lines[index + 1].startswith("+++ b/")
         ),
         None,
     )
     if old_header is not None:
-        old_path = lines[old_header][6:]
-        new_path = lines[old_header + 1][6:]
-        if old_path == new_path and old_path and "\n" not in old_path:
+        old_line = lines[old_header]
+        new_line = lines[old_header + 1]
+        old_path = old_line[6:]
+        new_path = new_line[6:]
+        if old_line == "--- /dev/null" and new_line.startswith("+++ b/"):
+            additions = [
+                line
+                for line in lines[old_header + 2 :]
+                if line.startswith("+") and not line.startswith("+++")
+            ]
+            if new_path and "\n" not in new_path and additions:
+                stripped = "\n".join(
+                    (
+                        "*** Begin Patch",
+                        f"*** Add File: {new_path}",
+                        *additions,
+                        "*** End Patch",
+                    )
+                )
+        elif old_path == new_path and old_path and "\n" not in old_path:
             hunks = [
                 "@@" if re.match(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@", line) else line
                 for line in lines[old_header + 2 :]

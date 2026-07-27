@@ -6500,3 +6500,23 @@ the session value. Ruff and strict mypy passed, and the complete suite passed
 `1104/1104` in 46.56 seconds with the existing Starlette warning. This
 collector change invalidates V6 and requires another fresh attempt; no
 long-horizon pass is claimed.
+
+Immutable attempt `20260727-long-runtime-v7` proved both preceding telemetry
+repairs: the Gateway retained the `long-` event identity and the hash join
+selected the run's providers without raw session persistence. It then exposed a
+real host-tool contract failure before checkpoint zero. The correction loop
+completed 21 local Executor, nine local Reasoner, one local Planner, nine Codex
+OAuth Frontier, one Codex OAuth Executor fallback, and one Codex OAuth Reasoner
+fallback invocation. Despite those independent fallbacks, all six
+`apply_patch` executions returned exit code 1 and no workspace change was
+created. The mode-`0600` failure record SHA-256 is
+`274f838b7ab679b9d81054a9dd53dfde9f9793ed315b71d5860982b5081469f1`.
+
+The sanitized tool errors showed that a standard new-file unified diff
+(`--- /dev/null`, `+++ b/path`) was passed to the host's native patch tool,
+which requires `*** Add File: path`. The existing shared streaming normalizer
+already converted ordinary unified updates and missing end sentinels; it now
+also converts this new-file form. A focused custom-tool/API run passed `6/6`,
+Ruff and strict mypy passed, and the complete suite passed `1105/1105` in
+45.74 seconds with the existing Starlette warning. V7 remains a failed
+diagnostic and the tool-contract change requires a new immutable epoch.
