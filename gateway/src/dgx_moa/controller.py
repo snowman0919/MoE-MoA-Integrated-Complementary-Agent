@@ -3518,7 +3518,12 @@ class Controller:
         implementation_complete = self.implementation_completion_ready(
             state, dict(request.get("metadata", {}))
         )
-        inspection_stalled = self.executor_stalled(state)
+        requests_change = (
+            state.active_turn_requires_change
+            if state.active_user_turn_sha256
+            else user_turn_intent(effective_objective(state))[0]
+        )
+        inspection_stalled = requests_change and self.executor_stalled(state)
         if inspection_stalled and body.get("tools"):
             named_tools = {
                 str(tool.get("name") or tool.get("function", {}).get("name")): tool

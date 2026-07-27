@@ -3983,6 +3983,51 @@ async def test_incomplete_implementation_requires_a_tool_action(
 
 
 @pytest.mark.asyncio
+async def test_stalled_nonmutation_turn_keeps_inspection_tools(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="planning-inspection",
+        objective="Implement atomic_store.py in this repository and test it.",
+        active_user_turn_sha256="a" * 64,
+        active_turn_requires_change=False,
+        active_turn_targets_repository=True,
+        roles_required=["executor"],
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "cat AGENTS.md"},
+                "exit_code": 0,
+            }
+            for _ in range(3)
+        ],
+    )
+    request = {
+        "model": "dgx-moa",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {},
+        "tools": [
+            {"type": "function", "function": {"name": name, "parameters": {}}}
+            for name in ("exec_command", "update_plan", "apply_patch")
+        ],
+        "tool_choice": "auto",
+    }
+
+    prepared = await controller.prepare_executor(state, request, ("executor",))
+
+    assert [tool["function"]["name"] for tool in prepared["tools"]] == [
+        "exec_command",
+        "update_plan",
+        "apply_patch",
+    ]
+    assert not any(
+        event["event_type"] == "executor_stall_tools_restricted"
+        for event in controller.store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
 async def test_progress_retry_rechecks_deferred_review(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

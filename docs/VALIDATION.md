@@ -7123,3 +7123,20 @@ value errors without logging exception messages or provider output. It also
 clarifies that ten elapsed hours alone are neither required nor sufficient:
 the sustained-Goal gate is actual dependency-ordered completion through a
 real client, authenticated Gateway, Dynamic MoA, and host tools.
+
+V53 ran the real Codex client through the authenticated candidate Gateway and
+completed four requests plus four host-tool continuations before failing the
+first v35 checkpoint as `dirty_checkpoint`. The session correctly classified
+the active turn as not requiring a repository change, but the generic
+Executor-stall recovery ignored that flag after repeated inspection and
+restricted the next invocation to mutation tools. A local Executor then
+created one untracked implementation file during the planning-only phase.
+The immutable mode-`0600` failure sidecar SHA-256 is
+`0bafeb658542d1213fd64ab70d4bf5ff6d486d1fae22fbbbf8c00a250416bfff`.
+
+Protocol v36 permits stalled-implementation mutation recovery only when the
+active turn requires a change. Explicit active-turn intent takes precedence;
+legacy sessions without an active-turn hash retain objective-based inference.
+Regression coverage proves mutation recovery remains active for implementation
+turns while a planning-only turn keeps its inspection tools and emits no
+stall-restriction event.

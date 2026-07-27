@@ -251,7 +251,7 @@ sufficient: the gate is successful completion of the dependency-ordered work
 through the real client and MoA path, including reconnect and context recovery.
 
 `scripts/analyze-long-horizon.py` freezes the machine-readable gate. Evidence
-uses protocol `frontier-long-goal-v35` and contains one header, consecutive
+uses protocol `frontier-long-goal-v36` and contains one header, consecutive
 phases `intake_and_plan`, `core_implementation`, `integration_and_tests`,
 `independent_review_and_repair`, and `full_validation_and_final`, followed by
 one final record. It requires stable SHA-256
