@@ -6701,3 +6701,28 @@ Protocol v14 preserves immediate exhaustion when the client does not execute
 the returned tool, but permits one second mutation-explicit retry after a real
 tool execution. Two completed retries still fail closed. The focused API case,
 Ruff, and strict mypy passed. No v14 physical result exists yet.
+
+V27 physically exercised v14 through the real Codex client, authenticated
+loopback Gateway, Dynamic MoA, and host tools. All five phases reached clean
+terminal checkpoints, the intentional reconnect resumed the same task, cache
+reuse reached `15,104` tokens, provider pinning remained true, and variable
+cost remained zero. It is still a failed diagnostic: phase
+`independent_review_and_repair` completed with zero host tools and one cancelled
+local Executor request, and finalization failed closed because
+`long-review.json` was absent. The immutable mode-`0600` evidence and failure
+SHA-256 values are respectively
+`c9297f2649eb6b04f3a30c2a8d65a6ba00e6c1ea7e0fc8c1fde6955f8eaed6d1`
+and
+`cf09abfc898a9e738f7b0e74fbc6043ed11c94bedb227f12db6850d90ea03daf`.
+
+The shared cause was not elapsed time or local-model stability. The first
+user turn finished change, validation, and review, so the persistent Gateway
+session reused that completion latch for later user turns and suppressed their
+legitimate tools as `change_validation_and_review_complete`. Protocol v15
+scopes change, validation, completion, and stall evidence to the current user
+turn using only a content hash and the preceding tool-execution marker. It
+preserves prior plan and evidence as context, keeps tool continuations in the
+same turn, does not clear an unresolved Frontier correction, and gives each
+five-phase prompt only its own work. The connected
+controller/API/streaming/long-horizon suite passed `427/427`; Ruff and strict
+mypy passed. No v15 physical result exists yet.

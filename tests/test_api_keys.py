@@ -66,6 +66,8 @@ def test_key_store_enforces_expiry_limits_admin_cap_and_file_mode(tmp_path: Path
 
     store.update("limited", ApiKeyUpdate(expires_in_days=2, request_limit=2))
     assert store.verify(token) == "limited"
+    database_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("state.db*"))
+    assert token.encode() in database_bytes
     store.revoke("limited")
     assert store.verify(token) is None
     store.delete("limited")
@@ -79,7 +81,6 @@ def test_key_store_enforces_expiry_limits_admin_cap_and_file_mode(tmp_path: Path
     store.delete_admin_session(session_token)
     assert store.verify_admin_session(session_token) is None
     database_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("state.db*"))
-    assert token.encode() in database_bytes
     assert session_token.encode() not in database_bytes
 
 

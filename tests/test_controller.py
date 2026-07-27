@@ -3284,6 +3284,48 @@ def test_implementation_completion_requires_change_validation_and_review(
     assert controller.requires_implementation_tool_action(question, {}) is False
 
 
+def test_new_user_turn_does_not_reuse_prior_completion_latch(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    initial = "Implement rate_limiter.py in this repository and test it."
+    state = controller.session("multi-turn", [{"role": "user", "content": initial}])
+    state.review_status = "approved"
+    state.tool_executions = [
+        {
+            "tool_execution_id": "change",
+            "tool_name": "apply_patch",
+            "normalized_arguments": {"patch": "*** Begin Patch"},
+            "exit_code": 0,
+        },
+        {
+            "tool_execution_id": "validation",
+            "tool_name": "exec_command",
+            "normalized_arguments": {"cmd": "python -m pytest -q"},
+            "exit_code": 0,
+        },
+    ]
+    store.save(state)
+    assert controller.implementation_completion_ready(state, {}) is True
+
+    resumed = controller.session(
+        "multi-turn",
+        [
+            {"role": "user", "content": initial},
+            {"role": "assistant", "content": "done"},
+            {"role": "user", "content": "Review concurrency and run the tests."},
+        ],
+    )
+
+    assert resumed.active_turn_after_tool_execution_id == "validation"
+    assert resumed.review_status == "pending"
+    assert controller.has_review_evidence(resumed, {}) is False
+    assert controller.implementation_completion_ready(resumed, {}) is False
+    assert controller.requires_implementation_tool_action(resumed, {}) is False
+    assert controller.executor_stalled(resumed) is False
+
+
 def test_frontier_missing_tests_block_approval(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
 

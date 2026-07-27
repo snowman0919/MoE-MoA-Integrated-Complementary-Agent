@@ -248,6 +248,59 @@ def effective_objective(state: SessionState) -> str:
     return state.resolved_objective or state.objective
 
 
+def current_turn_executions(state: SessionState) -> list[dict[str, Any]]:
+    marker = state.active_turn_after_tool_execution_id
+    if not marker:
+        return state.tool_executions
+    for index, execution in enumerate(state.tool_executions):
+        if execution.get("tool_execution_id") == marker:
+            return state.tool_executions[index + 1 :]
+    return state.tool_executions
+
+
+def user_turn_intent(content: str) -> tuple[bool, bool]:
+    normalized = content.lower()
+    return (
+        any(
+            marker in normalized
+            for marker in (
+                "implement",
+                "modify",
+                "fix ",
+                "create",
+                "write ",
+                "add ",
+                "refactor",
+                "구현",
+                "수정",
+                "생성",
+                "작성",
+                "추가",
+                "고쳐",
+                "만들",
+            )
+        ),
+        any(
+            marker in normalized
+            for marker in (
+                "repository",
+                "repo",
+                "codebase",
+                "project",
+                " file",
+                "module",
+                ".py",
+                ".js",
+                ".ts",
+                "저장소",
+                "파일",
+                "모듈",
+                "코드",
+            )
+        ),
+    )
+
+
 def reasoner_context_fingerprint(state: SessionState, messages: list[dict[str, Any]]) -> str:
     user_messages = [
         text_content(message.get("content"))
@@ -971,6 +1024,40 @@ class Controller:
                 ),
                 "",
             )
+        latest_user = next(
+            (
+                text_content(message.get("content"))
+                for message in reversed(messages)
+                if message.get("role") == "user"
+            ),
+            "",
+        )
+        latest_user_sha256 = hashlib.sha256(latest_user.encode()).hexdigest() if latest_user else ""
+        if latest_user_sha256 and latest_user_sha256 != state.active_user_turn_sha256:
+            subsequent_turn = bool(state.active_user_turn_sha256)
+            state.active_user_turn_sha256 = latest_user_sha256
+            state.active_turn_after_tool_execution_id = (
+                str(state.tool_executions[-1].get("tool_execution_id") or "")
+                if state.tool_executions
+                else ""
+            )
+            (
+                state.active_turn_requires_change,
+                state.active_turn_targets_repository,
+            ) = user_turn_intent(latest_user)
+            state.final_status = None
+            if subsequent_turn and not (
+                state.frontier_correction_required
+                or state.frontier_correction_pending_verification
+            ):
+                state.review_status = "pending"
+                state.review_deferred = False
+                state.frontier_review_verified = False
+                state.judge_status = "not_requested"
+                state.judge_verdict = None
+                state.pending_judge_evidence = ""
+            if subsequent_turn:
+                self.store.event(session_id, "user_turn_started", {"subsequent": True})
         if objective_was_empty and state.objective:
             self.record_evidence(
                 state,
@@ -3474,7 +3561,7 @@ class Controller:
             or metadata.get("validation_results")
         ):
             return True
-        for execution in reversed(state.tool_executions):
+        for execution in reversed(current_turn_executions(state)):
             arguments = execution.get("normalized_arguments")
             if isinstance(arguments, str):
                 try:
@@ -3528,47 +3615,16 @@ class Controller:
     ) -> bool:
         objective = effective_objective(state).lower()
         work = objective + "\n" + json.dumps(state.plan, ensure_ascii=False, sort_keys=True).lower()
-        requests_change = any(
-            marker in work
-            for marker in (
-                "implement",
-                "modify",
-                "fix ",
-                "create",
-                "write ",
-                "add ",
-                "refactor",
-                "구현",
-                "수정",
-                "생성",
-                "작성",
-                "추가",
-                "고쳐",
-                "만들",
-            )
-        )
-        targets_repository = any(
-            marker in objective
-            for marker in (
-                "repository",
-                "repo",
-                "codebase",
-                "project",
-                " file",
-                "module",
-                ".py",
-                ".js",
-                ".ts",
-                "저장소",
-                "파일",
-                "모듈",
-            )
+        requests_change, targets_repository = (
+            (state.active_turn_requires_change, state.active_turn_targets_repository)
+            if state.active_user_turn_sha256
+            else user_turn_intent(work)
         )
         if not (requests_change and targets_repository):
             return False
         changed = any(
             execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
-            for execution in state.tool_executions
+            for execution in current_turn_executions(state)
         )
         validated = self.has_review_evidence(state, metadata)
         review_ready = (
@@ -3591,14 +3647,14 @@ class Controller:
     ) -> bool:
         return any(
             execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
-            for execution in state.tool_executions
+            for execution in current_turn_executions(state)
         ) and not self.requires_implementation_tool_action(state, metadata)
 
     def executor_stalled(self, state: SessionState) -> bool:
         """Detect repeated successful inspection since the latest file change."""
         counts: dict[str, int] = {}
         inspections = 0
-        for execution in reversed(state.tool_executions):
+        for execution in reversed(current_turn_executions(state)):
             if execution.get("exit_code") != 0:
                 continue
             if self.tool_execution_changes_files(execution):

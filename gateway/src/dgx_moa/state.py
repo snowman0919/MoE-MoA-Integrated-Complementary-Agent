@@ -105,6 +105,10 @@ class SessionState(BaseModel):
     objective: str = ""
     resolved_objective: str = ""
     resolved_objective_orchestrated: bool = False
+    active_user_turn_sha256: str = ""
+    active_turn_after_tool_execution_id: str = ""
+    active_turn_requires_change: bool = False
+    active_turn_targets_repository: bool = False
     reasoner_context_fingerprint: str = ""
     repository: dict[str, str] = Field(default_factory=dict)
     route: str = "standard"
