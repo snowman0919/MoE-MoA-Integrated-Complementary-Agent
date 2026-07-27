@@ -1676,11 +1676,23 @@ def test_successful_output_can_describe_failures(settings, stub_provider: StubPr
     assert state.failed_call_fingerprints == []
 
 
-def test_stdout_missing_file_is_a_failure(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+def test_successful_shell_can_report_missing_file(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     state = SessionState(session_id="stdout-failure")
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
 
     controller._observe(state, tool_messages("read", "File not found: missing.txt"))
+
+    assert state.failures == []
+    assert state.tool_executions[0]["failure_class"] is None
+
+
+def test_non_shell_missing_file_is_a_failure(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    state = SessionState(session_id="read-failure")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    messages = tool_messages("read", "File not found: missing.txt")
+    messages[0]["tool_calls"][0]["function"]["name"] = "read"
+
+    controller._observe(state, messages)
 
     assert state.failures[0]["failure_class"] == "NONEXISTENT_PATH"
     assert state.tool_executions[0]["failure_class"] == "NONEXISTENT_PATH"

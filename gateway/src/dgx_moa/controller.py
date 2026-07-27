@@ -1356,6 +1356,17 @@ class Controller:
                 result[key] = compress_text(result[key], self.settings.limits)
             result = cast(dict[str, Any], self.safe_payload(state, result))
             observation = json.dumps(result, sort_keys=True)
+            call = calls_by_id.get(str(message.get("tool_call_id", ""))) or (
+                state.last_tool_call or {}
+            )
+            function = call.get("function") or {}
+            tool_name = str(function.get("name", result["tool_name"]))
+            shell_result = tool_name in {
+                "exec_command",
+                "shell",
+                "terminal",
+                "execute_code",
+            }
             failed = (
                 result["exit_code"] != 0
                 or any(
@@ -1373,13 +1384,18 @@ class Controller:
                     marker in result["stdout"].lower()
                     for marker in (
                         "bwrap:",
-                        "not found",
-                        "no such file",
                         "operation not permitted",
                         "permission denied",
                         "unsupported call",
                         "resources/read failed",
                         "failed to parse function arguments",
+                    )
+                )
+                or (
+                    not shell_result
+                    and any(
+                        marker in result["stdout"].lower()
+                        for marker in ("not found", "no such file")
                     )
                 )
             )
@@ -1412,10 +1428,6 @@ class Controller:
                     -self.settings.limits.max_retained_observations :
                 ]
             self.store.event(state.session_id, "tool_result_received", result)
-            call = calls_by_id.get(str(message.get("tool_call_id", ""))) or (
-                state.last_tool_call or {}
-            )
-            function = call.get("function") or {}
             arguments = function.get("arguments", result.get("arguments", {}))
             effect: dict[str, Any] = {
                 key: result[key]
@@ -1427,7 +1439,7 @@ class Controller:
                 "tool_call_id": str(message.get("tool_call_id", "")),
                 "decision_id": state.last_decision_id or "unknown",
                 "session_id": state.session_id,
-                "tool_name": str(function.get("name", result["tool_name"])),
+                "tool_name": tool_name,
                 "normalized_arguments": self.safe_payload(state, arguments),
                 "argument_fingerprint": fingerprint(call),
                 "started_at": "legacy_unavailable",

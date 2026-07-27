@@ -6406,3 +6406,33 @@ Repository Ruff passed, strict mypy reported zero errors across 59 source files,
 and the complete suite passed `1103/1103` in 42.72 seconds with the existing
 Starlette warning. A fresh immutable Gateway and long-horizon attempt are still
 required; this repair does not complete the Goal.
+
+Fresh Gateway `runtime-v4` used commit `61f247c`, a valid `candidate` runtime
+channel, a new database, and a new loopback port. Its authenticated Responses
+canary completed one local SGLang Executor tool call and a same-session tool
+continuation in 2.195 seconds. Both responses returned HTTP 200 and completed;
+two local Executor invocations took 1,027.3 and 999.5 milliseconds. The live
+Gateway retained zero database or deleted-database descriptors and logged zero
+SQLite, OperationalError, or HTTP 500 failures.
+
+Immutable long-horizon attempt `20260727-long-runtime-v2` then exercised the
+actual Codex client, authenticated Gateway API, Dynamic MoA routing, host tools,
+and Git workspace. It did not pass checkpoint zero. Before failure it completed
+31 Gateway requests and made 38 local Executor calls, eight local Reasoner
+calls, one local Planner call, eight Codex OAuth Frontier collaborations, and
+one Codex OAuth Executor fallback selected for `local_no_progress`. The client
+created three clean commits, including a credential-redaction implementation,
+but exhausted the eight-iteration engineering-loop budget before returning a
+terminal Codex turn. Six policy-level requests failed; Gateway SQLite/HTTP 500
+failures remained zero. The mode `0600` failure record SHA-256 is
+`65b3524cc7ad8f0682f0389f3e0b8543b86b978317cdc71256023dbbfa935365`.
+
+The same run exposed three false `NONEXISTENT_PATH` classifications on
+successful shell commands. Shell and exec tools now trust structured exit code
+zero for file-absence text in stdout while still treating stderr failures,
+nonzero exits, sandbox errors, unsupported calls, MCP errors, and argument
+parse errors as failures. Non-shell read tools retain semantic missing-file
+classification. Seven focused Controller tests passed and the complete suite
+passed `1104/1104` in 41.95 seconds. The next immutable long-horizon attempt
+must use a larger candidate-only engineering-loop iteration budget; no failed
+attempt is resumed or counted as a pass.
