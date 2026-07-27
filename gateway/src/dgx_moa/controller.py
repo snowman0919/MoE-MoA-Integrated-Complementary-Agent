@@ -1027,16 +1027,33 @@ class Controller:
                 ),
                 "",
             )
-        latest_user = next(
+        latest_user_index = next(
             (
-                text_content(message.get("content"))
-                for message in reversed(messages)
-                if message.get("role") == "user"
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if messages[index].get("role") == "user"
             ),
-            "",
+            -1,
+        )
+        latest_tool_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if messages[index].get("role") == "tool"
+            ),
+            -1,
+        )
+        latest_user = (
+            text_content(messages[latest_user_index].get("content"))
+            if latest_user_index >= 0
+            else ""
         )
         latest_user_sha256 = hashlib.sha256(latest_user.encode()).hexdigest() if latest_user else ""
-        if latest_user_sha256 and latest_user_sha256 != state.active_user_turn_sha256:
+        if (
+            latest_user_sha256
+            and latest_user_index > latest_tool_index
+            and latest_user_sha256 != state.active_user_turn_sha256
+        ):
             subsequent_turn = bool(state.active_user_turn_sha256)
             state.active_user_instruction = latest_user
             state.active_user_turn_sha256 = latest_user_sha256

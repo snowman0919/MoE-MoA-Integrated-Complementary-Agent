@@ -1341,6 +1341,40 @@ def test_bounded_goal_planning_turn_returns_phase_result_without_goal_completion
     assert "work remains in the current user turn" in prompt
 
 
+def test_tool_continuation_does_not_replace_bounded_turn_intent(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    initial = "/goal 계획만 확정하라. 코드는 건드리지 마라."
+    state = controller.session("bounded-continuation", [{"role": "user", "content": initial}])
+    store.save(state)
+
+    resumed = controller.session(
+        "bounded-continuation",
+        [
+            {"role": "user", "content": initial},
+            {"role": "user", "content": "Implement repository changes now."},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-read",
+                        "type": "function",
+                        "function": {"name": "exec_command", "arguments": '{"cmd":"pwd"}'},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call-read", "content": '{"exit_code":0}'},
+        ],
+    )
+
+    assert resumed.active_user_instruction == initial
+    assert resumed.active_turn_requires_change is False
+    assert resumed.active_turn_targets_repository is True
+
+
 def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

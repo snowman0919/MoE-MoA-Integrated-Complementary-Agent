@@ -7058,4 +7058,23 @@ immutable mode-`0600` failure sidecar SHA-256 is
 Protocol v32 accepts the common `path`, `file`, `full_path`, `file_path`, and
 `filePath` keys in the existing adapter and still rejects empty or non-string
 paths before shell quoting. Parameterized coverage includes both physically
-observed variants. No v32 end-to-end physical result exists yet.
+observed variants.
+
+V48 physically confirmed the v32 read adapter: all local reads were emitted to
+Codex as successful `exec_command` calls and no `UNSUPPORTED_TOOL` remained.
+The first checkpoint nevertheless failed. A trailing Responses tool-result
+continuation contained a different historical user item; `session()` treated
+it as a new user turn even though a tool result followed it. That changed the
+bounded planning intent to repository mutation, allowed two patches in the
+planning checkpoint, and exhausted the loop budget after unrelated command,
+syntax, and test failures. No checkpoint passed. Immutable mode-`0600`
+evidence and failure sidecar SHA-256 values are
+`4d4818a92ab7e4b041baf0ea4618689cafcd028790b42d83ac68fc5ffd25dd24`
+and
+`1b5b3852b29bc3745f4f7ab8c8af0af3f44c5a170d550dfb0917162951dd70eb`.
+
+Protocol v33 recognizes a new active user turn only when the latest user
+message follows the latest tool result. Tool-result continuations therefore
+retain the already recorded bounded intent, while a real subsequent user
+message still resets completion and review latches. No v33 end-to-end physical
+result exists yet.
