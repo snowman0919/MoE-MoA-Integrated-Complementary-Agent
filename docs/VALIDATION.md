@@ -7016,5 +7016,20 @@ Protocol v29 defers Frontier code review for an active repository-mutation
 turn until successful validation evidence exists. Architecture,
 disagreement, and non-mutation direct-review behavior remain unchanged. A
 regression proves zero Frontier review calls before validation and exactly one
-code-review call after a newer successful validation. No v29 physical result
-exists.
+code-review call after a newer successful validation.
+
+V45 did not complete its first v29 checkpoint. Three distinct `cat` attempts
+against the three expected input documents failed as one `NONEXISTENT_PATH`
+family and correctly reached the duplicate-failure limit. The input files and
+read-only Docker mounts were present; the defect was the `/inputs` alias,
+which existed only in the client container while Gateway-mediated host tools
+used the host namespace. The invalid epoch remains a failure and its immutable
+mode-`0600` sidecar SHA-256 is
+`0be0934ce2dffc6cbcfaa06c99a2ce0cb42db52e216ce9c8817ac0a031985c13`.
+
+Protocol v30 mounts each resolved input file at the same absolute path in the
+client container and names those host/client-common paths in the prompt. It
+also forbids the obsolete `/inputs` alias and source-environment paths quoted
+inside input documents. Regression coverage verifies this contract for Codex,
+OpenCode, and Hermes; the same-path bind mount was physically readable in the
+quality image. No v30 end-to-end physical result exists yet.

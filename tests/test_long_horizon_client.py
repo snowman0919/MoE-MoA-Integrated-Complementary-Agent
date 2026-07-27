@@ -13,21 +13,30 @@ from dgx_moa.controller import user_turn_intent
 def test_phase_prompts_require_changes_only_during_core_implementation() -> None:
     workspace = Path("/tmp/exact-workspace")
     validation = "python -m unittest -v tests.test_job_journal"
+    inputs = tuple(Path("/tmp/long-inputs") / name for name in (
+        "OBJECTIVE.md",
+        "ACCEPTANCE.md",
+        "PLAN.md",
+    ))
     assert [
-        user_turn_intent(MODULE.client_prompt(index, workspace, validation))[0]
+        user_turn_intent(MODULE.client_prompt(index, workspace, validation, inputs))[0]
         for index in range(MODULE.CHECKPOINTS)
     ] == [False, True, False, False, False]
     assert all(
         "/state/long-review.json"
-        not in MODULE.client_prompt(index, workspace, validation)
+        not in MODULE.client_prompt(index, workspace, validation, inputs)
         for index in range(MODULE.CHECKPOINTS - 1)
     )
-    final = MODULE.client_prompt(MODULE.CHECKPOINTS - 1, workspace, validation)
+    final = MODULE.client_prompt(
+        MODULE.CHECKPOINTS - 1, workspace, validation, inputs
+    )
     assert "/state/long-review.json" in final
     assert str(workspace) in final
     assert validation in final
     assert "추측한 경로로 cd하지 말고" in final
-    implementation = MODULE.client_prompt(1, workspace, validation)
+    assert all(str(path) in final for path in inputs)
+    assert "/inputs/OBJECTIVE.md" not in final
+    implementation = MODULE.client_prompt(1, workspace, validation, inputs)
     assert "preliminary Reviewer 승인" in implementation
     assert "최종 독립 검토는 이후 단계" in implementation
 
@@ -185,6 +194,11 @@ def test_client_commands_resume_the_same_private_session(
     assert environment["TEST_LONG_API_KEY"] == "private-test-value"
     assert str(args.objective) in " ".join(command)
     assert "private-test-value" not in " ".join(command)
+    prompt = inner[inner.index("-z") + 1] if harness == "hermes" else inner[-1]
+    for path in (args.objective, args.acceptance, args.plan):
+        assert f"{path}:{path}:ro" in command
+        assert str(path) in prompt
+    assert "/inputs/OBJECTIVE.md" not in prompt
     if harness == "codex":
         catalog = json.loads((state / "model-catalog.json").read_text())
         assert catalog["models"][0]["apply_patch_tool_type"] == "freeform"

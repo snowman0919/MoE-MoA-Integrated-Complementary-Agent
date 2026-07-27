@@ -21,7 +21,7 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-goal-v29"
+PROTOCOL = "frontier-long-goal-v30"
 PHASES = (
     "intake_and_plan",
     "core_implementation",
@@ -192,7 +192,12 @@ def stable_hashes(
     }
 
 
-def client_prompt(index: int, workspace: Path, validation_command: str) -> str:
+def client_prompt(
+    index: int,
+    workspace: Path,
+    validation_command: str,
+    input_paths: tuple[Path, Path, Path],
+) -> str:
     phase = PHASES[index]
     final = index == CHECKPOINTS - 1
     phase_rule = (
@@ -226,8 +231,10 @@ def client_prompt(index: int, workspace: Path, validation_command: str) -> str:
         "추측한 경로로 cd하지 말고 입력 문서가 지정한 source/test 경로를 정확히 사용하며 "
         "별도 대체 src 또는 tests 루트는 허용되지 않는다. "
         f"검증 명령은 정확히 `{validation_command}`이다. "
-        "첫 단계에서만 /inputs/OBJECTIVE.md, /inputs/ACCEPTANCE.md, "
-        "/inputs/PLAN.md와 저장소 운영 문서를 읽고 이후에는 같은 세션 맥락을 사용하라. "
+        f"첫 단계에서만 {input_paths[0]}, {input_paths[1]}, {input_paths[2]}와 "
+        "저장소 운영 문서를 읽고 이후에는 같은 세션 맥락을 사용하라. 이 세 경로만 "
+        "host/client 공통 입력 경로다. /inputs 별칭이나 입력 문서 안에 적힌 다른 "
+        "source 환경 절대경로를 도구로 열지 마라. "
         f"{phase_rule[index]}"
         "각 단계는 최소 한 번의 실제 호스트 도구를 사용하고 단계 종료 시 worktree를 "
         "clean으로 유지해야 한다. 계획·검토 전용 단계는 새 커밋을 강제하지 않는다. "
@@ -312,13 +319,15 @@ def client_command(
     index: int,
     gateway_session: str,
 ) -> tuple[list[str], dict[str, str], Path | None]:
-    prompt = client_prompt(index, args.workspace, args.validation_command)
-    environment = QUALITY.filtered_env({args.api_key_env: os.environ[args.api_key_env]})
-    inputs = (
-        (args.objective, "/inputs/OBJECTIVE.md"),
-        (args.acceptance, "/inputs/ACCEPTANCE.md"),
-        (args.plan, "/inputs/PLAN.md"),
+    input_paths = (args.objective, args.acceptance, args.plan)
+    prompt = client_prompt(
+        index,
+        args.workspace,
+        args.validation_command,
+        input_paths,
     )
+    environment = QUALITY.filtered_env({args.api_key_env: os.environ[args.api_key_env]})
+    inputs = tuple((path, str(path)) for path in input_paths)
     usage_file: Path | None = None
     if args.harness == "codex":
         write_private(state / "model-catalog.json", codex_model_catalog())
