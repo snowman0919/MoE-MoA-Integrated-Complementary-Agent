@@ -6972,3 +6972,25 @@ validation only after completion evidence, validation results, or a successful
 validation command newer than the latest file change. Initial explicit and
 high-risk review requests retain the existing pre-review and fail-closed
 contract. No v27 physical result exists.
+
+V43 physically passed the v27 planning checkpoint through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, and host tools in 671.878
+seconds. It was terminal and clean with six host-tool calls, provider pinning,
+15,104 cached tokens, one client retry, zero provider errors, zero unjustified
+repeated reads, and zero variable cost.
+
+The implementation checkpoint exposed a v27 scope regression before mutating
+the clean worktree. The Responses progress gate used successful validation for
+the resolved whole Goal even though the active planning-only turn was already
+complete. It therefore emitted implementation-tool requirements and entered
+correction instead of terminating the bounded turn. The invalid epoch was
+stopped rather than spending the remaining checkpoint ceiling. Immutable
+mode-`0600` evidence and interruption sidecar SHA-256 values are
+`3bef9f248dcd7c34cf638c4fe49f77fe3d472146093d2bc8f8cc076223b79f0b`
+and
+`66366cdd5d08fb45f7e20e4cd9d4c8d4683fc0efae5792a43cb1882bcd9d885b`.
+
+Protocol v28 restores the existing review-evidence test for bounded
+planning-only termination while retaining v27's successful-validation gate
+for implementation completion and tool-continuation Reviewer promotion. No
+v28 physical result exists.
