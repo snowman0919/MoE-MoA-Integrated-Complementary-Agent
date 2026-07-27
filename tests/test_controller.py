@@ -933,6 +933,107 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
 
 
 @pytest.mark.asyncio
+async def test_frontier_review_waits_for_implementation_validation(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class ReviewFrontier:
+        config = FrontierConfig(enabled=True)
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            del correlation_id
+            self.calls.append(mode)
+            return FrontierCollaborationResult(
+                mode=mode,
+                output={
+                    "verdict": "approve",
+                    "critical": [],
+                    "important": [],
+                    "suggestions": [],
+                    "missing_tests": [],
+                    "confidence": 0.95,
+                },
+                latency_ms=1,
+                transmitted_categories=sorted(evidence),
+            )
+
+    frontier = ReviewFrontier()
+    original = stub_provider.complete
+
+    async def require_frontier(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        schema_name = request.get("response_format", {}).get("json_schema", {}).get("name")
+        if role == "executor" and schema_name == "orchestration_decision":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "action": "invoke_agents",
+                                    "required_agents": ["frontier"],
+                                    "optional_agents": [],
+                                    "reason": {"frontier": "review the implementation"},
+                                    "parallelizable": True,
+                                    "continue_after": "synthesize",
+                                    "confidence": 0.9,
+                                }
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = require_frontier  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider, frontier)  # type: ignore[arg-type]
+    state = controller.session(
+        "frontier-review-validation",
+        [
+            {
+                "role": "user",
+                "content": "Implement and test the change in this repository, then review it.",
+            }
+        ],
+    )
+    state.runtime_mode = "orchestrated"
+    state.roles_required = ["reasoner", "executor"]
+    request = {
+        "model": "dgx-moa-orchestrated",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {},
+    }
+
+    await controller.prepare_executor(state, request, ("reasoner", "executor"))
+
+    assert frontier.calls == []
+    assert any(
+        event["event_type"] == "frontier_review_deferred"
+        for event in store.events(state.session_id)
+    )
+
+    state.tool_executions.extend(
+        [
+            {"tool_name": "apply_patch", "normalized_arguments": {}, "exit_code": 0},
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m pytest -q"},
+                "exit_code": 0,
+            },
+        ]
+    )
+    await controller.prepare_executor(
+        state, request, ("reasoner", "executor"), tool_continuation=True
+    )
+
+    assert frontier.calls == ["code_review"]
+
+
+@pytest.mark.asyncio
 async def test_executor_rejects_unsupported_reasoner_agent_recommendation(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

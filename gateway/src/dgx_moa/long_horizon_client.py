@@ -21,7 +21,7 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-goal-v28"
+PROTOCOL = "frontier-long-goal-v29"
 PHASES = (
     "intake_and_plan",
     "core_implementation",

@@ -2816,6 +2816,8 @@ class Controller:
         review_error: Exception | None = None
         collaboration_context = ""
         progress_retry = bool(request.get("metadata", {}).get("responses_progress_retry"))
+        metadata = dict(request.get("metadata", {}))
+        validation_evidence_available = self.has_validation_evidence(state, metadata)
         reuse_trigger = (
             "responses_progress_retry"
             if progress_retry
@@ -2844,7 +2846,7 @@ class Controller:
             orchestration = await self.orchestration_decision(
                 state,
                 reasoner_contribution,
-                dict(request.get("metadata", {})),
+                metadata,
                 executor_complete,
             )
             dynamic = tuple(
@@ -2867,6 +2869,12 @@ class Controller:
                     or "review" in effective_objective(state).lower()
                     else "architecture"
                 )
+                frontier_review_deferred = (
+                    mode == "code_review"
+                    and state.active_turn_requires_change
+                    and state.active_turn_targets_repository
+                    and not validation_evidence_available
+                )
                 evidence = {
                     "_paid_fallback_required": bool(
                         request.get("metadata", {}).get("frontier_required") or "judge" in roles
@@ -2885,7 +2893,13 @@ class Controller:
                     },
                     "specific_questions": request.get("metadata", {}).get("frontier_questions", []),
                 }
-                if self.frontier is None:
+                if frontier_review_deferred:
+                    self.store.event(
+                        state.session_id,
+                        "frontier_review_deferred",
+                        {"reason": "implementation_validation_incomplete"},
+                    )
+                elif self.frontier is None:
                     self.store.event(
                         state.session_id,
                         "frontier_unavailable",
@@ -2947,8 +2961,7 @@ class Controller:
                         )
                     else:
                         frontier_pending = (mode, evidence)
-        metadata = dict(request.get("metadata", {}))
-        review_evidence_available = self.has_validation_evidence(state, metadata) or (
+        review_evidence_available = validation_evidence_available or (
             not tool_continuation and self.has_review_evidence(state, metadata)
         )
         if (

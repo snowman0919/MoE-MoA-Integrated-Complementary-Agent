@@ -6994,3 +6994,27 @@ Protocol v28 restores the existing review-evidence test for bounded
 planning-only termination while retaining v27's successful-validation gate
 for implementation completion and tool-continuation Reviewer promotion. No
 v28 physical result exists.
+
+V44 physically passed the v28 planning checkpoint through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, and host tools in 457.148
+seconds. It was terminal and clean with six host-tool calls, provider pinning,
+zero retries, zero provider errors, zero unjustified repeated reads, and zero
+variable cost.
+
+The implementation checkpoint confirmed that local Reviewer stayed unused
+before validation, but exposed the parallel sibling defect: Frontier
+code-review selection still used objective wording instead of validation
+readiness. Two code-review dispatches occurred before any workspace change,
+one produced a material rejection, and the clean session entered correction.
+The invalid epoch was stopped before mutation. Immutable mode-`0600` evidence
+and interruption sidecar SHA-256 values are
+`25d9abdf4dac3cf0cb4f680f66a632600f63d4416def45658e89c2a214ce83a6`
+and
+`5855a2c5f07f2c4c58a0eb8568da47cd0bb812f7b91293798cb922536676f3c9`.
+
+Protocol v29 defers Frontier code review for an active repository-mutation
+turn until successful validation evidence exists. Architecture,
+disagreement, and non-mutation direct-review behavior remain unchanged. A
+regression proves zero Frontier review calls before validation and exactly one
+code-review call after a newer successful validation. No v29 physical result
+exists.
