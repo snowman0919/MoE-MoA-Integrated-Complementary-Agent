@@ -6532,10 +6532,13 @@ mode-`0600` evidence SHA-256 is
 `daccd943afd2843e271699db5bdfc1a0f790fefac651ad1bf3ac3321951452f5`.
 It remains diagnostic because only checkpoint zero completed.
 
-Protocol `frontier-long-goal-v2` replaces the v1 elapsed-time gate for new
+Protocol `frontier-long-goal-v3` replaces the v1 elapsed-time gate for new
 epochs. It retains 21 dependency-ordered checkpoints, stable identity hashes,
 same-session resume, intentional reconnect, cache evidence, provider pinning,
 privacy rejection, independent review, final validation, and fail-closed cost
 handling. It removes only the artificial 1,800-second spacing and 36,000-second
 minimum. Every checkpoint must now contain host-tool use, a terminal turn, and
-a unique clean commit. Existing v1 evidence is not reclassified.
+a unique clean commit. The preregistered total variable-cost ceiling is $10;
+OpenRouter remains eligible only after bounded Codex OAuth failover is
+unavailable and mandatory fallback is required. Existing evidence is not
+reclassified.

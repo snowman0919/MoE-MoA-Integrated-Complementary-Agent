@@ -10,9 +10,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-PROTOCOL = "frontier-long-goal-v2"
+PROTOCOL = "frontier-long-goal-v3"
 CHECKPOINTS = 21
 INTERVAL_SECONDS = 0
+MAX_VARIABLE_COST_USD = 10.0
 SCHEDULE_TOLERANCE_SECONDS = 60
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40,64}$")
@@ -275,8 +276,8 @@ def analyze(path: Path) -> dict[str, Any]:
         if isinstance(checkpoint.get("variable_cost_usd"), int | float)
         and not isinstance(checkpoint.get("variable_cost_usd"), bool)
     )
-    if request_cost != 0:
-        failures.append("variable_cost_not_zero")
+    if request_cost > MAX_VARIABLE_COST_USD:
+        failures.append("variable_cost_budget_exceeded")
     if len(finals) == 1 and len(checkpoints) == CHECKPOINTS:
         final = finals[0]
         if final.get("implementation_commit") != checkpoints[-1].get("commit"):
@@ -294,6 +295,7 @@ def analyze(path: Path) -> dict[str, Any]:
         "cache_reuse_observed": "cache_reuse_not_observed" not in failures,
         "provider_pinning_preserved": "provider_not_pinned" not in failures,
         "variable_cost_usd": request_cost,
+        "variable_cost_budget_usd": MAX_VARIABLE_COST_USD,
     }
 
 

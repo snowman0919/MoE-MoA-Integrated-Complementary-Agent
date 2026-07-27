@@ -246,7 +246,7 @@ implementation, independent review, passing validation, and a terminal
 response. Elapsed wall time is reported but is not a pass criterion.
 
 `scripts/analyze-long-horizon.py` freezes the machine-readable gate. Evidence
-uses protocol `frontier-long-goal-v2` and contains one header, consecutive
+uses protocol `frontier-long-goal-v3` and contains one header, consecutive
 checkpoints `0` through `20`, and one final record. It requires stable SHA-256
 identities for the session, objective, acceptance criteria, plan, repository,
 branch, and provider configuration; every checkpoint additionally requires a
@@ -261,10 +261,13 @@ drift, missing checkpoint, private/raw field, failed validation, unapproved
 review, unresolved critical finding, or missing final terminal fails the gate.
 The final record must match the last clean implementation commit, differ from
 the baseline, and carry implementation, review, and validation evidence
-hashes. Any nonzero ordinary variable cost fails. The analyzer records no
-prompt, hidden reasoning, provider output, request ID, key, cookie,
-authorization value, or repository name. Protocol-v1 ten-hour epochs remain
-immutable diagnostic history and cannot be relabeled as v2 confirmation.
+hashes. Ordinary variable cost must remain at or below the preregistered
+per-run $10 ceiling. OpenRouter remains eligible only after the bounded Codex
+OAuth profile chain is unavailable and a mandatory specialist/Executor path
+requires fallback. The analyzer records no prompt, hidden reasoning, provider
+output, request ID, key, cookie, authorization value, or repository name.
+Earlier epochs remain immutable diagnostic history and cannot be relabeled as
+v3 confirmation.
 
 ## Change control
 

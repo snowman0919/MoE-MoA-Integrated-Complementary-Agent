@@ -85,6 +85,20 @@ def test_long_horizon_analyzer_accepts_complete_pinned_sustained_goal(tmp_path: 
     assert result["variable_cost_usd"] == 0
 
 
+def test_long_horizon_analyzer_accepts_bounded_variable_cost(tmp_path: Path) -> None:
+    evidence = tmp_path / "long.jsonl"
+    write_evidence(evidence)
+    rows = [json.loads(line) for line in evidence.read_text().splitlines()]
+    rows[1]["variable_cost_usd"] = 1.25
+    evidence.write_text("\n".join(map(json.dumps, rows)) + "\n")
+
+    result = MODULE.analyze(evidence)
+
+    assert result["passed"] is True
+    assert result["variable_cost_usd"] == 1.25
+    assert result["variable_cost_budget_usd"] == 10
+
+
 @pytest.mark.parametrize(
     ("mutation", "failure"),
     (
@@ -106,8 +120,8 @@ def test_long_horizon_analyzer_accepts_complete_pinned_sustained_goal(tmp_path: 
             "missing_terminal",
         ),
         (
-            lambda rows: rows[5].update(variable_cost_usd=0.01),
-            "variable_cost_not_zero",
+            lambda rows: rows[5].update(variable_cost_usd=10.01),
+            "variable_cost_budget_exceeded",
         ),
         (lambda rows: rows[5].update(tool_calls=0), "missing_checkpoint_tool_use"),
         (lambda rows: rows[6].update(terminal=False), "missing_checkpoint_terminal"),
