@@ -244,9 +244,12 @@ missing host-tool use, secret
 persistence, or inability to resume. Completion requires an actual
 implementation, independent review, passing validation, and a terminal
 response. Elapsed wall time is reported but is not a pass criterion.
+The configured wall-clock limit is only a fail-safe and observation ceiling;
+direct-local inference or an idle soak outside this client-to-Gateway path is
+not sustained-Goal evidence.
 
 `scripts/analyze-long-horizon.py` freezes the machine-readable gate. Evidence
-uses protocol `frontier-long-goal-v18` and contains one header, consecutive
+uses protocol `frontier-long-goal-v19` and contains one header, consecutive
 phases `intake_and_plan`, `core_implementation`, `integration_and_tests`,
 `independent_review_and_repair`, and `full_validation_and_final`, followed by
 one final record. It requires stable SHA-256

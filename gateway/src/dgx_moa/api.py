@@ -2616,26 +2616,22 @@ def create_app(
                                 "tool_calls" in observation.finish_reasons
                                 or observation.tool_call_ids
                             ):
-                                state.pending_tool_call_ids = list(
-                                    dict.fromkeys(
-                                        [
-                                            *state.pending_tool_call_ids,
-                                            *observation.tool_call_ids,
-                                        ]
-                                    )
-                                )[-configured.limits.max_steps :]
-                                if observation.tool_call_ids:
-                                    index = max(observation.tool_call_ids_by_index)
-                                    state.last_tool_call = {
-                                        "id": observation.tool_call_ids_by_index[index],
-                                        "type": "function",
-                                        "function": {
-                                            "name": observation.tool_call_names.get(index, ""),
-                                            "arguments": observation.tool_call_arguments.get(
-                                                index, ""
-                                            ),
-                                        },
-                                    }
+                                request.app.state.controller.remember_tool_calls(
+                                    state,
+                                    [
+                                        {
+                                            "id": observation.tool_call_ids_by_index[index],
+                                            "type": "function",
+                                            "function": {
+                                                "name": observation.tool_call_names.get(index, ""),
+                                                "arguments": observation.tool_call_arguments.get(
+                                                    index, ""
+                                                ),
+                                            },
+                                        }
+                                        for index in sorted(observation.tool_call_ids_by_index)
+                                    ],
+                                )
                                 request.app.state.lifecycle_store.refresh_continuation(
                                     usage_request_id,
                                     "executor",
@@ -2921,10 +2917,7 @@ def create_app(
                 if isinstance(call, dict) and call.get("id")
             ]
             if assistant_tool_call_ids:
-                state.pending_tool_call_ids = list(
-                    dict.fromkeys([*state.pending_tool_call_ids, *assistant_tool_call_ids])
-                )[-configured.limits.max_steps :]
-                state.last_tool_call = assistant_tool_calls[-1]
+                request.app.state.controller.remember_tool_calls(state, assistant_tool_calls)
             request.app.state.controller.record_evidence(
                 state,
                 "final_synthesis",

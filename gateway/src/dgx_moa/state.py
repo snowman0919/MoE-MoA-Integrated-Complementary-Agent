@@ -133,6 +133,7 @@ class SessionState(BaseModel):
     approved_scope: list[str] = Field(default_factory=list)
     last_tool_call: dict[str, Any] | None = None
     pending_tool_call_ids: list[str] = Field(default_factory=list)
+    pending_tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     last_decision_id: str | None = None
     failed_call_fingerprints: list[str] = Field(default_factory=list)
     failure_families: dict[str, int] = Field(default_factory=dict)

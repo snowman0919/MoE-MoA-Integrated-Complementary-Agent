@@ -6772,4 +6772,24 @@ Protocol v18 preserves the original or resolved Goal and appends the latest
 distinct user instruction to the effective objective. Tool continuations keep
 the same instruction hash. A regression verifies that a second turn appears in
 the Executor prompt while prior completion evidence remains out of scope. No
-v18 physical result exists yet.
+v18 physical pass exists.
+
+V33 physically exercised v18 through the real Codex client, authenticated
+loopback Gateway, Dynamic MoA, and six host tool results. The first Gateway turn
+completed with local Reasoner and Executor, local Reviewer, and Codex OAuth
+Frontier provenance. The Codex client then exited nonzero before checkpoint
+zero: three distinct missing-path probes were incorrectly attributed to the
+single `last_tool_call`, reached `DUPLICATE_FAILURE_LIMIT`, and caused six
+subsequent continuations to fail closed with `loop_new_evidence_required`.
+Its immutable mode-`0600` failure SHA-256 is
+`71c8c62069a243fbce1e32ea52f8decd4982e8400ac1f49333f35790572b4ea7`.
+
+Protocol v19 retains pending tool calls by call ID and consumes the matching
+call when a Responses tool result arrives. Distinct parallel commands now keep
+distinct failure fingerprints while truly identical retries remain blocked.
+The focused continuation and loop suite passed `8/8`; the complete suite passed
+`1118/1118` with the existing Starlette warning; Ruff and strict mypy passed.
+No v19 physical result exists yet. This gate measures a real
+Codex/OpenCode/Hermes-to-authenticated-Gateway-to-Dynamic-MoA Goal, including
+host tools, review, validation, and reconnect state. Its wall-clock limit is a
+fail-safe, not a substitute for that path or a pass criterion.

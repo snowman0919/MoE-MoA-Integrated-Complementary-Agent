@@ -1934,6 +1934,55 @@ async def test_loop_rejects_second_executor_iteration_without_new_evidence(
     assert state.engineering_loop.iteration == 2
 
 
+def test_parallel_tool_results_keep_their_original_call_fingerprints(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    calls = [
+        {
+            "id": f"call-{index}",
+            "type": "function",
+            "function": {
+                "name": "exec_command",
+                "arguments": json.dumps({"cmd": f"test -f missing-{index}"}),
+            },
+        }
+        for index in range(3)
+    ]
+    state = controller.session(
+        "parallel-results",
+        [
+            {"role": "user", "content": "inspect distinct paths"},
+            {"role": "assistant", "content": None, "tool_calls": calls},
+        ],
+    )
+    controller.select_route(state, {})
+    controller.store.save(state)
+
+    state = controller.session(
+        "parallel-results",
+        [
+            {
+                "role": "tool",
+                "tool_call_id": f"call-{index}",
+                "content": json.dumps({"exit_code": 1, "stdout": "missing"}),
+            }
+            for index in range(3)
+        ],
+    )
+
+    assert state.engineering_loop is not None
+    assert state.engineering_loop.termination_reason is None
+    assert len(state.engineering_loop.open_failures) == 3
+    assert len({failure.fingerprint for failure in state.engineering_loop.open_failures}) == 3
+    assert [
+        execution["normalized_arguments"] for execution in state.tool_executions
+    ] == [call["function"]["arguments"] for call in calls]
+    assert state.pending_tool_call_ids == []
+    assert state.pending_tool_calls == []
+
+
 @pytest.mark.asyncio
 async def test_reasoner_budget_is_admitted_before_provider_call(
     settings, stub_provider: StubProvider

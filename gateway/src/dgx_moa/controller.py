@@ -1405,8 +1405,30 @@ class Controller:
         self.store.save(state)
         return evaluation
 
+    def remember_tool_calls(
+        self, state: SessionState, calls: list[dict[str, Any]]
+    ) -> None:
+        pending = {
+            str(call["id"]): call
+            for call in state.pending_tool_calls
+            if isinstance(call, dict) and call.get("id")
+        }
+        pending.update(
+            (str(call["id"]), call)
+            for call in calls
+            if isinstance(call, dict) and call.get("id")
+        )
+        state.pending_tool_calls = list(pending.values())[-self.settings.limits.max_steps :]
+        state.pending_tool_call_ids = list(pending)[-self.settings.limits.max_steps :]
+        if calls:
+            state.last_tool_call = calls[-1]
+
     def _observe(self, state: SessionState, messages: list[dict[str, Any]]) -> None:
-        calls_by_id: dict[str, dict[str, Any]] = {}
+        calls_by_id = {
+            str(call["id"]): call
+            for call in state.pending_tool_calls
+            if isinstance(call, dict) and call.get("id")
+        }
         observed_tool_call_ids = {
             str(execution.get("tool_call_id"))
             for execution in state.tool_executions
@@ -1416,19 +1438,7 @@ class Controller:
             if message.get("role") == "assistant" and message.get("tool_calls"):
                 calls = message["tool_calls"]
                 calls_by_id.update((str(call.get("id", "")), call) for call in calls)
-                state.last_tool_call = calls[-1]
-                state.pending_tool_call_ids = list(
-                    dict.fromkeys(
-                        [
-                            *state.pending_tool_call_ids,
-                            *[
-                                str(call.get("id"))
-                                for call in calls
-                                if isinstance(call, dict) and call.get("id")
-                            ],
-                        ]
-                    )
-                )[-self.settings.limits.max_steps :]
+                self.remember_tool_calls(state, calls)
                 if state.decisions:
                     state.decisions[-1]["structured_decision"] = {
                         "type": "tool_calls",
@@ -1440,6 +1450,12 @@ class Controller:
             state.pending_tool_call_ids = [
                 call_id for call_id in state.pending_tool_call_ids if call_id != tool_call_id
             ]
+            call = calls_by_id.get(tool_call_id) or (state.last_tool_call or {})
+            state.pending_tool_calls = [
+                item
+                for item in state.pending_tool_calls
+                if str(item.get("id", "")) != tool_call_id
+            ]
             if tool_call_id and tool_call_id in observed_tool_call_ids:
                 continue
             result = normalize_tool_result(message)
@@ -1447,9 +1463,6 @@ class Controller:
                 result[key] = compress_text(result[key], self.settings.limits)
             result = cast(dict[str, Any], self.safe_payload(state, result))
             observation = json.dumps(result, sort_keys=True)
-            call = calls_by_id.get(str(message.get("tool_call_id", ""))) or (
-                state.last_tool_call or {}
-            )
             function = call.get("function") or {}
             tool_name = str(function.get("name", result["tool_name"]))
             shell_result = tool_name in {
