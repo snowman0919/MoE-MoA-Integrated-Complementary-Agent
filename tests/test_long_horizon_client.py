@@ -277,10 +277,16 @@ def test_provider_metrics_exclude_concurrent_other_sessions(tmp_path: Path) -> N
             "request_id TEXT, role TEXT, provider TEXT, model TEXT, status TEXT, latency_ms REAL, "
             "prompt_tokens INTEGER, total_tokens INTEGER, cost_usd REAL, invoked_at REAL)"
         )
-        connection.execute("CREATE TABLE request_usage (request_id TEXT, session_id TEXT)")
+        connection.execute(
+            "CREATE TABLE role_request_usage (request_id TEXT, session_id_hash TEXT, role TEXT)"
+        )
         connection.executemany(
-            "INSERT INTO request_usage VALUES (?, ?)",
-            (("target-request", "private-target"), ("other-request", "private-other")),
+            "INSERT INTO role_request_usage VALUES (?, ?, ?)",
+            (
+                ("target-request", MODULE.sha256_text("private-target"), "executor"),
+                ("target-request", MODULE.sha256_text("private-target"), "reviewer"),
+                ("other-request", MODULE.sha256_text("private-other"), "executor"),
+            ),
         )
         connection.executemany(
             "INSERT INTO model_invocation_usage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

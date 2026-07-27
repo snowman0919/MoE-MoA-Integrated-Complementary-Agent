@@ -6479,3 +6479,24 @@ and
 `1b9bed4f4630f97b71e965910c6cc16c3844d7f414cf3846b361ac5f7aa91b57`.
 Any run using the fixed instrumentation must use a new immutable variant and
 attempt ID. No long-horizon pass is claimed.
+
+The following immutable `20260727-long-runtime-v6` diagnostic proved that the
+Codex provider did send the fixed header: all Gateway events used the expected
+`long-` session class. It also exposed the next telemetry boundary before
+checkpoint zero. `request_usage.session_id` intentionally stores a
+process-private UUIDv5 rather than the raw event session, so the collector's
+raw-session equality join could never select those invocations. The attempt was
+stopped without altering its database; its mode-`0600` telemetry-failure record
+SHA-256 is
+`458f858a592cec10820c657bf7451de64e73a3d7e4dea74e5e72109b56981ca7`.
+
+The collector now uses the existing privacy-preserving
+`role_request_usage.session_id_hash` with a correlated `EXISTS` filter. This
+avoids raw session persistence and prevents multi-role request rows from
+duplicating model invocations. The focused suite passed `13/13`. A direct check
+against the preserved V6 database selected four role/provider/model provenance
+records with provider pinning true and zero provider errors, without emitting
+the session value. Ruff and strict mypy passed, and the complete suite passed
+`1104/1104` in 46.56 seconds with the existing Starlette warning. This
+collector change invalidates V6 and requires another fresh attempt; no
+long-horizon pass is claimed.

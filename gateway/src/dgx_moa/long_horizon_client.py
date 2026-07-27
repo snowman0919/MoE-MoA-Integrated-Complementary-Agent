@@ -528,21 +528,22 @@ def provider_metrics(
             str(row[1]) for row in connection.execute("PRAGMA table_info(model_invocation_usage)")
         }
         cost_column = "invocation.cost_usd" if "cost_usd" in columns else "NULL"
-        join = (
-            " JOIN request_usage AS request ON request.request_id = invocation.request_id"
+        session_filter = (
+            " AND EXISTS (SELECT 1 FROM role_request_usage AS role_request "
+            "WHERE role_request.request_id = invocation.request_id "
+            "AND role_request.session_id_hash = ?)"
             if session_id
             else ""
         )
-        session_filter = " AND request.session_id = ?" if session_id else ""
         parameters: tuple[object, ...] = (
-            (started, completed, session_id) if session_id else (started, completed)
+            (started, completed, sha256_text(session_id)) if session_id else (started, completed)
         )
         rows = connection.execute(
             "SELECT invocation.request_id, invocation.role, invocation.provider, "
             "invocation.model, invocation.status, invocation.latency_ms, "
             "invocation.prompt_tokens, invocation.total_tokens, "
             f"{cost_column} "
-            f"FROM model_invocation_usage AS invocation{join} "
+            "FROM model_invocation_usage AS invocation "
             "WHERE invocation.invoked_at >= ? AND invocation.invoked_at <= ?"
             f"{session_filter} ORDER BY invocation.invoked_at",
             parameters,
