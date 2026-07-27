@@ -3691,7 +3691,8 @@ class Controller:
 
     @staticmethod
     def tool_execution_changes_files(execution: dict[str, Any]) -> bool:
-        if execution.get("tool_name") in {
+        tool_name = execution.get("tool_name")
+        if tool_name in {
             "apply_patch",
             "patch",
             "delete",
@@ -3701,6 +3702,35 @@ class Controller:
             "write_file",
             "delete_file",
         }:
+            if tool_name in {"apply_patch", "patch"}:
+                arguments = execution.get("normalized_arguments")
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except ValueError:
+                        arguments = {"input": arguments}
+                patch = (
+                    arguments.get("input")
+                    or arguments.get("patch")
+                    or arguments.get("diff")
+                    if isinstance(arguments, dict)
+                    else None
+                )
+                targets = (
+                    re.findall(
+                        r"^\*\*\* (?:(?:Add|Update|Delete) File: |Move to: )(.+?)\r?$",
+                        patch,
+                        re.MULTILINE,
+                    )
+                    if isinstance(patch, str)
+                    else []
+                )
+                if targets and all(
+                    target in {"/state", "/inputs"}
+                    or target.startswith(("/state/", "/inputs/"))
+                    for target in targets
+                ):
+                    return False
             return True
         effect = execution.get("filesystem_effect")
         if isinstance(effect, dict) and any(

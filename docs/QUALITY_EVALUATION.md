@@ -246,7 +246,7 @@ implementation, independent review, passing validation, and a terminal
 response. Elapsed wall time is reported but is not a pass criterion.
 
 `scripts/analyze-long-horizon.py` freezes the machine-readable gate. Evidence
-uses protocol `frontier-long-goal-v5` and contains one header, consecutive
+uses protocol `frontier-long-goal-v6` and contains one header, consecutive
 checkpoints `0` through `20`, and one final record. It requires stable SHA-256
 identities for the session, objective, acceptance criteria, plan, repository,
 branch, and provider configuration; every checkpoint additionally requires a
@@ -267,7 +267,7 @@ OAuth profile chain is unavailable and a mandatory specialist/Executor path
 requires fallback. The analyzer records no prompt, hidden reasoning, provider
 output, request ID, key, cookie, authorization value, or repository name.
 Earlier epochs remain immutable diagnostic history and cannot be relabeled as
-v5 confirmation.
+v6 confirmation.
 
 ## Change control
 

@@ -6532,7 +6532,7 @@ mode-`0600` evidence SHA-256 is
 `daccd943afd2843e271699db5bdfc1a0f790fefac651ad1bf3ac3321951452f5`.
 It remains diagnostic because only checkpoint zero completed.
 
-Protocol `frontier-long-goal-v5` replaces the v1 elapsed-time gate for new
+Protocol `frontier-long-goal-v6` replaces the v1 elapsed-time gate for new
 epochs. It retains 21 dependency-ordered checkpoints, stable identity hashes,
 same-session resume, intentional reconnect, cache evidence, provider pinning,
 privacy rejection, independent review, final validation, and fail-closed cost
@@ -6542,6 +6542,19 @@ a unique clean commit. The preregistered total variable-cost ceiling is $10;
 OpenRouter remains eligible only after bounded Codex OAuth failover is
 unavailable and mandatory fallback is required. Existing evidence is not
 reclassified.
+
+V15 verified corrected OpenRouter provider provenance, then exposed a shared
+progress-classification defect. A successful private checkpoint patch under
+`/state` was counted as an implementation change, which reset the Executor
+stall detector even though the repository remained unchanged. Protocol v6
+extracts only native patch headers and excludes a patch from implementation
+progress only when every target is an absolute `/state` or `/inputs` path.
+Unknown and workspace patches retain the conservative changed-file behavior.
+The immutable mode-`0600` V15 diagnostic SHA-256 is
+`bb3a5d9e85860591b9f379a132b1ca8bf60069a3eee008f8a64b8c3a1553424f`.
+Focused controller checks passed `2/2`, the connected controller/API/long
+horizon subset passed `347/347`, Ruff and strict mypy passed, and the complete
+suite passed `1109/1109` with the existing Starlette warning.
 
 V13 then exposed a provider-pinning ordering defect before checkpoint zero.
 The Gateway detected repeated successful inspection only after

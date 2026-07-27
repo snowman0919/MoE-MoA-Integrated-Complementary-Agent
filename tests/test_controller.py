@@ -3308,6 +3308,34 @@ def test_patch_tool_counts_as_a_file_change(settings, stub_provider: StubProvide
             "exit_code": 0,
         }
     )
+    assert not controller.tool_execution_changes_files(
+        {
+            "tool_name": "apply_patch",
+            "normalized_arguments": {
+                "input": (
+                    "*** Begin Patch\n"
+                    "*** Add File: /state/long-progress.json\n"
+                    "+{}\n"
+                    "*** End Patch"
+                )
+            },
+            "exit_code": 0,
+        }
+    )
+    assert controller.tool_execution_changes_files(
+        {
+            "tool_name": "apply_patch",
+            "normalized_arguments": {
+                "input": (
+                    "*** Begin Patch\n"
+                    "*** Update File: /state/long-progress.json\n"
+                    "*** Move to: progress.json\n"
+                    "*** End Patch"
+                )
+            },
+            "exit_code": 0,
+        }
+    )
 
 
 def test_review_evidence_survives_non_file_tools_but_not_a_new_change(
