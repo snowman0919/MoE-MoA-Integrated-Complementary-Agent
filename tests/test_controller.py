@@ -2399,6 +2399,49 @@ async def test_tool_continuation_promotes_reviewer_for_implementation_evidence(
 
 
 @pytest.mark.asyncio
+async def test_tool_continuation_defers_reviewer_until_validation(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="implementation-review-deferred",
+        objective="Implement and test the limiter",
+        runtime_mode="orchestrated",
+        roles_required=["reasoner", "executor"],
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "git diff --stat"},
+                "exit_code": 0,
+            }
+        ],
+    )
+    ensured: list[tuple[str, ...]] = []
+
+    async def ensure_roles(roles: tuple[str, ...]) -> None:
+        ensured.append(roles)
+
+    await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-orchestrated",
+            "messages": [{"role": "user", "content": state.objective}],
+            "metadata": {},
+        },
+        ("reasoner", "executor"),
+        ensure_roles,
+        tool_continuation=True,
+    )
+
+    assert ensured == []
+    assert "reviewer" not in stub_provider.calls
+    assert not any(
+        event["event_type"] == "reviewer_required"
+        for event in controller.store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("progress_retry", "correction_required", "reuse_trigger"),
     [
@@ -3301,6 +3344,27 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
             {},
         )
         is False
+    )
+
+    git_diff = SessionState(
+        session_id="git-diff",
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "git diff --stat"},
+                "exit_code": 0,
+            }
+        ],
+    )
+    assert controller.has_review_evidence(git_diff, {}) is True
+    assert controller.has_validation_evidence(git_diff, {}) is False
+    assert controller.has_validation_evidence(
+        SessionState(session_id="passed-validation"),
+        {"validation_results": [{"name": "unit", "passed": True}, "lint: passed"]},
+    )
+    assert not controller.has_validation_evidence(
+        SessionState(session_id="failed-validation"),
+        {"validation_results": [{"name": "unit", "passed": False}]},
     )
 
 

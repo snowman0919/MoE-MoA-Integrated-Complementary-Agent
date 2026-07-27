@@ -3608,7 +3608,7 @@ def create_app(
                         and (
                             (
                                 state.resolved_objective
-                                and not request.app.state.controller.has_review_evidence(
+                                and not request.app.state.controller.has_validation_evidence(
                                     state, current_body.metadata
                                 )
                             )

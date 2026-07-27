@@ -6945,3 +6945,30 @@ three-call limits. Its implementation checkpoint now requires preliminary
 Reviewer approval while retaining integration and final independent review in
 later phases, matching the runtime terminal contract. No v26 physical result
 exists.
+
+V42 physically passed the v26 planning checkpoint through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, and host tools in 560.450
+seconds. It was terminal and clean with ten host-tool calls, provider pinning,
+zero provider errors, zero unjustified repeated reads, and zero variable cost.
+The implementation checkpoint created the required source and test files, and
+the exact test command passed `8/8`, but checkpoint 1 timed out after 1,800
+seconds with three uncommitted paths and no approved terminal result.
+
+This was a review-scheduling failure, not long-duration evidence. The real
+path made five local Reviewer calls totaling 839.067 seconds and eight
+Frontier code reviews while issuing 22 implementation-tool requirements. A
+successful Git diff was treated as sufficient review and completion evidence,
+so incomplete changes repeatedly entered Reviewer and Frontier correction
+before a successful validation existed. Total observed model input and output
+exceeded one million tokens. Immutable mode-`0600` evidence and failure
+sidecar SHA-256 values are
+`4d9d31ff64136f8543c30be3495c5d05d797b6a4583c2098df84d58ded089d9b`
+and
+`9f91283772d533714885bd1e13f531d82158f7e596ed4294525408ddc9871fe0`.
+
+Protocol v27 separates reviewable diff evidence from successful validation
+evidence. Tool continuations now promote Reviewer and satisfy implementation
+validation only after completion evidence, validation results, or a successful
+validation command newer than the latest file change. Initial explicit and
+high-risk review requests retain the existing pre-review and fail-closed
+contract. No v27 physical result exists.

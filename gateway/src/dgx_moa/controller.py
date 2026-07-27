@@ -2948,7 +2948,9 @@ class Controller:
                     else:
                         frontier_pending = (mode, evidence)
         metadata = dict(request.get("metadata", {}))
-        review_evidence_available = self.has_review_evidence(state, metadata)
+        review_evidence_available = self.has_validation_evidence(state, metadata) or (
+            not tool_continuation and self.has_review_evidence(state, metadata)
+        )
         if (
             not state.frontier_correction_required
             and (not progress_retry or state.review_deferred)
@@ -3618,6 +3620,29 @@ class Controller:
                 break
         return False
 
+    def has_validation_evidence(self, state: SessionState, metadata: dict[str, Any]) -> bool:
+        completion_evidence = metadata.get("completion_evidence")
+        if isinstance(completion_evidence, dict) and completion_evidence:
+            return True
+        validation_results = metadata.get("validation_results")
+        if isinstance(validation_results, list) and validation_results:
+            passed = [
+                item.get("passed") is True
+                or str(item.get("status", "")).lower() in {"ok", "pass", "passed", "success"}
+                if isinstance(item, dict)
+                else bool(re.search(r"\b(?:ok|pass(?:ed)?|success(?:ful)?)\b", str(item), re.I))
+                and not bool(re.search(r"\b(?:fail(?:ed|ure)?|error)\b", str(item), re.I))
+                for item in validation_results
+            ]
+            if all(passed):
+                return True
+        for execution in reversed(current_turn_executions(state)):
+            if self.successful_validation_execution(execution):
+                return True
+            if self.tool_execution_changes_files(execution):
+                break
+        return False
+
     @staticmethod
     def successful_validation_execution(execution: dict[str, Any]) -> bool:
         arguments = execution.get("normalized_arguments")
@@ -3661,7 +3686,7 @@ class Controller:
             execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
             for execution in current_turn_executions(state)
         )
-        validated = self.has_review_evidence(state, metadata)
+        validated = self.has_validation_evidence(state, metadata)
         review_ready = (
             not state.frontier_correction_required
             and not state.frontier_correction_pending_verification
