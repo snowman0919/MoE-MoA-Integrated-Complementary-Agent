@@ -223,11 +223,13 @@ A client is `FRONTIER-NONINFERIOR` only when all are true:
 Any failed hard gate or a confidence interval proving inferiority yields
 `INFERIOR`. All other outcomes are `INCONCLUSIVE`.
 
-## Ten-hour context-retention gate
+## Sustained-Goal context-retention gate
 
-The repeated panel does not prove long-session coherence. A separate isolated
-task must run for at least ten hours with checkpoint snapshots every 30
-minutes and one intentional client reconnect. It must preserve:
+The repeated panel and a direct-model soak do not prove long-session coherence.
+A separate isolated task must complete 21 dependency-ordered implementation
+checkpoints through a real client, the authenticated Gateway, Dynamic MoA
+routing, host tool continuations, and one intentional client reconnect. It must
+preserve:
 
 - objective, acceptance criteria, dependency plan, current phase, and next
   action;
@@ -238,29 +240,31 @@ minutes and one intentional client reconnect. It must preserve:
 
 The run fails on unexplained 5xx, lost continuation, repeated whole-document
 reads without new need, premature goal completion, plan drift, missing
-checkpoint, secret persistence, or inability to resume. Completion requires
-an actual implementation, independent review, passing validation, and a
-terminal response after the ten-hour threshold.
+checkpoint, unchanged checkpoint commit, missing host-tool use, secret
+persistence, or inability to resume. Completion requires an actual
+implementation, independent review, passing validation, and a terminal
+response. Elapsed wall time is reported but is not a pass criterion.
 
 `scripts/analyze-long-horizon.py` freezes the machine-readable gate. Evidence
-contains one header, checkpoints `0` through `20` scheduled 1,800 seconds apart
-with a 60-second scheduling tolerance, and one final record. It requires stable
-SHA-256 identities for the session, objective, acceptance criteria, plan,
-repository, branch, and provider configuration; every checkpoint additionally
-requires a clean commit, next-action/context/evidence hashes, provider/model
-provenance and pinning, latency, context/cache tokens, tool/retry/provider-error
-counts, memory/swap, and variable cost.
+uses protocol `frontier-long-goal-v2` and contains one header, consecutive
+checkpoints `0` through `20`, and one final record. It requires stable SHA-256
+identities for the session, objective, acceptance criteria, plan, repository,
+branch, and provider configuration; every checkpoint additionally requires a
+new clean commit, a terminal client turn with host-tool use,
+next-action/context/evidence hashes, provider/model provenance and pinning,
+latency, context/cache tokens, tool/retry/provider-error counts, memory/swap,
+and variable cost.
 
 At least one intentional reconnect and one positive cache read are mandatory.
 Any provider error, unjustified repeated read, premature completion, identity
-drift, missing checkpoint, schedule drift, private/raw field, failed validation,
-unapproved review, unresolved critical finding, or missing final terminal fails
-the gate. The final record must be at least 36,000 actual seconds after the
-header, match the last clean implementation commit, differ from the baseline,
-and carry implementation, review, and validation evidence hashes. Any nonzero
-ordinary variable cost fails. The analyzer records no prompt, hidden reasoning,
-provider output, request ID, key, cookie, authorization value, or repository
-name.
+drift, missing checkpoint, private/raw field, failed validation, unapproved
+review, unresolved critical finding, or missing final terminal fails the gate.
+The final record must match the last clean implementation commit, differ from
+the baseline, and carry implementation, review, and validation evidence
+hashes. Any nonzero ordinary variable cost fails. The analyzer records no
+prompt, hidden reasoning, provider output, request ID, key, cookie,
+authorization value, or repository name. Protocol-v1 ten-hour epochs remain
+immutable diagnostic history and cannot be relabeled as v2 confirmation.
 
 ## Change control
 

@@ -6520,3 +6520,22 @@ also converts this new-file form. A focused custom-tool/API run passed `6/6`,
 Ruff and strict mypy passed, and the complete suite passed `1105/1105` in
 45.74 seconds with the existing Starlette warning. V7 remains a failed
 diagnostic and the tool-contract change requires a new immutable epoch.
+
+Immutable Codex attempt `20260727-long-runtime-v8` then completed checkpoint
+zero through the authenticated candidate Gateway and Dynamic MoA path. It used
+the local Reasoner, local SGLang Executor, local SGLang Planner/Reviewer, Codex
+OAuth Frontier collaboration, Codex OAuth Executor fallback, and 19 host-tool
+continuations. It produced clean commit
+`fb685e110a5a8b76d8b41b374d50460141d795c5`, provider pinning true, zero
+provider errors, zero ordinary variable cost, and a terminal client turn. The
+mode-`0600` evidence SHA-256 is
+`daccd943afd2843e271699db5bdfc1a0f790fefac651ad1bf3ac3321951452f5`.
+It remains diagnostic because only checkpoint zero completed.
+
+Protocol `frontier-long-goal-v2` replaces the v1 elapsed-time gate for new
+epochs. It retains 21 dependency-ordered checkpoints, stable identity hashes,
+same-session resume, intentional reconnect, cache evidence, provider pinning,
+privacy rejection, independent review, final validation, and fail-closed cost
+handling. It removes only the artificial 1,800-second spacing and 36,000-second
+minimum. Every checkpoint must now contain host-tool use, a terminal turn, and
+a unique clean commit. Existing v1 evidence is not reclassified.

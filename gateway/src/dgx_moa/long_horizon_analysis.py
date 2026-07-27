@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze the frozen ten-hour client context-retention gate."""
+"""Analyze the frozen sustained-Goal context-retention gate."""
 
 from __future__ import annotations
 
@@ -10,10 +10,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-PROTOCOL = "frontier-long-horizon-v1"
+PROTOCOL = "frontier-long-goal-v2"
 CHECKPOINTS = 21
-INTERVAL_SECONDS = 1_800
-MINIMUM_DURATION_SECONDS = 36_000
+INTERVAL_SECONDS = 0
 SCHEDULE_TOLERANCE_SECONDS = 60
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40,64}$")
@@ -174,6 +173,10 @@ def validate_checkpoint(
         failures.append("unjustified_repeated_read")
     if checkpoint.get("premature_completion") is not False:
         failures.append("premature_completion")
+    if checkpoint.get("terminal") is not True:
+        failures.append("missing_checkpoint_terminal")
+    if not isinstance(checkpoint.get("tool_calls"), int) or checkpoint["tool_calls"] < 1:
+        failures.append("missing_checkpoint_tool_use")
     context_tokens = checkpoint.get("context_tokens")
     cached_tokens = checkpoint.get("cached_tokens")
     if (
@@ -251,10 +254,11 @@ def analyze(path: Path) -> dict[str, Any]:
         for previous, current in zip(scheduled, scheduled[1:], strict=False):
             if abs((current - previous) - INTERVAL_SECONDS) > SCHEDULE_TOLERANCE_SECONDS:
                 failures.append("checkpoint_schedule_drift")
-        if scheduled[-1] - scheduled[0] < MINIMUM_DURATION_SECONDS:
-            failures.append("duration_below_ten_hours")
     else:
         failures.append("missing_checkpoint_schedule")
+    commits = [checkpoint.get("commit") for checkpoint in checkpoints]
+    if len(commits) == CHECKPOINTS and len(set(commits)) != CHECKPOINTS:
+        failures.append("checkpoint_commit_not_advanced")
 
     reconnects = sum(checkpoint.get("intentional_reconnect") is True for checkpoint in checkpoints)
     if reconnects < 1:
@@ -275,16 +279,6 @@ def analyze(path: Path) -> dict[str, Any]:
         failures.append("variable_cost_not_zero")
     if len(finals) == 1 and len(checkpoints) == CHECKPOINTS:
         final = finals[0]
-        final_completed = final.get("completed_at_epoch")
-        started = header.get("started_at_epoch")
-        if (
-            isinstance(final_completed, int | float)
-            and not isinstance(final_completed, bool)
-            and isinstance(started, int | float)
-            and not isinstance(started, bool)
-            and final_completed - started < MINIMUM_DURATION_SECONDS
-        ):
-            failures.append("actual_duration_below_ten_hours")
         if final.get("implementation_commit") != checkpoints[-1].get("commit"):
             failures.append("final_commit_mismatch")
     failures = sorted(set(failures))

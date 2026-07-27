@@ -21,9 +21,9 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-horizon-v1"
+PROTOCOL = "frontier-long-goal-v2"
 CHECKPOINTS = 21
-INTERVAL_SECONDS = 1_800
+INTERVAL_SECONDS = 0
 SAFE_HOSTS = {"127.0.0.1", "::1", "localhost"}
 FORBIDDEN_KEYS = {
     "api_key",

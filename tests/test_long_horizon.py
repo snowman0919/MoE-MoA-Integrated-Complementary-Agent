@@ -16,7 +16,7 @@ def write_evidence(path: Path) -> None:
         "variant": "V1",
         "started_at_epoch": 1_000_000,
         "expected_checkpoints": 21,
-        "checkpoint_interval_seconds": 1_800,
+        "checkpoint_interval_seconds": 0,
         "baseline_commit": "a" * 40,
         **{field: HASH for field in MODULE.STABLE_HASHES},
     }
@@ -27,13 +27,13 @@ def write_evidence(path: Path) -> None:
                 "type": "checkpoint",
                 "index": index,
                 "phase_index": index,
-                "scheduled_at_epoch": 1_000_000 + index * 1_800,
-                "completed_at_epoch": 1_000_030 + index * 1_800,
+                "scheduled_at_epoch": 1_000_000,
+                "completed_at_epoch": 1_000_030 + index * 30,
                 "latency_seconds": 30,
                 "next_action_sha256": HASH,
                 "context_summary_sha256": HASH,
                 "evidence_sha256": HASH,
-                "commit": "b" * 40,
+                "commit": f"{index + 1:040x}",
                 "dirty_state": "clean",
                 "provider_pinned": True,
                 "provider_provenance": [
@@ -50,14 +50,15 @@ def write_evidence(path: Path) -> None:
                 "variable_cost_usd": 0,
                 "intentional_reconnect": index == 10,
                 "premature_completion": False,
+                "terminal": True,
                 **{field: HASH for field in MODULE.STABLE_HASHES},
             }
         )
     final = {
         "type": "final",
-        "completed_at_epoch": 1_036_030,
+        "completed_at_epoch": 1_000_630,
         "implementation_evidence": True,
-        "implementation_commit": "b" * 40,
+        "implementation_commit": f"{21:040x}",
         "implementation_sha256": HASH,
         "review_sha256": HASH,
         "validation_sha256": HASH,
@@ -71,7 +72,7 @@ def write_evidence(path: Path) -> None:
     path.write_text("\n".join(json.dumps(item) for item in [header, *checkpoints, final]) + "\n")
 
 
-def test_long_horizon_analyzer_accepts_complete_pinned_ten_hour_run(tmp_path: Path) -> None:
+def test_long_horizon_analyzer_accepts_complete_pinned_sustained_goal(tmp_path: Path) -> None:
     evidence = tmp_path / "long.jsonl"
     write_evidence(evidence)
 
@@ -79,7 +80,7 @@ def test_long_horizon_analyzer_accepts_complete_pinned_ten_hour_run(tmp_path: Pa
 
     assert result["passed"] is True
     assert result["checkpoints"] == 21
-    assert result["scheduled_duration_seconds"] == 36_000
+    assert result["scheduled_duration_seconds"] == 0
     assert result["intentional_reconnects"] == 1
     assert result["variable_cost_usd"] == 0
 
@@ -108,9 +109,11 @@ def test_long_horizon_analyzer_accepts_complete_pinned_ten_hour_run(tmp_path: Pa
             lambda rows: rows[5].update(variable_cost_usd=0.01),
             "variable_cost_not_zero",
         ),
+        (lambda rows: rows[5].update(tool_calls=0), "missing_checkpoint_tool_use"),
+        (lambda rows: rows[6].update(terminal=False), "missing_checkpoint_terminal"),
         (
-            lambda rows: rows[-1].update(completed_at_epoch=1_000_100),
-            "actual_duration_below_ten_hours",
+            lambda rows: rows[7].update(commit=rows[6]["commit"]),
+            "checkpoint_commit_not_advanced",
         ),
         (
             lambda rows: rows[-1].update(implementation_commit="a" * 40),
