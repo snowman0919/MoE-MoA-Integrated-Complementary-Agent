@@ -342,9 +342,14 @@ runner가 바뀌면 해당 epoch는 진단으로 봉인하고 새 protocol/run I
 
 - 목적은 모델 endpoint를 10시간 점유하는 것이 아니라 최적화된 MoA API를
   통해 실제 장기 Goal의 계획·구현·검토·복구를 끝까지 유지하는 능력이다.
-- 10시간은 보조 관측 창이며 단독 완료 조건이나 품질 대용 지표가 아니다.
-- 실제 장기 Goal은 주기적 checkpoint와 최소 1회 intentional reconnect를
-  포함하고, 중단 후 같은 작업을 정확히 재개해야 한다.
+- 경과 시간은 관측값일 뿐 단독 완료 조건이나 품질 대용 지표가 아니다.
+- 실제 장기 Goal은 Codex/OpenCode/Hermes→인증 Gateway→Dynamic MoA→host tool
+  경로로 의존 순서가 있는 다섯 단계를 수행하고, 최소 1회 intentional
+  reconnect 뒤 같은 작업을 정확히 재개해야 한다.
+- 직접 local endpoint 호출, 모델 공회전, backend soak는 이 gate의 증거가
+  아니다.
+- 전체 실행에서 Reasoner, Executor, Planner, Reviewer provenance가 모두
+  관측되어야 하며 외부 fallback은 실제 routing policy가 요구할 때만 쓴다.
 - intentional reconnect 1회 이상
 - positive cache read 1회 이상
 - objective, acceptance criteria, plan, phase, next action, repository/branch/

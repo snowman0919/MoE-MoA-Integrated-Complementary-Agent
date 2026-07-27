@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one client through the frozen ten-hour context-retention protocol."""
+"""Run one real client through the sustained-Goal context-retention protocol."""
 
 from __future__ import annotations
 
@@ -21,8 +21,15 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-goal-v10"
-CHECKPOINTS = 21
+PROTOCOL = "frontier-long-goal-v11"
+PHASES = (
+    "intake_and_plan",
+    "core_implementation",
+    "integration_and_tests",
+    "independent_review_and_repair",
+    "full_validation_and_final",
+)
+CHECKPOINTS = len(PHASES)
 INTERVAL_SECONDS = 0
 SAFE_HOSTS = {"127.0.0.1", "::1", "localhost"}
 FORBIDDEN_KEYS = {
@@ -170,6 +177,7 @@ def stable_hashes(
 
 def client_prompt(index: int) -> str:
     final = index == CHECKPOINTS - 1
+    phase = PHASES[index]
     phase_rule = (
         "이번은 최종 단계이므로 전체 검증과 독립 Reviewer 검토를 완료하고 "
         "/state/long-review.json도 작성하라. "
@@ -177,21 +185,23 @@ def client_prompt(index: int) -> str:
         else "아직 완료를 선언하지 말고 다음 단계가 남아 있어야 한다. "
     )
     return (
-        f"장기 작업 체크포인트 {index}/{CHECKPOINTS - 1}를 수행하라. "
+        f"장기 작업 단계 {index}/{CHECKPOINTS - 1}({phase})를 수행하라. "
         "첫 체크포인트에서만 /inputs/OBJECTIVE.md, /inputs/ACCEPTANCE.md, "
         "/inputs/PLAN.md와 저장소 운영 문서를 읽고 이후에는 같은 세션 맥락과 "
         "/state/long-progress.json을 우선 사용하라. "
-        "실제 도구로 구현·검증하고 변경은 작은 논리 단위로 커밋하며 체크포인트 종료 시 "
-        "worktree를 clean으로 만들어라. 같은 파일을 근거 없이 반복해서 읽지 마라. "
+        "실제 도구로 구현·검증하고 구현 변경은 작은 논리 단위로 커밋하며 단계 종료 시 "
+        "worktree를 clean으로 만들어라. 계획·검토 전용 단계는 새 커밋을 강제하지 않는다. "
+        "같은 파일을 근거 없이 반복해서 읽지 마라. "
         f"{phase_rule}"
         "/state/long-progress.json을 JSON 객체로 갱신하라: "
-        f'{{"phase_index":{index},"next_action":"...","context_summary":"...",'
+        f'{{"phase_index":{index},"phase":"{phase}","next_action":"...",'
+        '"context_summary":"...",'
         '"evidence":"...","premature_completion":false,'
         '"unjustified_repeated_reads":0}. '
         "최종 검토 파일은 "
         '{"status":"approved|changes_requested","unresolved_critical_findings":0,'
         '"evidence":"..."} 형식이어야 한다. 최종 응답 직전 반드시 실제 도구로 '
-        "(1) 테스트 통과, (2) 새 Git commit과 clean worktree, "
+        "(1) 해당 단계 검증 통과, (2) 구현 변경이 있다면 Git commit과 clean worktree, "
         "(3) exec_command를 통한 /state/long-progress.json 원자적 작성과 JSON 검증을 "
         "이 순서로 완료하라. 하나라도 미완료면 응답을 끝내지 마라. "
         "사용자에게 보이는 설명은 한국어로 간결하게 하라."
@@ -610,8 +620,10 @@ def progress_state(state: Path, index: int) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RuntimeError("invalid_progress_state")
     required = {"next_action", "context_summary", "evidence"}
-    if value.get("phase_index") != index or not all(
-        isinstance(value.get(field), str) and value[field] for field in required
+    if (
+        value.get("phase_index") != index
+        or value.get("phase") != PHASES[index]
+        or not all(isinstance(value.get(field), str) and value[field] for field in required)
     ):
         raise RuntimeError("invalid_progress_state")
     if value.get("premature_completion") is not False:
@@ -788,8 +800,6 @@ def run_checkpoint(
     git_state = git_snapshot(args.workspace)
     if git_state["dirty_state"] != "clean":
         raise RuntimeError("dirty_checkpoint")
-    if git_state["commit"] == control.get("last_commit", control["baseline"]["commit"]):
-        raise RuntimeError("checkpoint_commit_unchanged")
     control["last_commit"] = git_state["commit"]
     provider = provider_metrics(
         args.state_db,
@@ -803,6 +813,7 @@ def run_checkpoint(
         "type": "checkpoint",
         "index": index,
         "phase_index": progress["phase_index"],
+        "phase": progress["phase"],
         "scheduled_at_epoch": scheduled,
         "completed_at_epoch": completed,
         "latency_seconds": round(completed - started, 3),
@@ -825,7 +836,7 @@ def run_checkpoint(
         "peak_memory_bytes": max(peak_before, peak_after),
         "swap_delta_bytes": max(0, swap_after - swap_before),
         "variable_cost_usd": provider["variable_cost_usd"],
-        "intentional_reconnect": index == 10,
+        "intentional_reconnect": index == CHECKPOINTS // 2,
         "premature_completion": progress["premature_completion"],
         "terminal": metrics["terminal"],
         **control.get("stable_hashes", {}),
@@ -924,6 +935,8 @@ def main() -> int:
                     "started_at_epoch": control["started_at_epoch"],
                     "expected_checkpoints": CHECKPOINTS,
                     "checkpoint_interval_seconds": INTERVAL_SECONDS,
+                    "client_path": args.harness,
+                    "gateway_path": "authenticated_loopback",
                     "baseline_commit": control["baseline"]["commit"],
                     **control["stable_hashes"],
                 }
@@ -955,7 +968,6 @@ def main() -> int:
                     "client_nonzero_exit",
                     "client_session_missing",
                     "client_terminal_missing",
-                    "checkpoint_commit_unchanged",
                     "dirty_checkpoint",
                     "client_container_already_exists",
                     "client_session_changed",

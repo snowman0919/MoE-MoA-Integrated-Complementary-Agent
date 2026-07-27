@@ -15,18 +15,21 @@ def write_evidence(path: Path) -> None:
         "protocol": MODULE.PROTOCOL,
         "variant": "V1",
         "started_at_epoch": 1_000_000,
-        "expected_checkpoints": 21,
+        "expected_checkpoints": MODULE.CHECKPOINTS,
         "checkpoint_interval_seconds": 0,
+        "client_path": "codex",
+        "gateway_path": "authenticated_loopback",
         "baseline_commit": "a" * 40,
         **{field: HASH for field in MODULE.STABLE_HASHES},
     }
     checkpoints = []
-    for index in range(21):
+    for index in range(MODULE.CHECKPOINTS):
         checkpoints.append(
             {
                 "type": "checkpoint",
                 "index": index,
                 "phase_index": index,
+                "phase": MODULE.PHASES[index],
                 "scheduled_at_epoch": 1_000_000,
                 "completed_at_epoch": 1_000_030 + index * 30,
                 "latency_seconds": 30,
@@ -37,7 +40,8 @@ def write_evidence(path: Path) -> None:
                 "dirty_state": "clean",
                 "provider_pinned": True,
                 "provider_provenance": [
-                    {"role": "executor", "provider": "local", "model": "candidate"}
+                    {"role": role, "provider": "local", "model": "candidate"}
+                    for role in ("reasoner", "executor", "planner", "reviewer")
                 ],
                 "context_tokens": 10_000,
                 "cached_tokens": 1_000 if index else 0,
@@ -48,7 +52,7 @@ def write_evidence(path: Path) -> None:
                 "peak_memory_bytes": 64_000_000_000,
                 "swap_delta_bytes": 0,
                 "variable_cost_usd": 0,
-                "intentional_reconnect": index == 10,
+                "intentional_reconnect": index == MODULE.CHECKPOINTS // 2,
                 "premature_completion": False,
                 "terminal": True,
                 **{field: HASH for field in MODULE.STABLE_HASHES},
@@ -58,7 +62,7 @@ def write_evidence(path: Path) -> None:
         "type": "final",
         "completed_at_epoch": 1_000_630,
         "implementation_evidence": True,
-        "implementation_commit": f"{21:040x}",
+        "implementation_commit": f"{MODULE.CHECKPOINTS:040x}",
         "implementation_sha256": HASH,
         "review_sha256": HASH,
         "validation_sha256": HASH,
@@ -79,7 +83,7 @@ def test_long_horizon_analyzer_accepts_complete_pinned_sustained_goal(tmp_path: 
     result = MODULE.analyze(evidence)
 
     assert result["passed"] is True
-    assert result["checkpoints"] == 21
+    assert result["checkpoints"] == MODULE.CHECKPOINTS
     assert result["scheduled_duration_seconds"] == 0
     assert result["intentional_reconnects"] == 1
     assert result["variable_cost_usd"] == 0
@@ -104,15 +108,15 @@ def test_long_horizon_analyzer_accepts_bounded_variable_cost(tmp_path: Path) -> 
     (
         (lambda rows: rows.pop(5), "incomplete_checkpoints"),
         (
-            lambda rows: rows[11].update(session_sha256="c" * 64),
+            lambda rows: rows[2].update(session_sha256="c" * 64),
             "session_sha256_drift",
         ),
         (
-            lambda rows: rows[8].update(provider_pinned=False),
+            lambda rows: rows[3].update(provider_pinned=False),
             "provider_not_pinned",
         ),
         (
-            lambda rows: rows[10].update(unjustified_repeated_reads=1),
+            lambda rows: rows[4].update(unjustified_repeated_reads=1),
             "unjustified_repeated_read",
         ),
         (
@@ -124,10 +128,20 @@ def test_long_horizon_analyzer_accepts_bounded_variable_cost(tmp_path: Path) -> 
             "variable_cost_budget_exceeded",
         ),
         (lambda rows: rows[5].update(tool_calls=0), "missing_checkpoint_tool_use"),
-        (lambda rows: rows[6].update(terminal=False), "missing_checkpoint_terminal"),
+        (lambda rows: rows[4].update(terminal=False), "missing_checkpoint_terminal"),
+        (lambda rows: rows[3].update(phase="wrong"), "phase_contract_drift"),
         (
-            lambda rows: rows[7].update(commit=rows[6]["commit"]),
-            "checkpoint_commit_not_advanced",
+            lambda rows: [
+                row.update(
+                    provider_provenance=[
+                        item
+                        for item in row["provider_provenance"]
+                        if item["role"] != "reviewer"
+                    ]
+                )
+                for row in rows[1:-1]
+            ],
+            "missing_reviewer_role",
         ),
         (
             lambda rows: rows[-1].update(implementation_commit="a" * 40),

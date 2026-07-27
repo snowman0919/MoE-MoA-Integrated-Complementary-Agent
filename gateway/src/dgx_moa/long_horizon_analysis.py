@@ -10,8 +10,15 @@ import re
 from pathlib import Path
 from typing import Any
 
-PROTOCOL = "frontier-long-goal-v10"
-CHECKPOINTS = 21
+PROTOCOL = "frontier-long-goal-v11"
+PHASES = (
+    "intake_and_plan",
+    "core_implementation",
+    "integration_and_tests",
+    "independent_review_and_repair",
+    "full_validation_and_final",
+)
+CHECKPOINTS = len(PHASES)
 INTERVAL_SECONDS = 0
 MAX_VARIABLE_COST_USD = 10.0
 SCHEDULE_TOLERANCE_SECONDS = 60
@@ -100,6 +107,10 @@ def validate_header(header: dict[str, Any], failures: list[str]) -> None:
         failures.append("checkpoint_count_not_preregistered")
     if header.get("checkpoint_interval_seconds") != INTERVAL_SECONDS:
         failures.append("checkpoint_interval_not_preregistered")
+    if header.get("client_path") not in {"codex", "opencode", "hermes"}:
+        failures.append("invalid_client_path")
+    if header.get("gateway_path") != "authenticated_loopback":
+        failures.append("invalid_gateway_path")
     variant = header.get("variant")
     if not isinstance(variant, str) or not re.fullmatch(r"V[0-9]+", variant):
         failures.append("variant_not_opaque")
@@ -121,6 +132,8 @@ def validate_checkpoint(
         failures.append("checkpoint_index_gap")
     if checkpoint.get("phase_index") != expected_index:
         failures.append("phase_drift")
+    if checkpoint.get("phase") != PHASES[expected_index]:
+        failures.append("phase_contract_drift")
     for field in STABLE_HASHES:
         if checkpoint.get(field) != header.get(field):
             failures.append(f"{field}_drift")
@@ -257,10 +270,6 @@ def analyze(path: Path) -> dict[str, Any]:
                 failures.append("checkpoint_schedule_drift")
     else:
         failures.append("missing_checkpoint_schedule")
-    commits = [checkpoint.get("commit") for checkpoint in checkpoints]
-    if len(commits) == CHECKPOINTS and len(set(commits)) != CHECKPOINTS:
-        failures.append("checkpoint_commit_not_advanced")
-
     reconnects = sum(checkpoint.get("intentional_reconnect") is True for checkpoint in checkpoints)
     if reconnects < 1:
         failures.append("missing_intentional_reconnect")
@@ -269,6 +278,14 @@ def analyze(path: Path) -> dict[str, Any]:
         for checkpoint in checkpoints
     ):
         failures.append("cache_reuse_not_observed")
+    observed_roles = {
+        item.get("role")
+        for checkpoint in checkpoints
+        for item in checkpoint.get("provider_provenance") or []
+        if isinstance(item, dict)
+    }
+    for role in {"reasoner", "executor", "planner", "reviewer"} - observed_roles:
+        failures.append(f"missing_{role}_role")
 
     request_cost = sum(
         float(checkpoint.get("variable_cost_usd", 0))

@@ -226,10 +226,10 @@ Any failed hard gate or a confidence interval proving inferiority yields
 ## Sustained-Goal context-retention gate
 
 The repeated panel and a direct-model soak do not prove long-session coherence.
-A separate isolated task must complete 21 dependency-ordered implementation
-checkpoints through a real client, the authenticated Gateway, Dynamic MoA
-routing, host tool continuations, and one intentional client reconnect. It must
-preserve:
+A separate isolated task must complete five dependency-ordered work phases
+through a real Codex, OpenCode, or installed Hermes client, the authenticated
+Gateway, Dynamic MoA routing, host tool continuations, and one intentional
+client reconnect. It must preserve:
 
 - objective, acceptance criteria, dependency plan, current phase, and next
   action;
@@ -239,22 +239,25 @@ preserve:
 - tool ownership, review obligations, and unresolved risks.
 
 The run fails on unexplained 5xx, lost continuation, repeated whole-document
-reads without new need, premature goal completion, plan drift, missing
-checkpoint, unchanged checkpoint commit, missing host-tool use, secret
+reads without new need, premature goal completion, plan drift, missing phase,
+missing host-tool use, secret
 persistence, or inability to resume. Completion requires an actual
 implementation, independent review, passing validation, and a terminal
 response. Elapsed wall time is reported but is not a pass criterion.
 
 `scripts/analyze-long-horizon.py` freezes the machine-readable gate. Evidence
-uses protocol `frontier-long-goal-v10` and contains one header, consecutive
-checkpoints `0` through `20`, and one final record. It requires stable SHA-256
+uses protocol `frontier-long-goal-v11` and contains one header, consecutive
+phases `intake_and_plan`, `core_implementation`, `integration_and_tests`,
+`independent_review_and_repair`, and `full_validation_and_final`, followed by
+one final record. It requires stable SHA-256
 identities for the session, objective, acceptance criteria, plan, repository,
-branch, and provider configuration; every checkpoint additionally requires a
-new clean commit, a terminal client turn with host-tool use,
+branch, and provider configuration; every phase additionally requires a clean
+worktree, a terminal client turn with host-tool use,
 next-action/context/evidence hashes, provider/model provenance and pinning,
 latency, context/cache tokens, tool/retry/provider-error counts, memory/swap,
 and variable cost.
 
+The full run must observe Reasoner, Executor, Planner, and Reviewer provenance.
 At least one intentional reconnect and one positive cache read are mandatory.
 Any provider error, unjustified repeated read, premature completion, identity
 drift, missing checkpoint, private/raw field, failed validation, unapproved
@@ -267,7 +270,8 @@ OAuth profile chain is unavailable and a mandatory specialist/Executor path
 requires fallback. The analyzer records no prompt, hidden reasoning, provider
 output, request ID, key, cookie, authorization value, or repository name.
 Earlier epochs remain immutable diagnostic history and cannot be relabeled as
-v10 confirmation.
+v11 confirmation. Elapsed time and direct local-model activity cannot replace
+evidence from the authenticated client-to-Gateway-to-MoA path.
 
 The isolated candidate runtime must reserve the sustained task, rather than
 production defaults, with the following frozen Loop Engineering ceilings:

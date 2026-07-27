@@ -6638,3 +6638,19 @@ The mode-`0600` diagnostic SHA-256 is
 `405d2f0d6074fd5800b113ea94efc861d5d369cf0048bc551321c76d2cf08770`.
 Stream finalization now records the response provider and model and retains the
 routing decision separately as the fallback reason.
+
+V22 physically confirmed the v10 Frontier correction-review priority and
+created a clean implementation commit, but it omitted the private progress
+state and therefore remains a failed diagnostic. Its immutable mode-`0600`
+failure SHA-256 is
+`1983a294720ef31346b5bcbf82f1b81d980ffaa9cd62673902ed3f566dd51dac`.
+User review then rejected elapsed-time and direct-local activity as substitutes
+for actual long-Goal usability. Protocol v11 now requires five
+dependency-ordered phases through a real Codex, OpenCode, or installed Hermes
+client, the authenticated Gateway, Dynamic MoA, and host tools. It requires
+aggregate Reasoner, Executor, Planner, and Reviewer provenance plus reconnect,
+cache, review, and validation evidence; it no longer requires 21 distinct
+commits or any minimum elapsed time. The focused long-horizon suite passed
+`31/31`, Ruff and strict mypy passed, and the complete suite passed
+`1115/1115` with the existing Starlette warning. No v11 physical result exists
+yet, so the sustained-Goal gate remains open.
