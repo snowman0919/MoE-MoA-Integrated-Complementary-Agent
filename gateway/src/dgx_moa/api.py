@@ -32,6 +32,7 @@ from .controller import (
     ReasonerUnavailable,
     pending_goal_prerequisites,
 )
+from .database import connect_sqlite
 from .evolution import PromptRegistry
 from .frontier import (
     CodexOAuthCollaboration,
@@ -482,6 +483,7 @@ def create_app(
                 release_local=app.state.lifecycle_store.release_leases,
             )
             app.state.controller.specialists = app.state.specialists
+        database_anchor = connect_sqlite(configured.state_db, secure=True)
         try:
             if configured.specialist_routing.enabled:
                 for role in ("planner", "reviewer"):
@@ -707,16 +709,19 @@ def create_app(
                 app.state.weekly_scheduler.start()
             yield
         finally:
-            if app.state.weekly_scheduler is not None:
-                await app.state.weekly_scheduler.close()
-            if app.state.observation is not None:
-                await app.state.observation.close()
-            if app.state.specialists is not None:
-                await app.state.specialists.close()
-            close_provider = getattr(provider, "aclose", None)
-            if close_provider is not None:
-                await close_provider()
-            await app.state.lifecycle.close()
+            try:
+                if app.state.weekly_scheduler is not None:
+                    await app.state.weekly_scheduler.close()
+                if app.state.observation is not None:
+                    await app.state.observation.close()
+                if app.state.specialists is not None:
+                    await app.state.specialists.close()
+                close_provider = getattr(provider, "aclose", None)
+                if close_provider is not None:
+                    await close_provider()
+                await app.state.lifecycle.close()
+            finally:
+                database_anchor.close()
 
     app = FastAPI(title="DGX MoA Agent", version="2.0.0", lifespan=lifespan)
     app.include_router(build_admin_router(admin_auth))

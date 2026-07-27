@@ -6356,3 +6356,42 @@ New immutable ten-hour attempt `20260727-performance-c8-two-pass` started at
 pass. The ten-hour SGLang completion, physical image cancellation/provenance
 gates, sealed quality panels, 200 confirmation attempts, actual ten-hour client
 run, and physical rollback remain open. The Goal is not complete.
+
+The operator subsequently clarified that elapsed time is not the long-horizon
+gate: the gate is completing a sustained Goal through a real client, the
+authenticated Gateway API, Dynamic MoA routing, tool continuations, reconnect,
+and preserved plan/context. Attempt `20260727-performance-c8-two-pass` was
+therefore stopped after 4,997 cycles and 9,994 successful direct model
+requests. It ran for approximately 8 hours 18 minutes without OOM, but ended
+with SIGTERM and `passed=false`. It is diagnostic backend stability evidence
+only. Its mode `0600` raw and summary SHA-256 values are respectively
+`22bfffd6b6506b84d47cf090e2086e58817909c954e20c68711a228cfceda8c8`
+and
+`b66f3ef5ef60fb5eb08f24f74c84fc80f77969e454227818dba5304dbe9a76d9`.
+
+The first corrected path attempt, `20260727-long-runtime-v1`, used an isolated
+Codex client and the candidate Gateway `/v1/responses` endpoint. It reached
+local Reasoner and Executor inference, requested a host tool, and began
+Frontier collaboration, but checkpoint zero failed after approximately 64
+seconds. The immutable mode `0600` failure record SHA-256 is
+`24a7fd1cb2425fde4fdadff247aa7070e4d706ca5cf5543f368d2e70319f565a`.
+It is not a long-horizon pass.
+
+The Gateway journal showed that the first two authenticated responses
+completed, then all new authentication connections failed with SQLite extended
+failure `SQLITE_IOERR_SHORT_READ` while opening the shared WAL database.
+Post-stop `PRAGMA integrity_check` returned `ok`. A focused reproduction
+confirmed the same extended error when WAL/SHM sidecars disappear while a WAL
+connection remains active. The client container could mount only its private
+state directory and workspace, not the sibling Gateway database. No kernel
+storage error occurred in the failure interval. The candidate now retains one
+SQLite anchor connection for the complete Gateway lifespan, preventing
+last-connection WAL/SHM deletion during high-churn request connections, and
+closes it in the lifespan cleanup path.
+
+The regression keeps both sidecars present across 100 short-lived connections
+while the Gateway lifespan is active. Repository Ruff passed, strict mypy
+reported zero errors across 59 source files, and the complete suite passed
+`1102/1102` in 32.55 seconds with the existing Starlette warning. A fresh
+immutable Gateway and long-horizon attempt are still required; this repair does
+not complete the Goal.
