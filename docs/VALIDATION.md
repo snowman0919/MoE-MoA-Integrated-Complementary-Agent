@@ -7588,3 +7588,25 @@ regressions passed `4/4`; Frontier and long-horizon focused tests passed
 `76/76`; the complete suite passed `1147/1147` with the existing Starlette
 warning. Ruff and strict mypy across 59 source files passed. No v4 physical
 pass exists yet.
+
+AvatarForge V71 physically exercised protocol v4 through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, and host tools. Phase 0
+and Phase 1 reached clean terminal checkpoints with `13` and `9` host-tool
+calls, zero provider errors, provider pinning, positive cache reuse, and local
+Reasoner, Executor, Planner, Reviewer plus Codex OAuth Frontier provenance.
+The runner then started Phase 2 in a new Codex container against the same
+Gateway session and created multiple clean correction commits. It did not
+converge: Phase 2 accumulated twelve rejected Frontier reviews, including four
+consecutive duplicate finding sets, while usage metadata made the persisted
+external-expert evidence fingerprints appear different. The run was stopped
+after eight clean implementation commits instead of spending the ten-hour
+fail-safe window on repeated review/correction cycles. No provider error or
+stream abort occurred, but only two of four required checkpoints were
+terminal, so the analyzer exited `1` with `incomplete_checkpoints`,
+`invalid_event_order`, `invalid_final_count`, `missing_checkpoint_schedule`,
+and `missing_intentional_reconnect`. The immutable evidence, analysis, and
+Gateway DB SHA-256 values are
+`5645cd7b33c243f109b8422616e3d8a03f26faec464d2cb0429f652c23ce6acf`,
+`12f95b7208caabe63f1a8e4d8d03f4b311610bd6ae003681ed65e48d7fee442c`,
+and
+`0936208ef8dfcb7ae2c61bcb1b603ba7f77c9abd8047fe515ee73fe5f788a1b9`.
