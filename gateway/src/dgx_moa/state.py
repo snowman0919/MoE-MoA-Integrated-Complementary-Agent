@@ -95,6 +95,7 @@ class SessionState(BaseModel):
     roles_required: list[str] = Field(default_factory=lambda: ["executor"])
     review_fail_closed: bool = False
     review_deferred: bool = False
+    reviewed_tool_execution_count: int = 0
     frontier_correction_required: bool = False
     frontier_correction_pending_verification: bool = False
     frontier_review_verified: bool = False

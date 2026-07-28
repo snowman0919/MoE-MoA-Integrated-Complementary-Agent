@@ -7824,3 +7824,37 @@ new immutable v11 run is required. The direct review-order regressions passed
 long-horizon coverage passed `157/157`, and the complete suite passed
 `1148/1148` with the existing Starlette warning. Ruff passed and strict mypy
 reported zero errors across 59 source files.
+
+AvatarForge V78 physically exercised protocol v11 through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, and host tools. The v11
+ordering repair worked: local Reviewer calls completed before each
+code-review Frontier call. One locally rejected snapshot recorded
+`frontier_review_deferred` with reason `local_reviewer_rejected`, and the
+Frontier invocation count did not increase for that snapshot. Before the
+failure, the run completed 44 host-tool executions and six clean
+baseline-relative commits with local Reasoner, Executor, Planner, Reviewer and
+Codex OAuth Executor/Frontier provenance. It then exposed a second shared
+review-state defect. After the local rejection, an `update_plan` result with
+no subsequent file mutation was enough to start Reviewer 5 against the same
+snapshot. The client was stopped rather than turning the repeated review into
+an elapsed-time test. The sole cancelled request and stream-aborted event are
+from that stop; there was no remote-provider failure. No terminal checkpoint
+JSONL was emitted, so no analyzer result is claimed. V78 is diagnostic
+evidence, not a long-horizon pass. The immutable Gateway DB and Codex rollout
+SHA-256 values are
+`16ad59140194520e221379774349a7c4a3d996c5ca626ff94db81e23a72df0e7`
+and
+`69f9f1180f81eac8065b62e5e39ff16fa5ff4091eeaa468f62c6f0d7f045e232`.
+
+AvatarForge protocol v12 records `reviewed_tool_execution_count` whenever the
+local Reviewer completes. After a local rejection, review evidence is
+ineligible until a successful repository mutation occurs at a later tool
+execution index. Plan updates, inspection, and validation of the unchanged
+snapshot now record `reviewer_deferred` with reason
+`local_reviewer_correction_not_applied` instead of consuming another Reviewer
+call. Frontier correction latches remain independent and unchanged. V78 stays
+sealed; a new immutable v12 run is required. The direct latch and review-order
+regressions passed `7/7`, combined controller and long-horizon coverage passed
+`158/158`, and the complete suite passed `1149/1149` with the existing
+Starlette warning. Ruff passed and strict mypy reported zero errors across 59
+source files.

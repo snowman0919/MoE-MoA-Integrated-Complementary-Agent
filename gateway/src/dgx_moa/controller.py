@@ -3052,9 +3052,20 @@ class Controller:
                         )
                     else:
                         frontier_pending = (mode, evidence)
-        review_evidence_available = validation_evidence_available or (
-            not tool_continuation and self.has_review_evidence(state, metadata)
+        local_correction_applied = state.review_status != "rejected" or any(
+            execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
+            for execution in state.tool_executions[state.reviewed_tool_execution_count :]
         )
+        review_evidence_available = local_correction_applied and (
+            validation_evidence_available
+            or (not tool_continuation and self.has_review_evidence(state, metadata))
+        )
+        if state.review_status == "rejected" and not local_correction_applied:
+            self.store.event(
+                state.session_id,
+                "reviewer_deferred",
+                {"reason": "local_reviewer_correction_not_applied"},
+            )
         if (
             not state.frontier_correction_required
             and (not progress_retry or state.review_deferred)
@@ -4423,6 +4434,7 @@ class Controller:
         safe_result = cast(dict[str, Any], self.safe_payload(state, result))
         state.review_status = result.get("status", "rejected")
         state.review_deferred = state.review_status != "approved"
+        state.reviewed_tool_execution_count = len(state.tool_executions)
         state.phase = Phase.CORRECTION if state.review_status != "approved" else Phase.EXECUTING
         state.agent_artifacts.append(
             {

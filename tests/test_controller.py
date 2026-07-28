@@ -4447,6 +4447,60 @@ async def test_correction_review_reuses_prior_required_findings(
     assert state.review_status == "approved"
 
 
+@pytest.mark.asyncio
+async def test_rejected_review_waits_for_a_new_file_mutation(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="rejected-review-mutation-latch",
+        objective="Implement app.py in this repository and test it.",
+        roles_required=["executor"],
+        review_status="rejected",
+        review_deferred=True,
+        reviewed_tool_execution_count=2,
+        tool_executions=[
+            {"tool_name": "apply_patch", "exit_code": 0},
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m pytest -q"},
+                "exit_code": 0,
+            },
+            {"tool_name": "update_plan", "exit_code": 0},
+        ],
+    )
+    request = {
+        "model": "dgx-moa",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {"responses_progress_retry": True},
+    }
+
+    await controller.prepare_executor(state, request, ("executor",))
+
+    assert "reviewer" not in stub_provider.calls
+    assert any(
+        event["event_type"] == "reviewer_deferred"
+        and event["payload"].get("reason") == "local_reviewer_correction_not_applied"
+        for event in store.events(state.session_id)
+    )
+
+    state.tool_executions.extend(
+        [
+            {"tool_name": "apply_patch", "exit_code": 0},
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m pytest -q"},
+                "exit_code": 0,
+            },
+        ]
+    )
+    await controller.prepare_executor(state, request, ("executor",))
+
+    assert "reviewer" in stub_provider.calls
+    assert state.review_status == "approved"
+
+
 def test_review_observation_is_bounded_redacted_and_complete(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
