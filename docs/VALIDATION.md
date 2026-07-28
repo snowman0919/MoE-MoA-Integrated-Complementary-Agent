@@ -7682,3 +7682,34 @@ fail-closed gate, tool permission, or evidence bound. Focused prompt,
 correction-verification, and long-horizon regressions passed `20/20`; the
 complete suite passed `1148/1148` with the existing Starlette warning. Ruff and
 strict mypy across 59 source files passed. No v7 physical pass exists yet.
+
+AvatarForge V74 physically exercised protocol v7 through the real Codex client,
+authenticated loopback Gateway, Dynamic MoA, and host tools. The first three
+Codex OAuth Frontier reviews rejected the implementation with respectively
+five, three, and four material findings; consecutive finding sets did not
+overlap, so the duplicate-failure gate could not terminate the serial discovery.
+The run reached 40 recorded model invocations across Executor, Reasoner,
+Planner, Reviewer, and Frontier, but produced no baseline-relative commit or
+terminal checkpoint. It was stopped after the third rejection instead of using
+the ten-hour fail-safe as a backend soak. The stop produced one stream-aborted
+event; no remote-provider or provider-error event occurred. No checkpoint JSONL
+or analyzer result is claimed. The immutable Gateway DB and Codex rollout
+SHA-256 values are
+`fb521955c2805ccc4bc6c23710be9a3d7b993079155dfef667ebf739c172dd8d`
+and
+`d45c6a2e9686bc08ff48f9a8d7a82bec075ad4a1353852c7d431b5ed899a5043`.
+
+AvatarForge protocol v8 keeps Codex OAuth as the unrestricted primary Frontier
+and adds one turn-scoped quality fallback after two rejected Codex reviews.
+Only that next review is forced through the existing bounded OpenRouter path;
+internal routing flags are removed before external evidence is built, the
+current provider call is never switched, and later reviews return to Codex
+OAuth. This is a convergence probe rather than a new review loop. Direct local
+inference, idle time, and backend soak remain invalid long-Goal evidence; PASS
+still requires the real client-to-authenticated-Gateway path to complete all
+four AvatarForge checkpoints, intentional reconnect, context/cache recovery,
+host-tool work, independent review, and final validation. Focused paid-fallback
+coverage passed `5/5`, the turn-scoped selection regression passed `1/1`, Ruff
+passed, the complete suite passed `1150/1150` with the existing Starlette
+warning, and strict mypy across 59 source files reported zero errors. No v8
+physical pass exists yet.

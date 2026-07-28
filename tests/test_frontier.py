@@ -732,6 +732,81 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
     assert requests == 2
 
 
+def test_required_review_can_force_paid_fallback_without_exposing_control_flags(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    key_path = tmp_path / "openrouter_api"
+    key_path.write_text("synthetic-openrouter-key")
+    requests: list[dict[str, object]] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "verdict": "approve",
+                                    "critical": [],
+                                    "important": [],
+                                    "suggestions": [],
+                                    "missing_tests": [],
+                                    "confidence": 0.9,
+                                }
+                            )
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 10},
+            }
+
+    class FakeClient:
+        def __init__(self, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+        def post(self, _url, **kwargs):  # type: ignore[no-untyped-def]
+            requests.append(kwargs)
+            return FakeResponse()
+
+    monkeypatch.setattr("dgx_moa.frontier.httpx.Client", FakeClient)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(
+            enabled=True,
+            openrouter_fallback_enabled=True,
+            openrouter_api_key_file=key_path,
+        ),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    result = runner._run(
+        "code_review",
+        {
+            "bounded_diff": "bounded",
+            "_paid_fallback_required": True,
+            "_force_paid_fallback": True,
+        },
+        "quality-fallback",
+    )
+
+    assert result.profile == "openrouter:anthropic/claude-sonnet-4.6"
+    assert len(requests) == 1
+    payload = json.dumps(requests[0]["json"])
+    assert "_paid_fallback_required" not in payload
+    assert "_force_paid_fallback" not in payload
+
+
 def test_optional_review_does_not_use_paid_fallback_while_oauth_circuit_is_open(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # type: ignore[no-untyped-def]

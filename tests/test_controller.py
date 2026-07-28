@@ -74,6 +74,57 @@ def test_unbounded_codex_oauth_skips_only_the_frontier_specific_budget(
     assert state.engineering_loop.remaining_budget.wall_clock_seconds > 0
 
 
+@pytest.mark.asyncio
+async def test_review_nonconvergence_selects_one_paid_fallback_per_turn(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class Frontier:
+        config = FrontierConfig(enabled=True)
+
+        def __init__(self) -> None:
+            self.evidence: list[dict[str, object]] = []
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            self.evidence.append(evidence)
+            return FrontierCollaborationResult(
+                mode=mode,
+                output={
+                    "verdict": "approve",
+                    "critical": [],
+                    "important": [],
+                    "suggestions": [],
+                    "missing_tests": [],
+                    "confidence": 0.9,
+                },
+                latency_ms=1,
+                transmitted_categories=sorted(evidence),
+            )
+
+    frontier = Frontier()
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider, frontier)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="review-quality-fallback",
+        frontier_correction_pending_verification=True,
+    )
+    store.event(state.session_id, "user_turn_started", {})
+    store.event(state.session_id, "frontier_review_rejected", {})
+    store.event(state.session_id, "frontier_review_rejected", {})
+
+    await controller._frontier_collaborate(state, "code_review", {"bounded_diff": "bounded"})
+    await controller._frontier_collaborate(state, "code_review", {"bounded_diff": "bounded"})
+
+    assert frontier.evidence[0]["_paid_fallback_required"] is True
+    assert frontier.evidence[0]["_force_paid_fallback"] is True
+    assert "_force_paid_fallback" not in frontier.evidence[1]
+    selected = [
+        event
+        for event in store.events(state.session_id)
+        if event["event_type"] == "frontier_quality_fallback_selected"
+    ]
+    assert len(selected) == 1
+
+
 def test_repeated_semantic_frontier_review_fails_closed(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
