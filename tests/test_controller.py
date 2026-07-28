@@ -387,6 +387,57 @@ async def test_planner_and_frontier_are_concurrent_and_frontier_evidence_survive
 
 
 @pytest.mark.asyncio
+async def test_successful_frontier_architecture_is_reused_per_task(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class ArchitectureFrontier:
+        config = FrontierConfig(enabled=True, max_invocations_per_task=None)
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            return FrontierCollaborationResult(
+                mode="architecture",
+                output={
+                    "recommended_architecture": "bounded",
+                    "design_decisions": [],
+                    "tradeoffs": [],
+                    "failure_modes": [],
+                    "implementation_sequence": [],
+                    "review_questions": [],
+                },
+                latency_ms=1,
+                transmitted_categories=sorted(evidence),
+            )
+
+    frontier = ArchitectureFrontier()
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider, frontier)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="frontier-architecture-reuse",
+        objective="Design a bounded service architecture",
+        runtime_mode="orchestrated",
+        roles_required=["reasoner", "executor"],
+    )
+    request = {
+        "model": "dgx-moa-orchestrated",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {"architecture": True},
+    }
+
+    await controller.prepare_executor(state, request, ("reasoner", "executor"))
+    await controller.prepare_executor(state, request, ("reasoner", "executor"))
+
+    assert frontier.calls == 1
+    assert any(
+        event["event_type"] == "frontier_architecture_reused"
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
 async def test_invalid_remote_planner_preserves_failure_provenance(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

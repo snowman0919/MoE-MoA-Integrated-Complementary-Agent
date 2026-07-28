@@ -7427,3 +7427,12 @@ baseline-relative diff, preventing an empty terminal turn from advancing into
 integration. Focused regressions passed `6/6`; the complete suite passed
 `1141/1141` with the existing Starlette warning; Ruff and strict mypy across
 59 source files passed. No v46 physical pass exists.
+
+Protocol v47 reuses the first successful structured Frontier architecture
+artifact for later orchestration requests in the same task. Code review,
+correction verification, and disagreement remain fresh calls. This removes the
+repeated architecture latency observed in V64 without weakening independent
+implementation review. The focused reuse and Planner concurrency regressions
+passed `3/3`; the complete suite passed `1142/1142` with the existing
+Starlette warning; Ruff and strict mypy across 59 source files passed. No v47
+physical pass exists.

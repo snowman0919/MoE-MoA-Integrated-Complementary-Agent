@@ -2971,7 +2971,30 @@ class Controller:
                     },
                     "specific_questions": specific_questions,
                 }
-                if frontier_review_deferred:
+                prior_architecture = next(
+                    (
+                        artifact
+                        for artifact in reversed(state.agent_artifacts)
+                        if artifact.get("role") == "frontier"
+                        and artifact.get("mode") == "architecture"
+                    ),
+                    None,
+                )
+                if mode == "architecture" and prior_architecture is not None:
+                    collaboration_context += "\nPrior Frontier contribution:\n" + json.dumps(
+                        {
+                            key: value
+                            for key, value in prior_architecture.items()
+                            if key != "role"
+                        },
+                        ensure_ascii=False,
+                    )
+                    self.store.event(
+                        state.session_id,
+                        "frontier_architecture_reused",
+                        {"reason": "successful_task_architecture_available"},
+                    )
+                elif frontier_review_deferred:
                     self.store.event(
                         state.session_id,
                         "frontier_review_deferred",
