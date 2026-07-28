@@ -1674,13 +1674,20 @@ class Controller:
                     "goal_objective_resolved",
                     {"characters": len(state.resolved_objective)},
                 )
-            if not failed and target_paths:
+            if not failed:
                 for failure in active_failures(state):
-                    if not target_paths.intersection(failure.get("target_paths", [])):
+                    failure_paths = set(failure.get("target_paths", []))
+                    same_path = bool(target_paths.intersection(failure_paths))
+                    same_tool_without_path = bool(
+                        not failure_paths
+                        and failure.get("tool_name") == execution["tool_name"]
+                    )
+                    if not (same_path or same_tool_without_path):
                         continue
                     if (
                         failure.get("resolution_requires_validation")
                         and not validation_completed
+                        and not same_tool_without_path
                     ):
                         continue
                     failure["resolution_status"] = "resolved"
@@ -1697,19 +1704,30 @@ class Controller:
                         "failure_resolved",
                         {
                             "failure_class": failure["failure_class"],
-                            "resolution": "successful_fallback_same_path",
+                            "resolution": (
+                                "successful_fallback_same_path"
+                                if same_path
+                                else "successful_fallback_same_tool"
+                            ),
                         },
                     )
                 if state.engineering_loop is not None and resolve_failures(
                     state.engineering_loop,
                     target_paths,
                     validation_completed=validation_completed,
+                    tool_name=execution["tool_name"],
                 ):
                     self.record_evidence(
                         state,
                         "failure_resolved",
                         "tool",
-                        {"resolution": "successful_fallback_same_path"},
+                        {
+                            "resolution": (
+                                "successful_fallback_same_path"
+                                if target_paths
+                                else "successful_fallback_same_tool"
+                            )
+                        },
                     )
             self.record_evidence(
                 state,
@@ -1819,6 +1837,7 @@ class Controller:
                         "tool_call_fingerprint": call_fingerprint,
                         "failure_family": family,
                         "target_paths": sorted(target_paths),
+                        "tool_name": execution["tool_name"],
                         "resolution_requires_validation": validation_attempted,
                     }
                 )

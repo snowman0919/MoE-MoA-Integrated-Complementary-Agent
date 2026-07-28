@@ -2048,6 +2048,48 @@ def test_successful_same_path_fallback_resolves_mcp_failure(
     )
 
 
+def test_successful_same_tool_resolves_pathless_patch_failure(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    state = SessionState(session_id="pathless-patch-fallback")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    def patch(call_id: str, content: str):  # type: ignore[no-untyped-def]
+        return [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "apply_patch",
+                            "arguments": json.dumps({"input": 42}),
+                        },
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": call_id, "content": content},
+        ]
+
+    controller._observe(
+        state,
+        patch(
+            "failed",
+            "apply_patch verification failed: TypeError: apply_patch input must be text",
+        ),
+    )
+    assert len(active_failures(state)) == 1
+    assert state.failures[0]["target_paths"] == []
+
+    controller._observe(
+        state,
+        patch("passed", json.dumps({"exit_code": 0})),
+    )
+    assert active_failures(state) == []
+    assert state.engineering_loop is None or state.engineering_loop.open_failures == []
+
+
 def test_test_failure_requires_successful_validation_to_resolve(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

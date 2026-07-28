@@ -145,3 +145,12 @@ def test_validation_failure_requires_validation_evidence_to_resolve() -> None:
         )
         == 1
     )
+
+
+def test_pathless_tool_failure_resolves_only_after_same_tool_succeeds() -> None:
+    loop = new_loop("request", "fix it")
+    register_failure(loop, "TYPECHECK_FAILURE", tool_name="apply_patch")
+
+    assert resolve_failures(loop, set(), tool_name="exec_command") == 0
+    assert resolve_failures(loop, set(), tool_name="apply_patch") == 1
+    assert loop.open_failures == []

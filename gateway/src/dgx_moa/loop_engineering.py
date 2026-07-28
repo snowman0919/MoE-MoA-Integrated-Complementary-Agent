@@ -157,6 +157,7 @@ class LoopFailure(BaseModel):
     attempted_strategies: list[str] = Field(default_factory=list)
     strategy_change_required: bool = False
     affected_paths: list[str] = Field(default_factory=list)
+    tool_name: str = ""
 
 
 class LoopState(BaseModel):
@@ -376,6 +377,7 @@ def register_failure(
             failure_class=failure_class,
             attempted_strategies=[strategy] if strategy else [],
             affected_paths=affected_paths,
+            tool_name=str(fingerprint_fields.get("tool_name", "")),
         )
         loop.open_failures.append(failure)
         return failure
@@ -390,17 +392,27 @@ def register_failure(
 
 
 def resolve_failures(
-    loop: LoopState, paths: set[str], *, validation_completed: bool = False
+    loop: LoopState,
+    paths: set[str],
+    *,
+    validation_completed: bool = False,
+    tool_name: str = "",
 ) -> int:
-    resolved = [
-        failure
-        for failure in loop.open_failures
-        if paths.intersection(failure.affected_paths)
-        and (
-            failure.failure_class not in VALIDATION_FAILURE_CLASSES
-            or validation_completed
+    resolved = []
+    for failure in loop.open_failures:
+        same_path = bool(paths.intersection(failure.affected_paths))
+        same_tool_without_path = bool(
+            not failure.affected_paths and tool_name and failure.tool_name == tool_name
         )
-    ]
+        if not (same_path or same_tool_without_path):
+            continue
+        if (
+            failure.failure_class in VALIDATION_FAILURE_CLASSES
+            and not validation_completed
+            and not same_tool_without_path
+        ):
+            continue
+        resolved.append(failure)
     loop.open_failures = [failure for failure in loop.open_failures if failure not in resolved]
     return len(resolved)
 

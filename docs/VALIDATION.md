@@ -7357,3 +7357,32 @@ and lint failures. MCP and ordinary same-path fallback behavior is unchanged.
 The focused Controller and Loop Engineering regressions passed `7/7`; the
 complete suite passed `1138/1138` with the existing Starlette warning; Ruff and
 strict mypy across 59 source files passed. No v44 physical pass exists.
+
+V62 physically exercised v44 through the real Codex client, authenticated
+loopback Gateway, Dynamic MoA, and host tools. Its clean planning checkpoint
+passed with seven host-tool calls and no retry. The implementation checkpoint
+created a journal implementation but failed the fixed 1,800-second fail-safe
+before tests or commit. The session made 44 Gateway requests and 44 host-tool
+calls, completed 37 local Executor, 23 Codex OAuth Executor, 17 local Reasoner,
+one local Planner, five local Reviewer, and nine Codex OAuth Frontier
+invocations. No OpenRouter cost was recorded. Nine failures were classified
+and eight resolved; the remaining active failure was a failed `apply_patch`
+invocation with no extractable target path. Later successful patches and
+validation could not satisfy the same-path-only resolution rule, so review and
+correction repeated until timeout. This is a real sustained-Goal failure, not
+a direct-model soak or elapsed-time claim. The immutable evidence, failure
+sidecar, analysis, and Gateway DB SHA-256 values are
+`20a1c8a87b6b4458ab011f0d5a9b49f76f4dcd33557a2a328189067b7c13c23f`,
+`2be17d4d188c09fa0b6fc5c2d6c319919488f8a482dc292fa90c4967e3b24d91`,
+`b23febbf8c7402ee5a4449e08b1185bec7cf3d0a6fb0521e6077d7882a87ab73`,
+and
+`fae3fd8613c39f19aa8bc5dfbc18444b222577565c1f4a96d80f01f1b5b000e6`.
+
+Protocol v45 stores the failed tool name in both failure ledgers. When a failed
+tool call has no extractable target path, only a later successful call to the
+same tool may resolve it. Failures with known paths retain the v44 same-path
+and validation requirements. This closes malformed patch failures without
+weakening test, build, typecheck, or lint gates. The focused Controller and
+Loop Engineering regressions passed `5/5`; the complete suite passed
+`1140/1140` with the existing Starlette warning; Ruff and strict mypy across
+59 source files passed. No v45 physical pass exists.
