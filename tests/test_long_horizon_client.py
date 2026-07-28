@@ -37,8 +37,32 @@ def test_phase_prompts_require_changes_only_during_core_implementation() -> None
     assert all(str(path) in final for path in inputs)
     assert "/inputs/OBJECTIVE.md" not in final
     implementation = MODULE.client_prompt(1, workspace, validation, inputs)
-    assert "preliminary Reviewer 승인" in implementation
+    assert "preliminary Reviewer" in implementation
+    assert implementation.index("commit하라") < implementation.index(
+        "preliminary Reviewer"
+    )
     assert "최종 독립 검토는 이후 단계" in implementation
+
+
+def test_final_validation_rejects_zero_tests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = arguments(tmp_path, "codex")
+    args.timeout = 1
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setattr(
+        MODULE.QUALITY,
+        "run_process",
+        lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
+            [], 0, "Ran 0 tests in 0.000s\n\nOK", ""
+        ),
+    )
+    monkeypatch.setattr(MODULE, "container_exists", lambda _name: False)
+
+    exit_code, _output_sha256 = MODULE.run_validation(args, state)
+
+    assert exit_code == 1
 
 
 def arguments(tmp_path: Path, harness: str) -> argparse.Namespace:

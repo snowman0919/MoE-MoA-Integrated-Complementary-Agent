@@ -7436,3 +7436,31 @@ implementation review. The focused reuse and Planner concurrency regressions
 passed `3/3`; the complete suite passed `1142/1142` with the existing
 Starlette warning; Ruff and strict mypy across 59 source files passed. No v47
 physical pass exists.
+
+V65 physically exercised v47 through the real Codex client, authenticated
+loopback Gateway, Dynamic MoA, and host tools. Planning passed and the first
+structured Frontier architecture artifact was called once and reused three
+times. Core implementation created a job-journal source and test path, ran
+Reviewer and fresh Frontier code review, but never produced the required clean
+commit. The phase prompt ordered preliminary review before commit; after review
+the no-change admission guard prevented the commit-only turn. The generated test
+file was also empty, yet `unittest` returned zero after running zero tests and
+the runtime counted that as validation. The attempt therefore failed
+`dirty_checkpoint`; it is not a long-horizon pass. Its immutable evidence,
+failure sidecar, analysis, and Gateway DB SHA-256 values are
+`5f70d7001ec2aa1a9c3f623f7cc365bc58a212f05dd591e6be62201957dd096b`,
+`4bc7c9ce7757ab3eac84790690d0c56e7ef9c9c5ea9a159b3f6d76f84b1467e5`,
+`2c189c5a2cbee84d8d51fc0a0427bfbcf62cd648ab4932abb3418eb741fd6a7a`,
+and
+`614bbd8d1a3843d9e61a2d22c0d184845653353f0374b7b1a54611de5149a0ad`.
+
+Protocol v48 orders implementation, unit validation, and commit before the
+preliminary Reviewer pass; review corrections must then be revalidated and
+recommitted. It also classifies successful commands reporting zero discovered
+tests as `TEST_FAILURE` in the shared tool-observation path and rejects the same
+output in final isolated validation. This gate still measures completed work
+through a real client, authenticated Gateway, Dynamic MoA, and host tools.
+Elapsed duration or direct local-model activity is not substitute evidence.
+The focused regressions passed `3/3`; the complete suite passed `1143/1143`
+with the existing Starlette warning; Ruff and strict mypy across 60 source
+files passed. No v48 physical pass exists yet.

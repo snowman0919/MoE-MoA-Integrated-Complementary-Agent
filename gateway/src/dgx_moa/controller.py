@@ -1508,14 +1508,23 @@ class Controller:
             observation = json.dumps(result, sort_keys=True)
             function = call.get("function") or {}
             tool_name = str(function.get("name", result["tool_name"]))
+            arguments = function.get("arguments", result.get("arguments", {}))
             shell_result = tool_name in {
                 "exec_command",
                 "shell",
                 "terminal",
                 "execute_code",
             }
+            validation_attempted = self.validation_execution(
+                {"tool_name": tool_name, "normalized_arguments": arguments}
+            )
+            empty_validation = validation_attempted and any(
+                marker in (result["stdout"] + "\n" + result["stderr"]).lower()
+                for marker in ("ran 0 tests", "no tests ran", "collected 0 items")
+            )
             failed = (
                 result["exit_code"] != 0
+                or empty_validation
                 or any(
                     marker in result["stderr"].lower()
                     for marker in (
@@ -1575,7 +1584,6 @@ class Controller:
                     -self.settings.limits.max_retained_observations :
                 ]
             self.store.event(state.session_id, "tool_result_received", result)
-            arguments = function.get("arguments", result.get("arguments", {}))
             effect: dict[str, Any] = {
                 key: result[key]
                 for key in ("changed_paths", "created_paths", "deleted_paths")
@@ -1606,7 +1614,6 @@ class Controller:
             observed_tool_call_ids.add(tool_call_id)
             self.store.event(state.session_id, "tool_execution_recorded", execution)
             changed_files = not failed and self.tool_execution_changes_files(execution)
-            validation_attempted = self.validation_execution(execution)
             validation_completed = not failed and validation_attempted
             if changed_files:
                 state.frontier_review_verified = False

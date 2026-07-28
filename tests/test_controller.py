@@ -2179,6 +2179,14 @@ def test_test_failure_requires_successful_validation_to_resolve(
     controller._observe(state, execution("read", f"cat {path}", 0))
     assert len(active_failures(state)) == 1
 
+    empty = execution("empty", f"python -m unittest -v {path}", 0)
+    empty[1]["content"] = json.dumps(
+        {"exit_code": 0, "stdout": "Ran 0 tests in 0.000s\n\nOK"}
+    )
+    controller._observe(state, empty)
+    assert len(active_failures(state)) == 2
+    assert state.tool_executions[-1]["failure_class"] == "TEST_FAILURE"
+
     controller._observe(state, execution("passed", f"pytest {path}", 0))
     assert active_failures(state) == []
 
