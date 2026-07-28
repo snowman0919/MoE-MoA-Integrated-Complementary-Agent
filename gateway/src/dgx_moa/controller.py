@@ -1606,7 +1606,8 @@ class Controller:
             observed_tool_call_ids.add(tool_call_id)
             self.store.event(state.session_id, "tool_execution_recorded", execution)
             changed_files = not failed and self.tool_execution_changes_files(execution)
-            validation_completed = not failed and self.successful_validation_execution(execution)
+            validation_attempted = self.validation_execution(execution)
+            validation_completed = not failed and validation_attempted
             if changed_files:
                 state.frontier_review_verified = False
                 change_arguments = arguments
@@ -1677,6 +1678,11 @@ class Controller:
                 for failure in active_failures(state):
                     if not target_paths.intersection(failure.get("target_paths", [])):
                         continue
+                    if (
+                        failure.get("resolution_requires_validation")
+                        and not validation_completed
+                    ):
+                        continue
                     failure["resolution_status"] = "resolved"
                     failure["resolved_at"] = now()
                     failure["resolution_evidence"] = [execution["tool_execution_id"]]
@@ -1695,7 +1701,9 @@ class Controller:
                         },
                     )
                 if state.engineering_loop is not None and resolve_failures(
-                    state.engineering_loop, target_paths
+                    state.engineering_loop,
+                    target_paths,
+                    validation_completed=validation_completed,
                 ):
                     self.record_evidence(
                         state,
@@ -1811,6 +1819,7 @@ class Controller:
                         "tool_call_fingerprint": call_fingerprint,
                         "failure_family": family,
                         "target_paths": sorted(target_paths),
+                        "resolution_requires_validation": validation_attempted,
                     }
                 )
                 state.failures = state.failures[-self.settings.limits.max_steps :]
@@ -3787,7 +3796,7 @@ class Controller:
         return False
 
     @staticmethod
-    def successful_validation_execution(execution: dict[str, Any]) -> bool:
+    def validation_execution(execution: dict[str, Any]) -> bool:
         arguments = execution.get("normalized_arguments")
         if isinstance(arguments, str):
             try:
@@ -3800,9 +3809,7 @@ class Controller:
             else None
         )
         return (
-            execution.get("exit_code") == 0
-            and execution.get("failure_class") is None
-            and isinstance(command, str)
+            isinstance(command, str)
             and bool(
                 re.search(
                     r"(?:^|&&|\|\||;|\n|[\"'])\s*(?:timeout\s+\S+\s+)?"
@@ -3811,6 +3818,14 @@ class Controller:
                     command,
                 )
             )
+        )
+
+    @classmethod
+    def successful_validation_execution(cls, execution: dict[str, Any]) -> bool:
+        return (
+            execution.get("exit_code") == 0
+            and execution.get("failure_class") is None
+            and cls.validation_execution(execution)
         )
 
     def requires_implementation_tool_action(

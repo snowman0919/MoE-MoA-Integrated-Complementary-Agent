@@ -109,6 +109,9 @@ PROGRESS_EVIDENCE_KINDS = frozenset(
         "failure_resolved",
     }
 )
+VALIDATION_FAILURE_CLASSES = frozenset(
+    {"TEST_FAILURE", "BUILD_FAILURE", "TYPECHECK_FAILURE", "LINT_FAILURE"}
+)
 
 
 class LoopBudget(BaseModel):
@@ -386,9 +389,17 @@ def register_failure(
     return existing
 
 
-def resolve_failures(loop: LoopState, paths: set[str]) -> int:
+def resolve_failures(
+    loop: LoopState, paths: set[str], *, validation_completed: bool = False
+) -> int:
     resolved = [
-        failure for failure in loop.open_failures if paths.intersection(failure.affected_paths)
+        failure
+        for failure in loop.open_failures
+        if paths.intersection(failure.affected_paths)
+        and (
+            failure.failure_class not in VALIDATION_FAILURE_CLASSES
+            or validation_completed
+        )
     ]
     loop.open_failures = [failure for failure in loop.open_failures if failure not in resolved]
     return len(resolved)

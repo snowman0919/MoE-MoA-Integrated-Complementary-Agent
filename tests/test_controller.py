@@ -2048,6 +2048,48 @@ def test_successful_same_path_fallback_resolves_mcp_failure(
     )
 
 
+def test_test_failure_requires_successful_validation_to_resolve(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    state = SessionState(session_id="validation-resolution")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    def execution(call_id: str, command: str, exit_code: int):  # type: ignore[no-untyped-def]
+        return [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "arguments": json.dumps({"cmd": command}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": json.dumps(
+                    {
+                        "exit_code": exit_code,
+                        "stderr": "FAILED" if exit_code else "",
+                    }
+                ),
+            },
+        ]
+
+    path = "tests/test_job_journal.py"
+    controller._observe(state, execution("failed", f"pytest {path}", 1))
+    controller._observe(state, execution("read", f"cat {path}", 0))
+    assert len(active_failures(state)) == 1
+
+    controller._observe(state, execution("passed", f"pytest {path}", 0))
+    assert active_failures(state) == []
+
+
 def test_failure_classification() -> None:
     assert classify_failure("No such file or directory") == "NONEXISTENT_PATH"
     assert classify_failure("unsupported call: read_mcp_resources") == "UNSUPPORTED_TOOL"

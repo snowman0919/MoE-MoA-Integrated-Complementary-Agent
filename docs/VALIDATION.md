@@ -7323,3 +7323,37 @@ those material fields. The focused Controller and Frontier suites passed
 `148/148`; the complete suite passed `1136/1136` with the existing Starlette
 warning; Ruff and strict mypy across 59 source files passed. No v43 physical
 pass exists.
+
+V61 physically exercised v43 through the real Codex client, authenticated
+loopback Gateway, Dynamic MoA, and host tools. The clean planning checkpoint
+passed with three host-tool calls and no retry. The implementation checkpoint
+created a 239-line journal and a 320-line, 35-test suite, then failed its fixed
+1,800-second fail-safe before commit. It made 54 Gateway requests and 53
+host-tool calls, completed 58 local Executor, 21 Codex OAuth Executor, 25 local
+Reasoner, three Codex OAuth Frontier, one local Planner, and one completed
+local Reviewer call. No OpenRouter cost was recorded. Sixteen test failures and
+two nonexistent-path failures occurred; the runtime emitted 17
+`failure_resolved` events and reached Reviewer only near the end. The immutable
+mode-`0600` evidence and failure sidecar SHA-256 values are
+`575e7c6897c423cbb5e9d9f46433ebf96c1a975fe273961537c3014d347b2724`
+and
+`a27ff3dc4fabfa30149add634d65ad6b06cc7cd77c27a5c53ff683320730b442`.
+
+V61 also physically confirmed the v43 semantic guards: the completed local
+rejection contained one structured finding and the Frontier rejection
+contained one material finding. No empty rejection was accepted. Independent
+test execution first isolated one negative-zero defect; a later correction
+introduced an import regression by changing the record class without updating
+the package export. The repeated validation loop was prolonged because any
+successful command sharing a target path resolved an active test failure,
+decremented its failure family, and erased the strategy-change signal even when
+the successful command was not validation.
+
+Protocol v44 records whether a failed tool execution was validation. Such a
+failure remains active until a successful unittest, pytest, Ruff, or mypy
+execution covers the same path; successful inspection no longer resolves it.
+The same rule applies to Loop Engineering's normalized test, build, typecheck,
+and lint failures. MCP and ordinary same-path fallback behavior is unchanged.
+The focused Controller and Loop Engineering regressions passed `7/7`; the
+complete suite passed `1138/1138` with the existing Starlette warning; Ruff and
+strict mypy across 59 source files passed. No v44 physical pass exists.

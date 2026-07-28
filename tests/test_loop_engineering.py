@@ -126,3 +126,22 @@ def test_successful_same_path_evidence_resolves_open_failure() -> None:
 
     assert resolve_failures(loop, {"/workspace/objective.md"}) == 1
     assert loop.open_failures == []
+
+
+def test_validation_failure_requires_validation_evidence_to_resolve() -> None:
+    loop = new_loop("request", "fix it")
+    register_failure(
+        loop,
+        "TEST_FAILURE",
+        affected_path=["tests/test_job_journal.py"],
+    )
+
+    assert resolve_failures(loop, {"tests/test_job_journal.py"}) == 0
+    assert (
+        resolve_failures(
+            loop,
+            {"tests/test_job_journal.py"},
+            validation_completed=True,
+        )
+        == 1
+    )
