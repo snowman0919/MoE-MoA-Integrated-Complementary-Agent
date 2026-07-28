@@ -763,6 +763,13 @@ async def test_local_review_escalates_to_frontier_code_review(
         request_class="explicit_orchestrated",
         roles_required=["reasoner", "executor"],
         tool_results=[{"stdout": f"contract-{index}"} for index in range(10)],
+        implementation_evidence=[
+            {
+                "tool_name": "apply_patch",
+                "target_paths": ["gateway/src/example.py"],
+                "change_arguments": {"input": "+ corrected = True"},
+            }
+        ],
         frontier_correction_pending_verification=correction_verification,
         review_status="deferred" if correction_verification else "pending",
         review_deferred=correction_verification,
@@ -796,6 +803,9 @@ async def test_local_review_escalates_to_frontier_code_review(
 
     assert [mode for mode, _ in frontier.calls] == ["code_review"]
     assert frontier.calls[0][1].get("_paid_fallback_required") is not True
+    assert frontier.calls[0][1]["implementation_evidence"][0]["target_paths"] == [
+        "gateway/src/example.py"
+    ]
     if correction_verification:
         assert frontier.calls[0][1]["specific_questions"] == [
             "Correction verification: report unresolved prior material findings or material "
@@ -934,6 +944,13 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
         frontier_correction_pending_verification=True,
         review_status="deferred",
         review_deferred=True,
+        implementation_evidence=[
+            {
+                "tool_name": "apply_patch",
+                "target_paths": ["gateway/src/example.py"],
+                "change_arguments": {"input": "+ corrected = True"},
+            }
+        ],
         agent_artifacts=[
             {
                 "role": "frontier",
@@ -967,6 +984,9 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
         "validate the documented boundary",
         "cover the boundary",
     ]
+    assert frontier.evidence[0]["relevant_evidence"]["implementation"][0][
+        "target_paths"
+    ] == ["gateway/src/example.py"]
     assert state.frontier_correction_pending_verification is False
     assert state.frontier_review_verified is True
     assert any(
@@ -4168,6 +4188,16 @@ async def test_correction_review_reuses_prior_required_findings(
         roles_required=["executor"],
         review_status="rejected",
         review_deferred=True,
+        implementation_evidence=[
+            {
+                "tool_name": "apply_patch",
+                "target_paths": ["gateway/src/dgx_moa/job_journal.py"],
+                "change_arguments": {
+                    "input": "if type(max_records) is not int: raise ValueError"
+                },
+            }
+        ],
+        tool_results=[{"stdout": "x" * 20_000}],
         tool_executions=[
             {"tool_name": "apply_patch", "exit_code": 0},
             {
@@ -4201,6 +4231,7 @@ async def test_correction_review_reuses_prior_required_findings(
     )
     assert "correction_verification" in review_prompt
     assert prior_finding["required_correction"] in review_prompt
+    assert "type(max_records) is not int" in review_prompt
     assert "omit unrelated new hardening from findings" in review_prompt
     assert state.review_status == "approved"
 

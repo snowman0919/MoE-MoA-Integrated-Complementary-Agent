@@ -2932,6 +2932,8 @@ class Controller:
                     "reasoner_hypotheses": reasoner_contribution.hypotheses,
                     "reasoner_recommendations": reasoner_contribution.recommended_actions,
                     "relevant_evidence": {
+                        "implementation": state.implementation_evidence,
+                        "contract": self.review_contract_evidence(state),
                         "changed_paths": request.get("metadata", {}).get("changed_paths", []),
                         "diff": request.get("metadata", {}).get(
                             "diff_summary", request.get("metadata", {}).get("relevant_diff", "")
@@ -3039,32 +3041,37 @@ class Controller:
                 ),
                 None,
             )
-            review_evidence = json.dumps(
-                self.safe_payload(
-                    state,
-                    {
-                        "objective": effective_objective(state),
-                        "acceptance_criteria": state.acceptance_criteria,
-                        "changed_paths": metadata.get("changed_paths", []),
-                        "diff_summary": metadata.get("diff_summary", ""),
-                        "validation_results": metadata.get("validation_results", []),
-                        "tool_results": self.review_tool_results(state),
-                        "tool_executions": self.review_tool_executions(state),
-                        **(
-                            {
-                                "correction_verification": {
-                                    "prior_findings": prior_reviewer_rejection.get("findings", [])
+            review_evidence = self.serialize_review_evidence(
+                cast(
+                    dict[str, Any],
+                    self.safe_payload(
+                        state,
+                        {
+                            "objective": effective_objective(state),
+                            "acceptance_criteria": state.acceptance_criteria,
+                            "implementation_evidence": state.implementation_evidence,
+                            "contract_evidence": self.review_contract_evidence(state),
+                            "changed_paths": metadata.get("changed_paths", []),
+                            "diff_summary": metadata.get("diff_summary", ""),
+                            "validation_results": metadata.get("validation_results", []),
+                            "tool_results": self.review_tool_results(state),
+                            "tool_executions": self.review_tool_executions(state),
+                            **(
+                                {
+                                    "correction_verification": {
+                                        "prior_findings": prior_reviewer_rejection.get(
+                                            "findings", []
+                                        )
+                                    }
                                 }
-                            }
-                            if prior_reviewer_rejection is not None
-                            and state.review_status == "rejected"
-                            else {}
-                        ),
-                    },
-                ),
-                ensure_ascii=False,
+                                if prior_reviewer_rejection is not None
+                                and state.review_status == "rejected"
+                                else {}
+                            ),
+                        },
+                    ),
+                )
             )
-            review_evidence = compress_text(review_evidence, self.settings.limits)
             pre_review_task = asyncio.create_task(self.review(state, review_evidence))
         if reasoner_contribution is not None:
             state.derived_confidence = self.derived_confidence(
@@ -3304,6 +3311,8 @@ class Controller:
                                 ),
                                 "tool_results": self.review_tool_results(state),
                                 "tool_executions": self.review_tool_executions(state),
+                                "implementation_evidence": state.implementation_evidence,
+                                "contract_evidence": self.review_contract_evidence(state),
                                 "local_reviewer_findings": pre_review_result,
                                 "known_limitations": request.get("metadata", {}).get(
                                     "known_limitations", []
@@ -4144,7 +4153,10 @@ class Controller:
             "assistant_message": choice.get("message", {}),
             "finish_reason": choice.get("finish_reason"),
         }
-        bounded: dict[str, Any] = redact(evidence)
+        return self.serialize_review_evidence(evidence)
+
+    def serialize_review_evidence(self, evidence: dict[str, Any]) -> str:
+        bounded = cast(dict[str, Any], redact(evidence))
         limit = self.settings.limits.max_review_evidence_characters
         serialized = json.dumps(bounded, ensure_ascii=False, sort_keys=True)
         marker = "...[truncated]"

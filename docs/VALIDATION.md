@@ -7276,3 +7276,23 @@ captured client tool history contained four passing and three failing test
 commands but no Ruff or mypy invocation. The review gate therefore exposed a
 real incomplete-validation and implementation-quality failure; it was not
 relaxed or converted to a pass. No v41 physical pass exists.
+
+Further structured-artifact diagnosis found an independent evidence defect in
+that same run. The final local Reviewer claimed that boolean capacities were
+accepted even though the committed source already used exact `type(...) is
+int` validation. Pre-review serialized evidence omitted
+`state.implementation_evidence`; after several tool turns the original patch
+also fell outside the six retained tool executions. The JSON was then passed
+through a line-oriented text compressor, so a large single-line object could
+drop later correction fields. Frontier code-review evidence had the same
+current-patch omission.
+
+Protocol v42 replaces that path with a shared structure-preserving review
+serializer, adds the latest bounded implementation and contract evidence to
+local Reviewer input, and supplies the same evidence to both Frontier
+code-review paths. It preserves every top-level evidence key while truncating
+the largest values, so current patch evidence and prior correction findings
+remain visible together. The local correction and both Frontier-path
+regressions passed `5/5`; the complete suite passed `1132/1132` with the
+existing Starlette warning; Ruff and strict mypy passed. No v42 physical pass
+exists.
