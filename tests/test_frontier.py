@@ -306,6 +306,8 @@ def test_frontier_review_requires_finite_arithmetic_parameters() -> None:
     assert "expected_version" in prompt
     assert "fully merged object" in prompt
     assert "when missing_tests is non-empty, use revise" in prompt
+    assert "include every material finding" in prompt
+    assert "never intentionally serialize known findings" in prompt
     assert "This review runs before final synthesis" in prompt
     assert "client-visible final answer is absent" in prompt
 

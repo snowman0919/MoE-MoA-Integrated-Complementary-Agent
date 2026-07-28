@@ -4160,8 +4160,9 @@ class Controller:
             {},
         )
         return [
-            "Correction verification: report unresolved prior material findings or material "
-            "regressions introduced by the correction; keep unrelated new hardening as "
+            "Correction verification: report all unresolved prior material findings and all "
+            "material regressions introduced by the correction in this one response; never "
+            "serialize known findings across later reviews, and keep unrelated new hardening as "
             "suggestions.",
             *prior_review.get("critical", []),
             *prior_review.get("important", []),

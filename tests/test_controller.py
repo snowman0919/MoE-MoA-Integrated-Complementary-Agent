@@ -887,8 +887,9 @@ async def test_local_review_escalates_to_frontier_code_review(
     ]
     if correction_verification:
         assert frontier.calls[0][1]["specific_questions"] == [
-            "Correction verification: report unresolved prior material findings or material "
-            "regressions introduced by the correction; keep unrelated new hardening as "
+            "Correction verification: report all unresolved prior material findings and all "
+            "material regressions introduced by the correction in this one response; never "
+            "serialize known findings across later reviews, and keep unrelated new hardening as "
             "suggestions.",
             "validate the documented boundary",
             "cover the boundary",
@@ -1058,8 +1059,9 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
     assert state.frontier_invocations == 2
     assert frontier.correlation_ids == ["frontier-correction-verification:frontier:2"]
     assert frontier.evidence[0]["specific_questions"] == [
-        "Correction verification: report unresolved prior material findings or material "
-        "regressions introduced by the correction; keep unrelated new hardening as suggestions.",
+        "Correction verification: report all unresolved prior material findings and all material "
+        "regressions introduced by the correction in this one response; never serialize known "
+        "findings across later reviews, and keep unrelated new hardening as suggestions.",
         "validate the documented boundary",
         "cover the boundary",
     ]

@@ -7653,3 +7653,32 @@ each prior call is executed, while the next request without execution still
 returns `503`. Focused correction and stream regressions passed `8/8`; the
 complete suite passed `1148/1148` with the existing Starlette warning. Ruff and
 strict mypy across 59 source files passed. No v6 physical pass exists yet.
+
+AvatarForge V73 physically exercised protocol v6 through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, and host tools. It proved
+the v6 repair: four required Frontier correction retries were requested,
+completed, and followed by client tool execution with zero retry exhaustion,
+stream aborts, remote-provider failures, or Gateway tracebacks. The run did
+not converge efficiently enough to continue. Its first Phase 0 turn reached
+58 host-tool executions, 104 model invocations, seven clean commits, and
+eleven Codex OAuth Frontier review rejections without reaching a terminal
+checkpoint. All eleven semantic review fingerprints were unique and contained
+29 material findings in total; ten corrections were applied. This is useful
+quality-improvement evidence but fails the required practical speed and
+completion contract. V73 was stopped rather than using the ten-hour fail-safe
+as a local-model soak. No checkpoint JSONL was emitted, so no analyzer result
+is claimed. The immutable Gateway DB and Codex rollout SHA-256 values are
+`75b918d36c24dc06d27e72113ca66cf16449446118554f6e2a100495f793fcc8`
+and
+`acdb71b49e9c5605c042d5870adcff6d173fdc5b923c8051bb4f9585e8861f41`.
+
+AvatarForge protocol v7 requires the Frontier code reviewer to perform one
+exhaustive pass over the bounded evidence and return every currently
+identifiable material finding in the same response. It must not intentionally
+serialize known findings across later reviews. Correction verification carries
+the same all-unresolved-findings rule while preserving the existing restriction
+against unrelated new hardening. This changes no provider authority,
+fail-closed gate, tool permission, or evidence bound. Focused prompt,
+correction-verification, and long-horizon regressions passed `20/20`; the
+complete suite passed `1148/1148` with the existing Starlette warning. Ruff and
+strict mypy across 59 source files passed. No v7 physical pass exists yet.
