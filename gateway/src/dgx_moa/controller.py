@@ -733,32 +733,6 @@ class Controller:
         evidence: dict[str, Any],
     ) -> FrontierCollaborationResult:
         assert self.frontier is not None
-        if mode == "code_review" and state.frontier_correction_pending_verification:
-            events = self.store.events(state.session_id)
-            last_turn = max(
-                (
-                    index
-                    for index, event in enumerate(events)
-                    if event["event_type"] == "user_turn_started"
-                ),
-                default=-1,
-            )
-            turn_events = events[last_turn + 1 :]
-            if sum(
-                event["event_type"] == "frontier_review_rejected" for event in turn_events
-            ) >= 2 and not any(
-                event["event_type"] == "frontier_quality_fallback_selected" for event in turn_events
-            ):
-                evidence = {
-                    **evidence,
-                    "_paid_fallback_required": True,
-                    "_force_paid_fallback": True,
-                }
-                self.store.event(
-                    state.session_id,
-                    "frontier_quality_fallback_selected",
-                    {"provider": "openrouter", "reason": "review_nonconvergence"},
-                )
         self.admit_frontier_call(state)
         state.frontier_invocations += 1
         invocation_id = f"{state.task_id or state.session_id}:frontier:{state.frontier_invocations}"

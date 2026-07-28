@@ -571,23 +571,10 @@ class CodexOAuthCollaboration:
     ) -> FrontierCollaborationResult:
         schema_model = COLLABORATION_SCHEMAS[mode]
         paid_fallback_required = evidence.get("_paid_fallback_required") is True
-        force_paid_fallback = evidence.get("_force_paid_fallback") is True
         external_evidence = {
-            key: value
-            for key, value in evidence.items()
-            if key not in {"_paid_fallback_required", "_force_paid_fallback"}
+            key: value for key, value in evidence.items() if key != "_paid_fallback_required"
         }
         started = time.monotonic()
-        if force_paid_fallback:
-            if not paid_fallback_required or not self.config.openrouter_fallback_enabled:
-                raise RuntimeError("PAID_FALLBACK_UNAVAILABLE")
-            return self._openrouter(
-                mode,
-                external_evidence,
-                correlation_id,
-                schema_model,
-                started,
-            )
         now = time.monotonic()
         if self.opened_at is not None:
             if now - self.opened_at < self.config.circuit_cooldown_seconds:

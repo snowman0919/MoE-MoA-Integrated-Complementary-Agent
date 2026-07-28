@@ -7713,3 +7713,37 @@ coverage passed `5/5`, the turn-scoped selection regression passed `1/1`, Ruff
 passed, the complete suite passed `1150/1150` with the existing Starlette
 warning, and strict mypy across 59 source files reported zero errors. No v8
 physical pass exists yet.
+
+AvatarForge V75 physically exercised protocol v8 through the real Codex client,
+authenticated loopback Gateway, Dynamic MoA, and host tools. It was not a
+backend soak: before termination it recorded 20 host-tool executions, produced
+a clean baseline-relative Phase 0 commit, and invoked local Reasoner, Executor,
+Planner, and Reviewer plus Codex OAuth Executor and Frontier paths. Two Codex
+Frontier reviews rejected concrete contract defects. The v8 review-count
+heuristic then selected its single OpenRouter quality fallback. That request
+did not complete within the 300-second provider window; the client cancelled
+the request and the Gateway recorded a stream abort before any OpenRouter usage
+row or review result existed. At that point the zero-stream-error hard gate was
+already failed, so the retrying client and isolated Gateway were stopped rather
+than running toward the ten-hour fail-safe. The later operator stop adds a
+second cancelled request and stream-aborted event; neither is represented as
+model or provider quality evidence. No checkpoint JSONL or analyzer result is
+claimed. The retained clean implementation commit is
+`2188920a85272c8ac7e90875431eb5db5e764816`. The immutable Gateway DB and Codex
+rollout SHA-256 values are
+`7f02b51af971a7b21b58fdf4af67b335ecd4b695e9a90eb0873878de6807bb1a`
+and
+`7bb31d9a2ece238942da90c82440bd82b9d60c149c74afbf03faa2af3124102f`.
+
+AvatarForge protocol v9 removes the unproven review-count quality fallback.
+OpenRouter remains available only through the pre-existing mandatory-path
+fallback after the configured Codex OAuth chain fails; it is never selected
+because reviews are numerous or slow to converge. This is a deletion of the
+V75 failure source, not a relaxed review gate: Codex review, correction,
+provider pinning, zero stream/provider errors, all four real Gateway
+checkpoints, intentional reconnect, cache/context recovery, host-tool work,
+validation, and clean commits remain mandatory. Direct model inference and
+idle/backend soak remain invalid evidence. Focused mandatory paid-fallback and
+long-horizon coverage passed `4/4`; the complete suite passed `1148/1148` with
+the existing Starlette warning; Ruff passed and strict mypy across 59 source
+files reported zero errors. No v9 physical pass exists yet.
