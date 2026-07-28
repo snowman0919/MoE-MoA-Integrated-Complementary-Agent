@@ -673,9 +673,15 @@ async def test_optional_frontier_unavailable_keeps_derived_confidence_low(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("clean_approval", [False, True])
+@pytest.mark.parametrize(
+    ("clean_approval", "correction_verification"),
+    [(False, False), (True, False), (True, True)],
+)
 async def test_local_review_escalates_to_frontier_code_review(
-    settings, stub_provider: StubProvider, clean_approval: bool
+    settings,
+    stub_provider: StubProvider,
+    clean_approval: bool,
+    correction_verification: bool,
 ) -> None:  # type: ignore[no-untyped-def]
     class ReviewFrontier:
         config = FrontierConfig(enabled=True, max_invocations_per_task=3)
@@ -757,6 +763,24 @@ async def test_local_review_escalates_to_frontier_code_review(
         request_class="explicit_orchestrated",
         roles_required=["reasoner", "executor"],
         tool_results=[{"stdout": f"contract-{index}"} for index in range(10)],
+        frontier_correction_pending_verification=correction_verification,
+        review_status="deferred" if correction_verification else "pending",
+        review_deferred=correction_verification,
+        agent_artifacts=(
+            [
+                {
+                    "role": "frontier",
+                    "output": {
+                        "verdict": "revise",
+                        "critical": [],
+                        "important": ["validate the documented boundary"],
+                        "missing_tests": ["cover the boundary"],
+                    },
+                }
+            ]
+            if correction_verification
+            else []
+        ),
     )
     request = {
         "model": "dgx-moa-orchestrated",
@@ -772,6 +796,16 @@ async def test_local_review_escalates_to_frontier_code_review(
 
     assert [mode for mode, _ in frontier.calls] == ["code_review"]
     assert frontier.calls[0][1].get("_paid_fallback_required") is not True
+    if correction_verification:
+        assert frontier.calls[0][1]["specific_questions"] == [
+            "Correction verification: report unresolved prior material findings or material "
+            "regressions introduced by the correction; keep unrelated new hardening as "
+            "suggestions.",
+            "validate the documented boundary",
+            "cover the boundary",
+        ]
+    else:
+        assert "specific_questions" not in frontier.calls[0][1]
     assert frontier.calls[0][1]["local_reviewer_findings"]["status"] == (
         "approved" if clean_approval else "rejected"
     )
@@ -797,7 +831,11 @@ async def test_local_review_escalates_to_frontier_code_review(
         event["event_type"] == "frontier_collaboration_started"
         and event["payload"].get("trigger")
         == (
-            "insufficient_local_review_assurance" if clean_approval else "material_reviewer_finding"
+            "frontier_correction_verification"
+            if correction_verification
+            else "insufficient_local_review_assurance"
+            if clean_approval
+            else "material_reviewer_finding"
         )
         for event in store.events(state.session_id)
     )

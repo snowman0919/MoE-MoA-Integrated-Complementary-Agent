@@ -2908,24 +2908,7 @@ class Controller:
                     request.get("metadata", {}).get("frontier_questions", [])
                 )
                 if state.frontier_correction_pending_verification:
-                    prior_review: dict[str, Any] = next(
-                        (
-                            artifact.get("output", {})
-                            for artifact in reversed(state.agent_artifacts)
-                            if artifact.get("role") == "frontier"
-                            and isinstance(artifact.get("output"), dict)
-                            and artifact["output"].get("verdict") in {"revise", "reject"}
-                        ),
-                        {},
-                    )
-                    specific_questions = [
-                        "Correction verification: report unresolved prior material findings or "
-                        "material regressions introduced by the correction; keep unrelated new "
-                        "hardening as suggestions.",
-                        *prior_review.get("critical", []),
-                        *prior_review.get("important", []),
-                        *prior_review.get("missing_tests", []),
-                    ]
+                    specific_questions = self.frontier_correction_questions(state)
                 evidence = {
                     "_paid_fallback_required": bool(
                         request.get("metadata", {}).get("frontier_required") or "judge" in roles
@@ -3310,6 +3293,15 @@ class Controller:
                                 "local_reviewer_findings": pre_review_result,
                                 "known_limitations": request.get("metadata", {}).get(
                                     "known_limitations", []
+                                ),
+                                **(
+                                    {
+                                        "specific_questions": (
+                                            self.frontier_correction_questions(state)
+                                        )
+                                    }
+                                    if state.frontier_correction_pending_verification
+                                    else {}
                                 ),
                             }
                             frontier_task = asyncio.create_task(
@@ -4011,6 +4003,27 @@ class Controller:
             or result.get("important")
             or result.get("missing_tests")
         )
+
+    @staticmethod
+    def frontier_correction_questions(state: SessionState) -> list[str]:
+        prior_review: dict[str, Any] = next(
+            (
+                artifact.get("output", {})
+                for artifact in reversed(state.agent_artifacts)
+                if artifact.get("role") == "frontier"
+                and isinstance(artifact.get("output"), dict)
+                and artifact["output"].get("verdict") in {"revise", "reject"}
+            ),
+            {},
+        )
+        return [
+            "Correction verification: report unresolved prior material findings or material "
+            "regressions introduced by the correction; keep unrelated new hardening as "
+            "suggestions.",
+            *prior_review.get("critical", []),
+            *prior_review.get("important", []),
+            *prior_review.get("missing_tests", []),
+        ]
 
     def remote_judge_invocation_reasons(
         self,

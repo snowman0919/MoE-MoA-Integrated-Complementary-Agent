@@ -7206,3 +7206,29 @@ verification remain unchanged. The focused correction/deferred/rejection
 regressions passed `3/3`; the complete suite passed `1131/1131` with the
 existing Starlette warning; Ruff and strict mypy passed. No v39 physical pass
 exists.
+
+V57 physically exercised v39 through the real Codex client, authenticated
+Gateway, Dynamic MoA, and host tools. The clean planning checkpoint passed with
+eight host-tool calls and local Reasoner, local Planner, local and Codex OAuth
+Executor, and Codex OAuth Frontier provenance. The implementation checkpoint
+created and committed a 251-line job-journal implementation and tests, but
+failed its fixed 1,800-second safety ceiling after 30 Gateway requests and 32
+host-tool results. Seven local Reviewer and 11 Frontier calls completed; seven
+Frontier reviews rejected and four corrections were applied. The bounded
+Frontier finding counts decreased but did not converge. The implementation
+workspace was clean at failure. The immutable mode-`0600` evidence and failure
+sidecar SHA-256 values are
+`04de78d4fe73cb756e6600a216768fb42bb1c81bf7e1705cc6dabfea2b7894ed`
+and
+`692d40c5665e6890d552da361bfa1b693a583208d5f211957fb8bbe01c635430`.
+This is a real sustained-Goal failure, not a direct-model soak or elapsed-time
+claim.
+
+Protocol v40 fixes the remaining evidence discontinuity. Orchestration-selected
+Frontier review and post-Reviewer Frontier escalation now share one correction
+question builder, so both paths receive the immediately preceding rejected
+Frontier material findings. Initial review and material fail-closed behavior
+remain unchanged. The two Frontier correction paths and local Reviewer
+continuity regressions passed `5/5`; the complete suite passed `1132/1132`
+with the existing Starlette warning; Ruff and strict mypy passed. No v40
+physical pass exists.
