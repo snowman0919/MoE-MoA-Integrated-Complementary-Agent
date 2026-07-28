@@ -26,6 +26,11 @@ from dgx_moa.state import Phase, SessionState, StateStore
 from .conftest import StubProvider
 
 
+def test_rejected_review_requires_a_finding() -> None:
+    with pytest.raises(ValueError, match="requires at least one finding"):
+        ReviewResult.model_validate({"status": "rejected", "findings": []})
+
+
 def test_local_invocation_records_zero_when_cache_detail_is_absent(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

@@ -267,6 +267,15 @@ class FrontierReviewResult(BaseModel):
     missing_tests: list[str]
     confidence: float = Field(ge=0, le=1)
 
+    @model_validator(mode="after")
+    def require_verdict_evidence(self) -> FrontierReviewResult:
+        material = bool(self.critical or self.important or self.missing_tests)
+        if self.verdict == "approve" and material:
+            raise ValueError("approved review cannot contain material findings")
+        if self.verdict != "approve" and not material:
+            raise ValueError("non-approved review requires a material finding")
+        return self
+
 
 class FrontierDisagreementResult(BaseModel):
     model_config = ConfigDict(extra="forbid")

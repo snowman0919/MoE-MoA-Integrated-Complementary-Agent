@@ -7296,3 +7296,30 @@ remain visible together. The local correction and both Frontier-path
 regressions passed `5/5`; the complete suite passed `1132/1132` with the
 existing Starlette warning; Ruff and strict mypy passed. No v42 physical pass
 exists.
+
+V60 physically exercised v42 through the real Codex client, authenticated
+loopback Gateway, Dynamic MoA, and host tools. The clean planning checkpoint
+passed with five host-tool calls. The implementation checkpoint created source
+and tests but did not converge before the fixed 1,800-second fail-safe. It made
+49 Gateway requests and 47 host-tool requests, completed five local Reviewer
+and nine Codex OAuth Frontier calls, recorded four Frontier rejections, one
+verified review, three applied corrections, three nonexistent-path failures,
+and three test failures. The isolated workspace remained uncommitted at
+failure. Its final focused eight tests pass independently, so the terminal
+failure is review/correction convergence rather than an artificial local-model
+soak. The immutable mode-`0600` evidence and failure sidecar SHA-256 values are
+`d5f57fc8aa63df60164b1419c9d01c899aab39f1b311406d2f43a5c84fda26d3`
+and
+`4ddee8249b7e00e96029477790704261b03279190fb21200b48de6adcf445e4f`.
+
+Structured event diagnosis found contradictory outputs accepted by the result
+schemas: one local Reviewer returned `rejected` with zero findings, and all
+four rejected Frontier events reported `revise` with zero material findings.
+Protocol v43 rejects those contradictions during provider response validation,
+reusing the existing bounded retry path. A local rejection now requires at
+least one structured finding; Frontier `revise` or `reject` requires a
+critical, important, or missing-test finding, while `approve` cannot carry
+those material fields. The focused Controller and Frontier suites passed
+`148/148`; the complete suite passed `1136/1136` with the existing Starlette
+warning; Ruff and strict mypy across 59 source files passed. No v43 physical
+pass exists.

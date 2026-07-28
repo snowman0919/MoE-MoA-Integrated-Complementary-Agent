@@ -230,6 +230,12 @@ class ReviewResult(BaseModel):
     status: Literal["approved", "rejected"]
     findings: list[ReviewFinding]
 
+    @model_validator(mode="after")
+    def require_rejection_evidence(self) -> ReviewResult:
+        if self.status == "rejected" and not self.findings:
+            raise ValueError("rejected review requires at least one finding")
+        return self
+
 
 class ProfileResponse(BaseModel):
     active_profile: Literal["resident", "judge", "stopped"]

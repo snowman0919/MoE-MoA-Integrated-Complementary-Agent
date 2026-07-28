@@ -63,6 +63,35 @@ def test_frontier_profile_and_selection(tmp_path) -> None:  # type: ignore[no-un
     )
 
 
+@pytest.mark.parametrize("verdict", ["revise", "reject"])
+def test_frontier_nonapproval_requires_material_finding(verdict: str) -> None:
+    with pytest.raises(ValueError, match="requires a material finding"):
+        COLLABORATION_SCHEMAS["code_review"].model_validate(
+            {
+                "verdict": verdict,
+                "critical": [],
+                "important": [],
+                "suggestions": [],
+                "missing_tests": [],
+                "confidence": 0.9,
+            }
+        )
+
+
+def test_frontier_approval_rejects_material_finding() -> None:
+    with pytest.raises(ValueError, match="cannot contain material findings"):
+        COLLABORATION_SCHEMAS["code_review"].model_validate(
+            {
+                "verdict": "approve",
+                "critical": [],
+                "important": ["unresolved defect"],
+                "suggestions": [],
+                "missing_tests": [],
+                "confidence": 0.9,
+            }
+        )
+
+
 def test_frontier_lock_and_eligibility(tmp_path) -> None:  # type: ignore[no-untyped-def]
     state = SessionState(session_id="frontier", phase=Phase.REPLANNING)
     assert frontier_eligible(state, {"validated_replan_failed": True}) == (
