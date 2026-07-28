@@ -8403,10 +8403,12 @@ def test_step_budget_failure_finalizes_one_usage_row(settings, stub_provider: St
         )
         usage = assert_usage(client.app, "failed")
 
-    assert response.status_code == 502
+    assert response.status_code == 409
     assert response.json()["error"]["message"] == "session step budget exhausted"
+    assert response.json()["error"]["type"] == "loop_admission_error"
+    assert response.json()["error"]["code"] == "loop_budget_exhausted"
     assert stub_provider.calls == []
-    assert usage.retryable_failure_class == "backend_error"
+    assert usage.retryable_failure_class is None
 
 
 @pytest.mark.parametrize("stream", [False, True])

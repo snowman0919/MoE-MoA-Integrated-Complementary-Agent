@@ -407,6 +407,10 @@ reconnect, plan/context 보존을 대체하지 않는다.
   도구 중 repository mutation 도구만 전달한다. 계획·Goal·이미지·조회
   도구로 correction retry를 소비하지 않으며 기존 2회 fail-closed 상한은
   유지한다.
+- protocol v3 candidate Gateway는 `DGX_MOA_MAX_STEPS=1000`을 사용해
+  `tool_calls=1000` fail-safe와 session step 상한을 정합시킨다. production
+  기본 100은 변경하지 않는다. step 상한 도달은 retryable backend 장애가
+  아니라 비재시도 `409 loop_budget_exhausted`로 종료한다.
 
 ## 10. Release, rollback, 배포
 

@@ -1134,7 +1134,7 @@ class Controller:
         if state.step_count >= self.settings.limits.max_steps:
             state.phase = Phase.BLOCKED
             self.store.save(state)
-            raise ValueError("session step budget exhausted")
+            raise LoopAdmissionError("session step budget exhausted")
         return state
 
     def select_route(self, state: SessionState, metadata: dict[str, Any]) -> None:

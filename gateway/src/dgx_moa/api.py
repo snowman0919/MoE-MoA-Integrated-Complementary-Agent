@@ -3228,6 +3228,7 @@ def create_app(
                 "loop_admission_error",
                 "loop_budget_exhausted"
                 if termination == "BUDGET_EXHAUSTED"
+                or str(error) == "session step budget exhausted"
                 else "loop_new_evidence_required",
             )
         except PolicyBlocked as error:

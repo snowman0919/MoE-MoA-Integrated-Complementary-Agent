@@ -2216,7 +2216,7 @@ def test_no_progress_and_step_budget(settings, stub_provider: StubProvider) -> N
     settings.limits.max_steps = 1
     exhausted = SessionState(session_id="y", step_count=1)
     store.save(exhausted)
-    with pytest.raises(ValueError, match="step budget"):
+    with pytest.raises(LoopAdmissionError, match="step budget"):
         controller.session("y", [{"role": "user", "content": "x"}])
 
 

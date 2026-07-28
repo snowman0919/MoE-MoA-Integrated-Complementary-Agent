@@ -71,7 +71,7 @@ class Limits(BaseModel):
     optional_idle_minimum_seconds: float = Field(default=300, gt=0, allow_inf_nan=False)
     optional_idle_maximum_seconds: float = Field(default=2_700, gt=0, allow_inf_nan=False)
     optional_minimum_ready_residency_seconds: float = Field(default=300, gt=0, allow_inf_nan=False)
-    max_steps: int = 100
+    max_steps: int = Field(default=100, ge=1)
 
     @model_validator(mode="after")
     def validate_idle_threshold_order(self) -> Limits:
@@ -749,6 +749,11 @@ def load_settings(path: str | Path | None = None) -> Settings:
         with suppress(json.JSONDecodeError):
             live_observation = json.loads(live_observation)
     gateway["live_observation"] = live_observation
+    limits = dict(gateway.get("limits", {}))
+    limits["max_steps"] = os.getenv(
+        "DGX_MOA_MAX_STEPS", limits.get("max_steps", 100)
+    )
+    gateway["limits"] = limits
     training_data: Any = os.getenv("DGX_MOA_TRAINING_DATA", gateway.get("training_data", {}))
     if isinstance(training_data, str):
         with suppress(json.JSONDecodeError):

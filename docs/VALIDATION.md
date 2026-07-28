@@ -7516,3 +7516,31 @@ increase retry count or weaken fail-closed behavior. The regression proves
 that an offered `create_goal` tool is removed while `apply_patch` remains.
 The complete suite passed `1146/1146`; Ruff and strict mypy across 59 source
 files passed. No v2 physical pass exists yet.
+
+AvatarForge V68 physically exercised protocol v2 through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, and host tools. Phase 0
+and Phase 1 passed with clean terminal checkpoints, 26 and 25 host-tool calls,
+zero provider errors, provider pinning, positive cache reuse, and separate
+phase commits. The observed roles included local Executor, Reasoner, Planner,
+Reviewer, and Codex OAuth Frontier. Required Frontier correction retries
+physically exposed only `apply_patch` and completed without exhaustion, proving
+the v2 repair. The Phase 2 resume created and tested the environment
+implementation but failed before its reconnect checkpoint. The session reached
+the independent `limits.max_steps=100` ceiling with 98 tool executions while
+the candidate loop still had 242 iterations and approximately 5.8 million
+tokens. Codex retried the resulting retryable 502 backend classification six
+times and reported a connection/stream failure. V68 is therefore diagnostic,
+not a long-horizon pass. Its immutable evidence, failure sidecar, analysis, and
+Gateway DB SHA-256 values are
+`38a4d94c4b5f6e59ec4a5140ca373a66bfacb0c53ca2afe3d19f8303ad76af0b`,
+`9138caae1e35f15114ccee37db24d7e68981d85f727f7a26768c7ff6ab676854`,
+`75730335aac800b41e3e96b0d9ed64f491c598f03c66c555b24c95a2bbbda905`,
+and
+`dc76784e667086e9356e596e3a24424f7c78683f65251d302b9b8b26d5ac2b34`.
+
+AvatarForge protocol v3 adds a bounded candidate-only
+`DGX_MOA_MAX_STEPS=1000` override while preserving the production default of
+100. Reaching the step ceiling is now a non-retryable HTTP 409
+`loop_budget_exhausted`, not a retryable backend error. Focused config,
+Controller, API, and blocked-session regressions passed `5/5`; Ruff and strict
+mypy across 59 source files passed. No v3 physical pass exists yet.
