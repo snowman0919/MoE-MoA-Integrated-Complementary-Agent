@@ -7156,3 +7156,26 @@ item. Once no pending call matches, a real subsequent user message retains the
 existing new-turn behavior. Regression coverage includes both the earlier
 user-before-tool ordering and the physically observed tool-before-synthetic-
 user ordering.
+
+V55 physically passed the v37 planning checkpoint through the real Codex
+client, authenticated candidate Gateway, Dynamic MoA, and host tools with a
+clean worktree. This confirms that the sustained-Goal gate measures actual
+dependency-ordered work rather than an idle or direct-local soak. The
+implementation checkpoint then created source and tests, produced one clean
+implementation commit, and independently passed 1,137 repository tests plus
+9 subtests. It did not pass the checkpoint: nine Frontier collaborations
+included seven full `code_review` rejections, each correction verification
+started a fresh whole-code review without the prior material findings, and
+the 1,800-second checkpoint safety ceiling expired with one corrected source
+file still dirty. The immutable mode-`0600` evidence and failure sidecar
+SHA-256 values are
+`d74b484a557d289afe02b0166afb9a8ef861403f015a2781ea63d9b01f809db2`
+and
+`7d4e047942dbf19f351fae98b0fd818369472e6c3d5b5993be20d98db116d8d3`.
+
+Protocol v38 sends the immediately preceding rejected Frontier review in the
+bounded `specific_questions` category during correction verification. The
+review must verify unresolved prior material findings and material regressions
+introduced by the correction; unrelated newly suggested hardening remains a
+suggestion rather than reopening the correction loop. Initial Frontier review
+and independent local Reviewer behavior are unchanged.

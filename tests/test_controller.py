@@ -817,10 +817,12 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
         def __init__(self) -> None:
             self.calls = 0
             self.correlation_ids: list[str] = []
+            self.evidence: list[dict[str, object]] = []
 
         async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
             self.calls += 1
             self.correlation_ids.append(correlation_id)
+            self.evidence.append(evidence)
             return FrontierCollaborationResult(
                 mode="code_review",
                 output={
@@ -894,6 +896,17 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
         frontier_correction_pending_verification=True,
         review_status="deferred",
         review_deferred=True,
+        agent_artifacts=[
+            {
+                "role": "frontier",
+                "output": {
+                    "verdict": "revise",
+                    "critical": [],
+                    "important": ["validate the documented boundary"],
+                    "missing_tests": ["cover the boundary"],
+                },
+            }
+        ],
     )
     request = {
         "model": "dgx-moa-orchestrated",
@@ -910,6 +923,12 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
     assert frontier.calls == 1
     assert state.frontier_invocations == 2
     assert frontier.correlation_ids == ["frontier-correction-verification:frontier:2"]
+    assert frontier.evidence[0]["specific_questions"] == [
+        "Correction verification: report unresolved prior material findings or material "
+        "regressions introduced by the correction; keep unrelated new hardening as suggestions.",
+        "validate the documented boundary",
+        "cover the boundary",
+    ]
     assert state.frontier_correction_pending_verification is False
     assert state.frontier_review_verified is True
     assert any(

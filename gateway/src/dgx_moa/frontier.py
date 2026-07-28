@@ -426,7 +426,9 @@ COLLABORATION_MODE_INSTRUCTIONS = {
         "additional tests in suggestions instead. This review runs before final synthesis. Do not "
         "revise or reject because the client-visible final answer is absent, or because of its "
         "language, length, format, or summary content; final synthesis validates those "
-        "requirements."
+        "requirements. When specific_questions marks correction verification, use revise only "
+        "for an unresolved prior material finding or a material regression introduced by that "
+        "correction; put unrelated newly suggested hardening in suggestions."
     ),
     "architecture": (
         "For architecture, distinguish required decisions from optional future hardening."

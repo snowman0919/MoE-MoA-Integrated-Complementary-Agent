@@ -2901,6 +2901,28 @@ class Controller:
                     and state.active_turn_targets_repository
                     and not validation_evidence_available
                 )
+                specific_questions = list(
+                    request.get("metadata", {}).get("frontier_questions", [])
+                )
+                if state.frontier_correction_pending_verification:
+                    prior_review: dict[str, Any] = next(
+                        (
+                            artifact.get("output", {})
+                            for artifact in reversed(state.agent_artifacts)
+                            if artifact.get("role") == "frontier"
+                            and isinstance(artifact.get("output"), dict)
+                            and artifact["output"].get("verdict") in {"revise", "reject"}
+                        ),
+                        {},
+                    )
+                    specific_questions = [
+                        "Correction verification: report unresolved prior material findings or "
+                        "material regressions introduced by the correction; keep unrelated new "
+                        "hardening as suggestions.",
+                        *prior_review.get("critical", []),
+                        *prior_review.get("important", []),
+                        *prior_review.get("missing_tests", []),
+                    ]
                 evidence = {
                     "_paid_fallback_required": bool(
                         request.get("metadata", {}).get("frontier_required") or "judge" in roles
@@ -2917,7 +2939,7 @@ class Controller:
                         "tests": request.get("metadata", {}).get("validation_results", []),
                         "tool_results": self.review_tool_results(state),
                     },
-                    "specific_questions": request.get("metadata", {}).get("frontier_questions", []),
+                    "specific_questions": specific_questions,
                 }
                 if frontier_review_deferred:
                     self.store.event(
