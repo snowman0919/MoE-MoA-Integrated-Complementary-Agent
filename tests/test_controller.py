@@ -4113,6 +4113,55 @@ async def test_progress_retry_rechecks_deferred_review(
     assert state.review_deferred is False
 
 
+@pytest.mark.asyncio
+async def test_correction_review_reuses_prior_required_findings(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    prior_finding = reviewer_finding()
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="correction-review",
+        objective="Implement app.py in this repository and test it.",
+        roles_required=["executor"],
+        review_status="rejected",
+        review_deferred=True,
+        tool_executions=[
+            {"tool_name": "apply_patch", "exit_code": 0},
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m pytest -q"},
+                "exit_code": 0,
+            },
+        ],
+        agent_artifacts=[
+            {
+                "role": "reviewer",
+                "output": {"status": "rejected", "findings": [prior_finding]},
+            }
+        ],
+    )
+
+    await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa",
+            "messages": [{"role": "user", "content": state.objective}],
+            "metadata": {"responses_progress_retry": True},
+        },
+        ("executor",),
+    )
+
+    review_prompt = next(
+        request["messages"][0]["content"]
+        for request in stub_provider.requests
+        if request["model"] == "reviewer"
+    )
+    assert "correction_verification" in review_prompt
+    assert prior_finding["required_correction"] in review_prompt
+    assert "omit unrelated new hardening from findings" in review_prompt
+    assert state.review_status == "approved"
+
+
 def test_review_observation_is_bounded_redacted_and_complete(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

@@ -7194,3 +7194,15 @@ sidecar SHA-256 values are
 `5e9a506ab1bb2e264917bb8c634ff7684cb07e187f735e397b5a97657de106bb`
 and
 `3676ff858cd140602913963430cb30d14d58d1c36ca5f5b8bd303ec75897a226`.
+
+Protocol v39 preserves that failed epoch and changes only local correction
+review continuity. When the current review state is rejected, the next bounded
+Reviewer request includes the immediately preceding rejected Reviewer findings.
+The trusted Reviewer contract limits correction verification to unresolved
+prior required corrections and material regressions introduced by the
+correction; unrelated new hardening is omitted from structured findings.
+Initial independent review, material fail-closed behavior, and Frontier
+verification remain unchanged. The focused correction/deferred/rejection
+regressions passed `3/3`; the complete suite passed `1131/1131` with the
+existing Starlette warning; Ruff and strict mypy passed. No v39 physical pass
+exists.

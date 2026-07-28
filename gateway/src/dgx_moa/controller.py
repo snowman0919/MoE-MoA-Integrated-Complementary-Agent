@@ -186,7 +186,10 @@ REVIEWER_QUALITY_CONTRACT = (
     "Approve implementation work only when bounded code, "
     "patch, or diff evidence is present; test results alone are insufficient. An approval with "
     "empty findings asserts that these checks are visible in the code evidence. Verify required "
-    "corrections against newer implementation evidence before clearing them. This review runs "
+    "corrections against newer implementation evidence before clearing them. When bounded "
+    "evidence contains correction_verification, reject only unresolved prior required "
+    "corrections or material regressions introduced by the correction; omit unrelated new "
+    "hardening from findings. This review runs "
     "before final synthesis. Do not reject because the client-visible final answer is absent, or "
     "because of its language, length, format, or summary content; final synthesis validates those "
     "requirements. Review only the implementation and currently available evidence."
@@ -3029,6 +3032,16 @@ class Controller:
                 {"trigger": "implementation_evidence"},
             )
         if "reviewer" in roles and review_evidence_available:
+            prior_reviewer_rejection = next(
+                (
+                    artifact["output"]
+                    for artifact in reversed(state.agent_artifacts)
+                    if artifact.get("role") == "reviewer"
+                    and isinstance(artifact.get("output"), dict)
+                    and artifact["output"].get("status") == "rejected"
+                ),
+                None,
+            )
             review_evidence = json.dumps(
                 self.safe_payload(
                     state,
@@ -3040,6 +3053,16 @@ class Controller:
                         "validation_results": metadata.get("validation_results", []),
                         "tool_results": self.review_tool_results(state),
                         "tool_executions": self.review_tool_executions(state),
+                        **(
+                            {
+                                "correction_verification": {
+                                    "prior_findings": prior_reviewer_rejection.get("findings", [])
+                                }
+                            }
+                            if prior_reviewer_rejection is not None
+                            and state.review_status == "rejected"
+                            else {}
+                        ),
                     },
                 ),
                 ensure_ascii=False,
