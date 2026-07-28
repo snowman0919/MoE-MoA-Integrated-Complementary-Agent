@@ -7179,3 +7179,18 @@ review must verify unresolved prior material findings and material regressions
 introduced by the correction; unrelated newly suggested hardening remains a
 suggestion rather than reopening the correction loop. Initial Frontier review
 and independent local Reviewer behavior are unchanged.
+
+V56 physically passed the v38 planning checkpoint through the real Codex
+client, authenticated Gateway, Dynamic MoA, and host tools. The implementation
+checkpoint again produced source, tests, one clean commit, and later one
+uncommitted correction, but did not converge before the 1,800-second safety
+ceiling. Ten Frontier calls completed, six material Frontier rejections and
+six local Reviewer passes occurred, and 20 of 25 requested host-tool results
+were returned before timeout. One translated stream reported the fixed
+payload-free `upstream_error_frame` class. This remains a sustained-Goal
+failure: increasing elapsed soak time would hide rather than fix the
+correction/provider loop. The immutable mode-`0600` evidence and failure
+sidecar SHA-256 values are
+`5e9a506ab1bb2e264917bb8c634ff7684cb07e187f735e397b5a97657de106bb`
+and
+`3676ff858cd140602913963430cb30d14d58d1c36ca5f5b8bd303ec75897a226`.
