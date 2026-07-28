@@ -1212,6 +1212,23 @@ def test_repeated_inspection_routes_executor_to_frontier(
                 "tools": [correction_tool],
             },
         )
+        app.state.store.event(
+            executed_retry_id,
+            "tool_execution_recorded",
+            {"step": 2},
+        )
+        executed_retry_third = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": executed_retry_id,
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": executed_retry.objective}],
+                "tools": [correction_tool],
+            },
+        )
         executed_retry_exhausted = client.post(
             "/v1/chat/completions",
             headers={
@@ -1329,12 +1346,13 @@ def test_repeated_inspection_routes_executor_to_frontier(
     )
     assert executed_retry_first.status_code == 200
     assert executed_retry_second.status_code == 200
+    assert executed_retry_third.status_code == 200
     assert executed_retry_exhausted.status_code == 503
     assert [
         event["payload"]["attempt"]
         for event in executed_retry_events
         if event["event_type"] == "frontier_correction_tool_retry_requested"
-    ] == [1, 2]
+    ] == [1, 2, 3]
     correction_retry = next(
         request
         for request in remote_requests

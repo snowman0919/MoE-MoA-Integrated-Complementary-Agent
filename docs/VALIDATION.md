@@ -7618,3 +7618,38 @@ cost, latency, or profile metadata cannot manufacture review progress. Focused
 duplicate-review and long-horizon regressions passed `44/44`; the complete
 suite passed `1148/1148` with the existing Starlette warning. Ruff and strict
 mypy across 59 source files passed. No v5 physical pass exists yet.
+
+AvatarForge V72 physically exercised protocol v5 through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, and host tools. Phase 0
+and Phase 1 reached clean terminal checkpoints. Phase 2 produced clean
+implementation and fault-coverage commits while local Reasoner, Executor,
+Planner, Reviewer, and Codex OAuth Frontier all completed calls. The run then
+failed after two required Frontier correction tool retries. Both returned and
+executed `apply_patch`; the second execution was recorded before the next
+continuation, but the fixed `len(completed_retries) >= 2` ceiling rejected all
+six pending continuations. The Responses adapter emitted six
+`upstream_error_frame` failures, which Codex surfaced as
+`stream disconnected before completion: response stream failed`. This was not
+a socket, SGLang, or Gateway availability failure. The analyzer exited `1`
+with `cache_reuse_not_observed`, `incomplete_checkpoints`,
+`invalid_event_order`, `invalid_final_count`, `missing_checkpoint_schedule`,
+and `missing_intentional_reconnect`. V72 is diagnostic evidence, not a
+long-horizon pass. The immutable evidence, failure sidecar, analysis, Gateway
+DB, and Codex rollout SHA-256 values are
+`d51daa2666baeb1b7597823b17f06b6ba418feee4b8fe22ce3342d91e9b0a9a2`,
+`aa536d02a0a53e84aebaeed6330860b9cd8c19f41c7840a0440da902c915e9ac`,
+`d54da7e7919e346f09cc2bfd1cd90873e7be3da69614ff16abeb1d59c40f61fe`,
+`f5c06aa27f24390096b37171983c9e562f6df544d91b7c02ee0655dabe80ff81`,
+and
+`d1c4dea45abea619d229e4cb93fbbdd19512cf5577688dcef8827a9971aa8a61`.
+
+AvatarForge protocol v6 removes only the fixed two-call Frontier correction
+ceiling. A recorded tool execution is progress and permits the next required
+correction tool call. A retry still fails closed when its tool call was not
+executed before another continuation, and the existing loop budgets,
+duplicate-failure limit, provider pinning, and mandatory-Frontier policy remain
+unchanged. The regression proves three correction tool calls are allowed when
+each prior call is executed, while the next request without execution still
+returns `503`. Focused correction and stream regressions passed `8/8`; the
+complete suite passed `1148/1148` with the existing Starlette warning. Ruff and
+strict mypy across 59 source files passed. No v6 physical pass exists yet.

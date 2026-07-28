@@ -2092,9 +2092,7 @@ def create_app(
                         index > last_retry and event["event_type"] == "tool_execution_recorded"
                         for index, event in enumerate(correction_events)
                     )
-                    if len(completed_retries) >= 2 or (
-                        completed_retries and not tool_executed_after_retry
-                    ):
+                    if completed_retries and not tool_executed_after_retry:
                         request.app.state.store.event(
                             state_session_id,
                             "frontier_correction_tool_retry_exhausted",
