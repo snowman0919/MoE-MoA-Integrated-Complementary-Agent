@@ -7253,3 +7253,26 @@ tool-name set. The non-mutation, implementation, and pending-continuation
 regressions passed `3/3`; explicit custom tool selection remains preserved.
 The complete suite passed `1132/1132` with the existing Starlette warning;
 Ruff and strict mypy passed. No v41 physical pass exists.
+
+V59 physically exercised v41 through the real Codex client, authenticated
+Gateway, Dynamic MoA, and host tools. The write-tool boundary fired and the
+planning checkpoint passed clean with eight host-tool calls. The implementation
+checkpoint created and committed a 466-line job-journal implementation and
+tests, then failed after six local Reviewer rejections, six Frontier review
+rejections, three applied corrections, and two completed correction-tool
+retries after the final rejection. The two-retry fail-closed policy then
+produced `FrontierRequiredUnavailable`; the Codex client exited nonzero after
+repeated error-frame reconnects. The run used local Reasoner, local Planner,
+local and Codex OAuth Executor, local Reviewer, and Codex OAuth Frontier. Its
+immutable mode-`0600` evidence and failure sidecar SHA-256 values are
+`31cd035773f2367feb5619811e591762f3b048929d62ed8b249d03d34ef00d8b`
+and
+`5100c197a60c219ce4fb134dc63955f869ea1a636de5b3c358bf911c44906884`.
+
+Independent execution of the generated commit passed its focused 11 tests and
+19 subtests, the full `1143/1143` tests and 19 subtests, and strict mypy across
+60 source files. Ruff still reported five source/test violations, while the
+captured client tool history contained four passing and three failing test
+commands but no Ruff or mypy invocation. The review gate therefore exposed a
+real incomplete-validation and implementation-quality failure; it was not
+relaxed or converted to a pass. No v41 physical pass exists.
