@@ -7464,3 +7464,23 @@ Elapsed duration or direct local-model activity is not substitute evidence.
 The focused regressions passed `3/3`; the complete suite passed `1143/1143`
 with the existing Starlette warning; Ruff and strict mypy across 60 source
 files passed. No v48 physical pass exists yet.
+
+V66 physically exercised v48 through the real Codex client, authenticated
+loopback Gateway, Dynamic MoA, and host tools. Planning passed cleanly with
+seven host-tool calls and no provider error. Core implementation then created
+non-empty source and test files, recovered one failed validation, passed four
+validation executions, resolved both recorded tool failures, and produced one
+clean implementation commit. It did not complete the core client turn: six
+fresh Frontier code reviews and their correction loops consumed the
+comparison run's one-million-token ceiling. The Gateway failed closed with
+`loop_budget_exhausted`; iterations, tools, Reasoner, Planner, Reviewer,
+Frontier, cost, and wall-clock ceilings remained. The run recorded 32 Executor,
+32 Reasoner, four Planner, and 12 Reviewer role usages. It is a diagnostic
+failure and does not satisfy the newly frozen eight-million-token AvatarForge
+protocol. The immutable evidence, failure sidecar, analysis, and Gateway DB
+SHA-256 values are
+`fd50e8f2c85bfc64015b732feed2042b892d49c3ddbcab8740f5008136394bfd`,
+`2f835473a0d83465dfc9185c2af4da6da5f38a7b1fab6fec088150b240f47ff3`,
+`84b25371bd8c04956009f74f19c91801a67cb1ab38d69e8095fca1b712ce5d76`,
+and
+`89e349763ee0f14a198da3a948430eb4f1d48a9830c2c8c3f73da582c1924b28`.

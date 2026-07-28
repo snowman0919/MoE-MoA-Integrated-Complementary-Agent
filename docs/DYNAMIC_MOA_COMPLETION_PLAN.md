@@ -372,6 +372,38 @@ runner가 바뀌면 해당 epoch는 진단으로 봉인하고 새 protocol/run I
 구성요소다. 짧은 backend soak나 단순 경과 시간으로 실제 작업 완결성,
 reconnect, plan/context 보존을 대체하지 않는다.
 
+### 9.1 AvatarForge active-work protocol
+
+추가 장기 검증은 사용자 제공 계약
+`avatarforge-10h-validation-goal.md`와 그 계약이 참조하는 AvatarForge Goal
+원문을 byte-for-byte fixture로 사용한다. 동결 SHA-256은 각각
+`6676ac077979fe305d96619c7cd2d6c42b40d7e3b361d28389e9eaa54609df83`와
+`37878be8c6e67262e80b680cea5effa504ed3cafef55d886ae41e9bc35d507fa`다.
+
+- Codex, OpenCode, installed Hermes는 같은 clean seed repository, 입력,
+  provider manifest, 권한, 모델 topology에서 각각 독립 실행한다.
+- 실제 client→인증 loopback Gateway→Dynamic MoA→host tool 경로만
+  유효하다. direct model/idle soak/반복 추론은 제외한다.
+- 필수 checkpoint는 AvatarForge Phase 0, 1, 2, 3이다. 각 checkpoint는
+  계획 갱신, baseline-relative 실제 diff, 발견된 테스트 1개 이상, 고정
+  validation 성공, 독립 Reviewer, clean commit, evidence를 요구한다.
+- Phase 1 완료 뒤 client를 의도적으로 재접속하고 동일 Gateway session의
+  plan, phase, unresolved item, tool/review evidence를 복구한다.
+- 10시간은 active-work 상한이다. Phase 0–3이 통과하면 기다리지 않고
+  종료할 수 있고, 시간이 남을 때만 마지막 통과 checkpoint에서 Phase 4
+  이후를 순서대로 진행한다. 시간을 채우는 반복은 실패다.
+- 설치, 라이선스, credential, OS permission이 없으면 dependent 항목을
+  `BLOCKED`로 기록하되 mock, schema, contract, state/revision 구현과 테스트는
+  계속한다. `BLOCKED`를 PASS로 변환하지 않는다.
+- candidate Loop ceiling은 `iterations=256`, `tool_calls=1000`,
+  `reasoner_reentries=256`, `planner_calls=32`, `reviewer_calls=64`,
+  `frontier_calls=128`, `tokens=8000000`, `external_cost_usd=10`,
+  `wall_clock_seconds=36000`이다. 이는 작업 목표가 아니라 fail-safe다.
+- 코드, prompt, fixture, model, scorer, threshold가 바뀌면 진행 중 결과를
+  진단으로 봉인하고 새 protocol/run ID와 clean seed에서 다시 시작한다.
+- 기존 long-horizon runner와 analyzer를 profile-driven으로 최소 확장한다.
+  별도 중복 runner나 AvatarForge 전용 orchestration framework는 만들지 않는다.
+
 ## 10. Release, rollback, 배포
 
 1. 정리된 기능 branch들을 `dev`에 reviewed integration
