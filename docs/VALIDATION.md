@@ -7747,3 +7747,38 @@ idle/backend soak remain invalid evidence. Focused mandatory paid-fallback and
 long-horizon coverage passed `4/4`; the complete suite passed `1148/1148` with
 the existing Starlette warning; Ruff passed and strict mypy across 59 source
 files reported zero errors. No v9 physical pass exists yet.
+
+AvatarForge V76 physically exercised protocol v9 through the real Codex client,
+authenticated loopback Gateway, Dynamic MoA, and host tools. Phase 0 completed
+a terminal clean checkpoint with 20 host-tool executions, zero provider errors,
+14,080 cached tokens, provider pinning, and local Reasoner, Executor, Planner,
+Reviewer plus Codex OAuth Executor and Frontier provenance. Its clean checkpoint
+commit is `36b73c3e326eb198897be0dfb3fe6f13ca6443f6`. Phase 1 then exposed a
+review-scheduling defect: after the new user turn, one successful inspection
+command was enough for `has_review_evidence()` to accept a bare `git diff` as
+review evidence before any Phase 1 file mutation. Frontier reviews consequently
+started against incomplete work and produced material-finding counts
+`4`, `5`, and `4`. The sequence did not converge, so the client and isolated
+Gateway were stopped rather than running toward the ten-hour fail-safe. No
+OpenRouter fallback, provider failure, or stream abort occurred before the
+operator stop; the retained cancelled request and stream-aborted event are from
+that stop. The analyzer exited `1` with `incomplete_checkpoints`,
+`invalid_event_order`, `invalid_final_count`, `missing_checkpoint_schedule`, and
+`missing_intentional_reconnect`. The immutable Gateway DB, evidence, analysis,
+and Codex rollout SHA-256 values are
+`cb4e2a7d4c31db68b957f126156f59cd315ceff6d692725f0e92beac9c05087c`,
+`156e43ab1a4289725206d4735fab6a3478c70582d1a02a4ca325ccf9cbe6aa14`,
+`a5df58cad147f8b57b343c200a362065e518a7b56e2075f922a9051d0efebd78`,
+and
+`e512c5f8e46e219a8f37bb06e2736f2776ce9f7bedc1122669d9a2b73d61b21f`.
+
+AvatarForge protocol v10 requires a successful current-turn file mutation
+before a repository-changing turn may use command-derived review evidence.
+Metadata that explicitly supplies changed paths, a bounded diff, validation
+results, or completion evidence remains eligible at the trust boundary. A bare
+`git diff`, inspection, or successful test before the mutation cannot trigger
+local or Frontier review. This fixes the shared evidence gate rather than
+special-casing AvatarForge. The focused review-evidence, deferred-Frontier, and
+evidence-order regressions passed `3/3`; the complete suite passed `1148/1148`
+with the existing Starlette warning; Ruff passed and strict mypy across 59
+source files reported zero errors. No v10 physical pass exists yet.

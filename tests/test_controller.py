@@ -3822,6 +3822,25 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
     )
     assert controller.has_review_evidence(git_diff, {}) is True
     assert controller.has_validation_evidence(git_diff, {}) is False
+    premature_review = git_diff.model_copy(
+        update={
+            "session_id": "premature-review",
+            "active_turn_requires_change": True,
+            "active_turn_targets_repository": True,
+        }
+    )
+    assert controller.has_review_evidence(premature_review, {}) is False
+    premature_review.tool_executions.insert(
+        0,
+        {
+            "tool_name": "apply_patch",
+            "normalized_arguments": {
+                "input": "*** Begin Patch\n*** Add File: app.py\n+x = 1\n*** End Patch"
+            },
+            "exit_code": 0,
+        },
+    )
+    assert controller.has_review_evidence(premature_review, {}) is True
     assert controller.has_validation_evidence(
         SessionState(session_id="passed-validation"),
         {"validation_results": [{"name": "unit", "passed": True}, "lint: passed"]},

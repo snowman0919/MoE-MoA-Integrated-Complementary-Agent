@@ -263,7 +263,7 @@ latency, context/cache tokens, tool/retry/provider-error counts, memory/swap,
 and variable cost.
 
 The additional AvatarForge active-work profile uses protocol
-`avatarforge-long-goal-v9` with consecutive checkpoints
+`avatarforge-long-goal-v10` with consecutive checkpoints
 `avatarforge_phase_0_contract`, `avatarforge_phase_1_plugin`,
 `avatarforge_phase_2_environment`, and `avatarforge_phase_3_state`. Every
 checkpoint must contain a baseline-relative change, discovered tests, a clean
@@ -272,7 +272,10 @@ reconnect occurs after Phase 1. Its ten-hour limit is an active-work fail-safe,
 not a minimum duration or pass criterion; idle soak and repeated inference are
 invalid evidence. OpenRouter is not selected from review counts; it remains a
 last fallback only after the configured Codex OAuth chain fails on a mandatory
-path. Provider provenance and variable cost remain mandatory.
+path. A repository-changing turn cannot enter review until the current turn
+contains a successful file mutation; an empty `git diff` or validation of only
+prior work is insufficient. Provider provenance and variable cost remain
+mandatory.
 
 The full run must observe Reasoner, Executor, Planner, and Reviewer provenance.
 At least one intentional reconnect and one positive cache read are mandatory.

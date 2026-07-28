@@ -3809,7 +3809,18 @@ class Controller:
             or metadata.get("validation_results")
         ):
             return True
-        for execution in reversed(current_turn_executions(state)):
+        executions = current_turn_executions(state)
+        if (
+            state.active_turn_requires_change
+            and state.active_turn_targets_repository
+            and not any(
+                execution.get("exit_code") == 0
+                and self.tool_execution_changes_files(execution)
+                for execution in executions
+            )
+        ):
+            return False
+        for execution in reversed(executions):
             arguments = execution.get("normalized_arguments")
             if isinstance(arguments, str):
                 try:
