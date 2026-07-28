@@ -720,10 +720,7 @@ class Controller:
         self.admit_loop_action(state, "tool_calls")
 
     def admit_frontier_call(self, state: SessionState) -> None:
-        if (
-            self.frontier is None
-            or self.frontier.config.max_invocations_per_task is not None
-        ):
+        if self.frontier is None or self.frontier.config.max_invocations_per_task is not None:
             self.admit_loop_action(state, "frontier_calls")
 
     async def _frontier_collaborate(
@@ -1094,8 +1091,7 @@ class Controller:
             ) = user_turn_intent(latest_user)
             state.final_status = None
             if subsequent_turn and not (
-                state.frontier_correction_required
-                or state.frontier_correction_pending_verification
+                state.frontier_correction_required or state.frontier_correction_pending_verification
             ):
                 state.review_status = "pending"
                 state.review_deferred = False
@@ -1448,18 +1444,14 @@ class Controller:
         self.store.save(state)
         return evaluation
 
-    def remember_tool_calls(
-        self, state: SessionState, calls: list[dict[str, Any]]
-    ) -> None:
+    def remember_tool_calls(self, state: SessionState, calls: list[dict[str, Any]]) -> None:
         pending = {
             str(call["id"]): call
             for call in state.pending_tool_calls
             if isinstance(call, dict) and call.get("id")
         }
         pending.update(
-            (str(call["id"]), call)
-            for call in calls
-            if isinstance(call, dict) and call.get("id")
+            (str(call["id"]), call) for call in calls if isinstance(call, dict) and call.get("id")
         )
         state.pending_tool_calls = list(pending.values())[-self.settings.limits.max_steps :]
         state.pending_tool_call_ids = list(pending)[-self.settings.limits.max_steps :]
@@ -1495,9 +1487,7 @@ class Controller:
             ]
             call = calls_by_id.get(tool_call_id) or (state.last_tool_call or {})
             state.pending_tool_calls = [
-                item
-                for item in state.pending_tool_calls
-                if str(item.get("id", "")) != tool_call_id
+                item for item in state.pending_tool_calls if str(item.get("id", "")) != tool_call_id
             ]
             if tool_call_id and tool_call_id in observed_tool_call_ids:
                 continue
@@ -1686,8 +1676,7 @@ class Controller:
                     failure_paths = set(failure.get("target_paths", []))
                     same_path = bool(target_paths.intersection(failure_paths))
                     same_tool_without_path = bool(
-                        not failure_paths
-                        and failure.get("tool_name") == execution["tool_name"]
+                        not failure_paths and failure.get("tool_name") == execution["tool_name"]
                     )
                     if not (same_path or same_tool_without_path):
                         continue
@@ -2182,10 +2171,7 @@ class Controller:
             role == "executor"
             and not state.active_turn_requires_change
             and state.active_turn_targets_repository
-            and not (
-                state.resolved_objective
-                and user_turn_intent(state.resolved_objective)[0]
-            )
+            and not (state.resolved_objective and user_turn_intent(state.resolved_objective)[0])
         )
         goal_constraints = (
             "For /goal requests, reading or summarizing the objective is not completion. "
@@ -2650,8 +2636,8 @@ class Controller:
         context_fingerprint = f"{user_context_fingerprint}:{evidence_generation}"
         reentry_reasons: list[str] = []
         if tool_continuation and "reasoner" in roles:
-            previous_context, _, previous_generation = (
-                state.reasoner_context_fingerprint.partition(":")
+            previous_context, _, previous_generation = state.reasoner_context_fingerprint.partition(
+                ":"
             )
             if previous_context and previous_context != user_context_fingerprint:
                 reentry_reasons.append("user_context_changed")
@@ -2953,9 +2939,7 @@ class Controller:
                     and state.active_turn_targets_repository
                     and not validation_evidence_available
                 )
-                specific_questions = list(
-                    request.get("metadata", {}).get("frontier_questions", [])
-                )
+                specific_questions = list(request.get("metadata", {}).get("frontier_questions", []))
                 if state.frontier_correction_pending_verification:
                     specific_questions = self.frontier_correction_questions(state)
                 evidence = {
@@ -2989,11 +2973,7 @@ class Controller:
                 )
                 if mode == "architecture" and prior_architecture is not None:
                     collaboration_context += "\nPrior Frontier contribution:\n" + json.dumps(
-                        {
-                            key: value
-                            for key, value in prior_architecture.items()
-                            if key != "role"
-                        },
+                        {key: value for key, value in prior_architecture.items() if key != "role"},
                         ensure_ascii=False,
                     )
                     self.store.event(
@@ -3045,10 +3025,13 @@ class Controller:
                     )
                     frontier_degraded = True
                 else:
-                    if orchestration.parallelizable or not {
-                        "planner",
-                        "reviewer",
-                    }.intersection(roles):
+                    if mode != "code_review" and (
+                        orchestration.parallelizable
+                        or not {
+                            "planner",
+                            "reviewer",
+                        }.intersection(roles)
+                    ):
                         frontier_task = asyncio.create_task(
                             self._frontier_collaborate(state, mode, evidence)
                         )
@@ -3208,12 +3191,8 @@ class Controller:
                 raw_usage = planner.get("usage") if planner is not None else None
                 usage = raw_usage if isinstance(raw_usage, dict) else {}
                 raw_prompt_details = usage.get("prompt_tokens_details")
-                prompt_details = (
-                    raw_prompt_details if isinstance(raw_prompt_details, dict) else {}
-                )
-                selected_provider = str(
-                    planner_routing.get("selected_provider") or "unknown"
-                )
+                prompt_details = raw_prompt_details if isinstance(raw_prompt_details, dict) else {}
+                selected_provider = str(planner_routing.get("selected_provider") or "unknown")
                 self.record_observed_invocation(
                     state,
                     {
@@ -3310,18 +3289,20 @@ class Controller:
                         not pre_review_result.get("findings") and not state.frontier_review_verified
                     )
                 )
-                if material_review_issue or review_assurance_needed:
-                    review_trigger = (
-                        "material_reviewer_finding"
-                        if material_review_issue
-                        else (
-                            "frontier_correction_verification"
-                            if state.frontier_correction_pending_verification
-                            else "insufficient_local_review_assurance"
-                        )
+                if material_review_issue:
+                    state.derived_confidence = "conflicted"
+                    frontier_pending = None
+                    self.store.event(
+                        state.session_id,
+                        "frontier_review_deferred",
+                        {"reason": "local_reviewer_rejected"},
                     )
-                    if material_review_issue:
-                        state.derived_confidence = "conflicted"
+                elif review_assurance_needed:
+                    review_trigger = (
+                        "frontier_correction_verification"
+                        if state.frontier_correction_pending_verification
+                        else "insufficient_local_review_assurance"
+                    )
                     if frontier_task is None and frontier_pending is None:
                         if self.frontier is None:
                             self.store.event(
@@ -3519,9 +3500,7 @@ class Controller:
                             ),
                         },
                     )
-                    if self.register_frontier_review_failure(
-                        state, frontier_result.output
-                    ):
+                    if self.register_frontier_review_failure(state, frontier_result.output):
                         self._reject_loop_action(
                             state,
                             "frontier_review",
@@ -3814,8 +3793,7 @@ class Controller:
             state.active_turn_requires_change
             and state.active_turn_targets_repository
             and not any(
-                execution.get("exit_code") == 0
-                and self.tool_execution_changes_files(execution)
+                execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
                 for execution in executions
             )
         ):
@@ -3878,15 +3856,12 @@ class Controller:
             if isinstance(arguments, dict)
             else None
         )
-        return (
-            isinstance(command, str)
-            and bool(
-                re.search(
-                    r"(?:^|&&|\|\||;|\n|[\"'])\s*(?:timeout\s+\S+\s+)?"
-                    r"(?:uv run )?(?:python -m )?"
-                    r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
-                    command,
-                )
+        return isinstance(command, str) and bool(
+            re.search(
+                r"(?:^|&&|\|\||;|\n|[\"'])\s*(?:timeout\s+\S+\s+)?"
+                r"(?:uv run )?(?:python -m )?"
+                r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
+                command,
             )
         )
 
@@ -4059,9 +4034,7 @@ class Controller:
                     except ValueError:
                         arguments = {"input": arguments}
                 patch = (
-                    arguments.get("input")
-                    or arguments.get("patch")
-                    or arguments.get("diff")
+                    arguments.get("input") or arguments.get("patch") or arguments.get("diff")
                     if isinstance(arguments, dict)
                     else None
                 )
@@ -4075,8 +4048,7 @@ class Controller:
                     else []
                 )
                 if targets and all(
-                    target in {"/state", "/inputs"}
-                    or target.startswith(("/state/", "/inputs/"))
+                    target in {"/state", "/inputs"} or target.startswith(("/state/", "/inputs/"))
                     for target in targets
                 ):
                     return False
@@ -4143,18 +4115,14 @@ class Controller:
         )
 
     @staticmethod
-    def register_frontier_review_failure(
-        state: SessionState, result: dict[str, Any]
-    ) -> bool:
+    def register_frontier_review_failure(state: SessionState, result: dict[str, Any]) -> bool:
         loop = state.engineering_loop
         if loop is None:
             return False
         register_failure(
             loop,
             "DUPLICATE_FAILURE",
-            finding_fingerprint=progress_evidence_fingerprint(
-                "frontier_review", result
-            ),
+            finding_fingerprint=progress_evidence_fingerprint("frontier_review", result),
         )
         return loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
 

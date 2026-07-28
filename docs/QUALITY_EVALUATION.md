@@ -263,7 +263,7 @@ latency, context/cache tokens, tool/retry/provider-error counts, memory/swap,
 and variable cost.
 
 The additional AvatarForge active-work profile uses protocol
-`avatarforge-long-goal-v10` with consecutive checkpoints
+`avatarforge-long-goal-v11` with consecutive checkpoints
 `avatarforge_phase_0_contract`, `avatarforge_phase_1_plugin`,
 `avatarforge_phase_2_environment`, and `avatarforge_phase_3_state`. Every
 checkpoint must contain a baseline-relative change, discovered tests, a clean
@@ -276,6 +276,13 @@ path. A repository-changing turn cannot enter review until the current turn
 contains a successful file mutation; an empty `git diff` or validation of only
 prior work is insufficient. Provider provenance and variable cost remain
 mandatory.
+
+Code-review dependencies are serial even when the orchestration decision marks
+the broader work parallelizable. The local Reviewer must finish first; a
+material local finding returns the task to correction without spending a
+Frontier review on the rejected snapshot. Frontier reviews only locally
+approved evidence. Architecture collaboration remains independently
+parallelizable.
 
 The full run must observe Reasoner, Executor, Planner, and Reviewer provenance.
 At least one intentional reconnect and one positive cache read are mandatory.

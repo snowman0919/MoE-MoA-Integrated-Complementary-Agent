@@ -19,7 +19,7 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v10"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v11"
 AVATARFORGE_PHASES = (
     "avatarforge_phase_0_contract",
     "avatarforge_phase_1_plugin",
@@ -332,9 +332,7 @@ def analyze(path: Path) -> dict[str, Any]:
         "failures": failures,
         "checkpoints": len(checkpoints),
         "scheduled_duration_seconds": (
-            scheduled[-1] - scheduled[0]
-            if len(scheduled) == checkpoints_expected
-            else None
+            scheduled[-1] - scheduled[0] if len(scheduled) == checkpoints_expected else None
         ),
         "intentional_reconnects": reconnects,
         "cache_reuse_observed": "cache_reuse_not_observed" not in failures,

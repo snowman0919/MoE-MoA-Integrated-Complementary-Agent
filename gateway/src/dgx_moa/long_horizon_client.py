@@ -30,7 +30,7 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v10"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v11"
 AVATARFORGE_PHASES = (
     "avatarforge_phase_0_contract",
     "avatarforge_phase_1_plugin",
@@ -840,8 +840,7 @@ def run_validation(args: argparse.Namespace, state: Path) -> tuple[int, str]:
             remove_client_container(name)
     output = run.stdout + "\n" + run.stderr
     empty = any(
-        marker in output.lower()
-        for marker in ("ran 0 tests", "no tests ran", "collected 0 items")
+        marker in output.lower() for marker in ("ran 0 tests", "no tests ran", "collected 0 items")
     )
     return (1 if run.returncode == 0 and empty else run.returncode), sha256_text(output)
 
@@ -947,9 +946,7 @@ def run_checkpoint(
     if control.get("client_session") not in {None, session}:
         raise RuntimeError("client_session_changed")
     control["client_session"] = session
-    progress = gateway_progress_state(
-        args.state_db, control["gateway_session"], index, phases
-    )
+    progress = gateway_progress_state(args.state_db, control["gateway_session"], index, phases)
     git_state = git_snapshot(args.workspace)
     if git_state["dirty_state"] != "clean":
         raise RuntimeError("dirty_checkpoint")
@@ -988,9 +985,7 @@ def run_checkpoint(
         "latency_seconds": round(completed - started, 3),
         "next_action_sha256": progress["next_action_sha256"],
         "context_summary_sha256": progress["context_summary_sha256"],
-        "evidence_sha256": sha256_text(
-            progress["evidence_sha256"] + metrics.pop("output_sha256")
-        ),
+        "evidence_sha256": sha256_text(progress["evidence_sha256"] + metrics.pop("output_sha256")),
         "commit": git_state["commit"],
         "dirty_state": git_state["dirty_state"],
         "provider_pinned": provider["provider_pinned"],

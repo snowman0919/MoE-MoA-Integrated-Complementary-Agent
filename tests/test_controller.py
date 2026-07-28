@@ -880,6 +880,22 @@ async def test_local_review_escalates_to_frontier_code_review(
 
     prepared = await controller.prepare_executor(state, request, ("reasoner", "executor"))
 
+    if not clean_approval:
+        assert frontier.calls == []
+        assert state.frontier_invocations == 0
+        assert state.derived_confidence == "conflicted"
+        assert state.review_status == "rejected"
+        assert state.review_deferred is True
+        assert state.frontier_correction_required is False
+        assert state.phase == Phase.CORRECTION
+        assert "Frontier contribution" not in json.dumps(prepared["messages"])
+        assert any(
+            event["event_type"] == "frontier_review_deferred"
+            and event["payload"].get("reason") == "local_reviewer_rejected"
+            for event in store.events(state.session_id)
+        )
+        return
+
     assert [mode for mode, _ in frontier.calls] == ["code_review"]
     assert frontier.calls[0][1].get("_paid_fallback_required") is not True
     assert frontier.calls[0][1]["implementation_evidence"][0]["target_paths"] == [
@@ -924,8 +940,6 @@ async def test_local_review_escalates_to_frontier_code_review(
             "frontier_correction_verification"
             if correction_verification
             else "insufficient_local_review_assurance"
-            if clean_approval
-            else "material_reviewer_finding"
         )
         for event in store.events(state.session_id)
     )
@@ -948,6 +962,7 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
             self.evidence: list[dict[str, object]] = []
 
         async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            assert "reviewer" in stub_provider.calls
             self.calls += 1
             self.correlation_ids.append(correlation_id)
             self.evidence.append(evidence)
@@ -982,7 +997,7 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
                                     "required_agents": ["reviewer", "frontier"],
                                     "optional_agents": [],
                                     "reason": {"reviewer": "verify the correction"},
-                                    "parallelizable": False,
+                                    "parallelizable": True,
                                     "continue_after": "synthesize",
                                     "confidence": 0.9,
                                 }
@@ -993,6 +1008,7 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
                 ]
             }
         if role == "reviewer":
+            stub_provider.calls.append(role)
             return {
                 "choices": [
                     {
@@ -1065,9 +1081,9 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
         "validate the documented boundary",
         "cover the boundary",
     ]
-    assert frontier.evidence[0]["relevant_evidence"]["implementation"][0][
-        "target_paths"
-    ] == ["gateway/src/example.py"]
+    assert frontier.evidence[0]["relevant_evidence"]["implementation"][0]["target_paths"] == [
+        "gateway/src/example.py"
+    ]
     assert state.frontier_correction_pending_verification is False
     assert state.frontier_review_verified is True
     assert any(
@@ -2205,9 +2221,7 @@ def test_test_failure_requires_successful_validation_to_resolve(
     assert len(active_failures(state)) == 1
 
     empty = execution("empty", f"python -m unittest -v {path}", 0)
-    empty[1]["content"] = json.dumps(
-        {"exit_code": 0, "stdout": "Ran 0 tests in 0.000s\n\nOK"}
-    )
+    empty[1]["content"] = json.dumps({"exit_code": 0, "stdout": "Ran 0 tests in 0.000s\n\nOK"})
     controller._observe(state, empty)
     assert len(active_failures(state)) == 2
     assert state.tool_executions[-1]["failure_class"] == "TEST_FAILURE"
@@ -2423,9 +2437,9 @@ def test_parallel_tool_results_keep_their_original_call_fingerprints(
     assert state.engineering_loop.termination_reason is None
     assert len(state.engineering_loop.open_failures) == 3
     assert len({failure.fingerprint for failure in state.engineering_loop.open_failures}) == 3
-    assert [
-        execution["normalized_arguments"] for execution in state.tool_executions
-    ] == [call["function"]["arguments"] for call in calls]
+    assert [execution["normalized_arguments"] for execution in state.tool_executions] == [
+        call["function"]["arguments"] for call in calls
+    ]
     assert state.pending_tool_call_ids == []
     assert state.pending_tool_calls == []
 
@@ -2492,8 +2506,7 @@ async def test_reasoner_structured_output_gets_three_bounded_local_attempts(
     assert attempts == 3
     assert retries == [2, 3]
     assert not any(
-        event["event_type"] == "reasoner_unavailable"
-        for event in store.events(state.session_id)
+        event["event_type"] == "reasoner_unavailable" for event in store.events(state.session_id)
     )
 
 
@@ -3984,10 +3997,7 @@ def test_patch_tool_counts_as_a_file_change(settings, stub_provider: StubProvide
             "tool_name": "apply_patch",
             "normalized_arguments": {
                 "input": (
-                    "*** Begin Patch\n"
-                    "*** Add File: /state/long-progress.json\n"
-                    "+{}\n"
-                    "*** End Patch"
+                    "*** Begin Patch\n*** Add File: /state/long-progress.json\n+{}\n*** End Patch"
                 )
             },
             "exit_code": 0,
@@ -4111,9 +4121,12 @@ def test_repeated_successful_inspection_marks_executor_stalled(
         ],
     )
     assert controller.executor_stalled(distinct) is True
-    assert controller.executor_stalled(
-        distinct.model_copy(update={"tool_executions": distinct.tool_executions[:3]})
-    ) is False
+    assert (
+        controller.executor_stalled(
+            distinct.model_copy(update={"tool_executions": distinct.tool_executions[:3]})
+        )
+        is False
+    )
     git_inspection = distinct.model_copy(
         update={
             "session_id": "git-inspection",
@@ -4392,9 +4405,7 @@ async def test_correction_review_reuses_prior_required_findings(
             {
                 "tool_name": "apply_patch",
                 "target_paths": ["gateway/src/dgx_moa/job_journal.py"],
-                "change_arguments": {
-                    "input": "if type(max_records) is not int: raise ValueError"
-                },
+                "change_arguments": {"input": "if type(max_records) is not int: raise ValueError"},
             }
         ],
         tool_results=[{"stdout": "x" * 20_000}],

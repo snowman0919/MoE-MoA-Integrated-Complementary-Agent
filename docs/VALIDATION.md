@@ -7782,3 +7782,45 @@ special-casing AvatarForge. The focused review-evidence, deferred-Frontier, and
 evidence-order regressions passed `3/3`; the complete suite passed `1148/1148`
 with the existing Starlette warning; Ruff passed and strict mypy across 59
 source files reported zero errors. No v10 physical pass exists yet.
+
+AvatarForge V77 physically exercised protocol v10 through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, and host tools. It did
+not run a direct-model or idle soak. Phase 0 and Phase 1 completed terminal
+clean checkpoints with provider pinning, no premature completion, and zero
+provider errors. The run recorded 129 host-tool executions and 70,402 cached
+tokens; local Reasoner, Executor, Planner, and Reviewer plus Codex OAuth
+Executor and Frontier all completed calls. Phase 2 then exposed a review
+dependency defect. The local Reviewer rejected successive correction
+snapshots while Codex Frontier still reviewed those same locally rejected
+snapshots, producing four consecutive Phase 2 Frontier rejections. The
+material-finding counts were `5`, `5`, `5`, and `4`; exact finding hashes did
+not repeat, and adjacent token-set best-match overlap was only partial. This
+was serial finding discovery on unstable evidence, not useful sustained-Goal
+work, so the client was stopped instead of consuming the ten-hour fail-safe.
+The stop accounts for the sole cancelled request and stream-aborted event;
+there was no remote-provider failure. The analyzer exited `1` with
+`incomplete_checkpoints`, `invalid_event_order`, `invalid_final_count`,
+`missing_checkpoint_schedule`, and `missing_intentional_reconnect`. It still
+confirmed two checkpoints, cache reuse, and provider pinning. V77 is diagnostic
+evidence, not a long-horizon pass. The immutable Gateway DB, evidence,
+analysis, and Codex rollout SHA-256 values are
+`ece9c2ae462d37890ebd1d77959ff17e06813968131e09e3f132df24ff5893af`,
+`6d425753a2cf450c1cfa3f5d3b4d663e58343dfa90d6a9e08d04509f2b78ddbf`,
+`689726b546549aa1d20dcedc5f7b4007e17a8eb7b41269fc38b247dda3440286`,
+and
+`8e637037c717071162d23901aac5cab75bd2ddd56a551c143d29b499b3275df5`.
+
+AvatarForge protocol v11 makes the review dependency explicit. Code-review
+Frontier work is always deferred until the local Reviewer completes, even
+when the broader orchestration decision is parallelizable. A material local
+finding now records `frontier_review_deferred` with reason
+`local_reviewer_rejected`, returns to correction, and performs no Frontier
+call on that rejected snapshot. A locally approved snapshot still proceeds to
+Frontier, including mandatory correction verification past the ordinary
+invocation limit. Architecture collaboration remains eligible for independent
+parallel execution. This changes review ordering, so V77 remains sealed and a
+new immutable v11 run is required. The direct review-order regressions passed
+`5/5`, controller coverage passed `117/117`, combined controller and
+long-horizon coverage passed `157/157`, and the complete suite passed
+`1148/1148` with the existing Starlette warning. Ruff passed and strict mypy
+reported zero errors across 59 source files.
