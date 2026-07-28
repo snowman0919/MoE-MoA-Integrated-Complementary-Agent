@@ -263,14 +263,16 @@ latency, context/cache tokens, tool/retry/provider-error counts, memory/swap,
 and variable cost.
 
 The additional AvatarForge active-work profile uses protocol
-`avatarforge-long-goal-v12` with consecutive checkpoints
+`avatarforge-long-goal-v13` with consecutive checkpoints
 `avatarforge_phase_0_contract`, `avatarforge_phase_1_plugin`,
 `avatarforge_phase_2_environment`, and `avatarforge_phase_3_state`. Every
 checkpoint must contain a baseline-relative change, discovered tests, a clean
 new commit, host-tool evidence, and independent review. The intentional
 reconnect occurs after Phase 1. Its ten-hour limit is an active-work fail-safe,
 not a minimum duration or pass criterion; idle soak and repeated inference are
-invalid evidence. OpenRouter is not selected from review counts; it remains a
+invalid evidence. The limit is one cumulative deadline for the complete
+profile, not a fresh per-checkpoint timeout. OpenRouter is not selected from
+review counts; it remains a
 last fallback only after the configured Codex OAuth chain fails on a mandatory
 path. A repository-changing turn cannot enter review until the current turn
 contains a successful file mutation; an empty `git diff` or validation of only
@@ -314,7 +316,7 @@ production defaults, with the following frozen Loop Engineering ceilings:
 `iterations=256`, `tool_calls=1000`, `reasoner_reentries=256`,
 `planner_calls=32`, `reviewer_calls=64`, `frontier_calls=128`,
 `tokens=8000000`, `external_cost_usd=10`, and
-`wall_clock_seconds=43200`. These are fail-safe ceilings, not work targets;
+`wall_clock_seconds=36000`. These are fail-safe ceilings, not work targets;
 the task still ends as soon as its checkpoint contract is satisfied. OpenRouter
 remains eligible only under the fallback and total-cost rules above.
 

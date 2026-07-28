@@ -392,6 +392,8 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - 10시간은 active-work 상한이다. Phase 0–3이 통과하면 기다리지 않고
   종료할 수 있고, 시간이 남을 때만 마지막 통과 checkpoint에서 Phase 4
   이후를 순서대로 진행한다. 시간을 채우는 반복은 실패다.
+- 이 상한은 전체 profile에 한 번만 적용한다. checkpoint마다 상한을 새로
+  부여하거나 실제 도구·수정·검토 진척이 있는 실행을 30분에 자르지 않는다.
 - 설치, 라이선스, credential, OS permission이 없으면 dependent 항목을
   `BLOCKED`로 기록하되 mock, schema, contract, state/revision 구현과 테스트는
   계속한다. `BLOCKED`를 PASS로 변환하지 않는다.

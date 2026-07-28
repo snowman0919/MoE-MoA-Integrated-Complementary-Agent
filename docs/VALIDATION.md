@@ -7858,3 +7858,42 @@ regressions passed `7/7`, combined controller and long-horizon coverage passed
 `158/158`, and the complete suite passed `1149/1149` with the existing
 Starlette warning. Ruff passed and strict mypy reported zero errors across 59
 source files.
+
+AvatarForge V79 physically exercised protocol v12 through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, and 54 host-tool
+continuations. Phase 0 completed as a terminal, clean, provider-pinned
+checkpoint with eleven tools, no premature completion, and zero provider
+errors. Phase 1 then produced additional baseline-relative commits and
+corrections. Ten local Reviewer calls completed; seven locally rejected
+snapshots correctly deferred Frontier, and each was followed by a later host
+tool mutation before another review began. Local Reasoner, Executor, Planner,
+Reviewer, Codex OAuth Executor, and Codex OAuth Frontier provenance were all
+observed. No remote-provider failure occurred.
+
+V79 failed at checkpoint 1 because the client runner applied its fixed
+1,800-second timeout to the entire active checkpoint even while repository
+mutations and independent reviews were still making progress. The timeout
+aborted Reviewer 11, recorded one `stream_aborted`, and produced immutable
+failure class `client_checkpoint_timeout`. This is a harness deadline defect,
+not long-horizon evidence and not a reason to run a direct-model soak. The
+analyzer exited nonzero with `incomplete_checkpoints`,
+`invalid_event_order`, `invalid_final_count`, `missing_checkpoint_schedule`,
+and `missing_intentional_reconnect`; it still confirmed cache reuse and
+provider pinning. The final Gateway DB, evidence, failure sidecar, and analysis
+SHA-256 values are
+`d67764380b8930b23db46ce49315f5846c698aa3f9b98c59831c62c6c5415fda`,
+`3d571731430e6e46c25e7b4ec0db8b0751e21aa8e3be79cbfc893a808d809183`,
+`b8620bdc3cb92393b4370d4f0cb273aedfccf204d31b4adbaf4600033884a408`,
+and
+`4b412680082df8cad268a70454149a080a441269f7d68bf84d55e7f6851342e4`.
+
+AvatarForge protocol v13 uses one cumulative active-work deadline for the
+complete profile. Its default is the frozen 36,000-second fail-safe; each
+checkpoint receives only the remaining time, so the allowance is never reset
+and successful Phase 0–3 completion still exits immediately. Journal-profile
+checkpoint timeout behavior is unchanged. Reaching the cumulative limit now
+fails distinctly as `client_goal_timeout`. V79 remains sealed and a fresh
+immutable v13 run is required. Controller and long-horizon coverage passed
+`159/159`; the complete suite passed `1150/1150` with the existing Starlette
+warning. Ruff passed and strict mypy reported zero errors across 59 source
+files.

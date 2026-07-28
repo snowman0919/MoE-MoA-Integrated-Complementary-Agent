@@ -30,13 +30,15 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v12"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v13"
 AVATARFORGE_PHASES = (
     "avatarforge_phase_0_contract",
     "avatarforge_phase_1_plugin",
     "avatarforge_phase_2_environment",
     "avatarforge_phase_3_state",
 )
+DEFAULT_CHECKPOINT_TIMEOUT_SECONDS = 1_800
+AVATARFORGE_ACTIVE_WORK_LIMIT_SECONDS = 36_000
 INTERVAL_SECONDS = 0
 SAFE_HOSTS = {"127.0.0.1", "::1", "localhost"}
 FORBIDDEN_KEYS = {
@@ -898,6 +900,15 @@ def stable_hashes_fields() -> tuple[str, ...]:
     )
 
 
+def client_timeout(args: argparse.Namespace, control: dict[str, Any]) -> int:
+    if getattr(args, "profile", "journal") != "avatarforge":
+        return int(args.timeout)
+    remaining = float(control["started_at_epoch"]) + args.timeout - time.time()
+    if remaining <= 0:
+        raise RuntimeError("client_goal_timeout")
+    return max(1, int(remaining))
+
+
 def run_checkpoint(
     args: argparse.Namespace,
     state: Path,
@@ -925,7 +936,7 @@ def run_checkpoint(
             with_container_name(command, container_name),
             cwd=args.workspace,
             environment=environment,
-            timeout=args.timeout,
+            timeout=client_timeout(args, control),
         )
     finally:
         if container_exists(container_name):
@@ -936,7 +947,9 @@ def run_checkpoint(
     metrics = client_metrics(args.harness, run.stdout, run.stderr, usage_file, state)
     session = metrics.pop("session")
     if run.returncode == 124:
-        raise RuntimeError("client_checkpoint_timeout")
+        raise RuntimeError(
+            "client_goal_timeout" if profile == "avatarforge" else "client_checkpoint_timeout"
+        )
     if run.returncode:
         raise RuntimeError("client_nonzero_exit")
     if not metrics["terminal"]:
@@ -1025,12 +1038,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gateway", type=local_gateway, required=True)
     parser.add_argument("--variant", required=True)
     parser.add_argument("--api-key-env", default="DGX_MOA_API_KEY")
-    parser.add_argument("--timeout", type=int, default=1_800)
+    parser.add_argument("--timeout", type=int)
     parser.add_argument(
         "--validation-command",
         default="python -m unittest discover -s tests -v",
     )
     args = parser.parse_args()
+    if args.timeout is None:
+        args.timeout = (
+            AVATARFORGE_ACTIVE_WORK_LIMIT_SECONDS
+            if args.profile == "avatarforge"
+            else DEFAULT_CHECKPOINT_TIMEOUT_SECONDS
+        )
+    if args.timeout <= 0:
+        parser.error("timeout must be positive")
     if not args.variant.startswith("V") or not args.variant[1:].isdigit():
         parser.error("variant must be opaque V<number>")
     for field in (

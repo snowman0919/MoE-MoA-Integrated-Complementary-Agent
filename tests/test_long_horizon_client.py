@@ -554,6 +554,19 @@ def test_checkpoint_interrupt_removes_only_its_named_container(
     assert removed == [MODULE.client_container_name(args, state, 0)]
 
 
+def test_avatarforge_timeout_is_one_active_work_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = argparse.Namespace(profile="avatarforge", timeout=36_000)
+    monkeypatch.setattr(MODULE.time, "time", lambda: 2_800.0)
+    assert MODULE.client_timeout(args, {"started_at_epoch": 1_000}) == 34_200
+    monkeypatch.setattr(MODULE.time, "time", lambda: 37_001.0)
+    with pytest.raises(RuntimeError, match="client_goal_timeout"):
+        MODULE.client_timeout(args, {"started_at_epoch": 1_000})
+    args.profile = "journal"
+    assert MODULE.client_timeout(args, {"started_at_epoch": 1_000}) == 36_000
+
+
 def test_secure_client_state_restricts_shell_snapshots(tmp_path: Path) -> None:
     snapshots = tmp_path / "shell_snapshots"
     snapshots.mkdir(mode=0o755)
@@ -664,7 +677,7 @@ def test_checkpoint_requires_committed_implementation(
     state.mkdir()
     baseline = "a" * 40
     control = {
-        "started_at_epoch": 1,
+        "started_at_epoch": MODULE.time.time(),
         "baseline": {"commit": baseline},
         "gateway_session": "private-gateway",
         "client_session": None,
