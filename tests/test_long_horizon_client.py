@@ -599,3 +599,71 @@ def test_checkpoint_failures_are_distinguished(
 
     with pytest.raises(RuntimeError, match=failure):
         MODULE.run_checkpoint(args, state, control, 0)
+
+
+def test_core_checkpoint_requires_committed_implementation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = arguments(tmp_path, "codex")
+    args.state_db = tmp_path / "unused.db"
+    args.timeout = 1
+    state = tmp_path / "state"
+    state.mkdir()
+    baseline = "a" * 40
+    control = {
+        "started_at_epoch": 1,
+        "baseline": {"commit": baseline},
+        "gateway_session": "private-gateway",
+        "client_session": None,
+    }
+    globals_ = MODULE.run_checkpoint.__globals__
+    monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
+    monkeypatch.setattr(
+        MODULE.QUALITY,
+        "run_process",
+        lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess([], 0, "", ""),
+    )
+    monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
+    monkeypatch.setitem(
+        globals_,
+        "client_command",
+        lambda *_args, **_kwargs: (["docker", "run", "--rm", "image", "command"], {}, None),
+    )
+    monkeypatch.setitem(globals_, "wait_until", lambda _target: None)
+    monkeypatch.setitem(globals_, "container_exists", lambda _name: False)
+    monkeypatch.setitem(
+        globals_,
+        "client_metrics",
+        lambda *_args: {
+            "session": "private-session",
+            "terminal": True,
+            "context_tokens": 0,
+            "cached_tokens": 0,
+            "tool_calls": 1,
+            "retries": 0,
+            "unjustified_repeated_reads": 0,
+            "output_sha256": "0" * 64,
+        },
+    )
+    monkeypatch.setitem(
+        globals_,
+        "gateway_progress_state",
+        lambda *_args: {
+            "phase_index": 1,
+            "phase": MODULE.PHASES[1],
+            "next_action_sha256": "0" * 64,
+            "context_summary_sha256": "0" * 64,
+            "evidence_sha256": "0" * 64,
+            "premature_completion": False,
+        },
+    )
+    monkeypatch.setitem(
+        globals_,
+        "git_snapshot",
+        lambda _workspace: {"dirty_state": "clean", "commit": baseline},
+    )
+    monkeypatch.setitem(globals_, "git", lambda *_args: "")
+
+    with pytest.raises(RuntimeError, match="implementation_checkpoint_unchanged"):
+        MODULE.run_checkpoint(args, state, control, 1)

@@ -21,7 +21,7 @@ from dgx_moa import quality_matrix as QUALITY
 
 PROJECT = Path(__file__).resolve().parents[3]
 
-PROTOCOL = "frontier-long-goal-v45"
+PROTOCOL = "frontier-long-goal-v46"
 PHASES = (
     "intake_and_plan",
     "core_implementation",
@@ -900,6 +900,14 @@ def run_checkpoint(
     git_state = git_snapshot(args.workspace)
     if git_state["dirty_state"] != "clean":
         raise RuntimeError("dirty_checkpoint")
+    if index == 1 and not git(
+        args.workspace,
+        "diff",
+        "--binary",
+        control["baseline"]["commit"],
+        git_state["commit"],
+    ).strip():
+        raise RuntimeError("implementation_checkpoint_unchanged")
     control["last_commit"] = git_state["commit"]
     provider = provider_metrics(
         args.state_db,
@@ -1072,6 +1080,7 @@ def main() -> int:
                     "client_session_missing",
                     "client_terminal_missing",
                     "dirty_checkpoint",
+                    "implementation_checkpoint_unchanged",
                     "client_container_already_exists",
                     "client_session_changed",
                     "gateway_state_missing",

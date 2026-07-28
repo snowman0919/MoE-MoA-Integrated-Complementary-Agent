@@ -4231,6 +4231,14 @@ async def test_stalled_nonmutation_turn_keeps_inspection_tools(
         for event in controller.store.events(state.session_id)
     )
 
+    state.frontier_correction_required = True
+    corrected = await controller.prepare_executor(state, request, ("executor",))
+    assert [tool["function"]["name"] for tool in corrected["tools"]] == [
+        "exec_command",
+        "update_plan",
+        "apply_patch",
+    ]
+
 
 @pytest.mark.asyncio
 async def test_progress_retry_rechecks_deferred_review(

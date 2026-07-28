@@ -7386,3 +7386,44 @@ weakening test, build, typecheck, or lint gates. The focused Controller and
 Loop Engineering regressions passed `5/5`; the complete suite passed
 `1140/1140` with the existing Starlette warning; Ruff and strict mypy across
 59 source files passed. No v45 physical pass exists.
+
+V63 was a diagnostic v45 attempt through the real Codex client, authenticated
+loopback Gateway, Dynamic MoA, and host tools. Planning passed cleanly with
+seven host-tool calls. The implementation checkpoint then failed
+`client_nonzero_exit` after the isolated Loop Engineering configuration
+exhausted its manually restored iteration and Reasoner budgets of eight. The
+remaining tool-call budget was 88 and there were no open failures. This is a
+harness configuration failure, not long-horizon quality evidence. Its
+immutable evidence, failure sidecar, analysis, and Gateway DB SHA-256 values
+are
+`1c912880f636bfe5297a2e84164eb0f550783b480fbf2b20bea3f3f76250d476`,
+`fa59ff5298fec316e2c59bfc9c918e60153d22da61b85fcded34fa192eea5541`,
+`1e96ba292553ecab9f1fc3fb22dff9faa1a00b525777abf9c195d8adb968449c`,
+and
+`156acd8565f3f8b20e48b95b52f81eaab1bbf9b87dc27836ec310e9629a68ba0`.
+
+V64 repeated v45 with iteration, Reasoner, and tool-call budgets aligned at
+100 while retaining the fixed 1,800-second wall-clock fail-safe. Planning
+passed with seven host-tool calls, but the core implementation checkpoint
+returned terminal and clean without any baseline-relative commit or diff. The
+harness accepted that empty phase. Integration then set
+`active_turn_requires_change=false`; after Reviewer and Frontier rejection,
+the non-mutation capability boundary also removed mutation tools from the
+required correction. The attempt ended `client_nonzero_exit` after repeated
+read-only correction retries. It made 24 host-tool calls and used local and
+Codex OAuth Executors, local Reasoner, local Planner, local Reviewer, and nine
+Codex OAuth Frontier calls; no OpenRouter use was recorded. Its immutable
+evidence, failure sidecar, analysis, and Gateway DB SHA-256 values are
+`2f2613b037a83296a64057c0cda7de134eb17d69237e3f0574d85ab3abb35fe2`,
+`af6637e24c696bb0a715eeb91f7baf412d0437af505a5a793bd3591b7f63427e`,
+`da7f4f0903a7e4ab920fb4a03ca8a6a9c7b8c648e2b71c463589cddb64d3fc05`,
+and
+`af94cc180a457bfe490f95defd0a319bc1e4ece719ffcac1b6a647229d411ee8`.
+
+Protocol v46 keeps the planning read-only boundary but does not apply it while
+a Frontier correction is required or pending verification. It also rejects
+the core implementation checkpoint unless its clean commit contains a real
+baseline-relative diff, preventing an empty terminal turn from advancing into
+integration. Focused regressions passed `6/6`; the complete suite passed
+`1141/1141` with the existing Starlette warning; Ruff and strict mypy across
+59 source files passed. No v46 physical pass exists.

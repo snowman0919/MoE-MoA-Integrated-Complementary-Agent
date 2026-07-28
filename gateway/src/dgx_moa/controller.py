@@ -3599,6 +3599,8 @@ class Controller:
             state.active_user_turn_sha256
             and not state.active_turn_requires_change
             and state.active_turn_targets_repository
+            and not state.frontier_correction_required
+            and not state.frontier_correction_pending_verification
             and isinstance(body.get("tools"), list)
         ):
             restricted_tools: list[dict[str, Any]] = []
