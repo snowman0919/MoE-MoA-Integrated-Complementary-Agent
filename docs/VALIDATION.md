@@ -7610,3 +7610,11 @@ Gateway DB SHA-256 values are
 `12f95b7208caabe63f1a8e4d8d03f4b311610bd6ae003681ed65e48d7fee442c`,
 and
 `0936208ef8dfcb7ae2c61bcb1b603ba7f77c9abd8047fe515ee73fe5f788a1b9`.
+
+AvatarForge protocol v5 fingerprints only semantic Frontier review output for
+duplicate-failure tracking. A third identical material finding now terminates
+the existing engineering loop with `DUPLICATE_FAILURE_LIMIT`; changing token,
+cost, latency, or profile metadata cannot manufacture review progress. Focused
+duplicate-review and long-horizon regressions passed `44/44`; the complete
+suite passed `1148/1148` with the existing Starlette warning. Ruff and strict
+mypy across 59 source files passed. No v5 physical pass exists yet.

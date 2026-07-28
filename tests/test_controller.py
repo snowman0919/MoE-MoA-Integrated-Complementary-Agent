@@ -74,6 +74,29 @@ def test_unbounded_codex_oauth_skips_only_the_frontier_specific_budget(
     assert state.engineering_loop.remaining_budget.wall_clock_seconds > 0
 
 
+def test_repeated_semantic_frontier_review_fails_closed(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session("frontier-review-repeat", [{"role": "user", "content": "work"}])
+    controller.select_route(state, {})
+    finding = {
+        "verdict": "revise",
+        "critical": [],
+        "important": ["fix the boundary"],
+        "suggestions": [],
+        "missing_tests": ["cover the boundary"],
+        "confidence": 0.9,
+    }
+
+    assert controller.register_frontier_review_failure(state, finding) is False
+    assert controller.register_frontier_review_failure(state, finding) is False
+    assert controller.register_frontier_review_failure(state, finding) is True
+    assert state.engineering_loop is not None
+    assert state.engineering_loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
+
+
 def test_structured_response_diagnostics_excludes_private_content() -> None:
     diagnostics = structured_response_diagnostics(
         {

@@ -417,6 +417,10 @@ reconnect, plan/context 보존을 대체하지 않는다.
   Executor 요청에서 모든 OAuth profile이 실패한 경우에만 기존 OpenRouter
   최후 fallback을 허용하며 malformed tool arguments 자체는 계속 fail
   closed한다.
+- protocol v5는 Frontier review의 semantic output만 fingerprint로 사용해
+  동일 finding 세 번째 반복을 기존 `DUPLICATE_FAILURE_LIMIT`로 fail
+  closed한다. token, cost, profile 메타데이터 변화나 무효 correction
+  호출은 새 review progress로 인정하지 않는다.
 
 ## 10. Release, rollback, 배포
 

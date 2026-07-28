@@ -3519,6 +3519,14 @@ class Controller:
                             ),
                         },
                     )
+                    if self.register_frontier_review_failure(
+                        state, frontier_result.output
+                    ):
+                        self._reject_loop_action(
+                            state,
+                            "frontier_review",
+                            "repeated semantic Frontier review finding",
+                        )
                 elif frontier_result.mode == "code_review":
                     correction_verified = state.frontier_correction_pending_verification
                     state.frontier_correction_pending_verification = False
@@ -4122,6 +4130,22 @@ class Controller:
             or result.get("important")
             or result.get("missing_tests")
         )
+
+    @staticmethod
+    def register_frontier_review_failure(
+        state: SessionState, result: dict[str, Any]
+    ) -> bool:
+        loop = state.engineering_loop
+        if loop is None:
+            return False
+        register_failure(
+            loop,
+            "DUPLICATE_FAILURE",
+            finding_fingerprint=progress_evidence_fingerprint(
+                "frontier_review", result
+            ),
+        )
+        return loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
 
     @staticmethod
     def frontier_correction_questions(state: SessionState) -> list[str]:
