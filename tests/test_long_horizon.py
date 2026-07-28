@@ -9,13 +9,18 @@ from dgx_moa import long_horizon_analysis as MODULE
 HASH = "a" * 64
 
 
-def write_evidence(path: Path) -> None:
+def write_evidence(
+    path: Path,
+    *,
+    protocol: str = MODULE.PROTOCOL,
+    phases: tuple[str, ...] = MODULE.PHASES,
+) -> None:
     header = {
         "type": "header",
-        "protocol": MODULE.PROTOCOL,
+        "protocol": protocol,
         "variant": "V1",
         "started_at_epoch": 1_000_000,
-        "expected_checkpoints": MODULE.CHECKPOINTS,
+        "expected_checkpoints": len(phases),
         "checkpoint_interval_seconds": 0,
         "client_path": "codex",
         "gateway_path": "authenticated_loopback",
@@ -23,13 +28,13 @@ def write_evidence(path: Path) -> None:
         **{field: HASH for field in MODULE.STABLE_HASHES},
     }
     checkpoints = []
-    for index in range(MODULE.CHECKPOINTS):
+    for index in range(len(phases)):
         checkpoints.append(
             {
                 "type": "checkpoint",
                 "index": index,
                 "phase_index": index,
-                "phase": MODULE.PHASES[index],
+                "phase": phases[index],
                 "scheduled_at_epoch": 1_000_000,
                 "completed_at_epoch": 1_000_030 + index * 30,
                 "latency_seconds": 30,
@@ -52,7 +57,7 @@ def write_evidence(path: Path) -> None:
                 "peak_memory_bytes": 64_000_000_000,
                 "swap_delta_bytes": 0,
                 "variable_cost_usd": 0,
-                "intentional_reconnect": index == MODULE.CHECKPOINTS // 2,
+                "intentional_reconnect": index == len(phases) // 2,
                 "premature_completion": False,
                 "terminal": True,
                 **{field: HASH for field in MODULE.STABLE_HASHES},
@@ -62,7 +67,7 @@ def write_evidence(path: Path) -> None:
         "type": "final",
         "completed_at_epoch": 1_000_630,
         "implementation_evidence": True,
-        "implementation_commit": f"{MODULE.CHECKPOINTS:040x}",
+        "implementation_commit": f"{len(phases):040x}",
         "implementation_sha256": HASH,
         "review_sha256": HASH,
         "validation_sha256": HASH,
@@ -87,6 +92,21 @@ def test_long_horizon_analyzer_accepts_complete_pinned_sustained_goal(tmp_path: 
     assert result["scheduled_duration_seconds"] == 0
     assert result["intentional_reconnects"] == 1
     assert result["variable_cost_usd"] == 0
+
+
+def test_long_horizon_analyzer_accepts_avatarforge_profile(tmp_path: Path) -> None:
+    evidence = tmp_path / "avatarforge.jsonl"
+    write_evidence(
+        evidence,
+        protocol=MODULE.AVATARFORGE_PROTOCOL,
+        phases=MODULE.AVATARFORGE_PHASES,
+    )
+
+    result = MODULE.analyze(evidence)
+
+    assert result["passed"] is True
+    assert result["protocol"] == MODULE.AVATARFORGE_PROTOCOL
+    assert result["checkpoints"] == len(MODULE.AVATARFORGE_PHASES)
 
 
 def test_long_horizon_analyzer_accepts_bounded_variable_cost(tmp_path: Path) -> None:

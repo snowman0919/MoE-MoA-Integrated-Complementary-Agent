@@ -19,6 +19,17 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v1"
+AVATARFORGE_PHASES = (
+    "avatarforge_phase_0_contract",
+    "avatarforge_phase_1_plugin",
+    "avatarforge_phase_2_environment",
+    "avatarforge_phase_3_state",
+)
+PROTOCOL_PHASES = {
+    PROTOCOL: PHASES,
+    AVATARFORGE_PROTOCOL: AVATARFORGE_PHASES,
+}
 INTERVAL_SECONDS = 0
 MAX_VARIABLE_COST_USD = 10.0
 SCHEDULE_TOLERANCE_SECONDS = 60
@@ -100,10 +111,12 @@ def valid_commit(value: Any) -> bool:
     return isinstance(value, str) and COMMIT.fullmatch(value) is not None
 
 
-def validate_header(header: dict[str, Any], failures: list[str]) -> None:
-    if header.get("type") != "header" or header.get("protocol") != PROTOCOL:
+def validate_header(
+    header: dict[str, Any], protocol: str, phases: tuple[str, ...], failures: list[str]
+) -> None:
+    if header.get("type") != "header" or header.get("protocol") != protocol:
         failures.append("invalid_header")
-    if header.get("expected_checkpoints") != CHECKPOINTS:
+    if header.get("expected_checkpoints") != len(phases):
         failures.append("checkpoint_count_not_preregistered")
     if header.get("checkpoint_interval_seconds") != INTERVAL_SECONDS:
         failures.append("checkpoint_interval_not_preregistered")
@@ -126,13 +139,14 @@ def validate_checkpoint(
     checkpoint: dict[str, Any],
     header: dict[str, Any],
     expected_index: int,
+    phases: tuple[str, ...],
     failures: list[str],
 ) -> None:
     if checkpoint.get("index") != expected_index:
         failures.append("checkpoint_index_gap")
     if checkpoint.get("phase_index") != expected_index:
         failures.append("phase_drift")
-    if checkpoint.get("phase") != PHASES[expected_index]:
+    if checkpoint.get("phase") != phases[expected_index]:
         failures.append("phase_contract_drift")
     for field in STABLE_HASHES:
         if checkpoint.get(field) != header.get(field):
@@ -236,17 +250,23 @@ def validate_final(
 def analyze(path: Path) -> dict[str, Any]:
     events = load_events(path)
     header = events[0]
+    raw_protocol = header.get("protocol")
+    protocol = raw_protocol if isinstance(raw_protocol, str) else ""
+    phases = PROTOCOL_PHASES.get(protocol, ())
+    checkpoints_expected = len(phases)
     checkpoints = [event for event in events if event.get("type") == "checkpoint"]
     finals = [event for event in events if event.get("type") == "final"]
     failures: list[str] = []
-    validate_header(header, failures)
-    expected_types = ["header", *(["checkpoint"] * CHECKPOINTS), "final"]
+    if not phases:
+        failures.append("invalid_protocol")
+    validate_header(header, protocol, phases, failures)
+    expected_types = ["header", *(["checkpoint"] * checkpoints_expected), "final"]
     if [event.get("type") for event in events] != expected_types:
         failures.append("invalid_event_order")
-    if len(checkpoints) != CHECKPOINTS:
+    if len(checkpoints) != checkpoints_expected:
         failures.append("incomplete_checkpoints")
-    for index, checkpoint in enumerate(checkpoints[:CHECKPOINTS]):
-        validate_checkpoint(checkpoint, header, index, failures)
+    for index, checkpoint in enumerate(checkpoints[:checkpoints_expected]):
+        validate_checkpoint(checkpoint, header, index, phases, failures)
     if len(finals) != 1:
         failures.append("invalid_final_count")
     else:
@@ -257,7 +277,7 @@ def analyze(path: Path) -> dict[str, Any]:
         for checkpoint in checkpoints
         if isinstance(checkpoint.get("scheduled_at_epoch"), int | float)
     ]
-    if len(scheduled) == CHECKPOINTS:
+    if checkpoints_expected and len(scheduled) == checkpoints_expected:
         started = header.get("started_at_epoch")
         if (
             isinstance(started, int | float)
@@ -286,6 +306,12 @@ def analyze(path: Path) -> dict[str, Any]:
     }
     for role in {"reasoner", "executor", "planner", "reviewer"} - observed_roles:
         failures.append(f"missing_{role}_role")
+    if protocol == AVATARFORGE_PROTOCOL:
+        previous_commit = header.get("baseline_commit")
+        for checkpoint in checkpoints:
+            if checkpoint.get("commit") == previous_commit:
+                failures.append("avatarforge_phase_commit_unchanged")
+            previous_commit = checkpoint.get("commit")
 
     request_cost = sum(
         float(checkpoint.get("variable_cost_usd", 0))
@@ -295,18 +321,20 @@ def analyze(path: Path) -> dict[str, Any]:
     )
     if request_cost > MAX_VARIABLE_COST_USD:
         failures.append("variable_cost_budget_exceeded")
-    if len(finals) == 1 and len(checkpoints) == CHECKPOINTS:
+    if len(finals) == 1 and len(checkpoints) == checkpoints_expected:
         final = finals[0]
         if final.get("implementation_commit") != checkpoints[-1].get("commit"):
             failures.append("final_commit_mismatch")
     failures = sorted(set(failures))
     return {
-        "protocol": PROTOCOL,
+        "protocol": protocol,
         "passed": not failures,
         "failures": failures,
         "checkpoints": len(checkpoints),
         "scheduled_duration_seconds": (
-            scheduled[-1] - scheduled[0] if len(scheduled) == CHECKPOINTS else None
+            scheduled[-1] - scheduled[0]
+            if len(scheduled) == checkpoints_expected
+            else None
         ),
         "intentional_reconnects": reconnects,
         "cache_reuse_observed": "cache_reuse_not_observed" not in failures,

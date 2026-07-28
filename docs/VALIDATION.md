@@ -7484,3 +7484,14 @@ SHA-256 values are
 `84b25371bd8c04956009f74f19c91801a67cb1ab38d69e8095fca1b712ce5d76`,
 and
 `89e349763ee0f14a198da3a948430eb4f1d48a9830c2c8c3f73da582c1924b28`.
+
+AvatarForge protocol v1 minimally extends the existing long-horizon
+runner/analyzer with a profile-selected protocol and four commit-required
+checkpoints. It preserves the journal v48 defaults, privacy fields, provider
+pinning, authenticated loopback path, reconnect/cache gates, cost ceiling, and
+final validation. The analyzer rejects an unchanged per-phase commit. Focused
+long-horizon regressions passed `40/40`; the complete suite passed `1146/1146`
+with the existing Starlette warning; Ruff and strict mypy across 60 source
+files passed. The frozen completion-plan SHA-256 before this implementation was
+`3f166f79358e42bbfd60b69536b0a7b00d9c96aa9c86c882df558e4032a92c8d`.
+No AvatarForge physical run exists yet.

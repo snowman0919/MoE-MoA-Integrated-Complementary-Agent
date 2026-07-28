@@ -30,6 +30,13 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v1"
+AVATARFORGE_PHASES = (
+    "avatarforge_phase_0_contract",
+    "avatarforge_phase_1_plugin",
+    "avatarforge_phase_2_environment",
+    "avatarforge_phase_3_state",
+)
 INTERVAL_SECONDS = 0
 SAFE_HOSTS = {"127.0.0.1", "::1", "localhost"}
 FORBIDDEN_KEYS = {
@@ -197,10 +204,12 @@ def client_prompt(
     workspace: Path,
     validation_command: str,
     input_paths: tuple[Path, Path, Path],
+    profile: str = "journal",
 ) -> str:
-    phase = PHASES[index]
-    final = index == CHECKPOINTS - 1
-    phase_rule = (
+    phases = AVATARFORGE_PHASES if profile == "avatarforge" else PHASES
+    phase = phases[index]
+    final = index == len(phases) - 1
+    journal_rules = (
         (
             "운영 문서와 입력 문서를 서로 독립적인 묶음으로 한 번만 읽고, 저장소 상태를 "
             "확인해 의존 순서가 있는 계획을 확정하라. 코드는 건드리지 말고 이후 단계가 "
@@ -226,8 +235,36 @@ def client_prompt(
             "최종 검토 근거를 남긴 뒤에만 완료를 선언하라. "
         ),
     )
+    avatarforge_rules = (
+        (
+            "저장소와 입력 계약을 감사하고 product, permission, quality, licensing 계약과 "
+            "Phase 0 상태·테스트·증거를 구현한 뒤 검증하고 clean commit하라. "
+        ),
+        (
+            "설치 가능한 Codex plugin manifest, AGENTS, 필요한 실제 Skill 소유권, MCP "
+            "tool schema와 contract tests로 Phase 1의 최소 완결 수직 증분을 구현·검증하고 "
+            "clean commit하라. 목적 없는 placeholder 디렉터리는 만들지 마라. "
+        ),
+        (
+            "아무것도 설치하지 말고 environment detection, capability, permission request, "
+            "blocked-state 계약과 fault tests를 구현·검증한 뒤 clean commit하라. 누락된 "
+            "상용 도구는 PASS가 아닌 BLOCKED로 기록하라. "
+        ),
+        (
+            "versioned Character IR, Asset Graph provenance, checkpoint/rollback, immutable "
+            "numbered revision state를 구현하고 unit·contract·fault tests를 실행한 뒤 clean "
+            "commit하라. 전체 Phase 0–3을 독립 Reviewer로 검토하고 /state/long-review.json에 "
+            "최종 근거를 남겨라. "
+        ),
+    )
+    phase_rule = avatarforge_rules if profile == "avatarforge" else journal_rules
+    commit_rule = (
+        "각 Phase는 baseline 대비 실제 변경과 새 clean commit이 필수다. "
+        if profile == "avatarforge"
+        else "계획·검토 전용 단계는 새 커밋을 강제하지 않는다. "
+    )
     return (
-        f"장기 작업 단계 {index}/{CHECKPOINTS - 1}({phase})를 수행하라. "
+        f"장기 작업 단계 {index}/{len(phases) - 1}({phase})를 수행하라. "
         f"현재 저장소 루트는 {workspace}이고 모든 도구의 현재 작업 디렉터리도 이 경로다. "
         "추측한 경로로 cd하지 말고 입력 문서가 지정한 source/test 경로를 정확히 사용하며 "
         "별도 대체 src 또는 tests 루트는 허용되지 않는다. "
@@ -238,7 +275,7 @@ def client_prompt(
         "source 환경 절대경로를 도구로 열지 마라. "
         f"{phase_rule[index]}"
         "각 단계는 최소 한 번의 실제 호스트 도구를 사용하고 단계 종료 시 worktree를 "
-        "clean으로 유지해야 한다. 계획·검토 전용 단계는 새 커밋을 강제하지 않는다. "
+        f"clean으로 유지해야 한다. {commit_rule}"
         "같은 파일을 근거 없이 반복해서 읽지 마라. "
         + (
             "최종 검토 파일은 "
@@ -326,6 +363,7 @@ def client_command(
         args.workspace,
         args.validation_command,
         input_paths,
+        getattr(args, "profile", "journal"),
     )
     environment = QUALITY.filtered_env({args.api_key_env: os.environ[args.api_key_env]})
     inputs = tuple((path, str(path)) for path in input_paths)
@@ -660,7 +698,12 @@ def runtime_metrics(snapshot: dict[str, Any]) -> tuple[int, int]:
     return peak, swap
 
 
-def gateway_progress_state(database: Path, session: str, index: int) -> dict[str, Any]:
+def gateway_progress_state(
+    database: Path,
+    session: str,
+    index: int,
+    phases: tuple[str, ...] = PHASES,
+) -> dict[str, Any]:
     with sqlite3.connect(database) as connection:
         row = connection.execute(
             "SELECT payload FROM sessions WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1",
@@ -687,7 +730,7 @@ def gateway_progress_state(database: Path, session: str, index: int) -> dict[str
 
     return {
         "phase_index": index,
-        "phase": PHASES[index],
+        "phase": phases[index],
         "next_action_sha256": fingerprint(
             (
                 "phase",
@@ -718,7 +761,7 @@ def gateway_progress_state(database: Path, session: str, index: int) -> dict[str
                 "failures",
             )
         ),
-        "premature_completion": index < CHECKPOINTS - 1
+        "premature_completion": index < len(phases) - 1
         and value.get("final_status") in {"achieved", "completed", "success"},
     }
 
@@ -862,6 +905,8 @@ def run_checkpoint(
     control: dict[str, Any],
     index: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    profile = getattr(args, "profile", "journal")
+    phases = AVATARFORGE_PHASES if profile == "avatarforge" else PHASES
     scheduled = float(control["started_at_epoch"]) + index * INTERVAL_SECONDS
     wait_until(scheduled)
     before = RUNTIME.runtime_snapshot()
@@ -902,17 +947,27 @@ def run_checkpoint(
     if control.get("client_session") not in {None, session}:
         raise RuntimeError("client_session_changed")
     control["client_session"] = session
-    progress = gateway_progress_state(args.state_db, control["gateway_session"], index)
+    progress = gateway_progress_state(
+        args.state_db, control["gateway_session"], index, phases
+    )
     git_state = git_snapshot(args.workspace)
     if git_state["dirty_state"] != "clean":
         raise RuntimeError("dirty_checkpoint")
-    if index == 1 and not git(
-        args.workspace,
-        "diff",
-        "--binary",
-        control["baseline"]["commit"],
-        git_state["commit"],
-    ).strip():
+    previous_commit = control.get("last_commit", control["baseline"]["commit"])
+    requires_change = (profile == "avatarforge") or index == 1
+    comparison_commit = (
+        previous_commit if profile == "avatarforge" else control["baseline"]["commit"]
+    )
+    if requires_change and (
+        git_state["commit"] == comparison_commit
+        or not git(
+            args.workspace,
+            "diff",
+            "--binary",
+            comparison_commit,
+            git_state["commit"],
+        ).strip()
+    ):
         raise RuntimeError("implementation_checkpoint_unchanged")
     control["last_commit"] = git_state["commit"]
     provider = provider_metrics(
@@ -952,7 +1007,7 @@ def run_checkpoint(
         "peak_memory_bytes": max(peak_before, peak_after),
         "swap_delta_bytes": max(0, swap_after - swap_before),
         "variable_cost_usd": provider["variable_cost_usd"],
-        "intentional_reconnect": index == CHECKPOINTS // 2,
+        "intentional_reconnect": index == len(phases) // 2,
         "premature_completion": progress["premature_completion"],
         "terminal": metrics["terminal"],
         **control.get("stable_hashes", {}),
@@ -963,6 +1018,7 @@ def run_checkpoint(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--harness", choices=("codex", "opencode", "hermes"), required=True)
+    parser.add_argument("--profile", choices=("journal", "avatarforge"), default="journal")
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--objective", type=Path, required=True)
     parser.add_argument("--acceptance", type=Path, required=True)
@@ -1009,6 +1065,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    profile = getattr(args, "profile", "journal")
+    protocol = AVATARFORGE_PROTOCOL if profile == "avatarforge" else PROTOCOL
+    phases = AVATARFORGE_PHASES if profile == "avatarforge" else PHASES
     ensure_local_git_identity(args.workspace)
     state = args.state_dir
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -1037,7 +1096,7 @@ def main() -> int:
     last_checkpoint: dict[str, Any] | None = None
     failure_path = args.evidence.with_suffix(args.evidence.suffix + ".failure.json")
     try:
-        for index in range(start_index, CHECKPOINTS):
+        for index in range(start_index, len(phases)):
             active_index = index
             checkpoint, control = run_checkpoint(args, state, control, index)
             if not header:
@@ -1047,10 +1106,10 @@ def main() -> int:
                 checkpoint.update(control["stable_hashes"])
                 header = {
                     "type": "header",
-                    "protocol": PROTOCOL,
+                    "protocol": protocol,
                     "variant": args.variant,
                     "started_at_epoch": control["started_at_epoch"],
-                    "expected_checkpoints": CHECKPOINTS,
+                    "expected_checkpoints": len(phases),
                     "checkpoint_interval_seconds": INTERVAL_SECONDS,
                     "client_path": args.harness,
                     "gateway_path": "authenticated_loopback",
@@ -1072,7 +1131,7 @@ def main() -> int:
         write_private(
             failure_path,
             {
-                "protocol": PROTOCOL,
+                "protocol": protocol,
                 "harness": args.harness,
                 "checkpoint": active_index,
                 "failed_at_epoch": time.time(),
@@ -1098,9 +1157,9 @@ def main() -> int:
         )
         raise
     summary = {
-        "protocol": PROTOCOL,
+        "protocol": protocol,
         "harness": args.harness,
-        "checkpoints": CHECKPOINTS,
+        "checkpoints": len(phases),
         "task_outcome": final["task_outcome"],
         "evidence": str(args.evidence),
     }

@@ -44,6 +44,30 @@ def test_phase_prompts_require_changes_only_during_core_implementation() -> None
     assert "최종 독립 검토는 이후 단계" in implementation
 
 
+def test_avatarforge_prompts_require_a_commit_per_phase() -> None:
+    workspace = Path("/tmp/avatarforge")
+    inputs = tuple(
+        Path("/tmp/avatarforge-inputs") / name
+        for name in ("OBJECTIVE.md", "ACCEPTANCE.md", "PLAN.md")
+    )
+    prompts = [
+        MODULE.client_prompt(
+            index,
+            workspace,
+            "python -m unittest discover -s tests -v",
+            inputs,
+            "avatarforge",
+        )
+        for index in range(len(MODULE.AVATARFORGE_PHASES))
+    ]
+
+    assert all(user_turn_intent(prompt)[0] for prompt in prompts)
+    assert all("새 clean commit이 필수" in prompt for prompt in prompts)
+    assert "아무것도 설치하지 말고" in prompts[2]
+    assert "Character IR" in prompts[3]
+    assert "/state/long-review.json" in prompts[3]
+
+
 def test_final_validation_rejects_zero_tests(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -625,11 +649,15 @@ def test_checkpoint_failures_are_distinguished(
         MODULE.run_checkpoint(args, state, control, 0)
 
 
-def test_core_checkpoint_requires_committed_implementation(
+@pytest.mark.parametrize(("profile", "index"), (("journal", 1), ("avatarforge", 0)))
+def test_checkpoint_requires_committed_implementation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    profile: str,
+    index: int,
 ) -> None:
     args = arguments(tmp_path, "codex")
+    args.profile = profile
     args.state_db = tmp_path / "unused.db"
     args.timeout = 1
     state = tmp_path / "state"
@@ -674,8 +702,12 @@ def test_core_checkpoint_requires_committed_implementation(
         globals_,
         "gateway_progress_state",
         lambda *_args: {
-            "phase_index": 1,
-            "phase": MODULE.PHASES[1],
+            "phase_index": index,
+            "phase": (
+                MODULE.AVATARFORGE_PHASES
+                if profile == "avatarforge"
+                else MODULE.PHASES
+            )[index],
             "next_action_sha256": "0" * 64,
             "context_summary_sha256": "0" * 64,
             "evidence_sha256": "0" * 64,
@@ -690,4 +722,4 @@ def test_core_checkpoint_requires_committed_implementation(
     monkeypatch.setitem(globals_, "git", lambda *_args: "")
 
     with pytest.raises(RuntimeError, match="implementation_checkpoint_unchanged"):
-        MODULE.run_checkpoint(args, state, control, 1)
+        MODULE.run_checkpoint(args, state, control, index)
