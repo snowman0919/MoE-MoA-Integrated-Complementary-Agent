@@ -7565,3 +7565,26 @@ values are
 `8ea98607e859dbca3156e92525127d3145a8d91b70d1ddc7c2e792275b36577b`,
 and
 `49052f89c37336271abaa73e3e09fdbb29b9ad2545cbda0e0d47a6a11fa88b08`.
+
+AvatarForge V70 restarted protocol v3 from a new clean seed, DB, Gateway port,
+and Codex session. It physically reached Phase 0 implementation, validation,
+clean commits, local Reasoner, Executor, Planner, Reviewer, and Codex OAuth
+Frontier calls without reusing V69 state. A required remote Executor response
+then failed `FrontierExecutorResult.tool_calls[0].function` JSON validation
+after the configured retries on the primary OAuth profile. The stream aborted
+and the client recovered, but the frozen zero-error gate was already failed.
+The V70-only client and Gateway were stopped immediately; the candidate SGLang
+listeners remained resident. No checkpoint JSONL was emitted before the hard
+failure, so no analyzer result is claimed. The immutable Gateway DB SHA-256 is
+`b0429c6c641a12c370857cdb94424d2d4492a26d912008dac43974fc1cd7a361`.
+
+AvatarForge protocol v4 adds `FRONTIER_VALIDATION_FAILURE` to the existing
+ordered Codex OAuth profile failover. Schema validation remains fail closed:
+malformed output is never executed. After all configured OAuth profiles fail,
+only a mandatory paid-fallback request may use the existing OpenRouter final
+fallback. Optional collaboration still fails without paid fallback. Focused
+OAuth validation, profile failover, paid fallback, and malformed-output retry
+regressions passed `4/4`; Frontier and long-horizon focused tests passed
+`76/76`; the complete suite passed `1147/1147` with the existing Starlette
+warning. Ruff and strict mypy across 59 source files passed. No v4 physical
+pass exists yet.

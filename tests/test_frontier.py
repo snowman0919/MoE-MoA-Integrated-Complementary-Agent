@@ -543,8 +543,9 @@ def test_codex_oauth_uses_global_default_as_tertiary_profile(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("oauth_failure", ["context", "validation"])
 async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path, monkeypatch: pytest.MonkeyPatch, oauth_failure: str
 ) -> None:  # type: ignore[no-untyped-def]
     profiles: list[str] = []
     requests: list[dict[str, object]] = []
@@ -552,8 +553,12 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
     key_path.write_text("synthetic-openrouter-key")
     key_path.chmod(0o600)
 
-    def oauth_context_failure(command, **kwargs):  # type: ignore[no-untyped-def]
+    def oauth_failure_run(command, **kwargs):  # type: ignore[no-untyped-def]
         profiles.append(Path(kwargs["env"]["CODEX_HOME"]).name)
+        if oauth_failure == "validation":
+            result_path = Path(command[command.index("--output-last-message") + 1])
+            result_path.write_text("{}")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(command, 1, stdout="", stderr="context window exceeded")
 
     class FakeResponse:
@@ -593,7 +598,7 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
             requests.append(kwargs)
             return FakeResponse()
 
-    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", oauth_context_failure)
+    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", oauth_failure_run)
     monkeypatch.setattr("dgx_moa.frontier.httpx.Client", FakeClient)
     runner = CodexOAuthCollaboration(
         FrontierConfig(
@@ -790,15 +795,29 @@ def test_codex_oauth_does_not_fail_over_unapproved_failures(
     assert profiles == ["primary"]
 
 
-def test_codex_oauth_does_not_fail_over_validation_failure(
+def test_codex_oauth_falls_back_on_validation_failure(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # type: ignore[no-untyped-def]
     profiles: list[str] = []
 
     def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
-        profiles.append(Path(kwargs["env"]["CODEX_HOME"]).name)
+        profile = Path(kwargs["env"]["CODEX_HOME"]).name
+        profiles.append(profile)
         result_path = Path(command[command.index("--output-last-message") + 1])
-        result_path.write_text("{}")
+        result_path.write_text(
+            "{}"
+            if profile == "primary"
+            else json.dumps(
+                {
+                    "recommended_architecture": "secondary",
+                    "design_decisions": [],
+                    "tradeoffs": [],
+                    "failure_modes": [],
+                    "implementation_sequence": [],
+                    "review_questions": [],
+                }
+            )
+        )
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
@@ -815,10 +834,10 @@ def test_codex_oauth_does_not_fail_over_validation_failure(
         tmp_path,
     )
 
-    with pytest.raises(ValueError):
-        runner._run("architecture", {"objective": "x"}, "invalid-result")
+    result = runner._run("architecture", {"objective": "x"}, "invalid-result")
 
-    assert profiles == ["primary"]
+    assert profiles == ["primary", "secondary"]
+    assert result.profile == "secondary"
 
 
 def test_codex_oauth_retries_malformed_structured_output(

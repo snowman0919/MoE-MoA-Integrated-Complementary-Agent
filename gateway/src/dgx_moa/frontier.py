@@ -72,6 +72,7 @@ PROFILE_FAILOVER_FAILURES = frozenset(
         "FRONTIER_USAGE_LIMIT",
         "FRONTIER_RATE_LIMIT",
         "FRONTIER_PROFILE_BUSY",
+        "FRONTIER_VALIDATION_FAILURE",
     }
 )
 PAID_FALLBACK_FAILURES = PROFILE_FAILOVER_FAILURES | frozenset(
@@ -681,6 +682,7 @@ class CodexOAuthCollaboration:
                             if attempt < self.config.collaboration_retries:
                                 continue
                             completed = None
+                            try_next_profile = profile_index + 1 < len(self.providers)
                             break
                         selected_profile = profile
                         break
@@ -701,7 +703,19 @@ class CodexOAuthCollaboration:
                     break
                 if not try_next_profile:
                     break
-            if validation_error is not None and not selected_profile:
+            if (
+                validation_error is not None
+                and not selected_profile
+                and final_failure == "FRONTIER_VALIDATION_FAILURE"
+            ):
+                if paid_fallback_required and self.config.openrouter_fallback_enabled:
+                    return self._openrouter(
+                        mode,
+                        external_evidence,
+                        correlation_id,
+                        schema_model,
+                        started,
+                    )
                 self._failed()
                 raise validation_error
             if completed is None or not selected_profile or not result_path.is_file():

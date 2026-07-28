@@ -408,9 +408,15 @@ reconnect, plan/context 보존을 대체하지 않는다.
   도구로 correction retry를 소비하지 않으며 기존 2회 fail-closed 상한은
   유지한다.
 - protocol v3 candidate Gateway는 `DGX_MOA_MAX_STEPS=1000`을 사용해
+  long-Goal의 독립 step ceiling과 Loop Engineering 예산을 일치시킨다.
   `tool_calls=1000` fail-safe와 session step 상한을 정합시킨다. production
   기본 100은 변경하지 않는다. step 상한 도달은 retryable backend 장애가
   아니라 비재시도 `409 loop_budget_exhausted`로 종료한다.
+- protocol v4는 Codex OAuth structured-output validation 실패 시 같은
+  provider의 secondary·tertiary profile을 먼저 순서대로 시도한다. 필수
+  Executor 요청에서 모든 OAuth profile이 실패한 경우에만 기존 OpenRouter
+  최후 fallback을 허용하며 malformed tool arguments 자체는 계속 fail
+  closed한다.
 
 ## 10. Release, rollback, 배포
 
