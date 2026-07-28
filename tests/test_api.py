@@ -1149,6 +1149,14 @@ def test_repeated_inspection_routes_executor_to_frontier(
                 },
             },
         }
+        irrelevant_tool = {
+            "type": "function",
+            "function": {
+                "name": "create_goal",
+                "description": "Create a goal.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
         reviewer_calls_before_correction = stub_provider.calls.count("reviewer")
         correction_response = client.post(
             "/v1/chat/completions",
@@ -1156,7 +1164,7 @@ def test_repeated_inspection_routes_executor_to_frontier(
             json={
                 "model": "dgx-moa-fast",
                 "messages": [{"role": "user", "content": rejected.objective}],
-                "tools": [correction_tool],
+                "tools": [correction_tool, irrelevant_tool],
             },
         )
         correction_events = app.state.store.events(rejected_id)
@@ -1340,6 +1348,9 @@ def test_repeated_inspection_routes_executor_to_frontier(
     assert "Never invoke a tool name as a shell command" in str(
         correction_retry["messages"][-1]["content"]
     )
+    assert [
+        tool["function"]["name"] for tool in correction_retry["tools"]  # type: ignore[index]
+    ] == ["apply_patch"]
     assert newly_rejected_response.status_code == 200, newly_rejected_response.text
     assert newly_rejected_response.json()["choices"][0]["finish_reason"] == "tool_calls"
     newly_rejected_selected = next(

@@ -7494,4 +7494,25 @@ long-horizon regressions passed `40/40`; the complete suite passed `1146/1146`
 with the existing Starlette warning; Ruff and strict mypy across 60 source
 files passed. The frozen completion-plan SHA-256 before this implementation was
 `3f166f79358e42bbfd60b69536b0a7b00d9c96aa9c86c882df558e4032a92c8d`.
-No AvatarForge physical run exists yet.
+AvatarForge V67 physically exercised protocol v1 through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, and host tools. Phase 0
+passed with 14 host-tool calls, a clean commit, no provider errors, and positive
+cache evidence. Phase 1 created plugin source and tests, repeatedly passed the
+configured validation, and reached three clean commits. It then failed closed:
+required Frontier correction retries received the client's complete tool list,
+selected non-mutation tools, and exhausted the bounded retry policy. The run
+ended `client_nonzero_exit` after one checkpoint; it is diagnostic evidence,
+not a long-horizon pass. The immutable evidence, failure sidecar, analysis, and
+Gateway DB SHA-256 values are
+`a8a2f9b7c6e72a3a434c32354e94678786a8f5482fb510695a2478549f044c1d`,
+`b2d5bf3fbdf99444cdd2a69dbcc589bab331d94baa1f26c9e4ee4607c0c2980d`,
+`be68df22f96c12050e6ea90d0a5377caa77a1dda9a7d7bd4a4bdeaa4b47a6480`,
+and
+`bf31384e162dfcf4fd03fe0005b82d9a72a381ba6f8e0b77ce1a4cf38396f9fb`.
+
+AvatarForge protocol v2 restricts a required Frontier correction retry's
+actual provider tool list to existing repository-mutation tools. It does not
+increase retry count or weaken fail-closed behavior. The regression proves
+that an offered `create_goal` tool is removed while `apply_patch` remains.
+The complete suite passed `1146/1146`; Ruff and strict mypy across 59 source
+files passed. No v2 physical pass exists yet.

@@ -22,6 +22,7 @@ from .admin_routes import build_admin_router
 from .config import Settings, get_settings
 from .controller import (
     IMPLEMENTATION_QUALITY_CONTRACT,
+    REPOSITORY_MUTATION_TOOLS,
     Controller,
     DuplicateFailedCall,
     FrontierRequiredUnavailable,
@@ -2125,6 +2126,22 @@ def create_app(
                     raise FrontierRequiredUnavailable(
                         "required Frontier correction cannot run without client tools"
                     )
+                tools = [
+                    tool
+                    for tool in tools
+                    if isinstance(tool, dict)
+                    and str(tool.get("name") or tool.get("function", {}).get("name"))
+                    in REPOSITORY_MUTATION_TOOLS
+                ]
+                if not tools:
+                    request.app.state.store.event(
+                        state_session_id,
+                        "frontier_correction_tool_unavailable",
+                        {"reason": "mutation_tools_unavailable"},
+                    )
+                    raise FrontierRequiredUnavailable(
+                        "required Frontier correction cannot run without mutation tools"
+                    )
                 tool_names = sorted(
                     {
                         str(tool.get("name") or tool.get("function", {}).get("name"))
@@ -2134,6 +2151,7 @@ def create_app(
                     }
                 )
                 retry_request = dict(executor_request)
+                retry_request["tools"] = tools
                 retry_request["stream"] = False
                 retry_request["messages"] = [
                     *executor_request.get("messages", []),

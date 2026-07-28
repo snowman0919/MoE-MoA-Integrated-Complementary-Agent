@@ -403,6 +403,10 @@ reconnect, plan/context 보존을 대체하지 않는다.
   진단으로 봉인하고 새 protocol/run ID와 clean seed에서 다시 시작한다.
 - 기존 long-horizon runner와 analyzer를 profile-driven으로 최소 확장한다.
   별도 중복 runner나 AvatarForge 전용 orchestration framework는 만들지 않는다.
+- protocol v2부터 필수 Frontier correction 재시도에는 클라이언트가 제공한
+  도구 중 repository mutation 도구만 전달한다. 계획·Goal·이미지·조회
+  도구로 correction retry를 소비하지 않으며 기존 2회 fail-closed 상한은
+  유지한다.
 
 ## 10. Release, rollback, 배포
 
