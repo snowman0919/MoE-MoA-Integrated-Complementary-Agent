@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-PROTOCOL = "frontier-long-goal-v40"
+PROTOCOL = "frontier-long-goal-v41"
 PHASES = (
     "intake_and_plan",
     "core_implementation",

@@ -7232,3 +7232,24 @@ remain unchanged. The two Frontier correction paths and local Reviewer
 continuity regressions passed `5/5`; the complete suite passed `1132/1132`
 with the existing Starlette warning; Ruff and strict mypy passed. No v40
 physical pass exists.
+
+V58 physically exercised v40 through the real Codex client, authenticated
+Gateway, Dynamic MoA, and host tools. The planning turn correctly retained
+`active_turn_requires_change=false`, but the Gateway still advertised
+`apply_patch`. After three unsupported-tool failures recovered, an Executor
+called the advertised mutation tool and created `job_journal.py`; checkpoint
+zero immediately failed `dirty_checkpoint`. The attempt included local
+Reasoner, two local Planner calls, local and Codex OAuth Executor, and four
+Codex OAuth Frontier calls. The immutable mode-`0600` failure sidecar SHA-256 is
+`9051dc31271aac1c9660ecb56116c2941114ac1f83c6684a00b1d531d6a26dec`.
+No planning or long-horizon pass is claimed.
+
+Protocol v41 enforces the bounded planning contract at the capability boundary.
+When an active repository turn explicitly requires no change, the Gateway
+removes known repository mutation tools and marks shell-style inspection tools
+read-only in their trusted descriptions. Ordinary implementation turns retain
+their write tools, and post-execution mutation detection uses the same shared
+tool-name set. The non-mutation, implementation, and pending-continuation
+regressions passed `3/3`; explicit custom tool selection remains preserved.
+The complete suite passed `1132/1132` with the existing Starlette warning;
+Ruff and strict mypy passed. No v41 physical pass exists.

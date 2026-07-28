@@ -195,6 +195,19 @@ REVIEWER_QUALITY_CONTRACT = (
     "requirements. Review only the implementation and currently available evidence."
 )
 
+REPOSITORY_MUTATION_TOOLS = frozenset(
+    {
+        "apply_patch",
+        "patch",
+        "delete",
+        "edit_file",
+        "edit",
+        "write",
+        "write_file",
+        "delete_file",
+    }
+)
+
 
 def fingerprint(call: dict[str, Any]) -> str:
     normalized_call = call.get("function", call)
@@ -272,6 +285,7 @@ def user_turn_intent(content: str) -> tuple[bool, bool]:
             for marker in (
                 "implement",
                 "modify",
+                "edit ",
                 "fix ",
                 "create",
                 "write ",
@@ -3544,6 +3558,43 @@ class Controller:
                             "reason": "mcp_server_unavailable",
                         },
                     )
+        if (
+            state.active_user_turn_sha256
+            and not state.active_turn_requires_change
+            and state.active_turn_targets_repository
+            and isinstance(body.get("tools"), list)
+        ):
+            restricted_tools: list[dict[str, Any]] = []
+            removed_tools: list[str] = []
+            for original_tool in body["tools"]:
+                if not isinstance(original_tool, dict):
+                    continue
+                tool = dict(original_tool)
+                function = tool.get("function")
+                function_name = function.get("name") if isinstance(function, dict) else None
+                name = str(tool.get("name") or function_name or "")
+                if name in REPOSITORY_MUTATION_TOOLS:
+                    removed_tools.append(name)
+                    continue
+                if name in {"exec_command", "shell", "terminal", "execute_code"}:
+                    description = (
+                        "NON-MUTATION TURN: inspect or validate only; do not create, edit, "
+                        "delete, move, or overwrite repository files."
+                    )
+                    if isinstance(function, dict):
+                        function = dict(function)
+                        function["description"] = description
+                        tool["function"] = function
+                    else:
+                        tool["description"] = description
+                restricted_tools.append(tool)
+            body["tools"] = restricted_tools
+            if removed_tools:
+                self.store.event(
+                    state.session_id,
+                    "nonmutation_tools_restricted",
+                    {"tools": sorted(removed_tools)},
+                )
         available_tools = tuple(
             sorted(
                 {
@@ -3623,7 +3674,9 @@ class Controller:
         elif available_tools and self.requires_implementation_tool_action(
             state, dict(request.get("metadata", {}))
         ):
-            body["tool_choice"] = "required"
+            tool_choice = body.get("tool_choice")
+            if tool_choice is None or tool_choice == "auto":
+                body["tool_choice"] = "required"
             self.store.event(
                 state.session_id,
                 "implementation_tool_action_required",
@@ -3903,16 +3956,7 @@ class Controller:
     @staticmethod
     def tool_execution_changes_files(execution: dict[str, Any]) -> bool:
         tool_name = execution.get("tool_name")
-        if tool_name in {
-            "apply_patch",
-            "patch",
-            "delete",
-            "edit_file",
-            "edit",
-            "write",
-            "write_file",
-            "delete_file",
-        }:
+        if tool_name in REPOSITORY_MUTATION_TOOLS:
             if tool_name in {"apply_patch", "patch"}:
                 arguments = execution.get("normalized_arguments")
                 if isinstance(arguments, str):

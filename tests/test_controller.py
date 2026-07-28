@@ -4110,10 +4110,15 @@ async def test_stalled_nonmutation_turn_keeps_inspection_tools(
     assert [tool["function"]["name"] for tool in prepared["tools"]] == [
         "exec_command",
         "update_plan",
-        "apply_patch",
     ]
+    assert "NON-MUTATION TURN" in prepared["tools"][0]["function"]["description"]
     assert not any(
         event["event_type"] == "executor_stall_tools_restricted"
+        for event in controller.store.events(state.session_id)
+    )
+    assert any(
+        event["event_type"] == "nonmutation_tools_restricted"
+        and event["payload"]["tools"] == ["apply_patch"]
         for event in controller.store.events(state.session_id)
     )
 
