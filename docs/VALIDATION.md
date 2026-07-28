@@ -7544,3 +7544,24 @@ AvatarForge protocol v3 adds a bounded candidate-only
 `loop_budget_exhausted`, not a retryable backend error. Focused config,
 Controller, API, and blocked-session regressions passed `5/5`; Ruff and strict
 mypy across 59 source files passed. No v3 physical pass exists yet.
+
+AvatarForge V69 physically exercised protocol v3 through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, and host tools. Phase 0
+reached a clean terminal checkpoint with 34 host-tool calls, positive cache
+reuse, provider pinning, and local Executor, Reasoner, Planner, Reviewer plus
+Codex OAuth Frontier provenance. The same session recovered after one
+`tool_call_missing` Frontier correction retry caused a stream abort, then
+continued into Phase 1 with clean commits. That recovery is useful diagnostic
+evidence but cannot satisfy the frozen zero-provider-error gate: the Phase 0
+checkpoint recorded one provider error. The client and V69-only Gateway were
+therefore stopped after the hard failure instead of spending the remaining
+ten-hour fail-safe window on an already-invalid run; both SGLang candidate
+listeners remained resident. The analyzer exited `1` with
+`incomplete_checkpoints`, `invalid_event_order`, `invalid_final_count`,
+`missing_checkpoint_schedule`, `missing_intentional_reconnect`, and
+`provider_error`. The immutable evidence, analysis, and Gateway DB SHA-256
+values are
+`78af129e1f93e8cc53f840f1d7b217fb28c5593f34a53d38323a561d1b74bd87`,
+`8ea98607e859dbca3156e92525127d3145a8d91b70d1ddc7c2e792275b36577b`,
+and
+`49052f89c37336271abaa73e3e09fdbb29b9ad2545cbda0e0d47a6a11fa88b08`.
