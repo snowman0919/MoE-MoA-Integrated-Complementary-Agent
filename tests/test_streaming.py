@@ -323,6 +323,54 @@ async def test_responses_sse_translates_edit_alias_to_apply_patch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_responses_sse_accepts_apply_patch_alias() -> None:
+    patch = "*** Begin Patch\n*** Add File: note.txt\n+ok\n*** End Patch"
+
+    async def upstream():
+        yield (
+            "data: "
+            + json.dumps(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call-patch",
+                                        "function": {
+                                            "name": "apply_patch",
+                                            "arguments": json.dumps({"patch": patch}),
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ]
+                }
+            )
+            + "\n\n"
+        ).encode()
+        yield b"data: [DONE]\n\n"
+
+    events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(upstream(), "model", custom_tool_names={"apply_patch"})
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+
+    done = next(
+        event
+        for event in events
+        if event["type"] == "response.output_item.done"
+        and event["item"]["type"] == "custom_tool_call"
+    )
+    assert done["item"]["input"] == patch
+
+
+@pytest.mark.asyncio
 async def test_responses_sse_replaces_malformed_edit_alias_with_feedback() -> None:
     async def upstream():
         yield (

@@ -7929,3 +7929,44 @@ long-horizon coverage passed `394/394`; the complete suite passed `1151/1151`
 with the existing Starlette warning. Ruff passed and strict mypy reported zero
 errors across 59 source files. V80 remains immutable; a fresh v14 run is
 required.
+
+AvatarForge V81 used protocol v14 and the real Codex client, authenticated
+loopback Gateway, Dynamic MoA, both SGLang candidates, the remote Ollama
+Reasoner, Codex OAuth collaboration, and host tools. It reached six clean
+baseline-relative commits and six independent local reviews before checkpoint
+zero. The operator incorrectly treated the redacted `material_findings` count
+as a finding-content fingerprint and interrupted the client. The preserved
+state later proved six distinct open failure fingerprints; the resulting
+`CLIENT_CANCELLED` run is invalid operator-interruption evidence and cannot be
+resumed or counted. The Gateway DB, failure sidecar, and additive correction
+record SHA-256 values are
+`d1e71991d28dc01a05b58e53c104a3c47cf5e487b54e092349ce8253e0b116c6`,
+`ec743972d90648715ac4b96d0ece8765b4494ac958c61c10f577aa4830839359`,
+and
+`86fbced4c978dd3e9adfa57c6964df19750e6df0e3c4a50303bb3a37f3c47dad`.
+
+Fresh V82 kept the same frozen v14 inputs and exercised the complete client to
+Gateway to MoA to host-tool path without an elapsed-time soak. Before its
+natural failure it completed one local Planner, nine local Reasoner, 42 local
+Executor, 18 Codex OAuth Executor, 12 local Reviewer, and eight Codex OAuth
+Frontier calls; it produced six baseline-relative clean commits and 50 host
+tool executions. No OpenRouter fallback occurred. After the seventh Frontier
+correction, the remote Executor retry returned a native `apply_patch` call and
+the Gateway emitted `finish_reason=tool_calls`, but no tool result followed.
+The next client request failed closed as `required Frontier correction retry
+exhausted`; five transport retries repeated the same structured failure and
+the client exited nonzero before checkpoint zero. The immutable Gateway DB and
+failure sidecar SHA-256 values are
+`a244be396f277b3f7e7c793bda96c17ac68a8ebdc2526aaa85b39155cabc14d3`
+and
+`6aefe61f52e0893dd4db1a2c60d74f78c0f9b8c4ac1b34dcc706509c5196b541`.
+
+The common Responses custom-tool translator previously extracted only
+`arguments.input`. A compatible remote Executor may return the same
+`apply_patch` payload under `arguments.patch`; the translator then exposed the
+JSON wrapper itself as patch input, which the Codex host could not execute.
+Protocol v15 accepts either key and still emits only the normalized raw patch.
+The focused custom-tool and correction coverage passed `6/6`; the complete
+suite passed `1152/1152` with the existing Starlette warning. Ruff passed and
+strict mypy reported zero errors across 59 source files. V81 and V82 remain
+immutable diagnostics; a fresh v15 attempt is required.

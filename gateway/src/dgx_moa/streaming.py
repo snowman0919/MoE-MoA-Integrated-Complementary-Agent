@@ -908,7 +908,7 @@ async def responses_sse(
             if item["_kind"] == "custom":
                 try:
                     parsed_arguments = json.loads(str(item["_arguments"]))
-                    custom_input = parsed_arguments["input"]
+                    custom_input = parsed_arguments.get("input", parsed_arguments.get("patch"))
                     if not isinstance(custom_input, str):
                         raise TypeError
                 except (KeyError, TypeError, ValueError):

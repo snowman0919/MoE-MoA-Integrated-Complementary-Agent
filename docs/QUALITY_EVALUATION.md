@@ -263,7 +263,7 @@ latency, context/cache tokens, tool/retry/provider-error counts, memory/swap,
 and variable cost.
 
 The additional AvatarForge active-work profile uses protocol
-`avatarforge-long-goal-v14` with consecutive checkpoints
+`avatarforge-long-goal-v15` with consecutive checkpoints
 `avatarforge_phase_0_contract`, `avatarforge_phase_1_plugin`,
 `avatarforge_phase_2_environment`, and `avatarforge_phase_3_state`. Every
 checkpoint must contain a baseline-relative change, discovered tests, a clean
@@ -273,8 +273,10 @@ not a minimum duration or pass criterion; idle soak and repeated inference are
 invalid evidence. The limit is one cumulative deadline for the complete
 profile, not a fresh per-checkpoint timeout. Codex's internal context-compaction
 summary request uses an isolated `:compact` fast session and cannot reset the
-work session's active turn, review state, or progress evidence. OpenRouter is not selected from
-review counts; it remains a
+work session's active turn, review state, or progress evidence. Remote
+`apply_patch` correction calls accept the Responses custom-tool `input` field
+and compatible `patch` alias, but emit only the normalized raw patch to the
+Codex host. OpenRouter is not selected from review counts; it remains a
 last fallback only after the configured Codex OAuth chain fails on a mandatory
 path. A repository-changing turn cannot enter review until the current turn
 contains a successful file mutation; an empty `git diff` or validation of only
