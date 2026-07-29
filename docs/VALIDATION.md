@@ -8281,3 +8281,15 @@ latency fell from 2.934 to 1.432 seconds. Its mode-`0600` result SHA-256 is
 `62a3d75412c109a30c83ca2c4c335abb1a8782f1cf83e87d986b33cc18b25749`.
 This proves the cache mechanism and v24 prefix contract separately; only a
 fresh real-client long Goal can prove end-to-end savings and completion.
+
+AvatarForge V93 started an isolated v24 candidate Gateway and passed the
+authenticated model catalog canary, but preflight found that the long-horizon
+client and analyzer still emitted the v23 protocol identifier. The Gateway was
+shut down before any client, session, event, or checkpoint ran. V93 is a
+zero-request setup failure and cannot be counted. Its Gateway DB and redacted
+catalog SHA-256 values are
+`9b67c133e20b98366b62f21d64989bd8bfc5130f75f701746b32ad7309cd000c`
+and
+`e06208261f069587c2d36a4875da6e78d2b6b2424153d8789bb79dc803bcff63`.
+The shared client, analyzer, and quality contract now use
+`avatarforge-long-goal-v24`; a fresh V94 run is required.
