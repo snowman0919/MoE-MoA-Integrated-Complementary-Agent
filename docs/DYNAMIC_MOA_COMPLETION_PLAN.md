@@ -445,6 +445,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v21은 Frontier `apply_patch`의 `input`, `patch`, `diff` 별칭을
   Codex custom-tool `input`으로 단일 정규화하고, 실행 가능한 patch envelope와
   file operation이 없는 correction을 완료로 기록하지 않는다.
+- protocol v22는 실사용 장기 Goal이 100 request에서 중단되지 않도록 candidate
+  session step 상한을 bounded 1000으로 늘린다. 시간 경과가 아니라 실제
+  checkpoint, reconnect, review, 최종 artifact gate는 그대로 유지한다.
 
 ## 10. Release, rollback, 배포
 

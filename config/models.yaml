@@ -219,7 +219,7 @@ gateway:
     optional_idle_minimum_seconds: 300
     optional_idle_maximum_seconds: 2700
     optional_minimum_ready_residency_seconds: 300
-    max_steps: 100
+    max_steps: 1000
 
 models:
   executor:

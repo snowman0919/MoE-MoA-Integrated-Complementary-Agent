@@ -8161,3 +8161,33 @@ Controller, API, streaming, Frontier, and long-horizon coverage passed
 `498/498`. The complete suite passed `1157/1157` with the existing Starlette
 warning. Ruff passed and strict mypy reported zero errors for the four changed
 source files. V88 remains sealed; a fresh v21 attempt is required.
+
+AvatarForge V89 exercised protocol v21 through the real Codex client,
+authenticated loopback Gateway, Dynamic MoA, both SGLang candidates, the
+remote Ollama Reasoner, Codex OAuth Executor fallback, and host tools. It
+completed the first two dependent checkpoints with seven clean commits,
+intentional client resume, six local Reviewer calls, and two verified Frontier
+reviews. After resume it began Phase 2 and continued mutating the repository,
+proving that the prior checkpoint, plan, and working context survived the
+client reconnection.
+
+The request then reached exactly `step_count=100`. The checked-in candidate
+limit blocked the session before controller admission, and Codex retried the
+409 `loop_budget_exhausted` response six times before reporting a stream
+connection failure. SGLang, Reasoner, provider, and host tools had no matching
+failure or abort. The client exited nonzero at checkpoint 2, so V89 is
+diagnostic only. Its failure sidecar records `client_nonzero_exit` under
+protocol v21. The immutable Gateway DB, two-checkpoint evidence, and failure
+sidecar SHA-256 values after clean Gateway shutdown are
+`e62a6c7c811ce61cdd05e28ff78089befe2561ea981b7f2a7500627ed5373e89`,
+`d36ca147fab420445be45162bbbbe09bf7c2cf98ccc720cb9f7321dd7ca86d94`,
+and `7fa1bcacf61ac7c243d56ea980fcc9ea829e9ebaa74f9252c0679d5621698403`.
+
+Protocol v22 raises only the bounded candidate session step limit from 100 to
+1000. It does not weaken mutation, validation, Reviewer, Frontier, reconnect,
+cache, clean-commit, or final-artifact gates, and the ten-hour value remains a
+fail-safe rather than a success duration. Focused config and long-horizon
+coverage passed `49/49`; the complete suite passed `1157/1157` with the
+existing Starlette warning. Ruff passed and strict mypy reported zero errors
+for the two changed source files. V89 remains sealed; a fresh v22 attempt is
+required.
