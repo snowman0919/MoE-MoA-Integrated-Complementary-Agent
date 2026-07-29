@@ -8191,3 +8191,30 @@ coverage passed `49/49`; the complete suite passed `1157/1157` with the
 existing Starlette warning. Ruff passed and strict mypy reported zero errors
 for the two changed source files. V89 remains sealed; a fresh v22 attempt is
 required.
+
+AvatarForge V90 physically exercised protocol v22 through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, both SGLang candidates,
+the remote Ollama Reasoner, Codex OAuth fallback, and host tools. It crossed
+the former boundary at step 100 and continued through step 229, proving the
+bounded 1000-step candidate setting. It also completed a real Frontier
+`apply_patch` correction through host mutation, command-only validation,
+independent local re-review, and Frontier verification, proving the v21 patch
+normalization fix.
+
+V90 sealed one clean checkpoint but did not finish Phase 1. Local Reviewer
+correction cycled through 11 reviews; one exact structured finding set reached
+three occurrences while `review_fail_closed` remained false. The existing
+semantic duplicate budget covered Frontier findings only. V90 was intentionally
+stopped after this shared admission defect was proven and is diagnostic only.
+Its immutable Gateway DB and one-checkpoint evidence SHA-256 values are
+`e676e67ca68a37a3265281d566abfb54e2f9f0f881baf870128b0ed863639797`
+and `fe6448a48403e89f9a1f6c9276bcc826805406d082e22c33b3fbd138b529e68a`.
+
+Protocol v23 registers rejected local Reviewer `status+findings` through the
+existing engineering-loop duplicate failure budget. A third identical set
+sets `review_fail_closed` and rejects the loop action instead of consuming
+hundreds of additional correction turns. V90 remains sealed; a fresh v23
+attempt is required. The focused helper check passed `1/1`, related Reviewer,
+Frontier, duplicate, and admission coverage passed `46/46`, and the complete
+suite passed `1157/1157` with the existing Starlette warning. Ruff passed and
+strict mypy reported zero errors for the three changed source files.

@@ -96,6 +96,14 @@ def test_repeated_semantic_frontier_review_fails_closed(
     assert state.engineering_loop is not None
     assert state.engineering_loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
 
+    state.engineering_loop.termination_reason = None
+    state.engineering_loop.open_failures.clear()
+    local = {"status": "rejected", "findings": [{"category": "correctness"}]}
+    assert controller.register_local_review_failure(state, local) is False
+    assert controller.register_local_review_failure(state, local) is False
+    assert controller.register_local_review_failure(state, local) is True
+    assert state.engineering_loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
+
 
 def test_structured_response_diagnostics_excludes_private_content() -> None:
     diagnostics = structured_response_diagnostics(

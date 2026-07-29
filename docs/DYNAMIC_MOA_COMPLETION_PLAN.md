@@ -448,6 +448,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v22는 실사용 장기 Goal이 100 request에서 중단되지 않도록 candidate
   session step 상한을 bounded 1000으로 늘린다. 시간 경과가 아니라 실제
   checkpoint, reconnect, review, 최종 artifact gate는 그대로 유지한다.
+- protocol v23은 local Reviewer의 `status+findings` semantic fingerprint를
+  기존 engineering-loop duplicate failure budget에 등록하고, 세 번째 동일
+  finding set에서 fail closed한다.
 
 ## 10. Release, rollback, 배포
 

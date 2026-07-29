@@ -4177,6 +4177,21 @@ class Controller:
         return loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
 
     @staticmethod
+    def register_local_review_failure(state: SessionState, result: dict[str, Any]) -> bool:
+        loop = state.engineering_loop
+        if loop is None:
+            return False
+        register_failure(
+            loop,
+            "DUPLICATE_FAILURE",
+            finding_fingerprint=progress_evidence_fingerprint(
+                "local_review",
+                {"status": result.get("status"), "findings": result.get("findings", [])},
+            ),
+        )
+        return loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
+
+    @staticmethod
     def frontier_correction_questions(state: SessionState) -> list[str]:
         prior_review: dict[str, Any] = next(
             (
@@ -4485,6 +4500,15 @@ class Controller:
         state.agent_artifacts = state.agent_artifacts[-self.settings.limits.max_steps :]
         self.store.save(state)
         self.store.event(state.session_id, "review_completed", safe_result)
+        if state.review_status != "approved" and self.register_local_review_failure(
+            state, safe_result
+        ):
+            state.review_fail_closed = True
+            self._reject_loop_action(
+                state,
+                "local_review",
+                "repeated semantic local Reviewer finding",
+            )
         state.evaluations.append(
             {
                 "evaluation_id": str(uuid.uuid4()),
