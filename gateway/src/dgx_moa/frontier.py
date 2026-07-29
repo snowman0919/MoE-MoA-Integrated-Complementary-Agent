@@ -339,6 +339,17 @@ def sanitize_executor_tool_paths(
     tool_calls: list[FrontierExecutorToolCall] = []
     for call in message.tool_calls:
         arguments = json.loads(call.function.arguments)
+        if call.function.name == "apply_patch":
+            patch = next(
+                (
+                    arguments.get(key)
+                    for key in ("input", "patch", "diff")
+                    if isinstance(arguments.get(key), str)
+                ),
+                None,
+            )
+            if patch is not None:
+                arguments = {"input": patch}
         for key in ("workdir", "cwd"):
             value = arguments.get(key)
             if isinstance(value, str) and Path(value).is_absolute():

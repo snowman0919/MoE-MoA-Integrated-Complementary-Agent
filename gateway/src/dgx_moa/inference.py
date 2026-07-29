@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
@@ -284,7 +285,8 @@ def unsafe_frontier_correction_tool_call(response: Mapping[str, Any]) -> bool:
     message = (response.get("choices") or [{}])[0].get("message", {})
     for call in message.get("tool_calls") or []:
         function = call.get("function") or {}
-        if function.get("name") not in {"edit", "edit_file"}:
+        name = function.get("name")
+        if name not in {"apply_patch", "edit", "edit_file"}:
             continue
         arguments = function.get("arguments", {})
         if isinstance(arguments, str):
@@ -294,6 +296,21 @@ def unsafe_frontier_correction_tool_call(response: Mapping[str, Any]) -> bool:
                 return True
         if not isinstance(arguments, dict):
             return True
+        if name == "apply_patch":
+            patch = next(
+                (
+                    arguments.get(key)
+                    for key in ("input", "patch", "diff")
+                    if isinstance(arguments.get(key), str)
+                ),
+                None,
+            )
+            return not (
+                patch
+                and "*** Begin Patch" in patch
+                and "*** End Patch" in patch
+                and re.search(r"(?m)^\*\*\* (?:Add|Delete|Update) File: ", patch)
+            )
         old = next(
             (
                 arguments.get(key)

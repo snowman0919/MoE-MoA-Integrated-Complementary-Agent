@@ -67,6 +67,19 @@ def test_runtime_version_is_2_0(settings: Settings) -> None:
             },
             False,
         ),
+        (
+            "apply_patch",
+            {
+                "diff": (
+                    "*** Begin Patch\n"
+                    "*** Update File: store.py\n"
+                    "@@\n-old\n+new\n"
+                    "*** End Patch"
+                )
+            },
+            False,
+        ),
+        ("apply_patch", {"input": "not a patch"}, True),
         ("write", {"filePath": "store.py", "content": "x" * 512}, False),
     ],
 )
@@ -1141,7 +1154,16 @@ def test_repeated_inspection_routes_executor_to_frontier(
                                     "type": "function",
                                     "function": {
                                         "name": "apply_patch",
-                                        "arguments": '{"patch":"bounded correction"}',
+                                        "arguments": json.dumps(
+                                            {
+                                                "patch": (
+                                                    "*** Begin Patch\n"
+                                                    "*** Update File: app.py\n"
+                                                    "@@\n-old\n+new\n"
+                                                    "*** End Patch"
+                                                )
+                                            }
+                                        ),
                                     },
                                 }
                             ],

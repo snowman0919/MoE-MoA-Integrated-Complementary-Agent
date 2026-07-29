@@ -263,7 +263,7 @@ latency, context/cache tokens, tool/retry/provider-error counts, memory/swap,
 and variable cost.
 
 The additional AvatarForge active-work profile uses protocol
-`avatarforge-long-goal-v20` with consecutive checkpoints
+`avatarforge-long-goal-v21` with consecutive checkpoints
 `avatarforge_phase_0_contract`, `avatarforge_phase_1_plugin`,
 `avatarforge_phase_2_environment`, and `avatarforge_phase_3_state`. Every
 checkpoint must contain a baseline-relative change, discovered tests, a clean
@@ -275,8 +275,10 @@ profile, not a fresh per-checkpoint timeout. Codex's internal context-compaction
 summary request uses an isolated `:compact` fast session and cannot reset the
 work session's active turn, review state, or progress evidence. Remote
 `apply_patch` correction calls accept the Responses custom-tool `input` field
-and compatible `patch` alias, but emit only the normalized raw patch to the
-Codex host. The local Reviewer must scan all bounded evidence before deciding
+and compatible `patch` or `diff` aliases, but normalize all three to the raw
+`input` expected by the Codex host. A correction retry is complete only when
+the patch has begin/end markers and a concrete file operation. The local
+Reviewer must scan all bounded evidence before deciding
 and return every visible material finding in one rejected response, grouped by
 root cause; it must not stop after the first defect or serialize known findings
 across later reviews. OpenRouter is not selected from review counts; it remains a

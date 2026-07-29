@@ -220,10 +220,10 @@ def test_remote_executor_tool_paths_stay_in_client_workspace() -> None:
                     "id": "patch",
                     "type": "function",
                     "function": {
-                        "name": "patch",
+                        "name": "apply_patch",
                         "arguments": json.dumps(
                             {
-                                "patch": (
+                                "diff": (
                                     "*** Begin Patch\n"
                                     "*** Update File: /gateway/production/src/app.py\n"
                                     "@@\n-old\n+new\n"
@@ -242,7 +242,9 @@ def test_remote_executor_tool_paths_stay_in_client_workspace() -> None:
     assert count == 2
     assert json.loads(sanitized.tool_calls[0].function.arguments) == {"cmd": "python -m unittest"}
     assert json.loads(sanitized.tool_calls[1].function.arguments)["cwd"] == "tests"
-    patch = json.loads(sanitized.tool_calls[2].function.arguments)["patch"]
+    arguments = json.loads(sanitized.tool_calls[2].function.arguments)
+    assert list(arguments) == ["input"]
+    patch = arguments["input"]
     assert "*** Update File: src/app.py" in patch
     assert "/gateway/production" not in patch
 

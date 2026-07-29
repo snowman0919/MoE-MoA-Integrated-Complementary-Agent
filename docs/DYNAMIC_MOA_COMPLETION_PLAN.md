@@ -442,6 +442,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v20은 stream 종료 시 명시적 Reviewer rejection을 `deferred`로
   덮지 않는다. rejected snapshot은 실제 성공한 repository mutation 전까지
   재검토할 수 없다.
+- protocol v21은 Frontier `apply_patch`의 `input`, `patch`, `diff` 별칭을
+  Codex custom-tool `input`으로 단일 정규화하고, 실행 가능한 patch envelope와
+  file operation이 없는 correction을 완료로 기록하지 않는다.
 
 ## 10. Release, rollback, 배포
 

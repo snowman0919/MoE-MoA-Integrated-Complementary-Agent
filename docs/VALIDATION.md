@@ -8130,3 +8130,34 @@ Controller, API, and long-horizon coverage passed `397/397`; the complete
 suite passed `1155/1155` with the existing Starlette warning. Ruff passed and
 strict mypy reported zero errors for the three changed source files. A fresh
 v20 attempt is required.
+
+AvatarForge V88 exercised protocol v20 for about 32 minutes through the real
+Codex client, authenticated loopback Gateway, Dynamic MoA, both SGLang
+candidates, the remote Ollama Reasoner, Codex OAuth Executor fallback, and 23
+host-tool executions. It completed one local Planner, seven local Reasoner,
+four local Executor, 25 primary and two secondary Codex OAuth Executor, seven
+local Reviewer, and seven Codex OAuth Frontier calls. OpenRouter was not used
+and recorded variable cost was zero.
+
+Six Frontier correction mutations and subsequent validations completed
+without repeating the V87 rejected-to-deferred defect. After the seventh
+Frontier rejection, however, the retry response ended with a tool call and the
+Gateway recorded it complete, while the next Codex continuation contained no
+corresponding host-tool result. The correction guard then correctly failed
+closed rather than accepting unverified work. No checkpoint evidence or
+analysis file exists, and the failure sidecar records `client_nonzero_exit` at
+checkpoint 0. V88 is diagnostic only. The immutable Gateway DB and failure
+sidecar SHA-256 values are
+`625588d29ee356eeb653d42b21b273f191dded6242e91b60dd9f661ea251c457`
+and `4845362eb5ad5f8f5a652def763921b04c22746c2647a6a6064180e41dadeac5`.
+
+Code audit after V88 exposed a shared compatibility gap: the Frontier output
+boundary did not canonicalize the `diff` patch alias, while the correction
+safety guard checked only edit tools. Protocol v21 normalizes `input`, `patch`,
+and `diff` to the Codex custom-tool `input` field and rejects an `apply_patch`
+correction without begin/end markers and a concrete file operation. Focused and related
+Frontier, Responses, and correction coverage passed `60/60`; related
+Controller, API, streaming, Frontier, and long-horizon coverage passed
+`498/498`. The complete suite passed `1157/1157` with the existing Starlette
+warning. Ruff passed and strict mypy reported zero errors for the four changed
+source files. V88 remains sealed; a fresh v21 attempt is required.
