@@ -1641,7 +1641,18 @@ class Controller:
                         "frontier_correction_mutation_recorded",
                         {"verification": "required"},
                     )
-                if validation_completed:
+                if (
+                    validation_attempted
+                    and failed
+                    and state.frontier_correction_mutation_observed
+                ):
+                    state.frontier_correction_mutation_observed = False
+                    self.store.event(
+                        state.session_id,
+                        "frontier_correction_validation_failed",
+                        {"failure_class": failure_class},
+                    )
+                elif validation_completed:
                     if state.frontier_correction_mutation_observed:
                         state.frontier_correction_required = False
                         state.frontier_correction_mutation_observed = False

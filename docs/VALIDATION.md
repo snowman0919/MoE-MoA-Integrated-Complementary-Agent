@@ -8075,3 +8075,31 @@ The correction-state regressions and related Controller, API, and long-horizon
 coverage passed `396/396`; the complete suite passed `1154/1154` with the
 existing Starlette warning. Ruff passed and strict mypy reported zero errors
 for the five changed source files.
+
+AvatarForge V86 physically exercised protocol v18 through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, both SGLang candidates,
+the remote Ollama Reasoner, Codex OAuth collaboration, and 15 host-tool
+executions. It completed one local Planner, eight local Reasoner, 13 local
+Executor, ten primary Codex OAuth Executor, one local Reviewer, and two Codex
+OAuth Frontier calls. OpenRouter was not used and variable cost remained zero.
+
+The first Frontier rejection correctly deferred another Reviewer, recorded
+one correction mutation, and selected command-only validation. That validation
+failed with a syntax-class build failure. The correction state kept
+`mutation_observed=true`, so subsequent calls repeated validation instead of
+returning to mutation; duplicate-failure admission then failed closed before
+checkpoint 0. V86 produced no checkpoint evidence file and cannot be analyzed
+as a pass. Its failure sidecar records `client_nonzero_exit` under protocol
+v18. The immutable Gateway DB and failure-sidecar SHA-256 values are
+`97abf096946db44e115b02dcd6f7768671ab396ca2e5f008941ec89113310a5a`
+and `ed1683668231f183ae0d9d7a3d70b5adb3f39a88d5f492b4cfc37f81ca676312`.
+
+Protocol v19 clears only the correction mutation-observed latch after a failed
+validation. The correction remains required and rejected, but the next remote
+Executor correction receives mutation tools again. Only a later successful
+bounded validation can enter independent review. The focused correction
+regressions passed `4/4`; related Controller, API, and long-horizon coverage
+passed `396/396`; the complete suite passed `1154/1154` with the existing
+Starlette warning. Ruff passed and strict mypy reported zero errors for the
+three changed source files. V86 remains immutable diagnostic evidence; a
+fresh v19 attempt is required.

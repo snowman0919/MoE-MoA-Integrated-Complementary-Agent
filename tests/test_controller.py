@@ -1831,6 +1831,38 @@ def test_frontier_correction_latch_requires_change_and_validation(
         for event in store.events(state.session_id)
     )
 
+    controller._observe(
+        state,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "frontier-validation-failed",
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "arguments": json.dumps({"cmd": "python -m unittest"}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "frontier-validation-failed",
+                "content": json.dumps({"exit_code": 1, "stderr": "SyntaxError"}),
+            },
+        ],
+    )
+
+    assert state.frontier_correction_required is True
+    assert state.frontier_correction_mutation_observed is False
+    assert any(
+        event["event_type"] == "frontier_correction_validation_failed"
+        for event in store.events(state.session_id)
+    )
+
+    state.frontier_correction_mutation_observed = True
     validation_messages = [
         {
             "role": "assistant",
