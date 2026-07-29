@@ -31,11 +31,15 @@ def test_rejected_review_requires_a_finding() -> None:
         ReviewResult.model_validate({"status": "rejected", "findings": []})
 
 
-def test_local_invocation_records_zero_when_cache_detail_is_absent(
+def test_local_invocation_preserves_unknown_cache_detail(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
-    state = SessionState(session_id="local-cache")
+    state = controller.session("local-cache", [{"role": "user", "content": "implement"}])
+    controller.select_route(state, {})
+    assert state.engineering_loop is not None
+    before = state.engineering_loop.remaining_budget.tokens
 
     controller.record_invocation(
         state,
@@ -47,7 +51,50 @@ def test_local_invocation_records_zero_when_cache_detail_is_absent(
         time.monotonic(),
     )
 
-    assert state.agent_invocations[-1]["cached_tokens"] == 0
+    assert state.agent_invocations[-1]["cached_tokens"] is None
+    assert state.engineering_loop.remaining_budget.tokens == before - 10
+
+
+def test_loop_budget_counts_only_reported_uncached_input_and_output(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session("cached-budget", [{"role": "user", "content": "implement"}])
+    controller.select_route(state, {})
+    assert state.engineering_loop is not None
+    before = state.engineering_loop.remaining_budget.tokens
+
+    controller.record_observed_invocation(
+        state,
+        {
+            "role": "executor",
+            "model": "executor",
+            "status": "completed",
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "total_tokens": 110,
+            "cached_tokens": 80,
+        },
+    )
+
+    assert state.engineering_loop.remaining_budget.tokens == before - 30
+
+
+def test_prompt_sandwich_keeps_dynamic_context_after_stable_prefix(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="cache-prefix", objective="implement")
+
+    first = controller.prompt_sandwich("executor", state, "first observation", "first decision")
+    state.plan.append("new dynamic plan")
+    second = controller.prompt_sandwich("executor", state, "second observation", "second decision")
+
+    first_prefix = first.split("\n\nROLE CONTEXT\n", 1)[0]
+    second_prefix = second.split("\n\nROLE CONTEXT\n", 1)[0]
+    assert first_prefix == second_prefix
+    assert "new dynamic plan" not in first_prefix
 
 
 def test_unbounded_codex_oauth_skips_only_the_frontier_specific_budget(

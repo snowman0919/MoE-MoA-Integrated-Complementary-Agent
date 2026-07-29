@@ -8218,3 +8218,66 @@ attempt is required. The focused helper check passed `1/1`, related Reviewer,
 Frontier, duplicate, and admission coverage passed `46/46`, and the complete
 suite passed `1157/1157` with the existing Starlette warning. Ruff passed and
 strict mypy reported zero errors for the three changed source files.
+
+AvatarForge V91 started through the real Codex client, authenticated loopback
+Gateway, Dynamic MoA, both SGLang candidates, the remote Ollama Reasoner, Codex
+OAuth collaboration, and host tools. It produced seven clean commits, 39 tool
+steps, six local reviews, and six Frontier rejections. The isolated launcher
+had not enabled Loop Engineering, however, so the v23 duplicate gate and frozen
+long-Goal budgets were not physically active. V91 was intentionally stopped
+and is diagnostic only. Its immutable Gateway DB SHA-256 is
+`7b05f624eeaddd7f034d7bf203cd57d57d01b4883d4b4cb928858f13e7a62592`.
+
+AvatarForge V92 enabled Loop Engineering explicitly with the frozen v23
+ceilings and exercised the real Codex-to-Gateway-to-MoA-to-host-tool path. It
+sealed Phase 0, continued Phase 1 through 419 steps, produced 55 commits, and
+performed 579 model invocations. Exact local Reviewer duplicates reached at
+most two occurrences; no duplicate gate or provider failure fired. The run
+failed closed with `BUDGET_EXHAUSTED` when the token budget reached zero, while
+217 iterations, 592 tool calls, 15 Reviewer calls, and 25,255 wall-clock
+seconds remained. The client exited nonzero, only one of four dependent
+checkpoints was sealed, and V92 is not a long-horizon pass.
+
+V92 used 7,998,198 total tokens: 7,761,329 prompt and 236,869 completion.
+Primary Codex OAuth Executor calls accounted for 4,368,114 total tokens, local
+Executor for 2,137,753, Frontier for 690,764, local Reviewer for 510,471, local
+Reasoner for 254,609, the single secondary Executor call for 32,267, and local
+Planner for 4,220. Codex providers reported 1,102,592 cached tokens. The
+Gateway incorrectly recorded an absent local cache report as zero, while
+physical SGLang metrics after the run showed Executor cache hit rate 0.0 and
+only negligible Specialist reuse relative to millions of prompt tokens. This
+is prompt-prefix and accounting failure evidence, not a reason to raise the
+eight-million-token fail-safe or credit elapsed time.
+
+The immutable V92 Gateway DB, partial evidence JSONL, and failure sidecar
+SHA-256 values are
+`b8daf38bc300fe01054bafd11631199cadb52c737567b31384b84a337851a946`,
+`98549c1d85a2f8ec7065fc4aec16dd1c97c740fe2d5d105183b5a9b452969022`,
+and
+`1848c279e25d28a457cf6c90ed7196e28b3f7f00cb961dd1354f592dc903adbb`.
+Both loopback-only SGLang candidates remained READY after clean V92 Gateway
+shutdown.
+
+Protocol v24 keeps raw provider usage unchanged but preserves an absent cache
+report as unknown rather than zero. Loop Engineering consumes
+`prompt_tokens - cached_tokens + completion_tokens` only when all cache fields
+are explicitly reported and valid; otherwise it conservatively consumes the
+raw total. Budget recovery uses the same calculation. The prompt sandwich now
+places immutable role policy, schema, objective, and constraints before
+dynamic plan, evidence, observation, and decision fields so SGLang Radix and
+Codex provider caches receive a stable prefix. The revised completion plan is
+frozen at SHA-256
+`75f0a2b4436f6c923530c635eef2567de708f7f6a324f37a7597c1a9a97ec79e`.
+
+The three focused cache regressions passed `3/3`, Controller coverage passed
+`120/120`, related usage, Loop Engineering, provider, streaming, API, and
+long-horizon coverage passed `419/419`, and the complete suite passed
+`1159/1159` with the existing Starlette warning. Ruff passed and strict mypy
+reported zero errors for the changed source file. A fresh isolated physical
+contract probe passed readiness, 65K capacity, streaming, tool parsing,
+Planner/Reviewer structured output, dual residency, and Radix reuse with
+different suffixes: Executor cache reuse increased from 0 to 8,192 tokens and
+latency fell from 2.934 to 1.432 seconds. Its mode-`0600` result SHA-256 is
+`62a3d75412c109a30c83ca2c4c335abb1a8782f1cf83e87d986b33cc18b25749`.
+This proves the cache mechanism and v24 prefix contract separately; only a
+fresh real-client long Goal can prove end-to-end savings and completion.

@@ -395,6 +395,11 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - 10시간은 active-work 상한이다. Phase 0–3이 통과하면 기다리지 않고
   종료할 수 있고, 시간이 남을 때만 마지막 통과 checkpoint에서 Phase 4
   이후를 순서대로 진행한다. 시간을 채우는 반복은 실패다.
+- 장기 Goal 합격값은 경과시간이 아니다. 실제 Codex/OpenCode/Hermes
+  client→인증 Gateway→Dynamic MoA→host tool 경로가 서로 의존하는 계획,
+  수정, 테스트, 독립 검토, checkpoint, 재접속, context/cache 복구를
+  terminal까지 완결해야 한다. direct local-model 반복이나 idle soak는
+  실행 시간이 길어도 증거가 아니다.
 - 이 상한은 전체 profile에 한 번만 적용한다. checkpoint마다 상한을 새로
   부여하거나 실제 도구·수정·검토 진척이 있는 실행을 30분에 자르지 않는다.
 - 설치, 라이선스, credential, OS permission이 없으면 dependent 항목을
