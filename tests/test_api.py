@@ -195,6 +195,103 @@ def test_frontier_correction_retries_unsafe_edit_with_safe_tool(
     )
 
 
+def test_frontier_correction_mutation_retries_with_validation_tool(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "validation-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    app = create_app(
+        settings.model_copy(update={"frontier_enabled": True, "frontier_config": frontier_config})
+    )
+    requests: list[dict[str, object]] = []
+
+    async def remote_execute(
+        remote_request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        requests.append(remote_request)
+        tool_calls = (
+            []
+            if len(requests) == 1
+            else [
+                {
+                    "id": "validate-correction",
+                    "type": "function",
+                    "function": {
+                        "name": "exec_command",
+                        "arguments": json.dumps(
+                            {"cmd": "python -m unittest discover -s tests -v"}
+                        ),
+                    },
+                }
+            ]
+        )
+        return {
+            "id": f"chatcmpl-validation-{len(requests)}",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None if tool_calls else "validation is required",
+                        "tool_calls": tool_calls,
+                    },
+                    "finish_reason": "tool_calls" if tool_calls else "stop",
+                }
+            ],
+            "usage": {"total_tokens": 8},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "primary", "cost_usd": None},
+        }
+
+    session_id = "frontier-validation-retry"
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        app.state.store.save(
+            SessionState(
+                session_id=session_id,
+                objective="Implement store.py in this repository.",
+                review_status="rejected_frontier",
+                review_deferred=True,
+                frontier_correction_required=True,
+                frontier_correction_mutation_observed=True,
+            )
+        )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "continue"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "description": name,
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                    for name in ("apply_patch", "exec_command")
+                ],
+            },
+        )
+        events = app.state.store.events(session_id)
+
+    assert response.status_code == 200, response.text
+    assert len(requests) == 2
+    retry = requests[-1]
+    assert [tool["function"]["name"] for tool in retry["tools"]] == ["exec_command"]  # type: ignore[index]
+    assert "still lacks successful validation" in str(retry["messages"][-1]["content"])  # type: ignore[index]
+    function = response.json()["choices"][0]["message"]["tool_calls"][0]["function"]
+    assert function["name"] == "exec_command"
+    assert any(
+        event["event_type"] == "frontier_correction_tool_retry_completed" for event in events
+    )
+
+
 def test_frontier_correction_verification_serializes_tool_calls(
     settings: Settings, stub_provider: StubProvider
 ) -> None:

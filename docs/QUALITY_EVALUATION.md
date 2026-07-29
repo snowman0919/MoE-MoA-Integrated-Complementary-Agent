@@ -263,7 +263,7 @@ latency, context/cache tokens, tool/retry/provider-error counts, memory/swap,
 and variable cost.
 
 The additional AvatarForge active-work profile uses protocol
-`avatarforge-long-goal-v17` with consecutive checkpoints
+`avatarforge-long-goal-v18` with consecutive checkpoints
 `avatarforge_phase_0_contract`, `avatarforge_phase_1_plugin`,
 `avatarforge_phase_2_environment`, and `avatarforge_phase_3_state`. Every
 checkpoint must contain a baseline-relative change, discovered tests, a clean
@@ -292,6 +292,12 @@ included in the final clean checkpoint commit, and contain only `status`,
 `unresolved_critical_findings`, and a 64-character lowercase
 `evidence_sha256`. The harness rejects a missing, unchanged, malformed, or
 free-form review artifact before final validation.
+
+A Frontier correction remains in correction state until the client has
+executed both a repository mutation and a subsequent successful bounded
+validation. Local Reviewer and Frontier verification are deferred throughout
+that state. After the mutation, the correction retry exposes only command
+tools for validation.
 
 Code-review dependencies are serial even when the orchestration decision marks
 the broader work parallelizable. The local Reviewer must finish first; a

@@ -432,6 +432,10 @@ reconnect, plan/context 보존을 대체하지 않는다.
   `status`, `unresolved_critical_findings`, `evidence_sha256`만 허용한다.
   free-form review 원문, prompt, hidden reasoning, credential은 저장하지 않으며
   missing, unchanged, malformed artifact는 fail closed한다.
+- protocol v18은 Frontier correction을 repository mutation과 그 뒤의 성공한
+  bounded validation이 모두 관측된 뒤에만 재검토한다. correction 중에는
+  Reviewer와 Frontier를 재호출하지 않고, mutation 뒤에는 command tool만
+  노출해 validation을 먼저 수행한다.
 
 ## 10. Release, rollback, 배포
 

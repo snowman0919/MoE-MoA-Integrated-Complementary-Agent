@@ -1631,23 +1631,39 @@ class Controller:
                     }
                 )
                 state.implementation_evidence = state.implementation_evidence[-3:]
-            if (changed_files or validation_completed) and state.frontier_correction_required:
-                state.frontier_correction_required = False
-                state.frontier_correction_pending_verification = True
-                state.review_status = "deferred"
-                state.review_deferred = True
-                self.store.event(
-                    state.session_id,
-                    "frontier_correction_applied",
-                    {
-                        "reason": (
-                            "implementation_changed_after_frontier_rejection"
-                            if changed_files
-                            else "validation_completed_after_frontier_rejection"
-                        ),
-                        "verification": "pending",
-                    },
-                )
+            if state.frontier_correction_required:
+                if changed_files:
+                    state.frontier_correction_mutation_observed = True
+                    state.review_status = "rejected_frontier"
+                    state.review_deferred = True
+                    self.store.event(
+                        state.session_id,
+                        "frontier_correction_mutation_recorded",
+                        {"verification": "required"},
+                    )
+                if validation_completed:
+                    if state.frontier_correction_mutation_observed:
+                        state.frontier_correction_required = False
+                        state.frontier_correction_mutation_observed = False
+                        state.frontier_correction_pending_verification = True
+                        state.review_status = "deferred"
+                        state.review_deferred = True
+                        self.store.event(
+                            state.session_id,
+                            "frontier_correction_applied",
+                            {
+                                "reason": (
+                                    "mutation_and_validation_completed_after_frontier_rejection"
+                                ),
+                                "verification": "pending",
+                            },
+                        )
+                    else:
+                        self.store.event(
+                            state.session_id,
+                            "frontier_correction_validation_deferred",
+                            {"reason": "mutation_missing"},
+                        )
             elif changed_files and state.review_status == "approved":
                 state.review_status = "deferred"
                 state.review_deferred = True
@@ -2937,11 +2953,13 @@ class Controller:
                     or "review" in effective_objective(state).lower()
                     else "architecture"
                 )
-                frontier_review_deferred = (
-                    mode == "code_review"
-                    and state.active_turn_requires_change
-                    and state.active_turn_targets_repository
-                    and not validation_evidence_available
+                frontier_review_deferred = mode == "code_review" and (
+                    state.frontier_correction_required
+                    or (
+                        state.active_turn_requires_change
+                        and state.active_turn_targets_repository
+                        and not validation_evidence_available
+                    )
                 )
                 specific_questions = list(request.get("metadata", {}).get("frontier_questions", []))
                 if state.frontier_correction_pending_verification:
@@ -3086,7 +3104,11 @@ class Controller:
                 "reviewer_required",
                 {"trigger": "implementation_evidence"},
             )
-        if "reviewer" in roles and review_evidence_available:
+        if (
+            "reviewer" in roles
+            and review_evidence_available
+            and not state.frontier_correction_required
+        ):
             prior_reviewer_rejection = next(
                 (
                     artifact["output"]
@@ -3498,6 +3520,7 @@ class Controller:
                 if material_frontier_review:
                     state.frontier_review_verified = False
                     state.frontier_correction_pending_verification = False
+                    state.frontier_correction_mutation_observed = False
                     state.review_status = "rejected_frontier"
                     state.review_deferred = True
                     state.frontier_correction_required = True
@@ -3524,6 +3547,7 @@ class Controller:
                 elif frontier_result.mode == "code_review":
                     correction_verified = state.frontier_correction_pending_verification
                     state.frontier_correction_pending_verification = False
+                    state.frontier_correction_mutation_observed = False
                     state.frontier_review_verified = True
                     self.store.event(
                         state.session_id,

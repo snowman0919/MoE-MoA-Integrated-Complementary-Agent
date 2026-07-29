@@ -8043,3 +8043,35 @@ Controller, API, and streaming coverage passed `458/458`. The complete suite
 passed `1153/1153` with the existing Starlette warning. Ruff passed and strict
 mypy reported zero errors across 59 source files. V84 remains sealed and a
 fresh v17 attempt is required.
+
+AvatarForge V85 used protocol v17 through the real Codex client,
+authenticated loopback Gateway, Dynamic MoA, both SGLang candidates, the
+remote Ollama Reasoner, Codex OAuth collaboration, and host tools. Phase 0
+completed, but Phase 1 exhausted the fixed 64-call Reviewer budget. Of 64
+completed reviews, 12 approved, 42 returned one finding, and 10 returned two
+findings. The Gateway failed closed with `loop_budget_exhausted`; the client
+exited nonzero and the analyzer rejected the incomplete checkpoints,
+reconnect, final record, and cache-reuse evidence. This is immutable
+diagnostic evidence, not a long-horizon pass. The Gateway DB, evidence JSONL,
+failure sidecar, and analysis SHA-256 values are
+`348e72c38edc36703afffc1deb40827f891f9bbf9108e8c5f81a14c3acb100fc`,
+`879d1faf764d84988c80c59fc3229528500de7f1ce1038134cc8f1716db2bdc0`,
+`d8ef42682c76635875ed9d9a97b4d4f1eec410bfc54d8fa524fd765cfdf3ef08`,
+and `6843fd64ecc3309ee1101ee6374bb7b721186f10a5150d06fa678dfc78fb4df4`.
+
+The common correction state previously became verification-eligible after
+either one repository mutation or validation alone. A multi-finding Frontier
+review therefore triggered another Reviewer/Frontier cycle after nearly every
+single patch. Protocol v18 requires a correction mutation followed by
+successful bounded validation before verification, defers Reviewer and
+Frontier while correction remains required, and exposes command tools for the
+post-mutation validation retry. The ten-hour ceiling remains only a fail-safe;
+confirmation requires dependent work completion, reconnect, context/cache
+recovery, independent review, and final validation through the real
+authenticated MoA path. V85 remains sealed and a fresh v18 attempt is
+required.
+
+The correction-state regressions and related Controller, API, and long-horizon
+coverage passed `396/396`; the complete suite passed `1154/1154` with the
+existing Starlette warning. Ruff passed and strict mypy reported zero errors
+for the five changed source files.

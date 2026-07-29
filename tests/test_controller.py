@@ -1778,7 +1778,7 @@ def test_successful_write_invalidates_approved_review(
     assert opencode_write.review_status == "deferred"
 
 
-def test_frontier_correction_latch_accepts_new_change_or_validation(
+def test_frontier_correction_latch_requires_change_and_validation(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
     store = StateStore(settings.state_db)
@@ -1820,40 +1820,28 @@ def test_frontier_correction_latch_accepts_new_change_or_validation(
     ]
     controller._observe(state, messages)
 
-    assert state.frontier_correction_required is False
-    assert state.frontier_correction_pending_verification is True
+    assert state.frontier_correction_required is True
+    assert state.frontier_correction_mutation_observed is True
+    assert state.frontier_correction_pending_verification is False
     assert state.frontier_review_verified is False
-    assert state.review_status == "deferred"
+    assert state.review_status == "rejected_frontier"
     assert state.review_deferred is True
     assert any(
-        event["event_type"] == "frontier_correction_applied"
+        event["event_type"] == "frontier_correction_mutation_recorded"
         for event in store.events(state.session_id)
     )
 
-    python_state = SessionState(
-        session_id="frontier-python-correction",
-        review_status="rejected_frontier",
-        review_deferred=True,
-        frontier_correction_required=True,
-    )
-    python_messages = [
+    validation_messages = [
         {
             "role": "assistant",
             "tool_calls": [
                 {
-                    "id": "frontier-python-fix",
+                    "id": "frontier-validation",
                     "type": "function",
                     "function": {
                         "name": "exec_command",
                         "arguments": json.dumps(
-                            {
-                                "command": (
-                                    "python - <<'PY'\n"
-                                    "from pathlib import Path\n"
-                                    "Path('app.py').write_text('value = 3\\n')\n"
-                                    "PY"
-                                )
-                            }
+                            {"cmd": "timeout 30s python -m unittest discover -s tests -v"}
                         ),
                     },
                 }
@@ -1861,22 +1849,25 @@ def test_frontier_correction_latch_accepts_new_change_or_validation(
         },
         {
             "role": "tool",
-            "tool_call_id": "frontier-python-fix",
-            "content": '{"exit_code":0}',
+            "tool_call_id": "frontier-validation",
+            "content": json.dumps({"exit_code": 0, "stdout": "Ran 4 tests\nOK\n"}),
         },
     ]
-    controller._observe(python_state, python_messages)
+    controller._observe(state, validation_messages)
 
-    assert python_state.frontier_correction_required is False
-    assert python_state.frontier_correction_pending_verification is True
-    assert python_state.review_status == "deferred"
+    assert state.frontier_correction_required is False
+    assert state.frontier_correction_mutation_observed is False
+    assert state.frontier_correction_pending_verification is True
+    assert state.review_status == "deferred"
     assert any(
         event["event_type"] == "frontier_correction_applied"
-        for event in store.events(python_state.session_id)
+        and event["payload"]["reason"]
+        == "mutation_and_validation_completed_after_frontier_rejection"
+        for event in store.events(state.session_id)
     )
 
     validation_state = SessionState(
-        session_id="frontier-validation-correction",
+        session_id="frontier-validation-without-mutation",
         review_status="rejected_frontier",
         review_deferred=True,
         frontier_correction_required=True,
@@ -1905,13 +1896,14 @@ def test_frontier_correction_latch_accepts_new_change_or_validation(
     ]
     controller._observe(validation_state, validation_messages)
 
-    assert validation_state.frontier_correction_required is False
-    assert validation_state.frontier_correction_pending_verification is True
-    assert validation_state.review_status == "deferred"
+    assert validation_state.frontier_correction_required is True
+    assert validation_state.frontier_correction_pending_verification is False
+    assert validation_state.frontier_correction_mutation_observed is False
+    assert validation_state.review_status == "rejected_frontier"
     assert any(
-        event["payload"]["reason"] == "validation_completed_after_frontier_rejection"
+        event["payload"]["reason"] == "mutation_missing"
         for event in store.events(validation_state.session_id)
-        if event["event_type"] == "frontier_correction_applied"
+        if event["event_type"] == "frontier_correction_validation_deferred"
     )
 
 
@@ -2968,7 +2960,11 @@ async def test_continuation_reuses_review_without_spending_review_budget(
             "messages": [{"role": "user", "content": state.objective}],
             "metadata": {"responses_progress_retry": True} if progress_retry else {},
         },
-        ("reasoner", "executor"),
+        (
+            ("reasoner", "executor", "reviewer")
+            if correction_required
+            else ("reasoner", "executor")
+        ),
         tool_continuation=True,
     )
 

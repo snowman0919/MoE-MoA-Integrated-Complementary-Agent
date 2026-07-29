@@ -2079,6 +2079,22 @@ def create_app(
             async def remote_executor_correction(
                 executor_request: dict[str, Any], stage: str
             ) -> dict[str, Any]:
+                validation_required = state.frontier_correction_mutation_observed
+                if validation_required:
+                    executor_request = dict(executor_request)
+                    executor_request["messages"] = [
+                        *executor_request.get("messages", []),
+                        {
+                            "role": "user",
+                            "content": (
+                                "The Frontier correction has changed the repository but has not "
+                                "been validated. Call exactly one available command tool now to "
+                                "run the smallest bounded relevant test suite. Do not inspect or "
+                                "edit another file unless that validation fails. Return a native "
+                                "tool call, not prose."
+                            ),
+                        },
+                    ]
                 completed_retries: list[int] = []
                 if state.frontier_correction_required:
                     correction_events = request.app.state.store.events(state_session_id)
@@ -2133,12 +2149,17 @@ def create_app(
                     raise FrontierRequiredUnavailable(
                         "required Frontier correction cannot run without client tools"
                     )
+                allowed_tools = (
+                    {"exec_command", "shell", "terminal", "execute_code"}
+                    if validation_required
+                    else REPOSITORY_MUTATION_TOOLS
+                )
                 tools = [
                     tool
                     for tool in tools
                     if isinstance(tool, dict)
                     and str(tool.get("name") or tool.get("function", {}).get("name"))
-                    in REPOSITORY_MUTATION_TOOLS
+                    in allowed_tools
                 ]
                 if not tools:
                     request.app.state.store.event(
@@ -2147,7 +2168,7 @@ def create_app(
                         {"reason": "mutation_tools_unavailable"},
                     )
                     raise FrontierRequiredUnavailable(
-                        "required Frontier correction cannot run without mutation tools"
+                        "required Frontier correction cannot run without eligible client tools"
                     )
                 tool_names = sorted(
                     {
@@ -2160,29 +2181,37 @@ def create_app(
                 retry_request = dict(executor_request)
                 retry_request["tools"] = tools
                 retry_request["stream"] = False
+                retry_instruction = (
+                    "A required Frontier correction has changed the repository but still lacks "
+                    "successful validation. Call exactly one available command tool now to run "
+                    "the smallest bounded relevant test suite. Do not inspect or edit another "
+                    "file unless that validation fails. Return a native tool call, not prose. "
+                    "Available tools: "
+                    if validation_required
+                    else (
+                        "A required code correction remains unresolved. The prior response "
+                        + (
+                            "called a tool but did not resolve the correction. Use a "
+                            "mutation-capable tool and change the affected file now. "
+                            if completed_retries
+                            else "did not call a tool and cannot complete this request. "
+                        )
+                        + "Call exactly one available client tool now to apply the concrete "
+                        "correction listed in the prior Frontier contribution. Do not repeat an "
+                        "inspection or validation that already succeeded unless the prior "
+                        "finding explicitly requires that evidence. Never invoke a tool name as "
+                        "a shell command; when apply_patch is unavailable, write through an "
+                        "available command tool instead. Return a native tool call, not prose. "
+                        "For edit tools, identify a unique existing block of at least eight "
+                        "non-whitespace characters; otherwise replace the complete file with a "
+                        "write tool. Available tools: "
+                    )
+                )
                 retry_request["messages"] = [
                     *executor_request.get("messages", []),
                     {
                         "role": "user",
-                        "content": (
-                            "A required code correction remains unresolved. The prior response "
-                            + (
-                                "called a tool but did not resolve the correction. Use a "
-                                "mutation-capable tool and change the affected file now. "
-                                if completed_retries
-                                else "did not call a tool and cannot complete this request. "
-                            )
-                            + "Call exactly "
-                            "one available client tool now to apply the concrete correction "
-                            "listed in the prior Frontier contribution. Do not repeat an "
-                            "inspection or validation that already succeeded unless the prior "
-                            "finding explicitly requires that evidence. Never invoke a tool name "
-                            "as a shell command; when apply_patch is unavailable, write through "
-                            "an available command tool instead. Return a native tool call, not "
-                            "prose. For edit tools, identify a unique existing block of at least "
-                            "eight non-whitespace characters; otherwise replace the complete file "
-                            "with a write tool. Available tools: " + ", ".join(tool_names)
-                        ),
+                        "content": retry_instruction + ", ".join(tool_names),
                     },
                 ]
                 request.app.state.store.event(
