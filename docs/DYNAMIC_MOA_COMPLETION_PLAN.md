@@ -439,6 +439,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v19는 post-mutation validation 실패 시 correction을 완료하거나
   같은 validation을 반복하지 않고 mutation 단계로 되돌린다. 성공한
   validation만 Reviewer와 Frontier 재검토를 허용한다.
+- protocol v20은 stream 종료 시 명시적 Reviewer rejection을 `deferred`로
+  덮지 않는다. rejected snapshot은 실제 성공한 repository mutation 전까지
+  재검토할 수 없다.
 
 ## 10. Release, rollback, 배포
 

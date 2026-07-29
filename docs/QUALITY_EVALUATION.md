@@ -263,7 +263,7 @@ latency, context/cache tokens, tool/retry/provider-error counts, memory/swap,
 and variable cost.
 
 The additional AvatarForge active-work profile uses protocol
-`avatarforge-long-goal-v19` with consecutive checkpoints
+`avatarforge-long-goal-v20` with consecutive checkpoints
 `avatarforge_phase_0_contract`, `avatarforge_phase_1_plugin`,
 `avatarforge_phase_2_environment`, and `avatarforge_phase_3_state`. Every
 checkpoint must contain a baseline-relative change, discovered tests, a clean
@@ -299,6 +299,9 @@ validation. Local Reviewer and Frontier verification are deferred throughout
 that state. After the mutation, the correction retry exposes only command
 tools for validation. A failed validation returns the correction to mutation
 state; only a successful validation permits independent re-review.
+Streaming completion cannot replace an explicit local Reviewer rejection with
+`deferred`; the rejected snapshot remains ineligible until a successful
+repository mutation is observed.
 
 Code-review dependencies are serial even when the orchestration decision marks
 the broader work parallelizable. The local Reviewer must finish first; a

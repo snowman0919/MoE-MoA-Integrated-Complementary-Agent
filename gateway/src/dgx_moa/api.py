@@ -2627,6 +2627,7 @@ def create_app(
                                 terminal
                                 and "reviewer" in state.roles_required
                                 and state.review_status != "approved"
+                                and not state.review_status.startswith("rejected")
                             ):
                                 state.review_deferred = True
                                 state.review_status = "deferred"

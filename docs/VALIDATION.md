@@ -8103,3 +8103,30 @@ passed `396/396`; the complete suite passed `1154/1154` with the existing
 Starlette warning. Ruff passed and strict mypy reported zero errors for the
 three changed source files. V86 remains immutable diagnostic evidence; a
 fresh v19 attempt is required.
+
+AvatarForge V87 exercised protocol v19 through the real Codex client,
+authenticated loopback Gateway, Dynamic MoA, both SGLang candidates, the
+remote Ollama Reasoner, Codex OAuth Executor fallback, and 11 host-tool
+executions. It completed one local Planner, six local Reasoner, 16 local
+Executor, one primary Codex OAuth Executor, and five local Reviewer calls.
+OpenRouter was not used and variable cost remained zero. Four reviews rejected
+and the fifth approved.
+
+The stream cleanup boundary replaced each explicit local Reviewer rejection
+with `deferred` whenever the Executor stream completed. That made
+`local_correction_applied` true on the next continuation and admitted another
+Reviewer after successful non-mutating commands. The event sequence physically
+showed repeated `review_started` calls after tools that the common mutation
+classifier marked false. V87 was intentionally stopped after the shared defect
+was proven; it created no checkpoint evidence and is diagnostic only. Its
+immutable Gateway DB SHA-256 is
+`6260c773ee2a8abf4576c83f41308f273d8a58db600a23f521ae47c3e620e814`.
+
+Protocol v20 preserves any explicit rejection during stream cleanup. Pending
+or incomplete review can still become deferred, but a rejected snapshot
+remains rejected until a successful repository mutation is observed. The
+focused streaming and continuation regressions passed `4/4`; related
+Controller, API, and long-horizon coverage passed `397/397`; the complete
+suite passed `1155/1155` with the existing Starlette warning. Ruff passed and
+strict mypy reported zero errors for the three changed source files. A fresh
+v20 attempt is required.

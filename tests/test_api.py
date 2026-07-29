@@ -6866,14 +6866,24 @@ def test_local_stream_records_explicit_zero_cache_usage(
     assert cached_tokens == 0
 
 
-def test_streaming_preserves_completed_pre_review(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+@pytest.mark.parametrize(
+    ("review_status", "review_deferred"),
+    (("approved", False), ("rejected", True)),
+)
+def test_streaming_preserves_completed_pre_review(
+    settings,
+    stub_provider: StubProvider,
+    review_status: str,
+    review_deferred: bool,
+) -> None:  # type: ignore[no-untyped-def]
     session_id = "stream-pre-reviewed"
     with client_with_stub(settings, stub_provider) as client:
         client.app.state.store.save(
             SessionState(
                 session_id=session_id,
                 objective="implement and verify",
-                review_status="approved",
+                review_status=review_status,
+                review_deferred=review_deferred,
                 roles_required=["reasoner", "executor", "reviewer"],
             )
         )
@@ -6891,8 +6901,8 @@ def test_streaming_preserves_completed_pre_review(settings, stub_provider: StubP
 
     assert response.status_code == 200
     assert state is not None
-    assert state.review_status == "approved"
-    assert state.review_deferred is False
+    assert state.review_status == review_status
+    assert state.review_deferred is review_deferred
 
 
 @pytest.mark.asyncio
