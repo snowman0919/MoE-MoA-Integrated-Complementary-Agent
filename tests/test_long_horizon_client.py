@@ -23,14 +23,14 @@ def test_phase_prompts_require_changes_only_during_core_implementation() -> None
         for index in range(MODULE.CHECKPOINTS)
     ] == [False, True, False, False, False]
     assert all(
-        "/state/long-review.json"
+        f"{workspace}/state/long-review.json"
         not in MODULE.client_prompt(index, workspace, validation, inputs)
         for index in range(MODULE.CHECKPOINTS - 1)
     )
     final = MODULE.client_prompt(
         MODULE.CHECKPOINTS - 1, workspace, validation, inputs
     )
-    assert "/state/long-review.json" in final
+    assert f"{workspace}/state/long-review.json" in final
     assert str(workspace) in final
     assert validation in final
     assert "추측한 경로로 cd하지 말고" in final
@@ -65,7 +65,8 @@ def test_avatarforge_prompts_require_a_commit_per_phase() -> None:
     assert all("새 clean commit이 필수" in prompt for prompt in prompts)
     assert "아무것도 설치하지 말고" in prompts[2]
     assert "Character IR" in prompts[3]
-    assert "/state/long-review.json" in prompts[3]
+    assert f"{workspace}/state/long-review.json" in prompts[3]
+    assert '"evidence_sha256":"64 lowercase hex"' in prompts[3]
 
 
 def test_final_validation_rejects_zero_tests(
@@ -87,6 +88,57 @@ def test_final_validation_rejects_zero_tests(
     exit_code, _output_sha256 = MODULE.run_validation(args, state)
 
     assert exit_code == 1
+
+
+def test_final_event_uses_only_committed_sanitized_workspace_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = arguments(tmp_path, "codex")
+    workspace = args.workspace
+    MODULE.git(workspace, "init", "-q")
+    MODULE.ensure_local_git_identity(workspace)
+    (workspace / "implementation.py").write_text("VALUE = 1\n")
+    MODULE.git(workspace, "add", "implementation.py")
+    MODULE.git(workspace, "commit", "-qm", "baseline")
+    baseline = MODULE.git(workspace, "rev-parse", "HEAD")
+    review_path = workspace / "state" / "long-review.json"
+    review_path.parent.mkdir()
+    review_path.write_text(
+        json.dumps(
+            {
+                "status": "approved",
+                "unresolved_critical_findings": 0,
+                "evidence_sha256": "a" * 64,
+            }
+        )
+    )
+    MODULE.git(workspace, "add", "state/long-review.json")
+    MODULE.git(workspace, "commit", "-qm", "add review")
+    checkpoint = {
+        "commit": MODULE.git(workspace, "rev-parse", "HEAD"),
+        "provider_provenance": [{"role": "reviewer"}],
+        "terminal": True,
+    }
+    header = {
+        "baseline_commit": baseline,
+        **{field: "b" * 64 for field in MODULE.stable_hashes_fields()},
+    }
+    monkeypatch.setattr(MODULE, "run_validation", lambda *_args: (0, "c" * 64))
+
+    result = MODULE.final_event(args, tmp_path / "private-state", header, checkpoint)
+
+    assert result["task_outcome"] == "completed"
+    review_path.write_text(
+        json.dumps(
+            {
+                "status": "approved",
+                "unresolved_critical_findings": 0,
+                "evidence": "raw review output",
+            }
+        )
+    )
+    with pytest.raises(RuntimeError, match="invalid_review_evidence"):
+        MODULE.final_event(args, tmp_path / "private-state", header, checkpoint)
 
 
 def arguments(tmp_path: Path, harness: str) -> argparse.Namespace:

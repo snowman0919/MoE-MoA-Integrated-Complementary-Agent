@@ -30,7 +30,7 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v16"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v17"
 AVATARFORGE_PHASES = (
     "avatarforge_phase_0_contract",
     "avatarforge_phase_1_plugin",
@@ -233,7 +233,7 @@ def client_prompt(
             "전체 완료 선언은 다음 단계에 남겨라. "
         ),
         (
-            "전체 검증과 독립 Reviewer 검토를 완료하고 /state/long-review.json에 "
+            f"전체 검증과 독립 Reviewer 검토를 완료하고 {workspace}/state/long-review.json에 "
             "최종 검토 근거를 남긴 뒤에만 완료를 선언하라. "
         ),
     )
@@ -255,7 +255,8 @@ def client_prompt(
         (
             "versioned Character IR, Asset Graph provenance, checkpoint/rollback, immutable "
             "numbered revision state를 구현하고 unit·contract·fault tests를 실행한 뒤 clean "
-            "commit하라. 전체 Phase 0–3을 독립 Reviewer로 검토하고 /state/long-review.json에 "
+            f"commit하라. 전체 Phase 0–3을 독립 Reviewer로 검토하고 "
+            f"{workspace}/state/long-review.json에 "
             "최종 근거를 남겨라. "
         ),
     )
@@ -282,7 +283,7 @@ def client_prompt(
         + (
             "최종 검토 파일은 "
             '{"status":"approved|changes_requested","unresolved_critical_findings":0,'
-            '"evidence":"..."} 형식이어야 한다. '
+            '"evidence_sha256":"64 lowercase hex"} 형식이어야 한다. '
             if final
             else ""
         )
@@ -853,10 +854,43 @@ def final_event(
     header: dict[str, Any],
     checkpoint: dict[str, Any],
 ) -> dict[str, Any]:
-    review_path = state / "long-review.json"
+    review_path = args.workspace / "state" / "long-review.json"
     if not review_path.is_file():
         raise RuntimeError("review_evidence_missing")
-    review = json.loads(review_path.read_text())
+    relative_review_path = review_path.relative_to(args.workspace).as_posix()
+    changed_paths = git(
+        args.workspace,
+        "diff",
+        "--name-only",
+        header["baseline_commit"],
+        checkpoint["commit"],
+        "--",
+        relative_review_path,
+    ).splitlines()
+    if relative_review_path not in changed_paths:
+        raise RuntimeError("review_evidence_unchanged")
+    try:
+        review = json.loads(review_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        raise RuntimeError("invalid_review_evidence") from None
+    if (
+        not isinstance(review, dict)
+        or set(review)
+        != {"status", "unresolved_critical_findings", "evidence_sha256"}
+        or review["status"] not in {"approved", "changes_requested"}
+        or isinstance(review["unresolved_critical_findings"], bool)
+        or not isinstance(review["unresolved_critical_findings"], int)
+        or review["unresolved_critical_findings"] < 0
+        or not isinstance(review["evidence_sha256"], str)
+        or len(review["evidence_sha256"]) != 64
+        or any(character not in "0123456789abcdef" for character in review["evidence_sha256"])
+        or (
+            review["status"] == "approved"
+            and review["unresolved_critical_findings"] != 0
+        )
+    ):
+        raise RuntimeError("invalid_review_evidence")
+    reject_private_fields(review)
     validation_exit, validation_hash = run_validation(args, state)
     snapshot = git_snapshot(args.workspace)
     implementation = git(
@@ -1167,6 +1201,9 @@ def main() -> int:
                     "gateway_state_missing",
                     "invalid_gateway_state",
                     "premature_completion",
+                    "review_evidence_missing",
+                    "review_evidence_unchanged",
+                    "invalid_review_evidence",
                 }
                 else "long_horizon_failure",
             },

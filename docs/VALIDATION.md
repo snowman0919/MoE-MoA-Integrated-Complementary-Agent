@@ -7998,3 +7998,48 @@ findings. Protocol v16 requires one complete bounded-evidence scan, all visible
 material findings in one rejected response, root-cause grouping, and concise
 output. V83 remains immutable diagnostic evidence; a fresh v16 attempt is
 required.
+
+Fresh V84 used protocol v16 through the real Codex client, authenticated
+loopback Gateway, Dynamic MoA, both SGLang candidates, the remote Ollama
+Reasoner, Codex OAuth collaboration, and 140 host-tool executions. It completed
+all four clean terminal checkpoints in 8,081.166 seconds, produced 22
+baseline-relative commits, preserved 105,728 cached tokens after Phase 0, and
+proved the required intentional reconnect in Phase 2. It completed one local
+Planner, 19 local Reasoner, 103 local Executor, 61 primary Codex OAuth Executor,
+one secondary Codex OAuth Executor, 40 local Reviewer, and 26 Codex OAuth
+Frontier calls. OpenRouter was not used and variable cost remained zero.
+
+Reviewer v16 physically returned multi-finding batches, including one
+three-finding rejection. Of 40 reviews, 26 were approved, nine returned one
+finding, three returned two, one returned three, and one malformed rejection
+returned no finding. All nine custom-tool correction retries completed. Eight
+unique engineering failures were registered and seven resolved. One cancelled
+Executor call caused a recovered stream abort; checkpoint 3 therefore recorded
+one provider error and failed provider pinning.
+
+The client then completed checkpoint 3 but raised `review_evidence_missing`
+before writing the final record. The model had correctly committed the
+structured artifact at the host-tool-writable repository path
+`state/long-review.json`; the harness alone still required private
+`/state/long-review.json`. The analyzer exited 1 with four checkpoints,
+intentional reconnect and cache reuse present, but `invalid_event_order`,
+`invalid_final_count`, `provider_error`, and `provider_not_pinned`. V84 is
+immutable diagnostic evidence, not a long-horizon PASS. The Gateway DB,
+evidence JSONL, failure sidecar, and analysis SHA-256 values are
+`11ef37831940899ad8f2c54e0de9cd1c12aa6794e9f9464d45eea555f677ad2e`,
+`feba60352cb235fbe0eeb1738f35fa9dfcd273fd6d19626f5c2b41bd6b311c3a`,
+`1fc93c4dd58e3d7a3bd84ce5e6c396bce9dec1e7432ec34b0115a96bc6af57b5`,
+and
+`5e3ca49e220ba1e40ac92913ec216176df04e720502a7f4b715859358f95c9b4`.
+
+Protocol v17 aligns the prompt and final validator on
+`<workspace>/state/long-review.json`, requires that path to differ from the
+baseline in the final clean commit, and accepts only `status`,
+`unresolved_critical_findings`, and a lowercase 64-character
+`evidence_sha256`. Free-form review output is no longer permitted in the
+artifact. The focused final-event and prompt regressions passed `3/3`; the
+long-horizon client suite passed `27/27`, and related long-horizon,
+Controller, API, and streaming coverage passed `458/458`. The complete suite
+passed `1153/1153` with the existing Starlette warning. Ruff passed and strict
+mypy reported zero errors across 59 source files. V84 remains sealed and a
+fresh v17 attempt is required.

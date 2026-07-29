@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from dgx_moa import long_horizon_analysis as MODULE
+from dgx_moa import long_horizon_client as CLIENT
 
 HASH = "a" * 64
 
@@ -95,6 +96,7 @@ def test_long_horizon_analyzer_accepts_complete_pinned_sustained_goal(tmp_path: 
 
 
 def test_long_horizon_analyzer_accepts_avatarforge_profile(tmp_path: Path) -> None:
+    assert MODULE.AVATARFORGE_PROTOCOL == CLIENT.AVATARFORGE_PROTOCOL
     evidence = tmp_path / "avatarforge.jsonl"
     write_evidence(
         evidence,

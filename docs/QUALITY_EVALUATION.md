@@ -263,7 +263,7 @@ latency, context/cache tokens, tool/retry/provider-error counts, memory/swap,
 and variable cost.
 
 The additional AvatarForge active-work profile uses protocol
-`avatarforge-long-goal-v16` with consecutive checkpoints
+`avatarforge-long-goal-v17` with consecutive checkpoints
 `avatarforge_phase_0_contract`, `avatarforge_phase_1_plugin`,
 `avatarforge_phase_2_environment`, and `avatarforge_phase_3_state`. Every
 checkpoint must contain a baseline-relative change, discovered tests, a clean
@@ -285,6 +285,13 @@ path. A repository-changing turn cannot enter review until the current turn
 contains a successful file mutation; an empty `git diff` or validation of only
 prior work is insufficient. Provider provenance and variable cost remain
 mandatory.
+
+The final review artifact uses the exact host-tool-writable repository path
+`<workspace>/state/long-review.json`. It must be changed after the baseline,
+included in the final clean checkpoint commit, and contain only `status`,
+`unresolved_critical_findings`, and a 64-character lowercase
+`evidence_sha256`. The harness rejects a missing, unchanged, malformed, or
+free-form review artifact before final validation.
 
 Code-review dependencies are serial even when the orchestration decision marks
 the broader work parallelizable. The local Reviewer must finish first; a

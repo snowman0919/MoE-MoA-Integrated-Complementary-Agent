@@ -426,6 +426,12 @@ reconnect, plan/context 보존을 대체하지 않는다.
   동일 finding 세 번째 반복을 기존 `DUPLICATE_FAILURE_LIMIT`로 fail
   closed한다. token, cost, profile 메타데이터 변화나 무효 correction
   호출은 새 review progress로 인정하지 않는다.
+- protocol v17은 모든 harness가 실제 host tool로 쓸 수 있는 정확한
+  `<workspace>/state/long-review.json`을 최종 review artifact 경로로 쓴다.
+  이 파일은 baseline 이후 clean commit에 포함되어야 하고
+  `status`, `unresolved_critical_findings`, `evidence_sha256`만 허용한다.
+  free-form review 원문, prompt, hidden reasoning, credential은 저장하지 않으며
+  missing, unchanged, malformed artifact는 fail closed한다.
 
 ## 10. Release, rollback, 배포
 
