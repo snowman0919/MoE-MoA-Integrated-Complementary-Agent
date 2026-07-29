@@ -4444,6 +4444,7 @@ async def test_correction_review_reuses_prior_required_findings(
     assert prior_finding["required_correction"] in review_prompt
     assert "type(max_records) is not int" in review_prompt
     assert "omit unrelated new hardening from findings" in review_prompt
+    assert "never stop after the first defect" in review_prompt
     assert state.review_status == "approved"
 
 

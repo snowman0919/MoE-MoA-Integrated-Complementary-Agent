@@ -7970,3 +7970,31 @@ The focused custom-tool and correction coverage passed `6/6`; the complete
 suite passed `1152/1152` with the existing Starlette warning. Ruff passed and
 strict mypy reported zero errors across 59 source files. V81 and V82 remain
 immutable diagnostics; a fresh v15 attempt is required.
+
+Fresh V83 used protocol v15 through the real Codex client, authenticated
+loopback Gateway, Dynamic MoA, both SGLang candidates, the remote Ollama
+Reasoner, Codex OAuth collaboration, and 165 host-tool executions. It remained
+active for 11,265.990 seconds, preserved context across checkpoints 0, 1, and
+2, and produced 11 baseline-relative commits before natural failure. It
+completed one local Planner, 17 local Reasoner, 137 local Executor, 49 Codex
+OAuth Executor, 64 local Reviewer, and 25 Codex OAuth Frontier calls. No
+OpenRouter fallback occurred. All nine custom-tool correction retries completed
+and returned tool results, so the v15 `patch`-alias fix passed repeated physical
+use.
+
+V83 then attempted a 65th Reviewer call and failed closed with
+`BUDGET_EXHAUSTED`; the client preserved checkpoints 0–2 and exited nonzero
+before checkpoint 3. Of 64 completed reviews, 40 were rejected and 24 approved;
+25 returned one finding and 13 returned two. Reviewer latency averaged
+132,225.8 ms, with 824.8 completion tokens per call. The immutable Gateway DB,
+evidence JSONL, and failure sidecar SHA-256 values are
+`f34b742b6c519aee7ca1253f5e7da2937b60d69776b2d649d7e82210ddc5c15d`,
+`be7aa64e07e7758d68cc0aab0945c5884da69a06425ab30355759cbb72e50013`,
+and
+`013542aaf83620c33731e1c7135dd7537ee5e06eccbd595594b4e402a0bf743a`.
+The fixed Reviewer contract did not require a complete scan for ordinary
+reviews, so the local model repeatedly serialized small groups of material
+findings. Protocol v16 requires one complete bounded-evidence scan, all visible
+material findings in one rejected response, root-cause grouping, and concise
+output. V83 remains immutable diagnostic evidence; a fresh v16 attempt is
+required.
