@@ -49,6 +49,7 @@ from .image_generation import (
 from .inference import (
     ResponseOwnedIterator,
     ResponseOwnedStreamingResponse,
+    compaction_request_index,
     elapsed_ms,
     has_matching_tool_result,
     title_request_index,
@@ -1536,6 +1537,14 @@ def create_app(
         if title_index is not None:
             state_session_id = f"{session_id}:title"
             raw["messages"] = [raw["messages"][title_index]]
+            mode = "fast"
+        elif compaction_request_index(raw["messages"]) is not None:
+            state_session_id = (
+                session_id if session_id.endswith(":compact") else f"{session_id}:compact"
+            )
+            raw.pop("tools", None)
+            raw.pop("tool_choice", None)
+            raw.pop("parallel_tool_calls", None)
             mode = "fast"
         else:
             state_session_id = session_id
@@ -3556,6 +3565,7 @@ def create_app(
             else "en"
         )
         response_model = COMPATIBILITY_MODEL_ALIASES.get(body.model, body.model)
+        compaction_index = compaction_request_index(messages)
 
         tool_choice = body.tool_choice
         if isinstance(tool_choice, dict) and tool_choice.get("type") in {"function", "custom"}:
@@ -3610,6 +3620,8 @@ def create_app(
                     )
                 else:
                     response_session_id = str(uuid.uuid4())
+            if compaction_index is not None and not response_session_id.endswith(":compact"):
+                response_session_id = f"{response_session_id}:compact"
 
             async def response_stream() -> AsyncIterator[bytes]:
                 chat_task: asyncio.Task[Response] | None = None
@@ -3867,10 +3879,17 @@ def create_app(
                 headers={"X-Session-ID": response_session_id, "Cache-Control": "no-cache"},
             )
         try:
+            chat_session_id = x_session_id
+            if compaction_index is not None and chat_session_id:
+                chat_session_id = (
+                    chat_session_id
+                    if chat_session_id.endswith(":compact")
+                    else f"{chat_session_id}:compact"
+                )
             chat_response = await chat(
                 chat_body,
                 request,
-                x_session_id,
+                chat_session_id,
                 x_runtime_channel,
                 x_trace_origin,
                 x_task_id,

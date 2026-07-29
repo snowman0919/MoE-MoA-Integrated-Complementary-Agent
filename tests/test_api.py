@@ -6004,6 +6004,61 @@ def test_current_opencode_title_prompt_isolated_from_trailing_work_prompt(
         assert stub_provider.calls == ["executor"]
 
 
+def test_codex_compaction_request_isolated_from_work_session(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    headers = {"Authorization": "Bearer test-secret", "X-Session-ID": "shared-session"}
+    with client_with_stub(settings, stub_provider) as client:
+        work = SessionState(
+            session_id="shared-session",
+            objective="Implement app.py and run tests.",
+            active_user_instruction="Implement app.py and run tests.",
+            active_user_turn_sha256="a" * 64,
+            active_turn_requires_change=True,
+            active_turn_targets_repository=True,
+            review_status="pending",
+        )
+        client.app.state.store.save(work)
+        response = client.post(
+            "/v1/responses",
+            headers=headers,
+            json={
+                "model": "dgx-moa-orchestrated",
+                "input": [
+                    {"role": "user", "content": work.objective},
+                    {"role": "assistant", "content": "Implementation is in progress."},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Compact the context into a concise summary so another model can "
+                            "continue the work."
+                        ),
+                    },
+                ],
+                "stream": True,
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "exec_command",
+                        "description": "Run a command.",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ],
+            },
+        )
+
+        main_state = client.app.state.store.get("shared-session")
+        compact_state = client.app.state.store.get("shared-session:compact")
+
+    assert response.status_code == 200
+    assert "event: response.completed" in response.text
+    assert main_state and main_state.active_user_turn_sha256 == "a" * 64
+    assert main_state.review_status == "pending"
+    assert compact_state and compact_state.runtime_mode == "fast"
+    assert stub_provider.calls == ["executor"]
+    assert "tools" not in stub_provider.requests[-1]
+
+
 def test_auth_enabled_invalid_key_returns_401(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     with client_with_stub(settings, stub_provider) as client:
         response = client.get("/v1/models", headers={"Authorization": "Bearer definitely-wrong"})

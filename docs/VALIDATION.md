@@ -7897,3 +7897,35 @@ immutable v13 run is required. Controller and long-horizon coverage passed
 `159/159`; the complete suite passed `1150/1150` with the existing Starlette
 warning. Ruff passed and strict mypy reported zero errors across 59 source
 files.
+
+AvatarForge V80 physically exercised protocol v13 through the real Codex
+client, authenticated loopback Gateway, Dynamic MoA, and host tools. Phase 0,
+Phase 1, and Phase 2 completed as clean, terminal, provider-pinned checkpoints
+with 13, 96, and 56 tool calls. Phase 2 also proved the intentional reconnect.
+The run observed local Reasoner, Executor, Planner, Reviewer, Codex OAuth
+Executor, and Codex OAuth Frontier provenance with no provider error.
+
+V80 failed closed during Phase 3 with `client_nonzero_exit`. Codex issued an
+internal context-compaction summary request inside the same HTTP session. The
+Gateway treated that auxiliary request as a new user turn, reset the
+current-turn tool boundary after real Phase 3 mutation, and then terminated the
+engineering loop with `NO_PROGRESS`. The analyzer exited 1 with three of four
+checkpoints, no final record, and PASS false. This is not a long-horizon pass;
+elapsed time and local-model activity are not completion evidence. Final
+Gateway DB, evidence, failure sidecar, and analysis SHA-256 values are
+`9c66a0618e9ad4c0e609e2e1ec075a8798cad1001ddbdad63e58231b3bfe5794`,
+`40346a5d8ace50c1db3336e0b3775d477ec0fa9eed9c5e8ff46af5be7b48b5d9`,
+`4e8e2db9fecaf8dbfdc9615a1c20aab6070b0ba13167dad13d241238866d82cc`,
+and
+`d05d17f679b017dd2e63c123710f38dcd3fbd7e3a3825d401ab0269eee6d5571`.
+Both loopback-only SGLang candidates remained healthy after the failed client
+and V80 Gateway shutdown.
+
+Protocol v14 isolates a bounded Codex compaction summary request in a
+tool-free `:compact` fast session. The work session's active user turn, review
+state, and progress evidence remain unchanged. The focused compaction and
+existing title-isolation regressions passed `3/3`; API, Controller, and
+long-horizon coverage passed `394/394`; the complete suite passed `1151/1151`
+with the existing Starlette warning. Ruff passed and strict mypy reported zero
+errors across 59 source files. V80 remains immutable; a fresh v14 run is
+required.

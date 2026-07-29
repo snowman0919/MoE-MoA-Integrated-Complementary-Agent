@@ -34,6 +34,23 @@ def title_request_index(messages: list[dict[str, Any]]) -> int | None:
     return None
 
 
+def compaction_request_index(messages: list[dict[str, Any]]) -> int | None:
+    """Return Codex's internal context-compaction request, if present."""
+    if len(messages) < 2:
+        return None
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get("role") != "user":
+            continue
+        content = " ".join(text_content(message.get("content")).lower().split())
+        if len(content) <= 2_000 and all(
+            marker in content for marker in ("compact", "context", "summary", "continue")
+        ):
+            return index
+        return None
+    return None
+
+
 def coerce_responses_input_messages(
     raw_input: str | list[dict[str, Any]],
 ) -> list[dict[str, Any]]:

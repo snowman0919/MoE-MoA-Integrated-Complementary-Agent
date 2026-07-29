@@ -389,6 +389,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
   validation 성공, 독립 Reviewer, clean commit, evidence를 요구한다.
 - Phase 1 완료 뒤 client를 의도적으로 재접속하고 동일 Gateway session의
   plan, phase, unresolved item, tool/review evidence를 복구한다.
+- Codex 내부 context compaction 요약 요청은 `:compact` 보조 세션에서
+  tool 없이 처리하며 본 작업 session의 user turn, review, progress evidence를
+  변경하지 않는다.
 - 10시간은 active-work 상한이다. Phase 0–3이 통과하면 기다리지 않고
   종료할 수 있고, 시간이 남을 때만 마지막 통과 checkpoint에서 Phase 4
   이후를 순서대로 진행한다. 시간을 채우는 반복은 실패다.
