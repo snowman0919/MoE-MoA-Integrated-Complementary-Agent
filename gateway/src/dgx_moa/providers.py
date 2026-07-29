@@ -19,6 +19,20 @@ BACKEND_BUSY_METRICS = {
 }
 
 
+def reported_cached_tokens(usage: object) -> int | None:
+    if not isinstance(usage, dict):
+        return None
+    details = usage.get("prompt_tokens_details")
+    if not isinstance(details, dict):
+        return None
+    cached = details.get("cached_tokens")
+    return (
+        cached
+        if isinstance(cached, int) and not isinstance(cached, bool) and cached >= 0
+        else None
+    )
+
+
 class StageTimeout(TimeoutError):
     def __init__(self, stage: str):
         super().__init__(f"{stage} timed out")
@@ -287,6 +301,15 @@ class ModelProvider:
         if isinstance(usage, dict) and isinstance(analysis_usage, dict):
             for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
                 usage[key] = int(usage.get(key, 0) or 0) + int(analysis_usage.get(key, 0) or 0)
+            analysis_cached = reported_cached_tokens(analysis_usage)
+            final_cached = reported_cached_tokens(usage)
+            if analysis_cached is None or final_cached is None:
+                usage.pop("prompt_tokens_details", None)
+            else:
+                usage["prompt_tokens_details"] = {
+                    **dict(usage.get("prompt_tokens_details") or {}),
+                    "cached_tokens": analysis_cached + final_cached,
+                }
         return final_payload
 
     @staticmethod

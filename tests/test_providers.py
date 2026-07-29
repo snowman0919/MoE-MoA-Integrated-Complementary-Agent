@@ -282,12 +282,16 @@ async def test_local_specialist_completion_fits_served_context(settings, monkeyp
 
 
 @pytest.mark.parametrize(
-    ("role", "reasoning_parser"),
-    (("planner", "nemotron_v3"), ("planner", "gemma4"), ("reviewer", "gemma4")),
+    ("role", "reasoning_parser", "reported_cache"),
+    (
+        ("planner", "nemotron_v3", False),
+        ("planner", "gemma4", True),
+        ("reviewer", "gemma4", True),
+    ),
 )
 @pytest.mark.asyncio
 async def test_specialist_separates_reasoning_from_final_json(  # type: ignore[no-untyped-def]
-    settings, monkeypatch, role: str, reasoning_parser: str
+    settings, monkeypatch, role: str, reasoning_parser: str, reported_cache: bool
 ) -> None:
     completion_bodies: list[dict[str, object]] = []
 
@@ -315,6 +319,11 @@ async def test_specialist_separates_reasoning_from_final_json(  # type: ignore[n
                     "prompt_tokens": 100,
                     "completion_tokens": 768,
                     "total_tokens": 868,
+                    **(
+                        {"prompt_tokens_details": {"cached_tokens": 10}}
+                        if reported_cache
+                        else {}
+                    ),
                 },
             }
         else:
@@ -331,6 +340,11 @@ async def test_specialist_separates_reasoning_from_final_json(  # type: ignore[n
                     "prompt_tokens": 110,
                     "completion_tokens": 20,
                     "total_tokens": 130,
+                    **(
+                        {"prompt_tokens_details": {"cached_tokens": 20}}
+                        if reported_cache
+                        else {}
+                    ),
                 },
             }
         return httpx.Response(200, json=payload, request=request)
@@ -372,11 +386,14 @@ async def test_specialist_separates_reasoning_from_final_json(  # type: ignore[n
         "content": "",
     }
     assert result["choices"][0]["message"]["content"] == '{"summary":"plan","steps":[]}'
-    assert result["usage"] == {
+    expected_usage = {
         "prompt_tokens": 210,
         "completion_tokens": 788,
         "total_tokens": 998,
     }
+    if reported_cache:
+        expected_usage["prompt_tokens_details"] = {"cached_tokens": 30}
+    assert result["usage"] == expected_usage
 
 
 def test_missing_structured_content_is_controlled_error() -> None:

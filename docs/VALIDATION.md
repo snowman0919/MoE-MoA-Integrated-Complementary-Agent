@@ -8293,3 +8293,30 @@ and
 `e06208261f069587c2d36a4875da6e78d2b6b2424153d8789bb79dc803bcff63`.
 The shared client, analyzer, and quality contract now use
 `avatarforge-long-goal-v24`; a fresh V94 run is required.
+
+AvatarForge V94 exercised protocol v24 through the real Codex client,
+authenticated loopback Gateway, Dynamic MoA, both SGLang candidates, the
+remote Ollama Reasoner, Codex OAuth collaboration, and host tools. It reached
+step 20 with three clean baseline-relative commits, three completed local
+reviews, three Frontier rejections, and no provider failure. The run also
+physically showed Codex OAuth prompt-cache reuse rising to 135,936 tokens.
+
+V94 exposed incomplete two-pass Specialist usage aggregation. Planner and
+Reviewer each perform private analysis followed by structured finalization.
+Their prompt, completion, and total tokens were summed, but only the final
+response's cache detail survived. V94 therefore recorded all three Reviewer
+calls as cache unknown and the Planner's partial final cache value as if it
+covered both calls. The client was intentionally stopped before checkpoint
+zero because cache completeness and exact multi-call accounting are hard
+gates. V94 is diagnostic only. Its mode-`0600` Gateway DB SHA-256 is
+`03b268e8be95b0e87f2a981e71c405263f8dfe5d76f7cbe25087f6a8fb0e463e`;
+no checkpoint evidence file exists.
+
+Protocol v25 sums Specialist cached tokens only when both analysis and final
+responses explicitly report valid values. If either report is absent, the
+aggregate remains unknown rather than exposing a partial value as complete.
+Raw prompt, completion, and total-token aggregation is unchanged. Focused
+known/unknown dual-call cases passed `3/3`; related provider, specialist,
+Controller, usage, API, and long-horizon coverage passed `474/474`. The shared
+client, analyzer, and quality contract now use
+`avatarforge-long-goal-v25`; a fresh run is required.
