@@ -9151,3 +9151,17 @@ gateway mount while preserving the V155 loopback, tmpfs, GPU, state, PATH, and
 entrypoint contract. The key content is not copied into the workspace or
 evidence. Gateway, runner, and the real Codex child started with zero initial
 failures. V156 remains in progress and is not a PASS.
+
+V156 subsequently completed eight Codex OAuth primary Executor calls with no
+remote failure or stream abort, produced one clean commit, and reached a local
+Reviewer rejection with one critical completeness finding. OpenRouter was not
+used. The correction loop remains active, so this is progress evidence rather
+than a completed checkpoint.
+
+Protocol v58 adds the originating Codex failure code to successful OpenRouter
+fallback provenance and Frontier invocation telemetry. This distinguishes
+context, validation, timeout, and circuit-open causes from the selected paid
+provider without storing provider output. Two focused fallback cases passed;
+the full regression passed 1,179 tests in 49.79 seconds. Ruff passed and strict
+mypy reported zero issues across 59 source files. Physical v58 confirmation
+has not yet run, so v58 is not a PASS.

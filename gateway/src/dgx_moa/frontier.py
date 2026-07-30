@@ -481,6 +481,7 @@ class FrontierCollaborationResult(BaseModel):
     latency_ms: float
     transmitted_categories: list[str]
     profile: str = "unknown"
+    fallback_reason: str | None = None
 
 
 class FrontierExecutionError(RuntimeError):
@@ -687,6 +688,7 @@ class CodexOAuthCollaboration:
                         correlation_id,
                         schema_model,
                         started,
+                        "FRONTIER_CIRCUIT_OPEN",
                     )
                 raise RuntimeError("FRONTIER_CIRCUIT_OPEN")
             self.opened_at = None
@@ -708,6 +710,7 @@ class CodexOAuthCollaboration:
                         correlation_id,
                         schema_model,
                         started,
+                        "FRONTIER_CONTEXT_LIMIT",
                     )
                 raise RuntimeError("FRONTIER_CONTEXT_LIMIT")
         else:
@@ -831,6 +834,7 @@ class CodexOAuthCollaboration:
                         correlation_id,
                         schema_model,
                         started,
+                        final_failure,
                     )
                 self._failed()
                 raise validation_error
@@ -846,6 +850,7 @@ class CodexOAuthCollaboration:
                         correlation_id,
                         schema_model,
                         started,
+                        final_failure,
                     )
                 self._failed()
                 raise FrontierExecutionError(
@@ -880,6 +885,7 @@ class CodexOAuthCollaboration:
         correlation_id: str,
         schema_model: type[BaseModel],
         started: float,
+        fallback_reason: str,
     ) -> FrontierCollaborationResult:
         if correlation_id in self.openrouter_calls:
             self._failed()
@@ -1058,6 +1064,7 @@ class CodexOAuthCollaboration:
             latency_ms=round((time.monotonic() - started) * 1000, 3),
             transmitted_categories=sorted(bounded),
             profile=f"openrouter:{self.config.openrouter_model}",
+            fallback_reason=fallback_reason,
         )
 
     def _failed(self) -> None:
@@ -1127,6 +1134,7 @@ class CodexOAuthCollaboration:
             "usage": usage,
             "provider_provenance": {
                 "provider": result.profile,
+                "fallback_reason": result.fallback_reason,
                 "latency_ms": result.latency_ms,
                 "cost_usd": result.cost_usd,
                 "sanitized_absolute_workdirs": sanitized_paths,

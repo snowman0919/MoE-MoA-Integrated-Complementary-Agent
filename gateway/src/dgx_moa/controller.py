@@ -3523,6 +3523,7 @@ class Controller:
                         "cached_tokens": frontier_result.cached_tokens,
                         "cost_usd": frontier_result.cost_usd,
                         "profile": frontier_result.profile,
+                        "fallback_reason": frontier_result.fallback_reason,
                         "status": "completed",
                     },
                 )
@@ -3545,6 +3546,7 @@ class Controller:
                         "completion_tokens": frontier_result.completion_tokens,
                         "cost_usd": frontier_result.cost_usd,
                         "profile": frontier_result.profile,
+                        "fallback_reason": frontier_result.fallback_reason,
                         "transmitted_categories": frontier_result.transmitted_categories,
                     },
                 )

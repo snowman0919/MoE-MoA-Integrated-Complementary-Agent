@@ -667,6 +667,10 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
     assert profiles == ["primary", "secondary"]
     assert result["choices"][0]["message"]["content"] == "완료했습니다."
     assert result["provider_provenance"]["provider"].startswith("openrouter:")
+    assert result["provider_provenance"]["fallback_reason"] == {
+        "context": "FRONTIER_CONTEXT_LIMIT",
+        "validation": "FRONTIER_VALIDATION_FAILURE",
+    }[oauth_failure]
     assert result["provider_provenance"]["cost_usd"] == pytest.approx(0.0006)
     assert len(requests) == 1
     sent = requests[0]
