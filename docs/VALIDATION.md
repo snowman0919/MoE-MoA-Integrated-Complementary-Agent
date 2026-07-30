@@ -8607,3 +8607,12 @@ and retains `/tokenize` for other models. A physical system/user probe returned
 with the existing Starlette warning, Ruff passed, and strict mypy reported zero
 errors across 59 source files. This diagnostic changes the runtime contract,
 so any resumed long-horizon evaluation requires a fresh protocol/run ID.
+
+V105 also exposed a routing-estimate defect: its completed local Planner call
+used 1,720 output tokens in 255.24 seconds (6.74 output tokens/second), while
+the checked-in prediction was 30 seconds. The fixed two-pass Gemma path can
+generate up to 768 analysis plus 1,536 final tokens; Reviewer uses the same
+analysis pass and up to 1,500 final tokens. The default local completion
+estimates are therefore now 260 seconds for Planner and 340 seconds for
+Reviewer. Local-only validation remains local, but an ordinary request may no
+longer select Gemma using the unsupported 30/45-second assumptions.

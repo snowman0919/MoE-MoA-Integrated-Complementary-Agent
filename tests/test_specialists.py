@@ -328,6 +328,10 @@ async def test_opencode_specialist_uses_role_model_and_drops_tools(
 def test_remote_planner_reserves_tokens_for_hidden_reasoning() -> None:
     settings = SpecialistRoutingConfig()
 
+    assert settings.local_latency_seconds == {
+        "planner": 260.0,
+        "reviewer": 340.0,
+    }
     assert settings.remote_min_completion_tokens == {
         "planner": 16_384,
         "reviewer": 2_048,

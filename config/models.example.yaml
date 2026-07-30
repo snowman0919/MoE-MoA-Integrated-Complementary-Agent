@@ -44,7 +44,7 @@ gateway:
     api_key_env: OPENCODE_GO_API_KEY
     models: {planner: deepseek-v4-pro, reviewer: deepseek-v4-flash}
     timeout_seconds: 120
-    local_latency_seconds: {planner: 30, reviewer: 45}
+    local_latency_seconds: {planner: 260, reviewer: 340}
     remote_latency_seconds: {planner: 25, reviewer: 5}
     remote_min_completion_tokens: {planner: 16384, reviewer: 2048}
     network_latency_seconds: 0.25
