@@ -8931,3 +8931,36 @@ quality-contract SHA-256 values are respectively
 `5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
 and
 `8f1fcac1c149acec70097abf0f069b5b4b2cba4c3ca5327c989bcc1338104053`.
+
+V135 passed the v49 Python sandbox probe but the outer runner omitted V132's
+Docker-socket supplementary group. It exited with `permission_denied` before
+any Gateway request, model invocation, or workspace change. A separate bounded
+V136 diagnostic using the same child sandbox directly reached the Gateway and
+completed one local Reasoner and one local Executor call, confirming that the
+v49 Python mounts were not the permission boundary.
+
+V137 restored both the GPU device request and Docker-socket group. It physically
+ran through the real OpenCode client for about 13 minutes and completed 64
+model invocations: 47 local Executor, three Codex OAuth primary Executor, one
+local Planner, 11 local Reasoner, and two local Reviewer calls. All 12 recorded
+shell executions exited zero. The first Reviewer still reported four critical
+findings across contract implementation and test validity plus one minor
+environment finding. Correction then repeated two duplicate failure
+fingerprints, reached the configured `NO_PROGRESS` threshold, and remained
+blocked without a clean commit. The preserved workspace contains eight dirty
+entries and no new commit. V137 is an implementation-quality failure, not a
+harness or provider PASS.
+
+Protocol v50 keeps the same execution environment and raises only the
+candidate Loop Engineering consecutive no-progress limit from two to four.
+Concrete progress still resets the counter, and all existing iteration, tool,
+token, cost, and wall-clock ceilings remain unchanged. This gives a reviewed
+multi-file correction more than two attempts without permitting an unbounded
+loop. The focused guard regression passed 18 tests; the full regression passed
+1,175 tests in 46.05 seconds. Ruff passed and strict mypy reported zero issues
+across 59 source files. Physical v50 confirmation has not yet run, so v50 is
+not a PASS. The v50 completion-plan and quality-contract SHA-256 values are
+respectively
+`5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
+and
+`dc9812b4380040a525f32c29480d10d2259d21fa4facfc702f9aa9c0740068f9`.

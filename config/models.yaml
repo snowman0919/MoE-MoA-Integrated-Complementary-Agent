@@ -30,7 +30,7 @@ gateway:
       external_cost_usd: 10
       wall_clock_seconds: 1800
     duplicate_fingerprint_limit: 2
-    no_progress_iteration_limit: 2
+    no_progress_iteration_limit: 4
     local_failures_before_frontier: 2
     request_class_overrides: {}
     risk_level_overrides: {}
