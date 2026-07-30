@@ -8683,3 +8683,25 @@ source files. The pytest, Ruff, and mypy log SHA-256 values are respectively
 `82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18`,
 and
 `960745a059df2e6bf5556b518f6404c7707247bf3da084d48c3008145eb95a5d`.
+
+### 2026-07-30: OpenCode V115 workspace permission diagnostic
+
+Immutable V115 failed checkpoint zero with `client_nonzero_exit`; it remains
+failed evidence and was not rewritten. The OpenCode session recorded one
+denied host-tool call because its external-directory policy allowed the three
+read-only input files but omitted the separately mounted isolated workspace.
+The subsequent remote Executor fallback was unavailable. The workspace stayed
+at its clean baseline and no checkpoint evidence was produced. This was a
+harness permission defect, not a Gemma 4 26B-A4B physical-runtime failure.
+
+The common OpenCode configuration now allows only the isolated workspace root
+in addition to the three frozen input paths while retaining the catch-all
+external-directory deny. The focused regression passed 30 tests and Ruff
+passed. The full regression then passed 1,166 tests in 44.64 seconds; Ruff
+passed and strict mypy reported zero issues across 59 source files. Because
+harness policy changed after V115 began, AvatarForge protocol v36 starts from
+a new clean seed and run ID; v35 remains diagnostic-only.
+The v36 completion-plan and quality-contract SHA-256 values are respectively
+`370edfd303d875a777ec249fc5bac786616dc437553ab42a1aaa8360b4e58881`
+and
+`8534f832e5f4e3b5ac5f6f23a633e1b5391223f59f9070a661803617a1f9e104`.

@@ -504,6 +504,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
   latency와 품질 결과는 새 모델의 증거로 재사용하지 않는다. V113 물리
   gate에서 Planner 39.730초, Reviewer 30.554초를 측정했으므로 ordinary
   routing의 보수적 local latency 기본값은 각각 45/35초로 사용한다.
+- protocol v36은 OpenCode에 전체 호스트가 아닌 격리 workspace 루트만
+  `external_directory` 예외로 허용한다. v35 실행은 진단 자료로만
+  보존하고 새 clean seed와 새 run ID에서 다시 시작한다.
 
 ## 10. Release, rollback, 배포
 

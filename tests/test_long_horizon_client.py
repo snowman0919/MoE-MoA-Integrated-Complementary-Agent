@@ -319,6 +319,7 @@ def test_client_commands_resume_the_same_private_session(
         permissions = json.loads(raw_config)["permission"]["external_directory"]
         assert permissions["*"] == "deny"
         assert {path for path, action in permissions.items() if action == "allow"} == {
+            str(args.workspace),
             str(args.objective),
             str(args.acceptance),
             str(args.plan),
