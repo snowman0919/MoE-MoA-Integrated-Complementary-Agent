@@ -30,7 +30,7 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v29"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v30"
 AVATARFORGE_PHASES = (
     "avatarforge_phase_0_contract",
     "avatarforge_phase_1_plugin",
@@ -434,6 +434,8 @@ def client_command(
             "json",
             "--pure",
             "--auto",
+            "--title",
+            "DGX MoA long horizon",
             "--dir",
             str(args.workspace),
             "--model",

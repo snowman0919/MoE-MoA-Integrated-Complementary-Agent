@@ -8463,3 +8463,28 @@ sidecar SHA-256 values are
 and
 `1d89850c602752d92b7424fdb016c7232cfaae9930e0aa3fdfd7cb996d7ff52e`.
 V99 cannot be promoted.
+
+### 2026-07-30 — AvatarForge V100 OpenCode title-generation stall
+
+AvatarForge V100 used the real OpenCode client and authenticated loopback
+Gateway with the frozen AvatarForge inputs. Authentication returned 401
+without a key and 200 with the isolated key; Executor, Specialist, and
+Reasoner readiness probes all returned 200. The first chat completion returned
+200 and Gateway state reached executing step one, but no pending host tool,
+repository mutation, commit, checkpoint, or further Gateway request appeared.
+The OpenCode process remained active without an established network connection
+until the diagnostic was manually stopped. No evidence JSONL or synthetic
+failure record was created, so V100 is not a long-horizon result.
+
+The root cause matches OpenCode's separate conversation-title generation path.
+Protocol v30 supplies the CLI's native `--title` option with a fixed
+non-sensitive title so that metadata generation cannot hold the work process
+open. The focused client-command and analyzer checks passed `4/4`; the complete
+long-horizon runner/analyzer suite passed `42/42`; Ruff and strict mypy passed.
+The complete suite passed `1162/1162` with the existing Starlette warning;
+strict mypy reported zero errors across 59 source files.
+The v30 completion plan is frozen at SHA-256
+`efe99081106c94377a26fd608d16f52b8cb1b9da4ee1b8702799ece8bc30e166`.
+The preserved V100 Gateway DB SHA-256 is
+`d62ee1b1a3a5cbe9335405e9c632c5d443d49587e8aad7f960a2f8944dbfdd8a`.
+V100 cannot be promoted.

@@ -476,6 +476,11 @@ reconnect, plan/context 보존을 대체하지 않는다.
   finding ID·severity·category·affected location·required 여부로 정규화해,
   같은 결함을 바꿔 말하는 반복 correction이 duplicate fail-closed를
   우회하지 못하게 한다.
+- protocol v30은 OpenCode 장기 실행에 고정된 비민감 `--title`을 전달한다.
+  제목 생성을 위한 별도 모델 호출은 Goal 구현·도구 실행 증거가 아니며,
+  V100에서 첫 Gateway 응답 후 네트워크·파일·checkpoint 진척 없이
+  OpenCode 프로세스만 계속 실행되는 정체를 만들었다. 기존 v29 실행은
+  진단으로 보존하고 v30부터 제목 생성 경로를 평가 대상에서 제외한다.
 
 ## 10. Release, rollback, 배포
 

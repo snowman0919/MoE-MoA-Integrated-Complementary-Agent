@@ -308,6 +308,8 @@ def test_client_commands_resume_the_same_private_session(
         assert '"X-Runtime-Channel" = "candidate"' in headers
         assert '"X-Trace-Origin" = "candidate_evaluation"' in headers
         assert '"X-Workspace-ID" = "long-horizon"' in headers
+    elif harness == "opencode":
+        assert inner[inner.index("--title") + 1] == "DGX MoA long horizon"
 
 
 def test_client_metrics_and_provider_pinning_are_aggregated_without_payloads(
