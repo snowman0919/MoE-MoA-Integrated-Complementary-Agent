@@ -9228,5 +9228,8 @@ Protocol v62 limits only the internal Executor orchestration JSON request to
 instruction. General Planner plans and client-visible Executor output retain
 their existing limits. The focused invalid-output retry case passed; the full
 regression passed 1,181 tests in 48.90 seconds. Ruff passed and strict mypy
-reported zero issues across 59 source files. Physical v62 confirmation has not
-yet run, so v62 is not a PASS.
+reported zero issues across 59 source files. Two direct candidate Executor
+structured-output probes at the new limit returned valid JSON in 3.34 seconds
+with 102 completion tokens and 3.24 seconds with 99 completion tokens. This is
+physical latency evidence, but end-to-end v62 confirmation has not yet run, so
+v62 is not a PASS.
