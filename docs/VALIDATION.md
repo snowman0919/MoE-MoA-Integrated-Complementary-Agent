@@ -8987,3 +8987,15 @@ v51 completion-plan and quality-contract SHA-256 values are respectively
 `5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
 and
 `33fe7aa4e19a383d62887af3c30160c75c269b1c02752229c548a6c552d1b648`.
+
+Protocol v52 reuses the physically probed read-only Python 3.13 and virtual
+environment mounts for AvatarForge Codex as well as OpenCode. This removes the
+known dependency mismatch before starting an independent Codex implementation
+run without changing the journal profile or provider policy. Both focused
+sandbox tests passed; the full regression passed 1,176 tests in 50.92 seconds.
+Ruff passed and strict mypy reported zero issues across 59 source files.
+Physical Codex confirmation has not yet run, so v52 is not a PASS. The v52
+completion-plan and quality-contract SHA-256 values are respectively
+`5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
+and
+`59a4c6af868ce4f6fecb4d48ce549b8a10981c0ef105a674fc562df528bb82ab`.

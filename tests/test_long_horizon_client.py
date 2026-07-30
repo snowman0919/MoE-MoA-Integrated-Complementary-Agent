@@ -435,6 +435,37 @@ def test_avatarforge_opencode_bounds_agent_steps(
     assert "agent" not in unbounded
 
 
+def test_avatarforge_codex_uses_complete_python_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = arguments(tmp_path, "codex")
+    args.profile = "avatarforge"
+    monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
+
+    command, _, _ = MODULE.client_command(
+        args, tmp_path / "state", None, 0, "private-session"
+    )
+
+    assert (
+        f"{MODULE.AVATARFORGE_PYTHON_ROOT}:{MODULE.AVATARFORGE_PYTHON_TARGET}:ro"
+        in command
+    )
+    assert (
+        f"{MODULE.AVATARFORGE_UV_PYTHON_ROOT}:"
+        f"{MODULE.AVATARFORGE_UV_PYTHON_TARGET}:ro"
+        in command
+    )
+    assert any(
+        value.startswith(f"PATH={MODULE.AVATARFORGE_PYTHON_BIN}:")
+        for value in command
+    )
+    assert (
+        f"PYTHONPATH={MODULE.AVATARFORGE_PYTHON_TARGET}/lib/python3.13/site-packages:"
+        f"{args.workspace}/gateway/src"
+        in command
+    )
+
+
 def test_provider_pinning_is_scoped_to_each_call(tmp_path: Path) -> None:
     database = tmp_path / "state.db"
     with sqlite3.connect(database) as connection:

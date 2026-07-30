@@ -30,7 +30,7 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v51"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v52"
 AVATARFORGE_OPENCODE_STEPS = 32
 AVATARFORGE_OPENCODE_AGENT = "avatarforge"
 AVATARFORGE_PYTHON_ROOT = Path("/home/kotori9/dgx-moa-agent/.venv")
@@ -412,6 +412,26 @@ def client_command(
     )
     environment = QUALITY.filtered_env({args.api_key_env: os.environ[args.api_key_env]})
     inputs = tuple((path, str(path)) for path in input_paths)
+    avatarforge = getattr(args, "profile", "journal") == "avatarforge"
+    python_environment = (
+        (
+            f"PATH={AVATARFORGE_PYTHON_BIN}:/tools:/usr/bin:/bin",
+            (
+                f"PYTHONPATH={AVATARFORGE_PYTHON_TARGET}/lib/python3.13/site-packages:"
+                f"{args.workspace}/gateway/src"
+            ),
+        )
+        if avatarforge
+        else ()
+    )
+    python_mounts = (
+        (
+            (AVATARFORGE_PYTHON_ROOT, AVATARFORGE_PYTHON_TARGET),
+            (AVATARFORGE_UV_PYTHON_ROOT, AVATARFORGE_UV_PYTHON_TARGET),
+        )
+        if avatarforge
+        else ()
+    )
     usage_file: Path | None = None
     if args.harness == "codex":
         write_private(state / "model-catalog.json", codex_model_catalog())
@@ -462,9 +482,10 @@ def client_command(
             state,
             inner,
             environment_names=(args.api_key_env,),
-            extra_environment=("CODEX_HOME=/state",),
+            extra_environment=("CODEX_HOME=/state", *python_environment),
             read_only_mounts=(
                 (QUALITY.CODEX_BINARY, "/tools/codex"),
+                *python_mounts,
                 *inputs,
             ),
         )
@@ -492,16 +513,7 @@ def client_command(
             **QUALITY.OPENCODE_ISOLATION_ENV,
             "OPENCODE_CONFIG_CONTENT": opencode_config(args, gateway_session),
         }
-        if getattr(args, "profile", "journal") == "avatarforge":
-            isolation.update(
-                {
-                    "PATH": f"{AVATARFORGE_PYTHON_BIN}:/tools:/usr/bin:/bin",
-                    "PYTHONPATH": (
-                        f"{AVATARFORGE_PYTHON_TARGET}/lib/python3.13/site-packages:"
-                        f"{args.workspace}/gateway/src"
-                    ),
-                }
-            )
+        isolation.update(dict(value.split("=", 1) for value in python_environment))
         command = QUALITY.docker_command(
             args.workspace,
             state,
@@ -511,17 +523,7 @@ def client_command(
             read_only_mounts=(
                 (QUALITY.OPENCODE_BINARY, "/tools/opencode"),
                 *QUALITY.opencode_runtime_mounts(state),
-                *(
-                    (
-                        (AVATARFORGE_PYTHON_ROOT, AVATARFORGE_PYTHON_TARGET),
-                        (
-                            AVATARFORGE_UV_PYTHON_ROOT,
-                            AVATARFORGE_UV_PYTHON_TARGET,
-                        ),
-                    )
-                    if getattr(args, "profile", "journal") == "avatarforge"
-                    else ()
-                ),
+                *python_mounts,
                 *inputs,
             ),
         )
