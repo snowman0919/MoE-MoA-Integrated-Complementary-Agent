@@ -8905,3 +8905,29 @@ are respectively
 `5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
 and
 `ee5f9725a05e443548e508edddd0044e01d725847122e081aec17e43171612f8`.
+
+V133 failed before starting OpenCode because the outer runner did not reproduce
+V132's GPU device request and therefore could not execute the mandatory
+`nvidia-smi` telemetry probe. No model invocation or workspace change occurred.
+The failed attempt and its sidecar remain preserved.
+
+V134 restored the GPU device request and reached the child-container boundary,
+but Docker rejected the v48 child command. Static reconstruction showed that
+all mount sources existed and destinations were unique. The two new Python
+mounts targeted host-specific absolute paths whose parents do not exist in the
+quality image; the read-only root filesystem could not create those parents.
+No model invocation or workspace change occurred. V134 remains an immutable
+container-runtime failure.
+
+Protocol v49 targets both Python mounts below the existing `/tools` image
+directory, runs the uv-managed Python 3.13 interpreter directly, and adds the
+read-only virtual environment's site-packages to `PYTHONPATH`. A network-off,
+read-only, capability-dropped physical import probe passed for `pytest`,
+`httpx`, `yaml`, and `zstandard`. The focused regression passed, then the full
+regression passed 1,175 tests in 45.56 seconds; Ruff passed and strict mypy
+reported zero issues across 59 source files. Physical AvatarForge confirmation
+has not yet run, so v49 is not a PASS. The v49 completion-plan and
+quality-contract SHA-256 values are respectively
+`5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
+and
+`8f1fcac1c149acec70097abf0f069b5b4b2cba4c3ca5327c989bcc1338104053`.

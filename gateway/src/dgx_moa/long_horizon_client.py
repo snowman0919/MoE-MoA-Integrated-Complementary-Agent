@@ -30,11 +30,16 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v48"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v49"
 AVATARFORGE_OPENCODE_STEPS = 32
 AVATARFORGE_OPENCODE_AGENT = "avatarforge"
 AVATARFORGE_PYTHON_ROOT = Path("/home/kotori9/dgx-moa-agent/.venv")
 AVATARFORGE_UV_PYTHON_ROOT = Path("/home/kotori9/.local/share/uv/python")
+AVATARFORGE_PYTHON_TARGET = "/tools/avatarforge-venv"
+AVATARFORGE_UV_PYTHON_TARGET = "/tools/avatarforge-python"
+AVATARFORGE_PYTHON_BIN = (
+    f"{AVATARFORGE_UV_PYTHON_TARGET}/cpython-3.13.13-linux-aarch64-gnu/bin"
+)
 AVATARFORGE_PHASES = (
     "avatarforge_phase_0_contract",
     "avatarforge_phase_1_plugin",
@@ -490,8 +495,11 @@ def client_command(
         if getattr(args, "profile", "journal") == "avatarforge":
             isolation.update(
                 {
-                    "PATH": f"{AVATARFORGE_PYTHON_ROOT}/bin:/tools:/usr/bin:/bin",
-                    "PYTHONPATH": str(args.workspace / "gateway/src"),
+                    "PATH": f"{AVATARFORGE_PYTHON_BIN}:/tools:/usr/bin:/bin",
+                    "PYTHONPATH": (
+                        f"{AVATARFORGE_PYTHON_TARGET}/lib/python3.13/site-packages:"
+                        f"{args.workspace}/gateway/src"
+                    ),
                 }
             )
         command = QUALITY.docker_command(
@@ -505,10 +513,10 @@ def client_command(
                 *QUALITY.opencode_runtime_mounts(state),
                 *(
                     (
-                        (AVATARFORGE_PYTHON_ROOT, str(AVATARFORGE_PYTHON_ROOT)),
+                        (AVATARFORGE_PYTHON_ROOT, AVATARFORGE_PYTHON_TARGET),
                         (
                             AVATARFORGE_UV_PYTHON_ROOT,
-                            str(AVATARFORGE_UV_PYTHON_ROOT),
+                            AVATARFORGE_UV_PYTHON_TARGET,
                         ),
                     )
                     if getattr(args, "profile", "journal") == "avatarforge"

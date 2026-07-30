@@ -293,7 +293,9 @@ mandatory.
 
 The AvatarForge OpenCode sandbox mounts the existing production Python 3.13
 virtual environment, its symlinked uv-managed interpreter root, and the
-candidate gateway source read-only. Its host-supplied
+candidate gateway source read-only. The two Python roots use fixed destinations
+below the image's existing `/tools` directory so the read-only root filesystem
+never has to create host-specific parent paths. Its host-supplied
 `python -m pytest -q` command supersedes stale validation commands embedded in
 input documents for this protocol epoch. This is the execution environment for
 full-repository validation; dependency installation or network access during a
