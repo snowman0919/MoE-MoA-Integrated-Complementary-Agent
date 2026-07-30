@@ -414,14 +414,19 @@ def test_avatarforge_opencode_bounds_agent_steps(
     assert bounded["agent"][agent]["steps"] == MODULE.AVATARFORGE_OPENCODE_STEPS
     assert command[command.index("--agent") + 1] == agent
     assert (
-        f"{MODULE.QUALITY.HERMES_PYTHON_ROOT}:{MODULE.QUALITY.HERMES_PYTHON_ROOT}:ro"
+        f"{MODULE.AVATARFORGE_PYTHON_ROOT}:{MODULE.AVATARFORGE_PYTHON_ROOT}:ro"
+        in command
+    )
+    assert (
+        f"{MODULE.AVATARFORGE_UV_PYTHON_ROOT}:{MODULE.AVATARFORGE_UV_PYTHON_ROOT}:ro"
         in command
     )
     assert f"PYTHONPATH={args.workspace}/gateway/src" in command
     assert any(
-        value.startswith(f"PATH={MODULE.QUALITY.HERMES_PYTHON_ROOT}/bin:")
+        value.startswith(f"PATH={MODULE.AVATARFORGE_PYTHON_ROOT}/bin:")
         for value in command
     )
+    assert "host 검증 명령이 입력 문서의 이전 검증 명령보다 우선" in command[-1]
     assert "agent" not in unbounded
 
 

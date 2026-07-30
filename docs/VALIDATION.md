@@ -8882,3 +8882,26 @@ v47 completion-plan and quality-contract SHA-256 values are respectively
 `5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
 and
 `e6530bb9cccc7e5333b294279fe5ac92be54c700d0feea82257a80a630b17af7`.
+
+V132 physically confirmed that protocol v47 supplied the four dependencies
+missing from V131, but later validation required `zstandard`, which was not in
+the mounted Hermes runtime. An independent host reproduction also showed that
+the input document's `python -m unittest discover -s tests -v` command is
+incompatible with this repository's package-relative test imports: it exited
+1 after six import failures with `attempted relative import with no known
+parent package`. V132 was stopped with a dirty worktree and remains an
+immutable diagnostic failure.
+
+Protocol v48 mounts the existing production Python 3.13 virtual environment
+and its symlinked uv-managed interpreter root read-only for AvatarForge only.
+It uses the full-repository `python -m pytest -q` host validation command and
+states explicitly that this epoch's host command supersedes stale validation
+commands embedded in input documents. Journal, Codex, and Hermes behavior is
+unchanged. The focused regression passed, then the full regression passed
+1,175 tests in 44.11 seconds; Ruff passed and strict mypy reported zero issues
+across 59 source files. Physical AvatarForge confirmation has not yet run, so
+v48 is not a PASS. The v48 completion-plan and quality-contract SHA-256 values
+are respectively
+`5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
+and
+`ee5f9725a05e443548e508edddd0044e01d725847122e081aec17e43171612f8`.

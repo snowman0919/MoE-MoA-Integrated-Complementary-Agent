@@ -291,10 +291,13 @@ contains a successful file mutation; an empty `git diff` or validation of only
 prior work is insufficient. Provider provenance and variable cost remain
 mandatory.
 
-The AvatarForge OpenCode sandbox mounts the already pinned Hermes Python 3.11
-runtime and the candidate gateway source read-only. This is the execution
-environment for the frozen full-repository validation command; dependency
-installation or network access during a checkpoint is forbidden.
+The AvatarForge OpenCode sandbox mounts the existing production Python 3.13
+virtual environment, its symlinked uv-managed interpreter root, and the
+candidate gateway source read-only. Its host-supplied
+`python -m pytest -q` command supersedes stale validation commands embedded in
+input documents for this protocol epoch. This is the execution environment for
+full-repository validation; dependency installation or network access during a
+checkpoint is forbidden.
 
 The final review artifact uses the exact host-tool-writable repository path
 `<workspace>/state/long-review.json`. It must be changed after the baseline,

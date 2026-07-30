@@ -30,9 +30,11 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v47"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v48"
 AVATARFORGE_OPENCODE_STEPS = 32
 AVATARFORGE_OPENCODE_AGENT = "avatarforge"
+AVATARFORGE_PYTHON_ROOT = Path("/home/kotori9/dgx-moa-agent/.venv")
+AVATARFORGE_UV_PYTHON_ROOT = Path("/home/kotori9/.local/share/uv/python")
 AVATARFORGE_PHASES = (
     "avatarforge_phase_0_contract",
     "avatarforge_phase_1_plugin",
@@ -268,12 +270,19 @@ def client_prompt(
         if profile == "avatarforge"
         else "계획·검토 전용 단계는 새 커밋을 강제하지 않는다. "
     )
+    validation_authority = (
+        "이 protocol epoch에서는 위 host 검증 명령이 입력 문서의 이전 검증 "
+        "명령보다 우선한다. "
+        if profile == "avatarforge"
+        else ""
+    )
     return (
         f"장기 작업 단계 {index}/{len(phases) - 1}({phase})를 수행하라. "
         f"현재 저장소 루트는 {workspace}이고 모든 도구의 현재 작업 디렉터리도 이 경로다. "
         "추측한 경로로 cd하지 말고 입력 문서가 지정한 source/test 경로를 정확히 사용하며 "
         "별도 대체 src 또는 tests 루트는 허용되지 않는다. "
         f"검증 명령은 정확히 `{validation_command}`이다. "
+        f"{validation_authority}"
         f"첫 단계에서만 {input_paths[0]}, {input_paths[1]}, {input_paths[2]}와 "
         "저장소 운영 문서를 읽고 이후에는 같은 세션 맥락을 사용하라. 이 세 경로만 "
         "host/client 공통 입력 경로다. /inputs 별칭이나 입력 문서 안에 적힌 다른 "
@@ -481,7 +490,7 @@ def client_command(
         if getattr(args, "profile", "journal") == "avatarforge":
             isolation.update(
                 {
-                    "PATH": f"{QUALITY.HERMES_PYTHON_ROOT}/bin:/tools:/usr/bin:/bin",
+                    "PATH": f"{AVATARFORGE_PYTHON_ROOT}/bin:/tools:/usr/bin:/bin",
                     "PYTHONPATH": str(args.workspace / "gateway/src"),
                 }
             )
@@ -495,7 +504,13 @@ def client_command(
                 (QUALITY.OPENCODE_BINARY, "/tools/opencode"),
                 *QUALITY.opencode_runtime_mounts(state),
                 *(
-                    ((QUALITY.HERMES_PYTHON_ROOT, str(QUALITY.HERMES_PYTHON_ROOT)),)
+                    (
+                        (AVATARFORGE_PYTHON_ROOT, str(AVATARFORGE_PYTHON_ROOT)),
+                        (
+                            AVATARFORGE_UV_PYTHON_ROOT,
+                            str(AVATARFORGE_UV_PYTHON_ROOT),
+                        ),
+                    )
                     if getattr(args, "profile", "journal") == "avatarforge"
                     else ()
                 ),
