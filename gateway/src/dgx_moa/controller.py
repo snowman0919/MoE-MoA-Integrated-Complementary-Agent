@@ -2472,6 +2472,16 @@ class Controller:
                 mandatory.append("judge")
         mandatory = list(dict.fromkeys(mandatory))
         schema = OrchestrationDecision.model_json_schema()
+        schema["properties"]["reason"]["additionalProperties"]["enum"] = [
+            "architecture",
+            "dependency",
+            "review",
+            "risk",
+            "uncertainty",
+            "validation",
+            "cost_latency",
+            "recommended",
+        ]
         request = {
             "model": self.settings.models["executor"].served_name,
             "messages": [
@@ -2553,7 +2563,11 @@ class Controller:
             self.store.event(
                 state.session_id,
                 "executor_orchestration_retry",
-                {"failure_class": "invalid_structured_output", "attempt": 2},
+                {
+                    "failure_class": "invalid_structured_output",
+                    "attempt": 2,
+                    **structured_response_diagnostics(response),
+                },
             )
             retry_request = dict(request)
             retry_request["messages"] = [

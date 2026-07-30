@@ -9256,5 +9256,17 @@ continuations and eleven completed client requests produced no orchestration
 retry or request failure. Across the first fourteen local Executor
 orchestration calls, completion length stayed between 101 and 255 tokens
 (163.8 mean) and latency stayed between 3.6 and 7.9 seconds. The run remains
-active and has not yet reached its clean phase checkpoint, so this is preserved
-intermediate evidence rather than a PASS.
+stable through twenty tool continuations, then one evidence-rich orchestration
+reached 512 tokens in 15.4 seconds and required a 76-token, 2.3-second retry.
+V161 was stopped with its database and generated implementation preserved. It
+is a diagnostic epoch rather than a PASS.
+
+Protocol v64 constrains model-generated orchestration reason values to eight
+fixed observability codes while retaining the broader stored model for
+backward-compatible policy annotations. Retry events now include only bounded
+finish reason and content/reasoning lengths, never response content. A physical
+long-input probe returned schema-valid JSON with 115 completion tokens in 3.98
+seconds. The focused retry regression passed; the full regression passed 1,181
+tests in 43.89 seconds. Ruff passed and strict mypy reported zero issues across
+59 source files. End-to-end v64 confirmation has not yet run, so v64 is not a
+PASS.

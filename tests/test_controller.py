@@ -784,6 +784,16 @@ async def test_invalid_executor_orchestration_gets_one_minimal_retry(
     schema = orchestration_requests[0]["response_format"]["json_schema"]["schema"]
     assert schema["properties"]["reason"]["maxProperties"] == 4
     assert schema["properties"]["reason"]["additionalProperties"]["maxLength"] == 160
+    assert schema["properties"]["reason"]["additionalProperties"]["enum"] == [
+        "architecture",
+        "dependency",
+        "review",
+        "risk",
+        "uncertainty",
+        "validation",
+        "cost_latency",
+        "recommended",
+    ]
     retry_request = orchestration_requests[-1]
     assert retry_request["max_tokens"] == 512
     assert retry_request["chat_template_kwargs"] == {"enable_thinking": False}
@@ -793,10 +803,13 @@ async def test_invalid_executor_orchestration_gets_one_minimal_retry(
         for invocation in state.agent_invocations
         if invocation["role"] == "executor"
     ] == ["orchestration", "orchestration_retry"]
-    assert any(
-        event["event_type"] == "executor_orchestration_retry"
+    retry_event = next(
+        event
         for event in store.events(state.session_id)
+        if event["event_type"] == "executor_orchestration_retry"
     )
+    assert retry_event["payload"]["finish_reason"] is None
+    assert retry_event["payload"]["content_characters"] == 19
 
 
 @pytest.mark.asyncio
