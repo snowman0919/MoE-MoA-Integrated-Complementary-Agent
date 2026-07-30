@@ -351,7 +351,7 @@ class SpecialistRoutingConfig(BaseModel):
     )
     timeout_seconds: float = Field(default=120, gt=0, le=600)
     local_latency_seconds: dict[str, float] = Field(
-        default_factory=lambda: {"planner": 260.0, "reviewer": 340.0}
+        default_factory=lambda: {"planner": 45.0, "reviewer": 35.0}
     )
     remote_latency_seconds: dict[str, float] = Field(
         default_factory=lambda: {"planner": 25.0, "reviewer": 5.0}

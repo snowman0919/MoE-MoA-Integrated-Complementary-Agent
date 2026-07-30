@@ -150,7 +150,7 @@ let modelCatalog=new Map();
 const modelNames=new Map([["dgx-moa-executor","Qwen3-Next"],
   ["dgx-moa-planner","Nemotron-30B"],["dgx-moa-reviewer","North-Mini-30B"],
   ["dgx-moa-executor-candidate","Qwen3-Next"],
-  ["dgx-moa-specialist-candidate","Gemma-4-31B"]]);
+  ["dgx-moa-specialist-candidate","Gemma-4-26B-A4B"]]);
 const modelLabel=model=>modelNames.get(model)||model;
 const reasonNames=new Map([["local_busy","로컬 Busy"],["local_context_exceeded","컨텍스트 초과"],
   ["executor_remote","Executor 원격"],["remote_faster","원격 우선"],

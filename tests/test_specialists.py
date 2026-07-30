@@ -329,8 +329,8 @@ def test_remote_planner_reserves_tokens_for_hidden_reasoning() -> None:
     settings = SpecialistRoutingConfig()
 
     assert settings.local_latency_seconds == {
-        "planner": 260.0,
-        "reviewer": 340.0,
+        "planner": 45.0,
+        "reviewer": 35.0,
     }
     assert settings.remote_min_completion_tokens == {
         "planner": 16_384,

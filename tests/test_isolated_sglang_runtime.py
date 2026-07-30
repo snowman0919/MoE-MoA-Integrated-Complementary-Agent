@@ -97,6 +97,8 @@ def valid_runtime_snapshot() -> dict[str, Any]:
                     "max-total-tokens": "65536",
                     "max-mamba-cache-size": "5",
                     "quantization": "modelopt_fp4",
+                    "cuda-graph-backend-decode": "disabled",
+                    "cuda-graph-backend-prefill": "disabled",
                     "tool-call-parser": "qwen3_coder",
                     "radix-cache": True,
                     "metrics": True,
@@ -339,6 +341,22 @@ def test_runtime_validator_fails_closed_when_reasoning_or_cache_is_missing(monke
         "error_type": "RuntimeError",
         "failure": "reasoning_split_failure",
     }
+
+
+def test_reasoning_probe_allows_visible_answer_after_private_reasoning(monkeypatch) -> None:
+    observed: dict[str, Any] = {}
+
+    def completion(*_args, **kwargs):  # type: ignore[no-untyped-def]
+        observed.update(kwargs)
+        return response("323", reasoning="private analysis"), 0.1
+
+    monkeypatch.setattr(MODULE, "completion", completion)
+
+    result = MODULE.reasoning("http://127.0.0.1:18102", "candidate", 1)
+
+    assert observed["max_tokens"] == 512
+    assert result["visible_characters"] == 3
+    assert result["reasoning_characters"] == 16
 
 
 def test_runtime_validator_redacts_unknown_failure_text() -> None:

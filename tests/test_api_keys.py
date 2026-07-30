@@ -124,7 +124,12 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert 'class="tooltip"' in dashboard.text
         assert all(
             name in dashboard.text
-            for name in ("Qwen3-Next", "Nemotron-30B", "North-Mini-30B", "Gemma-4-31B")
+            for name in (
+                "Qwen3-Next",
+                "Nemotron-30B",
+                "North-Mini-30B",
+                "Gemma-4-26B-A4B",
+            )
         )
         assert "[...modelCatalog]" in dashboard.text
 

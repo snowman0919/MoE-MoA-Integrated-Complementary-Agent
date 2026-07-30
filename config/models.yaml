@@ -85,7 +85,7 @@ gateway:
       planner: deepseek-v4-pro
       reviewer: deepseek-v4-flash
     timeout_seconds: 300
-    local_latency_seconds: {planner: 260, reviewer: 340}
+    local_latency_seconds: {planner: 45, reviewer: 35}
     remote_latency_seconds: {planner: 25, reviewer: 5}
     remote_min_completion_tokens: {planner: 16384, reviewer: 2048}
     network_latency_seconds: 0.25
@@ -236,12 +236,12 @@ models:
     trust_remote_code: false
     required: true
   planner:
-    repository: nvidia/Gemma-4-31B-IT-NVFP4
-    revision: 4135a98a9b728a548947683219633b25682223ac
+    repository: nvidia/Gemma-4-26B-A4B-NVFP4
+    revision: a19cfe00be84568a6867111c9a68c9c44fdcffe6
     classification: vendor-provided
     base_url: http://127.0.0.1:18102
     served_name: dgx-moa-specialist-candidate
-    destination: /home/kotori9/models/experimental/gemma-4-31b-it-nvfp4-4135a98a
+    destination: /home/kotori9/models/experimental/gemma-4-26b-a4b-nvfp4-a19cfe00
     context_length: 65536
     max_num_seqs: 1
     quantization: modelopt_fp4
@@ -251,12 +251,12 @@ models:
     trust_remote_code: false
     required: false
   reviewer:
-    repository: nvidia/Gemma-4-31B-IT-NVFP4
-    revision: 4135a98a9b728a548947683219633b25682223ac
+    repository: nvidia/Gemma-4-26B-A4B-NVFP4
+    revision: a19cfe00be84568a6867111c9a68c9c44fdcffe6
     classification: vendor-provided
     base_url: http://127.0.0.1:18102
     served_name: dgx-moa-specialist-candidate
-    destination: /home/kotori9/models/experimental/gemma-4-31b-it-nvfp4-4135a98a
+    destination: /home/kotori9/models/experimental/gemma-4-26b-a4b-nvfp4-a19cfe00
     context_length: 65536
     max_num_seqs: 1
     quantization: modelopt_fp4

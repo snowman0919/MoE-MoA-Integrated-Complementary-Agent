@@ -26,7 +26,7 @@ IMAGE = (
     "sha256:26f620b13e49900cc6ab59ed693f9ce8f9ea4f3531074c1e39a3bf9db06ab8f0"
 )
 EXECUTOR_REVISION = "15c399c8189eccc9c47d17dcf8adf3c16e8bb3f8"
-SPECIALIST_REVISION = "4135a98a9b728a548947683219633b25682223ac"
+SPECIALIST_REVISION = "a19cfe00be84568a6867111c9a68c9c44fdcffe6"
 MINIMUM_AVAILABLE_MEMORY_KIB = 10 * 1024**2
 SAFE_HOSTS = {"127.0.0.1", "::1", "localhost"}
 SAFE_CHECK_FAILURES = frozenset(
@@ -295,7 +295,7 @@ def reasoning(endpoint: str, model: str, timeout: float) -> dict[str, Any]:
         model,
         [{"role": "user", "content": "Calculate 17 * 19. End the visible answer with 323."}],
         timeout,
-        max_tokens=256,
+        max_tokens=512,
         separate_reasoning=True,
         chat_template_kwargs={"enable_thinking": True},
     )
@@ -619,6 +619,8 @@ def runtime_contract(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "max-total-tokens": "65536",
                 "max-mamba-cache-size": "5",
                 "quantization": "modelopt_fp4",
+                "cuda-graph-backend-decode": "disabled",
+                "cuda-graph-backend-prefill": "disabled",
                 "tool-call-parser": "qwen3_coder",
                 "radix-cache": True,
                 "metrics": True,
@@ -817,7 +819,7 @@ def run_validation(
             "planner_reviewer": {
                 "provider": "sglang",
                 "model": specialist_model,
-                "repository": "nvidia/Gemma-4-31B-IT-NVFP4",
+                "repository": "nvidia/Gemma-4-26B-A4B-NVFP4",
                 "revision": SPECIALIST_REVISION,
             },
         },

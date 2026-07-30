@@ -8620,3 +8620,66 @@ Protocol v34 is frozen with completion-plan SHA-256
 `c4d887038caf6e6bc9555977d1993f5678141cd08b81534d173f4ab23be2b0d1`
 and current committed quality-contract SHA-256
 `10142343e003abcf00be7351a36d05061e01b70b3fb8cfd350b74d983938a054`.
+
+### 2026-07-30 — Gemma 4 26B-A4B NVFP4 physical replacement
+
+AvatarForge V110 was stopped without a checkpoint or completion verdict when
+the user replaced the specialist model contract. Its preserved Gateway DB
+SHA-256 is
+`69e6da6514b82dfdc08fd14bc8f67d9e1358c253d5cea4ab45ad4c005c423fde`;
+V110 is not promotable.
+
+The replacement specialist is
+`nvidia/Gemma-4-26B-A4B-NVFP4` revision
+`a19cfe00be84568a6867111c9a68c9c44fdcffe6`. Hugging Face verification
+checked all 12 remote files. Its two weight shards are pinned by
+`config/sglang-specialist.sha256`. SGLang identified the model as
+`Gemma4ForConditionalGeneration`, hybrid SWA, ModelOpt NVFP4, with
+FlashInfer CUTLASS MoE on SM120. Weight loading took 104.23 seconds and
+18.68 GiB, compared with 29.71 GiB for the retired dense 31B model. The
+65,536-token memory pool and batch-one full decode CUDA Graph completed with
+35.00 GiB GPU memory still available. A 16-token real inference readiness
+probe returned HTTP 200. A fixed 256-token decode completed in 8.630 seconds
+at 29.66 output tokens/second, 4.18 times the former 7.1-token/second physical
+result.
+
+V111 preserved a validator-contract drift: the Executor command already
+disabled decode and prefill CUDA Graphs, while the runtime predicate omitted
+those two inspected fields. No inference gate ran and V111 is not a PASS.
+Its SHA-256 is
+`eea2af2b3703c872fc7cb87d2cdec363569790bb40ae6f58c03eef24af0f4025`.
+V112 then ran the inference gates but rejected the reasoning split because a
+256-token probe ended while still in private reasoning. It is diagnostic, not
+a PASS; its SHA-256 is
+`04167fa8ee488bfcd184f40eac954bdff10190720efb012611c14f41dd018b64`.
+The probe-only cap was raised to 512. A physical retry stopped normally after
+257 tokens with both hidden reasoning and a visible answer.
+
+Immutable V113 passed all 12 physical checks in 84.455 seconds: both runtime
+contracts, Executor and specialist readiness, both streaming paths, both tool
+parsers, Executor Radix cache reuse, specialist reasoning separation, and
+Planner/Reviewer structured output. Planner completed in 39.730 seconds and
+Reviewer in 30.554 seconds, so the conservative routing estimates are now
+45/35 seconds. The second Executor cache probe reused 8,192 tokens. Host
+available memory was 30.174 GiB before and 30.160 GiB after; neither container
+was OOM-killed and neither used swap. V113 SHA-256 is
+`f240dcd48799f3d8d3ce5e74b9df3cc1cab6adca2b619c9db11a49776cf19415`.
+
+After V113 passed, the explicitly retired 31B model directory and its Hugging
+Face metadata cache were deleted. Disk availability increased from 99 GiB
+before downloading the replacement to 112 GiB after replacement and cleanup;
+only the 18 GiB 26B-A4B specialist remains. Protocol v35 completion-plan
+SHA-256 is
+`5f0497475447aa9b098d33d49f10ac777358346c8d7fcc9c0e7f95d16a358c7b`
+and quality-contract SHA-256 is
+`0a10bb7cb84fa7fdb64dde5134a507b44795500b1b802ac127005a7cb0db7b3a`.
+This is a dual-SGLang physical topology PASS, not the broader blind-quality,
+long-horizon, merge, deployment, or Goal-completion approval.
+
+Post-change V114 passed `1166/1166` tests in 47.20 seconds with the existing
+Starlette warning. Ruff passed, and strict mypy reported zero issues across 59
+source files. The pytest, Ruff, and mypy log SHA-256 values are respectively
+`30b6a9e772fe154a210bc5f597a4f8ebbbf191a89fd561b303c217c3ede9c059`,
+`82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18`,
+and
+`960745a059df2e6bf5556b518f6404c7707247bf3da084d48c3008145eb95a5d`.

@@ -50,7 +50,7 @@ def test_candidate_gateway_pins_executor_and_unified_specialist() -> None:
     assert planner.base_url == reviewer.base_url == "http://localhost:18102"
     assert planner.served_name == reviewer.served_name == "dgx-moa-specialist-candidate"
     assert planner.revision == reviewer.revision == MODULE.SPECIALIST_REVISION
-    assert planner.repository == reviewer.repository == "nvidia/Gemma-4-31B-IT-NVFP4"
+    assert planner.repository == reviewer.repository == "nvidia/Gemma-4-26B-A4B-NVFP4"
     assert planner.context_length == reviewer.context_length == 65_536
     assert planner.quantization == reviewer.quantization == "modelopt_fp4"
     assert planner.reasoning_parser == reviewer.reasoning_parser == "gemma4"

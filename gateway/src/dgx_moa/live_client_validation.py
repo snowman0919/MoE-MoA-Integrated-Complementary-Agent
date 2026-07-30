@@ -23,7 +23,7 @@ from dgx_moa.config import load_settings
 PROJECT = Path(__file__).resolve().parents[3]
 PRODUCTION = Path("/home/kotori9/dgx-moa-agent")
 EXECUTOR_REVISION = "15c399c8189eccc9c47d17dcf8adf3c16e8bb3f8"
-SPECIALIST_REVISION = "4135a98a9b728a548947683219633b25682223ac"
+SPECIALIST_REVISION = "a19cfe00be84568a6867111c9a68c9c44fdcffe6"
 SAFE_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
@@ -82,12 +82,14 @@ def local_endpoint(value: str) -> str:
 
 def candidate_models(base, executor_endpoint: str, specialist_endpoint: str):  # type: ignore[no-untyped-def]
     specialist = {
-        "repository": "nvidia/Gemma-4-31B-IT-NVFP4",
+        "repository": "nvidia/Gemma-4-26B-A4B-NVFP4",
         "revision": SPECIALIST_REVISION,
         "classification": "vendor-provided",
         "base_url": specialist_endpoint,
         "served_name": "dgx-moa-specialist-candidate",
-        "destination": Path("/home/kotori9/models/experimental/gemma-4-31b-it-nvfp4-4135a98a"),
+        "destination": Path(
+            "/home/kotori9/models/experimental/gemma-4-26b-a4b-nvfp4-a19cfe00"
+        ),
         "context_length": 65_536,
         "max_num_seqs": 1,
         "quantization": "modelopt_fp4",

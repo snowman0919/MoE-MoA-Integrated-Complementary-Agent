@@ -276,8 +276,8 @@ cache 최적화는 출력/tool 의미가 바뀌거나 메모리/OOM gate를 악�
 
 - Executor: `Cirrascale/Qwen3-Coder-Next-NVFP4`,
   revision `15c399c8189eccc9c47d17dcf8adf3c16e8bb3f8`
-- Planner/Reviewer: `nvidia/Gemma-4-31B-IT-NVFP4`,
-  revision `4135a98a9b728a548947683219633b25682223ac`
+- Planner/Reviewer: `nvidia/Gemma-4-26B-A4B-NVFP4`,
+  revision `a19cfe00be84568a6867111c9a68c9c44fdcffe6`
 - image:
   `lmsysorg/sglang:dev-cu13@sha256:26f620b13e49900cc6ab59ed693f9ce8f9ea4f3531074c1e39a3bf9db06ab8f0`
 
@@ -498,6 +498,12 @@ reconnect, plan/context 보존을 대체하지 않는다.
   호출과 고정 two-pass token budget에 따라 ordinary routing의 local latency
   기본값을 Planner 260초, Reviewer 340초로 사용한다. V105는 중단 진단으로
   보존하며 v34는 새 clean seed와 새 run ID에서 시작한다.
+- protocol v35는 Planner/Reviewer candidate를
+  `nvidia/Gemma-4-26B-A4B-NVFP4` revision
+  `a19cfe00be84568a6867111c9a68c9c44fdcffe6`로 교체한다. v34의 31B
+  latency와 품질 결과는 새 모델의 증거로 재사용하지 않는다. V113 물리
+  gate에서 Planner 39.730초, Reviewer 30.554초를 측정했으므로 ordinary
+  routing의 보수적 local latency 기본값은 각각 45/35초로 사용한다.
 
 ## 10. Release, rollback, 배포
 

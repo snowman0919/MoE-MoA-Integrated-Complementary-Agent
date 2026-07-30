@@ -78,10 +78,10 @@ def test_candidate_manifests_pin_every_weight_shard() -> None:
     specialist = [pattern.fullmatch(line) for line in SPECIALIST_MANIFEST.read_text().splitlines()]
 
     assert all(executor) and len(executor) == 10
-    assert all(specialist) and len(specialist) == 4
+    assert all(specialist) and len(specialist) == 2
     assert {match.group(1) for match in executor if match} == {
         f"model-{index:05d}-of-00010.safetensors" for index in range(1, 11)
     }
     assert {match.group(1) for match in specialist if match} == {
-        f"model-{index:05d}-of-00004.safetensors" for index in range(1, 5)
+        f"model-{index:05d}-of-00002.safetensors" for index in range(1, 3)
     }
