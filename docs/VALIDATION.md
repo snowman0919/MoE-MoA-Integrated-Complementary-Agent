@@ -9213,3 +9213,20 @@ verdicts retain the real exit code and output but receive
 `TEST_FAILURE`. Ruff passed, strict mypy reported zero issues across 59 source
 files, and the full regression passed 1,181 tests in 42.61 seconds. Physical
 v61 confirmation has not yet run, so v61 is not a PASS.
+
+V159 physically exercised v61 through the real Codex child. It recovered after
+one 146.3-second backend failure, completed ten client streams, and produced one
+clean Phase 0 commit before the operator-requested stop. The diagnostic exposed
+an internal orchestration request that consumed the full 4,096-token limit in
+121.4 seconds before invalid structured output, followed by a successful
+bounded retry. The local Planner separately completed 1,716 tokens in 59.4
+seconds. V159 was stopped without deleting its database or workspace and is not
+a completed checkpoint or PASS.
+
+Protocol v62 limits only the internal Executor orchestration JSON request to
+512 tokens, matching its existing retry contract and fewer-than-300-token
+instruction. General Planner plans and client-visible Executor output retain
+their existing limits. The focused invalid-output retry case passed; the full
+regression passed 1,181 tests in 48.90 seconds. Ruff passed and strict mypy
+reported zero issues across 59 source files. Physical v62 confirmation has not
+yet run, so v62 is not a PASS.

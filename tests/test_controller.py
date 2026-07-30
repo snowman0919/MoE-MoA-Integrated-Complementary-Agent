@@ -773,7 +773,14 @@ async def test_invalid_executor_orchestration_gets_one_minimal_retry(
     )
 
     assert orchestration_calls == 2
-    retry_request = stub_provider.requests[-1]
+    orchestration_requests = [
+        request
+        for request in stub_provider.requests
+        if request.get("response_format", {}).get("json_schema", {}).get("name")
+        == "orchestration_decision"
+    ]
+    assert orchestration_requests[0]["max_tokens"] == 512
+    retry_request = orchestration_requests[-1]
     assert retry_request["max_tokens"] == 512
     assert "fewer than 300 tokens" in retry_request["messages"][0]["content"]
     assert [

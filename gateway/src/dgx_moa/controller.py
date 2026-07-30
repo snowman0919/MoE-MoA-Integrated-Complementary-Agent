@@ -2515,7 +2515,7 @@ class Controller:
                 }
             ],
             "stream": False,
-            "max_tokens": self.settings.limits.planner_tokens,
+            "max_tokens": min(self.settings.limits.planner_tokens, 512),
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {"name": "orchestration_decision", "strict": True, "schema": schema},
