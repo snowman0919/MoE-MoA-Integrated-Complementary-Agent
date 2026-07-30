@@ -484,6 +484,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v31은 OpenCode의 기본 외부 경로 deny를 유지하면서 동결
   objective·acceptance·plan 세 파일만 정확한 경로 allowlist로 허용한다.
   workspace 밖의 다른 경로와 비밀 파일은 계속 거부한다.
+- protocol v32는 격리 OpenCode의 native experimental filewatcher를 끈다.
+  host tool 완료 뒤 네트워크 요청 없이 event loop가 대기하는 V102 정체를
+  제거하되, runner의 Git diff·clean commit·checkpoint 검증은 유지한다.
 
 ## 10. Release, rollback, 배포
 

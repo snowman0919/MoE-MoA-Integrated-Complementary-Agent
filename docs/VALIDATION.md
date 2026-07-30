@@ -8510,3 +8510,26 @@ Starlette warning; Ruff passed and strict mypy reported zero errors across 59
 source files. The v31 completion plan is
 frozen at SHA-256
 `11f1ac59dd81712a93b1940c366fa450b600f6d8fad53dc4920d5d0e511c86c3`.
+
+### 2026-07-30 — AvatarForge V102 OpenCode filewatcher stall
+
+Protocol v31 successfully passed the three frozen inputs through the exact
+external-path allowlist. OpenCode reached six engineering steps, executed ten
+host tools, and created the Phase 0 source and test files. The Gateway used one
+local Planner call, local Reasoner calls, local Executor calls, and Codex OAuth
+primary Executor fallback. After a completed bash tool, OpenCode created the
+next assistant placeholder but made no network request and remained in
+`ep_poll`; no commit or checkpoint was produced. The diagnostic was manually
+stopped with the worktree dirty and no evidence JSONL. The preserved Gateway
+DB SHA-256 is
+`ec36921aececaca30ec04dda5a5d9919885896e90aaaff84f2ef70f8d0389758`.
+V102 cannot be promoted.
+
+Protocol v32 uses OpenCode's native
+`OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=1` only in the isolated harness.
+Git diff, clean commit, review, and checkpoint validation remain owned by the
+runner. Focused long-horizon and client-quality coverage passed `22/22`; Ruff
+and strict mypy passed. The complete suite passed `1162/1162` with the existing
+Starlette warning, and strict mypy reported zero errors across 59 source files.
+The v32 completion plan is frozen at SHA-256
+`a3ac652c7d57d1a8c61a622535c742dc48191db488f6d76ee738639b0881163a`.

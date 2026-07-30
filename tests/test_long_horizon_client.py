@@ -310,6 +310,7 @@ def test_client_commands_resume_the_same_private_session(
         assert '"X-Workspace-ID" = "long-horizon"' in headers
     elif harness == "opencode":
         assert inner[inner.index("--title") + 1] == "DGX MoA long horizon"
+        assert "OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=1" in command
         raw_config = next(
             value.removeprefix("OPENCODE_CONFIG_CONTENT=")
             for value in command
