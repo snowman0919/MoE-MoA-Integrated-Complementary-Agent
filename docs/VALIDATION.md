@@ -8842,3 +8842,22 @@ respectively
 `5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
 and
 `7005b151f852010de3bbeef740991f08b12887589f4165fd16607d7dc85d2599`.
+
+V130 physically received the v45 `steps=32` configuration and produced one
+clean Phase 0 commit, but the implicitly selected built-in OpenCode agent
+continued to 34 completed steps. Its last event remained a completed tool call,
+the client did not produce a terminal response, and the workspace became dirty
+again. V130 was stopped after the bounded diagnostic observation and remains a
+failed immutable run.
+
+Protocol v46 removes the implicit-agent ambiguity. AvatarForge configures a
+dedicated primary agent, selects it explicitly with the OpenCode `--agent`
+flag, and applies the same 32-step limit to that named agent. The journal
+profile remains unchanged. The focused client/analyzer regression passed 50
+tests and Ruff passed. The full regression then passed 1,175 tests in 47.61
+seconds; Ruff passed and strict mypy reported zero issues across 59 source
+files. The v46 completion-plan and quality-contract SHA-256 values are
+respectively
+`5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
+and
+`9f92b64a3041e95e1764ae11be44b3898b5f1d783aa8db3eeae349e71e671556`.

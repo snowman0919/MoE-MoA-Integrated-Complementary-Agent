@@ -395,15 +395,24 @@ def test_client_metrics_and_provider_pinning_are_aggregated_without_payloads(
     ]
 
 
-def test_avatarforge_opencode_bounds_agent_steps(tmp_path: Path) -> None:
+def test_avatarforge_opencode_bounds_agent_steps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     args = arguments(tmp_path, "opencode")
     args.profile = "avatarforge"
+    monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
 
     bounded = json.loads(MODULE.opencode_config(args, "private-session"))
+    command, _, _ = MODULE.client_command(
+        args, tmp_path / "state", None, 0, "private-session"
+    )
     args.profile = "journal"
     unbounded = json.loads(MODULE.opencode_config(args, "private-session"))
 
-    assert bounded["agent"]["build"]["steps"] == MODULE.AVATARFORGE_OPENCODE_STEPS
+    agent = MODULE.AVATARFORGE_OPENCODE_AGENT
+    assert bounded["default_agent"] == agent
+    assert bounded["agent"][agent]["steps"] == MODULE.AVATARFORGE_OPENCODE_STEPS
+    assert command[command.index("--agent") + 1] == agent
     assert "agent" not in unbounded
 
 

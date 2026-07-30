@@ -30,8 +30,9 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v45"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v46"
 AVATARFORGE_OPENCODE_STEPS = 32
+AVATARFORGE_OPENCODE_AGENT = "avatarforge"
 AVATARFORGE_PHASES = (
     "avatarforge_phase_0_contract",
     "avatarforge_phase_1_plugin",
@@ -299,7 +300,16 @@ def opencode_config(args: argparse.Namespace, gateway_session: str) -> str:
     value = {
         "$schema": "https://opencode.ai/config.json",
         **(
-            {"agent": {"build": {"steps": AVATARFORGE_OPENCODE_STEPS}}}
+            {
+                "default_agent": AVATARFORGE_OPENCODE_AGENT,
+                "agent": {
+                    AVATARFORGE_OPENCODE_AGENT: {
+                        "description": "Bounded AvatarForge implementation agent",
+                        "mode": "primary",
+                        "steps": AVATARFORGE_OPENCODE_STEPS,
+                    }
+                },
+            }
             if getattr(args, "profile", "journal") == "avatarforge"
             else {}
         ),
@@ -459,6 +469,8 @@ def client_command(
             "--model",
             "dgx-moa/dgx-moa-orchestrated",
         ]
+        if getattr(args, "profile", "journal") == "avatarforge":
+            inner.extend(("--agent", AVATARFORGE_OPENCODE_AGENT))
         if session is not None:
             inner.extend(("--session", session))
         inner.append(prompt)
