@@ -472,6 +472,10 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v28은 장기 correction에서 최근 mutation 4개와 최근 도구 6개를
   Reviewer evidence에 함께 유지하고, implementation evidence를 8개 및
   redacted reviewer 입력을 24k 문자로 제한해 전체 구현 맥락 유실을 줄인다.
+- protocol v29는 local Reviewer 중복 fingerprint를 원문 문구가 아니라
+  finding ID·severity·category·affected location·required 여부로 정규화해,
+  같은 결함을 바꿔 말하는 반복 correction이 duplicate fail-closed를
+  우회하지 못하게 한다.
 
 ## 10. Release, rollback, 배포
 

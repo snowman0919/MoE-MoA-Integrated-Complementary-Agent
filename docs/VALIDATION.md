@@ -8413,3 +8413,33 @@ passed and strict mypy reported zero errors across 59 source files. The v28
 completion plan is frozen at SHA-256
 `67846161c090affc5233e9f4bfe2711d2fae8036c6070428eb026041ffdaadc8`.
 A fresh v28 run is required; V97 cannot be promoted.
+
+### 2026-07-30 — AvatarForge V98 semantic-review diagnostic
+
+AvatarForge V98 used protocol v28 and the real Codex client through the
+authenticated loopback Gateway. It reached 75 engineering steps with 74 host
+tool executions, six clean commits, and seven local Reviewer rounds. The
+expanded evidence window moved findings from generic missing implementation
+evidence to concrete test correctness and unnecessary-state findings.
+
+The run then exposed a separate duplicate guard defect. Reviewer finding ID
+`INSUFFICIENT_TEST_COVERAGE` occurred three times and
+`UNNECESSARY_AUXILIARY_STATE` occurred three times at the same location, but
+each wording variant produced a different full-payload fingerprint. Every
+failure therefore remained occurrence one and the intended third-occurrence
+fail-closed gate did not fire. The diagnostic was explicitly terminated and
+preserved as `client_nonzero_exit`; it is not a long-horizon pass. The immutable
+Gateway DB and failure sidecar SHA-256 values are
+`7591b7a7b53165a1ddbfc5f16223cd656239da76b11b213ed6262d7292740b0c`
+and
+`b8771c193a496e02205a5bcd0a859f402e70c6e17ac5ff349e8cfd94dd1f1121`.
+
+Protocol v29 fingerprints local Reviewer findings from finding ID, severity,
+category, affected location, and whether a correction is required; summary and
+correction prose no longer alter identity. The focused reworded semantic
+duplicate regression passed `1/1`; Controller, long-horizon, client-quality,
+and config coverage passed `213/213`; the complete suite passed `1162/1162`
+with the existing Starlette warning. Ruff passed and strict mypy reported zero
+errors across 59 source files. The v29 completion plan is frozen at SHA-256
+`f57d279cd1d1f10bc0d5f2338d47450f596a3f7e52b4a8fd1405b0629b60c615`.
+A fresh v29 run is required; V98 cannot be promoted.

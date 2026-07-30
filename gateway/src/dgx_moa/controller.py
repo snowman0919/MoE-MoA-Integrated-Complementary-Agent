@@ -4256,12 +4256,27 @@ class Controller:
         loop = state.engineering_loop
         if loop is None:
             return False
+        findings = [
+            {
+                key: finding.get(key)
+                for key in ("finding_id", "severity", "category", "affected_location")
+            }
+            | {"required_correction": bool(finding.get("required_correction"))}
+            for finding in result.get("findings", [])
+            if isinstance(finding, dict)
+        ]
         register_failure(
             loop,
             "DUPLICATE_FAILURE",
             finding_fingerprint=progress_evidence_fingerprint(
                 "local_review",
-                {"status": result.get("status"), "findings": result.get("findings", [])},
+                {
+                    "status": result.get("status"),
+                    "findings": sorted(
+                        findings,
+                        key=lambda finding: json.dumps(finding, sort_keys=True, default=str),
+                    ),
+                },
             ),
         )
         return loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"

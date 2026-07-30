@@ -263,7 +263,7 @@ latency, context/cache tokens, tool/retry/provider-error counts, memory/swap,
 and variable cost.
 
 The additional AvatarForge active-work profile uses protocol
-`avatarforge-long-goal-v28` with consecutive checkpoints
+`avatarforge-long-goal-v29` with consecutive checkpoints
 `avatarforge_phase_0_contract`, `avatarforge_phase_1_plugin`,
 `avatarforge_phase_2_environment`, and `avatarforge_phase_3_state`. Every
 checkpoint must contain a baseline-relative change, discovered tests, a clean

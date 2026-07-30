@@ -145,10 +145,32 @@ def test_repeated_semantic_frontier_review_fails_closed(
 
     state.engineering_loop.termination_reason = None
     state.engineering_loop.open_failures.clear()
-    local = {"status": "rejected", "findings": [{"category": "correctness"}]}
+    local = {
+        "status": "rejected",
+        "findings": [
+            {
+                "finding_id": "MISSING_TESTS",
+                "severity": "critical",
+                "category": "correctness",
+                "affected_location": "tests/test_api.py",
+                "required_correction": "Add the missing boundary test.",
+                "summary": "First wording",
+            }
+        ],
+    }
     assert controller.register_local_review_failure(state, local) is False
-    assert controller.register_local_review_failure(state, local) is False
-    assert controller.register_local_review_failure(state, local) is True
+    reworded = {
+        **local,
+        "findings": [
+            {
+                **local["findings"][0],
+                "required_correction": "Cover that boundary in a test.",
+                "summary": "Different wording",
+            }
+        ],
+    }
+    assert controller.register_local_review_failure(state, reworded) is False
+    assert controller.register_local_review_failure(state, reworded) is True
     assert state.engineering_loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
 
 
