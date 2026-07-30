@@ -487,6 +487,10 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v32는 격리 OpenCode의 native experimental filewatcher를 끈다.
   host tool 완료 뒤 네트워크 요청 없이 event loop가 대기하는 V102 정체를
   제거하되, runner의 Git diff·clean commit·checkpoint 검증은 유지한다.
+- protocol v33은 OpenCode SDK가 configured `X-Session-ID` 대신 자체 session
+  ID를 Gateway에 보내는 동작을 계측 계약에 반영한다. OpenCode 출력에서
+  확인된 client session으로 Gateway state와 provider telemetry를 조회하며,
+  Codex·Hermes의 configured session 계약은 변경하지 않는다.
 
 ## 10. Release, rollback, 배포
 

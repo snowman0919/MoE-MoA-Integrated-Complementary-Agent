@@ -8554,3 +8554,27 @@ stopped. This is useful recovery evidence, not a long-horizon PASS. The
 preserved pre-stop Gateway DB SHA-256 is
 `b575d3d4eab5c24ccf94625eb1d40a0b00ba64e68acc8784294968c21398fb1e`.
 V103 cannot be promoted.
+
+### 2026-07-30 — AvatarForge V104 OpenCode session-identity diagnostic
+
+V104 moved the isolated Gateway and checkpoint runner into Docker-daemon-owned
+containers so PTY and task boundaries could not terminate them. OpenCode
+completed 17 engineering steps, 16 host tools, and one clean Phase 0
+implementation commit. The runner then failed checkpoint zero with
+`gateway_state_missing`.
+
+The Gateway DB session exactly matched OpenCode's own session ID, not the
+configured `X-Session-ID`. OpenCode's compatible-provider SDK replaces that
+header with its native session identity. Protocol v33 therefore uses the
+client session already parsed from OpenCode output for Gateway progress and
+provider telemetry queries; Codex and Hermes retain the configured session.
+The focused session-selection and analyzer checks passed `4/4`; Ruff and
+strict mypy passed. The complete suite passed `1165/1165` with the existing
+Starlette warning, and strict mypy reported zero errors across 59 source files.
+The immutable Gateway DB and failure sidecar SHA-256 values are
+`16172379e714f8ddc2c014bc755a2818c5fea3645e262b8b7de8ea13571b3966`
+and
+`d8a6813a9f22dae008e5eef231f77c6be53fac2a8ab5fc49feab679b921b3143`.
+The v33 completion plan is frozen at SHA-256
+`1042623b3380933b329e1d8ffabeaff867014fc6720e0433cf5ec382d80e403e`.
+V104 cannot be promoted.

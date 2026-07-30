@@ -634,6 +634,23 @@ def test_avatarforge_timeout_is_one_active_work_deadline(
     assert MODULE.client_timeout(args, {"started_at_epoch": 1_000}) == 36_000
 
 
+@pytest.mark.parametrize(
+    ("harness", "expected"),
+    (
+        ("opencode", "client-session"),
+        ("codex", "configured-session"),
+        ("hermes", "configured-session"),
+    ),
+)
+def test_observed_gateway_session_uses_opencode_client_identity(
+    harness: str, expected: str
+) -> None:
+    assert (
+        MODULE.observed_gateway_session(harness, "configured-session", "client-session")
+        == expected
+    )
+
+
 def test_secure_client_state_restricts_shell_snapshots(tmp_path: Path) -> None:
     snapshots = tmp_path / "shell_snapshots"
     snapshots.mkdir(mode=0o755)

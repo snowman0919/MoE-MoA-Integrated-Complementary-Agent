@@ -30,7 +30,7 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v32"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v33"
 AVATARFORGE_PHASES = (
     "avatarforge_phase_0_contract",
     "avatarforge_phase_1_plugin",
@@ -949,6 +949,10 @@ def client_timeout(args: argparse.Namespace, control: dict[str, Any]) -> int:
     return max(1, int(remaining))
 
 
+def observed_gateway_session(harness: str, configured: str, client: str) -> str:
+    return client if harness == "opencode" else configured
+
+
 def run_checkpoint(
     args: argparse.Namespace,
     state: Path,
@@ -999,7 +1003,8 @@ def run_checkpoint(
     if control.get("client_session") not in {None, session}:
         raise RuntimeError("client_session_changed")
     control["client_session"] = session
-    progress = gateway_progress_state(args.state_db, control["gateway_session"], index, phases)
+    gateway_session = observed_gateway_session(args.harness, control["gateway_session"], session)
+    progress = gateway_progress_state(args.state_db, gateway_session, index, phases)
     git_state = git_snapshot(args.workspace)
     if git_state["dirty_state"] != "clean":
         raise RuntimeError("dirty_checkpoint")
@@ -1024,7 +1029,7 @@ def run_checkpoint(
         args.state_db,
         started,
         completed,
-        control["gateway_session"],
+        gateway_session,
     )
     peak_before, swap_before = runtime_metrics(before)
     peak_after, swap_after = runtime_metrics(after)
