@@ -67,7 +67,7 @@ specialist_command=(
   --max-running-requests 1 --max-total-tokens 65536
   --swa-full-tokens-ratio 0.06
   --quantization modelopt_fp4
-  --cuda-graph-backend-decode disabled
+  --cuda-graph-backend-decode full --cuda-graph-max-bs-decode 1
   --cuda-graph-backend-prefill disabled
   --reasoning-parser gemma4 --tool-call-parser gemma4
   --enable-metrics --enable-cache-report --incremental-streaming-output

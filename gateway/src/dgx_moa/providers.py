@@ -98,6 +98,51 @@ class ModelProvider:
             await close()
 
     @staticmethod
+    async def token_count(
+        client: httpx.AsyncClient,
+        model: ModelConfig,
+        body: dict[str, Any],
+    ) -> tuple[int, int] | None:
+        if model.reasoning_parser == "gemma4":
+            messages = body.get("messages", [])
+            system = "\n".join(
+                str(message.get("content", ""))
+                for message in messages
+                if message.get("role") == "system"
+            )
+            response = await client.post(
+                f"{model.base_url.rstrip('/')}/v1/messages/count_tokens",
+                json={
+                    "model": model.served_name,
+                    "messages": [
+                        message for message in messages if message.get("role") != "system"
+                    ],
+                    **({"system": system} if system else {}),
+                },
+            )
+            response.raise_for_status()
+            count = response.json().get("input_tokens")
+            return (count, model.context_length) if isinstance(count, int) else None
+        response = await client.post(
+            f"{model.base_url.rstrip('/')}/tokenize",
+            json={
+                "model": model.served_name,
+                "messages": body.get("messages", []),
+                "tools": body.get("tools"),
+                "chat_template_kwargs": body.get("chat_template_kwargs"),
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        count = payload.get("count")
+        context_length = payload.get("max_model_len", model.context_length)
+        return (
+            (count, context_length)
+            if isinstance(count, int) and isinstance(context_length, int)
+            else None
+        )
+
+    @staticmethod
     def body(role: str, model: ModelConfig, request: dict[str, Any]) -> dict[str, Any]:
         body = request.copy()
         body["model"] = model.served_name
@@ -131,28 +176,12 @@ class ModelProvider:
         if not isinstance(requested, int) or isinstance(requested, bool) or requested < 1:
             return
         try:
-            response = await client.post(
-                f"{model.base_url.rstrip('/')}/tokenize",
-                json={
-                    "model": model.served_name,
-                    "messages": body.get("messages", []),
-                    "chat_template_kwargs": body.get("chat_template_kwargs"),
-                },
-            )
-            if response.is_error:
+            tokenization = await ModelProvider.token_count(client, model, body)
+            if tokenization is None:
                 return
-            tokenization = response.json()
         except (httpx.HTTPError, ValueError):
             return
-        prompt_tokens = tokenization.get("count")
-        context_length = tokenization.get("max_model_len")
-        if (
-            not isinstance(prompt_tokens, int)
-            or isinstance(prompt_tokens, bool)
-            or not isinstance(context_length, int)
-            or isinstance(context_length, bool)
-        ):
-            return
+        prompt_tokens, context_length = tokenization
         available = max(1, context_length - prompt_tokens - 8)
         body["max_tokens"] = min(requested, available)
 
@@ -204,21 +233,12 @@ class ModelProvider:
         body = ModelProvider.body(role, model, request)
         try:
             async with asyncio.timeout(timeout_seconds):
-                response = await self.client.post(
-                    f"{model.base_url.rstrip('/')}/tokenize",
-                    json={
-                        "model": model.served_name,
-                        "messages": body.get("messages", []),
-                        "tools": body.get("tools"),
-                        "chat_template_kwargs": body.get("chat_template_kwargs"),
-                    },
-                )
-                response.raise_for_status()
-                payload = response.json()
+                tokenization = await self.token_count(self.client, model, body)
         except (TimeoutError, httpx.HTTPError, ValueError):
             return None
-        prompt_tokens = payload.get("count")
-        context_length = payload.get("max_model_len", model.context_length)
+        if tokenization is None:
+            return None
+        prompt_tokens, context_length = tokenization
         output_tokens = body.get("max_tokens", 0)
         if not all(
             isinstance(value, int) and not isinstance(value, bool)

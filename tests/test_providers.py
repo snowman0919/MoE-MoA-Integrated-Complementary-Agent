@@ -296,6 +296,12 @@ async def test_specialist_separates_reasoning_from_final_json(  # type: ignore[n
     completion_bodies: list[dict[str, object]] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/messages/count_tokens":
+            return httpx.Response(
+                200,
+                json={"input_tokens": 100},
+                request=request,
+            )
         if request.url.path == "/tokenize":
             return httpx.Response(
                 200,

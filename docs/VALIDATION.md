@@ -8578,3 +8578,32 @@ and
 The v33 completion plan is frozen at SHA-256
 `1042623b3380933b329e1d8ffabeaff867014fc6720e0433cf5ec382d80e403e`.
 V104 cannot be promoted.
+
+### 2026-07-30 — AvatarForge V105 stopped for Gemma runtime diagnosis
+
+Protocol v33 V105 was explicitly stopped at the user's request before a
+checkpoint or completion verdict because the local Gemma Planner/Reviewer
+reported only about 6.5 tokens/second. The runner exited `143` and the Gateway
+exited `137`; neither omission is a PASS. The preserved Gateway DB SHA-256 is
+`e6c325ef87d526102eb41382e13e3d130b3d26a0f61432b3e16488a45fd90f19`.
+V105 cannot be promoted.
+
+The pinned Gemma checkpoint is a dense 60-layer model. Its on-disk tensors are
+30.39 GiB and the physical loader measured 29.71 GiB of weights; the vendor
+NVFP4 configuration excludes every self-attention layer from FP4. A fixed
+256-token decode took 35.98 seconds. Enabling a batch-one full decode CUDA
+Graph used 0.04 GiB and raised the stable scheduler rate only from about
+6.5–6.7 to 7.1 tokens/second. The candidate remained running with zero restart
+and zero OOM, and 17 GiB host memory remained available. This is a measured
+dense-model/memory-bandwidth limit, not evidence that a larger KV cache caused
+the low rate.
+
+The former Gemma `/tokenize` path also returned HTTP 500 when its multimodal
+placeholder token IDs exceeded ORJSON's 64-bit integer range. The Gateway now
+uses SGLang's native `/v1/messages/count_tokens` count-only endpoint for Gemma
+and retains `/tokenize` for other models. A physical system/user probe returned
+25 input tokens with no new serialization error. Focused SGLang tests passed
+`20/20`, provider tests passed `25/25`, the complete suite passed `1165/1165`
+with the existing Starlette warning, Ruff passed, and strict mypy reported zero
+errors across 59 source files. This diagnostic changes the runtime contract,
+so any resumed long-horizon evaluation requires a fresh protocol/run ID.
