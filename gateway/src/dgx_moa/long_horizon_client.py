@@ -277,7 +277,8 @@ def client_prompt(
     )
     validation_authority = (
         "이 protocol epoch에서는 위 host 검증 명령이 입력 문서의 이전 검증 "
-        "명령보다 우선한다. "
+        "명령보다 우선한다. exec_command로 검증할 때 login=false를 명시하고, "
+        "명령을 pipe·redirect·output filter나 다른 shell로 감싸지 마라. "
         if profile == "avatarforge"
         else ""
     )

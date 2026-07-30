@@ -9270,3 +9270,21 @@ seconds. The focused retry regression passed; the full regression passed 1,181
 tests in 43.89 seconds. Ruff passed and strict mypy reported zero issues across
 59 source files. End-to-end v64 confirmation has not yet run, so v64 is not a
 PASS.
+
+V162 physically passed the V161 orchestration failure point on v64: twenty-five
+tool executions completed with zero orchestration retry, while the workspace
+contained the requested implementation and tests. Validation still could not
+reach an accepted terminal verdict. Five successful pytest commands were
+filtered, and four exact unfiltered commands exited 4 because the Codex tool's
+default login shell selected Python 3.11 while `PYTHONPATH` referenced the
+mounted Python 3.13 environment. The same mounted environment imported
+`pydantic_core` successfully under the non-login Python 3.13 path. V162 was
+stopped with all evidence and generated files preserved and is not a PASS.
+
+Protocol v65 requires `login=false` for the exact AvatarForge validation
+`exec_command`, in addition to the existing prohibition on pipes, redirects,
+and output filters. This preserves the mounted Python 3.13 ABI without changing
+the validation command or production runtime. Both focused harness tests
+passed; the full regression passed 1,181 tests in 50.86 seconds. Ruff passed and
+strict mypy reported zero issues across 59 source files. End-to-end v65
+confirmation has not yet run, so v65 is not a PASS.

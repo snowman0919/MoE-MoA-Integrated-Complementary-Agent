@@ -432,6 +432,7 @@ def test_avatarforge_opencode_bounds_agent_steps(
         for value in command
     )
     assert "host 검증 명령이 입력 문서의 이전 검증 명령보다 우선" in command[-1]
+    assert "login=false" in command[-1]
     assert "agent" not in unbounded
 
 
