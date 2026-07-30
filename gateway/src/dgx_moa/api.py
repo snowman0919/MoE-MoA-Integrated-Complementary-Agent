@@ -52,6 +52,7 @@ from .inference import (
     compaction_request_index,
     elapsed_ms,
     has_matching_tool_result,
+    remap_reused_tool_call_ids,
     title_request_index,
     tool_result_call_ids,
     unsafe_frontier_correction_tool_call,
@@ -2065,6 +2066,22 @@ def create_app(
                     scoped_request,
                     f"{usage_request_id}:{stage}",
                 )
+                remapped_ids = remap_reused_tool_call_ids(
+                    response,
+                    {
+                        str(execution.get("tool_call_id"))
+                        for execution in state.tool_executions
+                        if execution.get("tool_call_id")
+                    }
+                    | set(state.pending_tool_call_ids),
+                    f"{usage_request_id}:{stage}",
+                )
+                if remapped_ids:
+                    request.app.state.store.event(
+                        state_session_id,
+                        "provider_tool_call_ids_remapped",
+                        {"provider": "frontier", "count": remapped_ids},
+                    )
                 request.app.state.store.event(
                     state_session_id,
                     "executor_remote_completed",

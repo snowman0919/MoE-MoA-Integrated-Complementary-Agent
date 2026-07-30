@@ -18,6 +18,7 @@ from dgx_moa.config import ImageGenerationConfig, Settings
 from dgx_moa.controller import fingerprint
 from dgx_moa.inference import (
     has_matching_tool_result,
+    remap_reused_tool_call_ids,
     unsafe_frontier_correction_tool_call,
 )
 from dgx_moa.lifecycle import (
@@ -48,6 +49,27 @@ def test_runtime_version_is_2_0(settings: Settings) -> None:
 
     assert __version__ == "2.0.0"
     assert app.version == "2.0.0"
+
+
+def test_reused_frontier_tool_call_id_is_remapped() -> None:
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {"id": "call-reused"},
+                        {"id": "call-new"},
+                    ]
+                }
+            }
+        ]
+    }
+
+    assert remap_reused_tool_call_ids(response, {"call-reused"}, "attempt") == 1
+    calls = response["choices"][0]["message"]["tool_calls"]
+    assert calls[0]["id"].startswith("call_")
+    assert calls[0]["id"] != "call-reused"
+    assert calls[1]["id"] == "call-new"
 
 
 @pytest.mark.parametrize(
@@ -1300,7 +1322,18 @@ def test_repeated_inspection_routes_executor_to_frontier(
         exhausted_events = app.state.store.events(rejected_id)
         assert len(remote_requests) == correction_remote_calls
         executed_retry_id = "frontier-correction-executed-unresolved"
-        executed_retry = rejected.model_copy(update={"session_id": executed_retry_id})
+        executed_retry = rejected.model_copy(
+            update={
+                "session_id": executed_retry_id,
+                "tool_executions": [
+                    *rejected.tool_executions,
+                    {
+                        "tool_call_id": "call-frontier-correction",
+                        "filesystem_effect": {"unknown_effect": True},
+                    },
+                ],
+            }
+        )
         app.state.store.save(executed_retry)
         executed_retry_first = client.post(
             "/v1/chat/completions",
@@ -1462,6 +1495,10 @@ def test_repeated_inspection_routes_executor_to_frontier(
     assert any(
         event["event_type"] == "frontier_correction_tool_retry_completed"
         for event in correction_events
+    )
+    assert any(
+        event["event_type"] == "provider_tool_call_ids_remapped"
+        for event in executed_retry_events
     )
     assert executed_retry_first.status_code == 200
     assert executed_retry_second.status_code == 200

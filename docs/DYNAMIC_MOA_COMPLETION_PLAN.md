@@ -456,6 +456,16 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v23은 local Reviewer의 `status+findings` semantic fingerprint를
   기존 engineering-loop duplicate failure budget에 등록하고, 세 번째 동일
   finding set에서 fail closed한다.
+- protocol v24는 고정 정책·schema·목표·제약을 동적 plan·evidence보다 먼저
+  배치하고, cache 미보고를 실제 0과 구분하며 검증된 cache만 Loop token
+  예산에서 차감한다.
+- protocol v25는 Planner·Reviewer의 analysis와 final 두 호출이 모두 cache를
+  보고한 경우에만 합계를 기록한다. 하나라도 미보고면 부분값 대신 unknown을
+  보존한다.
+- protocol v26은 Frontier가 세션 안에서 이미 실행된 tool call ID를 재사용하면
+  provider dispatch 단위의 deterministic ID로 remap한다. ID 재사용 때문에
+  성공한 host mutation 결과가 duplicate로 누락되어 correction retry가
+  고갈되는 것을 막되, provider pinning과 안전한 tool-call 검증은 유지한다.
 
 ## 10. Release, rollback, 배포
 

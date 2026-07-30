@@ -145,6 +145,23 @@ def coerce_responses_tools(
     return chat_tools or None
 
 
+def remap_reused_tool_call_ids(
+    response: dict[str, Any], used_ids: set[str], namespace: str
+) -> int:
+    remapped = 0
+    choices = response.get("choices") or []
+    message = choices[0].get("message", {}) if choices else {}
+    for index, call in enumerate(message.get("tool_calls") or []):
+        call_id = call.get("id") if isinstance(call, dict) else None
+        if not isinstance(call_id, str) or not call_id:
+            continue
+        if call_id in used_ids:
+            call["id"] = f"call_{uuid.uuid5(uuid.NAMESPACE_URL, f'{namespace}:{index}').hex}"
+            remapped += 1
+        used_ids.add(str(call["id"]))
+    return remapped
+
+
 def responses_payload(
     model: str,
     chat_response: dict[str, Any] | None = None,

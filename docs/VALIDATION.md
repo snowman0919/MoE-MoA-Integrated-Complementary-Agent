@@ -8320,3 +8320,38 @@ known/unknown dual-call cases passed `3/3`; related provider, specialist,
 Controller, usage, API, and long-horizon coverage passed `474/474`. The shared
 client, analyzer, and quality contract now use
 `avatarforge-long-goal-v25`; a fresh run is required.
+
+AvatarForge V95 exercised protocol v25 through the real Codex client,
+authenticated loopback Gateway, Dynamic MoA, both SGLang candidates, the
+remote Ollama Reasoner, Codex OAuth collaboration, and host tools. It reached
+step 75 with 13 commits, 14 successful `apply_patch` executions, 51 successful
+and two failed command executions, 11 completed local reviews, ten Frontier
+reviews, and no provider failure before the terminal fault. No checkpoint was
+sealed, the final worktree retained one uncommitted evidence change, and V95
+is diagnostic only.
+
+The final Frontier correction returned a safe native `apply_patch` call and
+Codex recorded a successful local custom-tool output. The next continuation
+did not produce a Gateway `tool_execution_recorded` event. The correction
+guard then failed closed, Codex retried the failed stream six times, and the
+run ended `CLIENT_CANCELLED` with `client_nonzero_exit` at checkpoint zero.
+The Codex rollout contained 15 custom calls but only 14 distinct call IDs; the
+last ID occurred twice. Controller observation correctly suppresses an
+already-executed call ID, so the provider's reused ID made the new successful
+mutation look like a duplicate and exhausted correction verification.
+
+The immutable V95 Gateway DB and failure sidecar SHA-256 values are
+`aa4f2dd94fe3bfe0a2956a01487899e44d147d951c55a023e4226c32d45ef5f6`
+and
+`0ddc75e02bfbbde05a96d61723a8dd0f8a73a344af5dfe2285fa5972798dd6fd`.
+Protocol v26 remaps only provider tool-call IDs that collide with a pending or
+already executed ID, using a deterministic per-dispatch ID, and emits only a
+provider/count observation. It does not weaken tool safety, correction
+validation, provider pinning, or fail-closed review. The focused helper and
+Frontier correction checks passed `2/2`; API and Responses streaming coverage
+passed `303/303`; long-horizon and client-quality coverage passed `60/60`; the
+complete suite passed `1160/1160` with the existing Starlette warning. Ruff
+passed and strict mypy reported zero errors across 59 source files. The v26
+completion plan is frozen at SHA-256
+`f9fbb7916c1736465f3155037cf8bf71268e2a1a3e94eca2da5dfb90c83da314`.
+A fresh v26 run is required; V95 cannot be promoted.
