@@ -8812,3 +8812,33 @@ quality-contract SHA-256 values are respectively
 `5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
 and
 `2922d2ff695eb84038b1624d967817552dcc21bfe76fe63eea50cd07f0969f7d`.
+
+V127 reduced the Codex OAuth stderr to the single safe diagnostic term
+`directory`. The gateway had been started with a non-Git project root, while
+the mounted candidate worktree's `.git` file referenced an unmounted external
+gitdir. V128 corrected the project root to the run's self-contained isolated
+clone, but its outer runner used the image's `dgx-moa` entrypoint instead of
+the previously explicit Python entrypoint and exited before starting a client.
+Both immutable runs remain diagnostic failures.
+
+V129 kept the self-contained Git project root and restored the Python runner
+entrypoint. Codex OAuth Frontier recovered physically: seven
+`gpt-5.6-sol` primary Executor calls completed. The same run completed 65 local
+Executor calls, four local Reasoner calls, one local Planner call, and six
+local Reviewer calls; no OpenRouter provider was selected. Phase 0 produced
+three clean commits, but OpenCode continued for more than 15 minutes and 65
+Gateway calls, then recreated overlapping root-level implementation and test
+files and left five dirty entries without terminal checkpoint evidence. V129
+is therefore a quality and bounded-execution failure, not a PASS.
+
+Protocol v45 uses OpenCode's native `agent.build.steps` limit of 32 for each
+AvatarForge checkpoint. Reaching that limit without a terminal clean
+checkpoint remains a failure; the broader journal profile is unchanged. The
+focused regression passed 35 tests and Ruff passed. After synchronizing the
+analyzer protocol constant, the full regression passed 1,175 tests in 53.75
+seconds; Ruff passed and strict mypy reported zero issues across 59 source
+files. The v45 completion-plan and quality-contract SHA-256 values are
+respectively
+`5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
+and
+`7005b151f852010de3bbeef740991f08b12887589f4165fd16607d7dc85d2599`.

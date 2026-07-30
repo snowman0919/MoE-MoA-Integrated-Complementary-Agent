@@ -395,6 +395,18 @@ def test_client_metrics_and_provider_pinning_are_aggregated_without_payloads(
     ]
 
 
+def test_avatarforge_opencode_bounds_agent_steps(tmp_path: Path) -> None:
+    args = arguments(tmp_path, "opencode")
+    args.profile = "avatarforge"
+
+    bounded = json.loads(MODULE.opencode_config(args, "private-session"))
+    args.profile = "journal"
+    unbounded = json.loads(MODULE.opencode_config(args, "private-session"))
+
+    assert bounded["agent"]["build"]["steps"] == MODULE.AVATARFORGE_OPENCODE_STEPS
+    assert "agent" not in unbounded
+
+
 def test_provider_pinning_is_scoped_to_each_call(tmp_path: Path) -> None:
     database = tmp_path / "state.db"
     with sqlite3.connect(database) as connection:

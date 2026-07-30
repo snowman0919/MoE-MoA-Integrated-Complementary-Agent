@@ -30,7 +30,8 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v44"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v45"
+AVATARFORGE_OPENCODE_STEPS = 32
 AVATARFORGE_PHASES = (
     "avatarforge_phase_0_contract",
     "avatarforge_phase_1_plugin",
@@ -297,6 +298,11 @@ def client_prompt(
 def opencode_config(args: argparse.Namespace, gateway_session: str) -> str:
     value = {
         "$schema": "https://opencode.ai/config.json",
+        **(
+            {"agent": {"build": {"steps": AVATARFORGE_OPENCODE_STEPS}}}
+            if getattr(args, "profile", "journal") == "avatarforge"
+            else {}
+        ),
         "provider": {
             "dgx-moa": {
                 "npm": "@ai-sdk/openai-compatible",
