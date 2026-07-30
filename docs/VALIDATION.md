@@ -9342,3 +9342,28 @@ poll. The focused regression passed two tests; the full regression passed 1,183
 tests in 43.56 seconds. Ruff passed and strict mypy reported zero issues across
 59 source files. End-to-end v68 confirmation has not yet run, so v68 is not a
 PASS.
+
+V166 did not reach v68 confirmation. Its manually reconstructed gateway omitted
+the Codex release directory from `PATH`, so six planned-complex-change Frontier
+dispatches failed immediately with `FileNotFoundError: codex`. Local Reasoner,
+Planner, and Executor calls completed before that harness configuration error.
+V166 was stopped with its database and workspace preserved and is not a PASS.
+
+V167 restored the physically verified Codex 0.144.6 executable path and
+completed local Reasoner, local Planner, local Reviewer, local Executor, and
+Codex OAuth Frontier calls without OpenRouter fallback. It reached the target
+validation sequence: exact pytest output was partial, two `write_stdin`
+continuations reused session 54085, and the latest continuation was correctly
+classified `rejected_missing_terminal_verdict`. The next response nevertheless
+called `exec_command`. The prompt-only v68 constraint was advisory while the
+API continued exposing every client tool, so V167 was stopped with its database
+and workspace preserved and is not a PASS.
+
+Protocol v69 enforces the pending validation poll at the API tool boundary. The
+latest unfinished continuation session is resolved once and reused by both the
+prompt and request preparation; request preparation exposes only `write_stdin`
+and sets `tool_choice=required` until a terminal verdict arrives. A later
+completed continuation removes both restrictions. Three focused regressions
+passed; the full regression passed 1,184 tests in 47.73 seconds. Ruff passed,
+strict mypy reported zero issues across 59 source files, and `git diff --check`
+passed. End-to-end v69 confirmation has not yet run, so v69 is not a PASS.

@@ -2226,6 +2226,34 @@ class Controller:
             {"evidence_id": evidence_id, "count": len(selections)},
         )
 
+    def pending_validation_poll_session(self, state: SessionState) -> str | int | None:
+        latest = next(
+            (
+                execution
+                for execution in reversed(state.tool_executions)
+                if execution.get("validation_continuation")
+            ),
+            None,
+        )
+        if (
+            not latest
+            or latest.get("validation_evidence_status")
+            != "rejected_missing_terminal_verdict"
+        ):
+            return None
+        arguments = latest.get("normalized_arguments", {})
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                return None
+        session_id = arguments.get("session_id") if isinstance(arguments, dict) else None
+        return (
+            session_id
+            if isinstance(session_id, (str, int)) and not isinstance(session_id, bool)
+            else None
+        )
+
     def prompt_sandwich(
         self,
         role: str,
@@ -2358,34 +2386,14 @@ class Controller:
             if role == "executor" and state.review_status == "rejected"
             else ""
         )
-        latest_continuation = next(
-            (
-                execution
-                for execution in reversed(state.tool_executions)
-                if execution.get("validation_continuation")
-            ),
-            None,
-        )
         validation_poll_constraint = ""
-        if (
-            role == "executor"
-            and latest_continuation
-            and latest_continuation.get("validation_evidence_status")
-            == "rejected_missing_terminal_verdict"
-        ):
-            arguments = latest_continuation.get("normalized_arguments", {})
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except json.JSONDecodeError:
-                    arguments = {}
-            session_id = arguments.get("session_id") if isinstance(arguments, dict) else None
-            if session_id is not None:
-                validation_poll_constraint = (
-                    f"Validation process session {session_id} is still active. Call only "
-                    f"write_stdin with session_id {session_id} until its terminal verdict and "
-                    "exit are observed; do not edit, replan, or start another validation first."
-                )
+        session_id = self.pending_validation_poll_session(state) if role == "executor" else None
+        if session_id is not None:
+            validation_poll_constraint = (
+                f"Validation process session {session_id} is still active. Call only "
+                f"write_stdin with session_id {session_id} until its terminal verdict and "
+                "exit are observed; do not edit, replan, or start another validation first."
+            )
         prompt_artifact = self.prompts.active_artifact(role) if self.prompts else None
         registered_policy = (
             str(prompt_artifact.payload["template"]) if prompt_artifact is not None else None
@@ -3891,7 +3899,28 @@ class Controller:
                     "executor_stall_tools_restricted",
                     {"tools": list(selected_names)},
                 )
-        if implementation_complete and (tool_continuation or progress_retry):
+        pending_validation_session = self.pending_validation_poll_session(state)
+        if pending_validation_session is not None and body.get("tools"):
+            body["tools"] = [
+                tool
+                for tool in body["tools"]
+                if isinstance(tool, dict)
+                and str(tool.get("name") or tool.get("function", {}).get("name"))
+                == "write_stdin"
+            ]
+            available_tools = ("write_stdin",) if body["tools"] else ()
+            if available_tools:
+                body["tool_choice"] = "required"
+            self.store.event(
+                state.session_id,
+                "validation_poll_tools_restricted",
+                {"session_id": pending_validation_session},
+            )
+        if (
+            pending_validation_session is None
+            and implementation_complete
+            and (tool_continuation or progress_retry)
+        ):
             body.pop("tools", None)
             body.pop("tool_choice", None)
             available_tools = ()

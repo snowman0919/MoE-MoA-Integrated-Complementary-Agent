@@ -139,6 +139,45 @@ def test_executor_prompt_pins_only_latest_unfinished_validation_poll(
     assert "Call only write_stdin with session_id 7" not in complete
 
 
+@pytest.mark.asyncio
+async def test_pending_validation_poll_exposes_only_write_stdin(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="validation-poll-tools",
+        objective="implement",
+        tool_executions=[
+            {
+                "validation_continuation": True,
+                "validation_evidence_status": "rejected_missing_terminal_verdict",
+                "normalized_arguments": json.dumps({"session_id": 7}),
+            }
+        ],
+    )
+    request = {
+        "messages": [{"role": "user", "content": "continue"}],
+        "metadata": {},
+        "tools": [
+            {"type": "function", "function": {"name": name, "parameters": {}}}
+            for name in ("exec_command", "write_stdin", "apply_patch")
+        ],
+    }
+
+    prepared = await controller.prepare_executor(
+        state, request, ("executor",), tool_continuation=True
+    )
+
+    assert [tool["function"]["name"] for tool in prepared["tools"]] == ["write_stdin"]
+    assert prepared["tool_choice"] == "required"
+    assert any(
+        event["event_type"] == "validation_poll_tools_restricted"
+        and event["payload"]["session_id"] == 7
+        for event in store.events(state.session_id)
+    )
+
+
 def test_unbounded_codex_oauth_skips_only_the_frontier_specific_budget(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
