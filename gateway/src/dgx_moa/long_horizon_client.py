@@ -36,7 +36,7 @@ AVATARFORGE_OPENCODE_AGENT = "avatarforge"
 AVATARFORGE_PYTHON_ROOT = Path("/home/kotori9/dgx-moa-agent/.venv")
 AVATARFORGE_UV_PYTHON_ROOT = Path("/home/kotori9/.local/share/uv/python")
 AVATARFORGE_PYTHON_TARGET = "/tools/avatarforge-venv"
-AVATARFORGE_UV_PYTHON_TARGET = "/tools/avatarforge-python"
+AVATARFORGE_UV_PYTHON_TARGET = str(AVATARFORGE_UV_PYTHON_ROOT)
 AVATARFORGE_PYTHON_BIN = (
     f"{AVATARFORGE_UV_PYTHON_TARGET}/cpython-3.13.13-linux-aarch64-gnu/bin"
 )

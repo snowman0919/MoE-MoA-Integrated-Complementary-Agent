@@ -9180,3 +9180,20 @@ focused filtered-output and failure-resolution tests passed; the full
 regression passed 1,180 tests in 43.72 seconds. Ruff passed and strict mypy
 reported zero issues across 59 source files. Physical v59 confirmation has not
 yet run, so v59 is not a PASS.
+
+V157 physically confirmed that v59 did not accept any filtered validation.
+It created the requested source, test, contract, and state files, then exposed
+a separate launch defect: the mounted AvatarForge venv's Python symlink points
+to `/home/kotori9/.local/share/uv/python`, while the child mounted that root
+only at `/tools/avatarforge-python`. Direct Python validation failed once and
+two subsequent environment attempts exited 127. The run reached 11 iterations
+and eight failures before being stopped for a required code change. V157 is a
+diagnostic epoch, not a PASS.
+
+Protocol v60 mounts the UV Python root at its existing absolute path so the
+read-only venv symlink resolves without copying or rewriting the environment.
+An isolated physical container probe imported pytest under Python 3.13 using
+the exact new mounts. Both focused client-command tests passed; the full
+regression passed 1,180 tests in 48.42 seconds. Ruff passed and strict mypy
+reported zero issues across 59 source files. Physical v60 confirmation has not
+yet run, so v60 is not a PASS.

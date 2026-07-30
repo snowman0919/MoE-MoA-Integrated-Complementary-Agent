@@ -446,6 +446,7 @@ def test_avatarforge_codex_uses_complete_python_runtime(
         args, tmp_path / "state", None, 0, "private-session"
     )
 
+    assert str(MODULE.AVATARFORGE_UV_PYTHON_ROOT) == MODULE.AVATARFORGE_UV_PYTHON_TARGET
     assert (
         f"{MODULE.AVATARFORGE_PYTHON_ROOT}:{MODULE.AVATARFORGE_PYTHON_TARGET}:ro"
         in command
