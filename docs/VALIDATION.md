@@ -9137,3 +9137,17 @@ absolute state paths, read-only root, tmpfs, GPU device, and loopback-only
 listener contract. It started the gateway, runner, and real Codex child on
 protocol v57 with zero initial failures. Its physical result remains in
 progress and is not a PASS.
+
+V155 reached the first real tool continuation before Codex OAuth Frontier
+timed out. The subsequent five client retries hit the paid-fallback path, but
+the configured OpenRouter key file existed only on the host and was not mounted
+into the read-only candidate gateway. Each retry therefore failed closed with
+`FRONTIER_OPENROUTER_AUTH_ERROR`; the client recorded `stream_disconnected`
+and the session ended `CLIENT_CANCELLED`. This is a candidate launch-contract
+failure, not a model-quality result.
+
+V156 adds only the configured OpenRouter key file as an exact-path read-only
+gateway mount while preserving the V155 loopback, tmpfs, GPU, state, PATH, and
+entrypoint contract. The key content is not copied into the workspace or
+evidence. Gateway, runner, and the real Codex child started with zero initial
+failures. V156 remains in progress and is not a PASS.
