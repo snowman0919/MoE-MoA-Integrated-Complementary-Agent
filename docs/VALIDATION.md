@@ -9104,3 +9104,21 @@ respectively
 `5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
 and
 `5c72babec48a2bc085eaef7e2b3227cd0459b98df0520e6574152c898b466584`.
+
+V150 physically exercised protocol v56 without a provider error, stream
+disconnect, or OOM. The first two Reviewer passes each rejected one critical
+verification finding. Executor then ran pytest with an output pipeline and
+redirection; the command exited zero, but its own `head` filter removed the
+terminal pass count before the bounded execution summary was created. Later
+correction attempts included isolated permission, missing-path, and test
+failures while the writable workspace itself remained owned by UID 1000 and
+mounted read-write. V150 remains an immutable in-progress diagnostic epoch and
+is not a PASS.
+
+Protocol v57 tightens the existing rejected-review correction instruction:
+exact validation must run without pipes, redirects, or output filters so the
+terminal verdict reaches Reviewer evidence. No provider or orchestration
+abstraction was added. The focused regression passed one case; the full
+regression passed 1,179 tests in 48.34 seconds. Ruff passed and strict mypy
+reported zero issues across 59 source files. Physical v57 confirmation has not
+yet run, so v57 is not a PASS.

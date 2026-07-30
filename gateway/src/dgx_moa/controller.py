@@ -2305,7 +2305,8 @@ class Controller:
         review_correction_constraint = (
             "The prior Reviewer finding is binding correction evidence. Apply its required "
             "correction directly; when it requests verification or test evidence, run the exact "
-            "current validation command before replanning or editing unrelated files."
+            "current validation command without pipes, redirects, or output filters so its "
+            "terminal verdict is preserved before replanning or editing unrelated files."
             if role == "executor" and state.review_status == "rejected"
             else ""
         )

@@ -109,6 +109,7 @@ def test_executor_prompt_requires_direct_reviewer_correction(
 
     assert "binding correction evidence" not in ordinary
     assert "run the exact current validation command" in correction
+    assert "without pipes, redirects, or output filters" in correction
 
 
 def test_unbounded_codex_oauth_skips_only_the_frontier_specific_budget(
