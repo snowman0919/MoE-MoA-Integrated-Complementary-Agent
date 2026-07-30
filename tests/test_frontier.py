@@ -335,7 +335,7 @@ def test_codex_oauth_environment_excludes_gateway_secrets(
     (
         ("failed to initialize in-process app-server client", "app_server_init"),
         ("argument list too long", "argument_list_too_long"),
-        ("provider returned an unfamiliar failure", "unclassified"),
+        ("provider returned an unfamiliar failure", "non_json_stdout"),
         ("", "empty_error"),
     ),
 )
@@ -343,6 +343,7 @@ def test_frontier_failure_detail_never_returns_payload(
     output: str, expected: str
 ) -> None:
     assert classify_frontier_failure_detail(output) == expected
+    assert classify_frontier_failure_detail("", "unknown stderr") == "stderr_only"
 
 
 @pytest.mark.parametrize(

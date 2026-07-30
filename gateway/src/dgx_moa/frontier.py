@@ -489,13 +489,21 @@ class FrontierExecutionError(RuntimeError):
         self.detail = detail
 
 
-def classify_frontier_failure_detail(output: str) -> str:
+def classify_frontier_failure_detail(stdout: str, stderr: str = "") -> str:
+    output = stdout + "\n" + stderr
     normalized = output.lower()
     patterns = (
         ("failed to initialize in-process app-server client", "app_server_init"),
         ("read-only file system", "read_only_fs"),
         ("argument list too long", "argument_list_too_long"),
+        ("database is locked", "database_locked"),
+        ("resource temporarily unavailable", "resource_busy"),
+        ("failed to read output schema", "output_schema_read"),
         ("unexpected argument", "cli_argument"),
+        ("failed to parse", "parse_failure"),
+        ("invalid value", "invalid_value"),
+        ("not a git repository", "git_repository"),
+        ("broken pipe", "broken_pipe"),
         ("output schema", "output_schema"),
         ("invalid request", "invalid_request"),
         ("stream disconnected", "stream_disconnected"),
@@ -505,7 +513,26 @@ def classify_frontier_failure_detail(output: str) -> str:
     )
     if not output.strip():
         return "empty_error"
-    return next((detail for marker, detail in patterns if marker in normalized), "unclassified")
+    matched = next((detail for marker, detail in patterns if marker in normalized), None)
+    if matched is not None:
+        return matched
+    event_types: set[str] = set()
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and isinstance(event.get("type"), str):
+            event_types.add(event["type"])
+    if "turn.failed" in event_types:
+        return "turn_failed"
+    if "error" in event_types:
+        return "error_event"
+    if event_types:
+        return "json_event_failure"
+    if stdout.strip():
+        return "non_json_stdout"
+    return "stderr_only" if stderr.strip() else "unclassified"
 
 
 def codex_usage(output: str) -> tuple[int | None, int | None, int | None]:
@@ -732,7 +759,7 @@ class CodexOAuthCollaboration:
                     failure = classify_frontier_failure(completed.stdout + completed.stderr)
                     final_failure = failure
                     final_failure_detail = classify_frontier_failure_detail(
-                        completed.stdout + completed.stderr
+                        completed.stdout, completed.stderr
                     )
                     has_fallback = profile_index + 1 < len(self.providers)
                     if failure in PROFILE_FAILOVER_FAILURES and has_fallback:

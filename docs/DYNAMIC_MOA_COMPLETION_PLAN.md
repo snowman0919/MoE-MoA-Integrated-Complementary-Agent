@@ -523,6 +523,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
   결과는 진단 자료로만 보존한다.
 - protocol v42는 redacted Frontier evidence를 process argv가 아니라
   Codex 공식 stdin 모드로 전달한다. v41 결과는 진단 자료로만 보존한다.
+- protocol v43은 raw output 없이 Codex JSON event 실패와 stderr-only
+  실패를 구분하고 고정된 CLI 오류 범주를 확장한다. v42 결과는 진단
+  자료로만 보존한다.
 
 ## 10. Release, rollback, 배포
 

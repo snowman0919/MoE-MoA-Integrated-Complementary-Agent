@@ -8790,3 +8790,14 @@ quality-contract SHA-256 values are respectively
 `ba7cabbc53d847a687caec67ce8892e7dd43cafd9dec0c2565c447823ee4a9b0`
 and
 `fb35d51c21390f1e7b76e9a3ef9b248deaf0b40fa71b18af08e81f9895bfe633`.
+
+V125 used stdin transport but the real Executor payload still returned the
+generic protocol class, while both short and 180,000-character synthetic
+executor-schema probes passed. V125 remains diagnostic. Protocol v43
+distinguishes JSON error events, stderr-only exits, and a wider fixed set of
+CLI failure categories without retaining output. Its focused regression
+passed 74 tests; Ruff and strict mypy passed. The v43 completion-plan and
+quality-contract SHA-256 values are respectively
+`8289123424d8ba4fa6fefad50d30674e4883965fb434650bff079db505ae1c66`
+and
+`d9325c410c49ac1cfa151fffbcd84e021881f18e4a1f7ba1a9abc08b31be4a7b`.
