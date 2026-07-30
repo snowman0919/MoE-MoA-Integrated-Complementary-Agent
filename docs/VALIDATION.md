@@ -9288,3 +9288,20 @@ the validation command or production runtime. Both focused harness tests
 passed; the full regression passed 1,181 tests in 50.86 seconds. Ruff passed and
 strict mypy reported zero issues across 59 source files. End-to-end v65
 confirmation has not yet run, so v65 is not a PASS.
+
+V163 physically confirmed that `login=false` removed the Python ABI mismatch:
+the first exact unfiltered pytest command exited zero under the mounted Python
+3.13 environment. Its returned tool observation contained only 213 stdout
+bytes and stopped at 12 percent without truncation, while the underlying pytest
+process was still running. The Codex child had treated a yielded `exec_command`
+session as complete instead of polling it, so v61 correctly rejected the
+missing terminal verdict. V163 was stopped with its generated source preserved
+and is a diagnostic epoch, not a PASS.
+
+Protocol v66 requires a yielded validation execution to reuse its existing
+session ID through `write_stdin` until both process exit and terminal verdict
+are observed. It forbids starting a replacement validation while that session
+is active. Both focused harness tests passed; the full regression passed 1,181
+tests in 45.57 seconds. Ruff passed and strict mypy reported zero issues across
+59 source files. End-to-end v66 confirmation has not yet run, so v66 is not a
+PASS.

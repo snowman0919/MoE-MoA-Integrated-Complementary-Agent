@@ -433,6 +433,7 @@ def test_avatarforge_opencode_bounds_agent_steps(
     )
     assert "host 검증 명령이 입력 문서의 이전 검증 명령보다 우선" in command[-1]
     assert "login=false" in command[-1]
+    assert "같은 session_id를 write_stdin" in command[-1]
     assert "agent" not in unbounded
 
 

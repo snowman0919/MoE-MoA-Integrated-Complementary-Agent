@@ -278,7 +278,9 @@ def client_prompt(
     validation_authority = (
         "이 protocol epoch에서는 위 host 검증 명령이 입력 문서의 이전 검증 "
         "명령보다 우선한다. exec_command로 검증할 때 login=false를 명시하고, "
-        "명령을 pipe·redirect·output filter나 다른 shell로 감싸지 마라. "
+        "명령을 pipe·redirect·output filter나 다른 shell로 감싸지 마라. 실행이 "
+        "session_id와 함께 yield되면 새 검증을 시작하지 말고 같은 session_id를 "
+        "write_stdin으로 종료 코드와 terminal verdict가 나올 때까지 poll하라. "
         if profile == "avatarforge"
         else ""
     )
