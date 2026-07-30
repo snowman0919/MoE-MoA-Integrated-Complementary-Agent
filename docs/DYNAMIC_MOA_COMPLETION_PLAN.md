@@ -513,6 +513,8 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v38은 OpenCode의 디렉터리 단위 외부 접근 계약에 맞춰 동결
   입력 각각의 부모 디렉터리만 허용한다. 전체 attachments와 그 밖의 외부
   경로는 계속 deny하며 v37 결과는 진단 자료로만 보존한다.
+- protocol v39는 OpenCode 공식 permission glob 계약에 따라 각 신뢰
+  디렉터리 허용 패턴에 `/**`를 붙인다. v38 결과는 진단 자료로만 보존한다.
 
 ## 10. Release, rollback, 배포
 

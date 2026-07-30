@@ -8735,3 +8735,14 @@ values are respectively
 `234ccd39c939cf3f554fbea4298ef9b53071a623c18c203dd8f702d362917596`
 and
 `b9a0bf9cdfcc60c9361d65a7328f2530092da8e3f6566000af91c7452ee9fbdb`.
+
+V120 confirmed that a bare trusted-directory path still does not match a file
+below it under OpenCode's permission glob rules. The official permission
+contract requires a recursive `/**` suffix. V120 remains a diagnostic failure.
+Protocol v39 applies that suffix only to the isolated workspace and frozen
+input parent directories while retaining the global deny. Its focused
+regression passed 34 tests, Ruff passed, and strict mypy reported zero issues.
+The v39 completion-plan and quality-contract SHA-256 values are respectively
+`03567278100679ed8d1011d88fb018abff99bbbe32dda32f6ba042759a234188`
+and
+`99cd69ab949653a15cf5bbbccb101785ef7863e5edd9e83aa0f75f8837a5efab`.
