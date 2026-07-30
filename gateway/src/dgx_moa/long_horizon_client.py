@@ -30,7 +30,7 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v50"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v51"
 AVATARFORGE_OPENCODE_STEPS = 32
 AVATARFORGE_OPENCODE_AGENT = "avatarforge"
 AVATARFORGE_PYTHON_ROOT = Path("/home/kotori9/dgx-moa-agent/.venv")

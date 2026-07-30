@@ -355,7 +355,7 @@ production defaults, with the following frozen Loop Engineering ceilings:
 `iterations=256`, `tool_calls=1000`, `reasoner_reentries=256`,
 `planner_calls=32`, `reviewer_calls=64`, `frontier_calls=128`,
 `tokens=8000000`, `external_cost_usd=10`, and
-`wall_clock_seconds=36000`. Four consecutive no-progress iterations terminate
+`wall_clock_seconds=36000`. Two consecutive no-progress iterations terminate
 the task; any concrete progress resets that counter. These are fail-safe
 ceilings, not work targets;
 the task still ends as soon as its checkpoint contract is satisfied. OpenRouter

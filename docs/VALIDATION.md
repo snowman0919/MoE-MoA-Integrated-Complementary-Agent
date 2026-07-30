@@ -8964,3 +8964,26 @@ respectively
 `5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
 and
 `dc9812b4380040a525f32c29480d10d2259d21fa4facfc702f9aa9c0740068f9`.
+
+V138 started with protocol v50 but inherited a stale external
+`DGX_MOA_LOOP_ENGINEERING` override that materialized
+`no_progress_iteration_limit=2`. It was stopped as an invalid diagnostic epoch
+before evaluation because the physically active policy did not match the
+frozen contract.
+
+V139 changed only that external override to four and physically confirmed the
+active limit in session state. It completed three Codex OAuth primary Executor,
+33 local Executor, one local Planner, four local Reasoner, and no Reviewer
+calls. Eight shell results exited zero, but the model produced no new evidence
+for four consecutive iterations, created an alternate `source/` tree without a
+clean commit, and terminated blocked before review. The higher limit did not
+improve quality or produce a checkpoint; V139 is a failed quality diagnostic.
+
+Protocol v51 restores the previously verified consecutive no-progress limit of
+two. The focused guard regression passed 18 tests; the full regression passed
+1,175 tests in 44.50 seconds. Ruff passed and strict mypy reported zero issues
+across 59 source files. This rollback does not relabel any v50 evidence. The
+v51 completion-plan and quality-contract SHA-256 values are respectively
+`5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
+and
+`33fe7aa4e19a383d62887af3c30160c75c269b1c02752229c548a6c552d1b648`.
