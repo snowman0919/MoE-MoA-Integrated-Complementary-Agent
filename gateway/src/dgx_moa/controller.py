@@ -2929,6 +2929,8 @@ class Controller:
             if progress_retry
             else "frontier_correction_required"
             if state.frontier_correction_required
+            else "local_reviewer_correction_required"
+            if state.review_status == "rejected"
             else None
         )
         if reuse_trigger is not None:

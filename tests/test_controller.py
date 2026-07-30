@@ -3023,10 +3023,11 @@ async def test_tool_continuation_defers_reviewer_until_validation(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("progress_retry", "correction_required", "reuse_trigger"),
+    ("progress_retry", "correction_required", "review_status", "reuse_trigger"),
     [
-        (True, False, "responses_progress_retry"),
-        (False, True, "frontier_correction_required"),
+        (True, False, "approved", "responses_progress_retry"),
+        (False, True, "rejected_frontier", "frontier_correction_required"),
+        (False, False, "rejected", "local_reviewer_correction_required"),
     ],
 )
 async def test_continuation_reuses_review_without_spending_review_budget(
@@ -3034,6 +3035,7 @@ async def test_continuation_reuses_review_without_spending_review_budget(
     stub_provider: StubProvider,
     progress_retry: bool,
     correction_required: bool,
+    review_status: str,
     reuse_trigger: str,
 ) -> None:  # type: ignore[no-untyped-def]
     store = StateStore(settings.state_db)
@@ -3043,7 +3045,7 @@ async def test_continuation_reuses_review_without_spending_review_budget(
         objective="Implement rate_limiter.py in this repository.",
         runtime_mode="orchestrated",
         roles_required=["reasoner", "executor"],
-        review_status="rejected_frontier",
+        review_status=review_status,
         frontier_correction_required=correction_required,
         tool_executions=[
             {
