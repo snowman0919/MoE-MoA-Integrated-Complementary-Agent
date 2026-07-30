@@ -9322,3 +9322,23 @@ existing failure-resolution path. The focused initial/continuation cases
 passed; the full regression passed 1,182 tests in 45.49 seconds. Ruff passed and
 strict mypy reported zero issues across 59 source files. End-to-end v67
 confirmation has not yet run, so v67 is not a PASS.
+
+V165 physically confirmed v67 association: `write_stdin` executions retained
+their real poll arguments, carried `validation_continuation=true`, and inherited
+the original pytest command for evidence classification. The first validation
+failed and was corrected; later polls returned partial output and were
+correctly rejected for a missing terminal verdict. The Executor then performed
+unrelated work before polling the still-active process again, so no accepted
+terminal verdict was recorded. V165 produced clean Phase 0 commit `ffa4631`,
+was stopped with its database and remaining generated files preserved, and is
+not a PASS.
+
+Protocol v68 pins the Executor to the session ID from the latest unfinished
+validation continuation. Until that session produces both process exit and a
+terminal verdict, the prompt permits only `write_stdin` for that session and
+forbids editing, replanning, or starting another validation. A later completed
+continuation removes the constraint instead of reviving an older incomplete
+poll. The focused regression passed two tests; the full regression passed 1,183
+tests in 43.56 seconds. Ruff passed and strict mypy reported zero issues across
+59 source files. End-to-end v68 confirmation has not yet run, so v68 is not a
+PASS.

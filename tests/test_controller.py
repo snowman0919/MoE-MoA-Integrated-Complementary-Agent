@@ -112,6 +112,33 @@ def test_executor_prompt_requires_direct_reviewer_correction(
     assert "without pipes, redirects, or output filters" in correction
 
 
+def test_executor_prompt_pins_only_latest_unfinished_validation_poll(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="validation-poll", objective="implement")
+    state.tool_executions.append(
+        {
+            "validation_continuation": True,
+            "validation_evidence_status": "rejected_missing_terminal_verdict",
+            "normalized_arguments": json.dumps({"session_id": 7}),
+        }
+    )
+
+    pending = controller.prompt_sandwich("executor", state, "partial output", "continue")
+    assert "Call only write_stdin with session_id 7" in pending
+
+    state.tool_executions.append(
+        {
+            "validation_continuation": True,
+            "validation_evidence_status": "accepted",
+            "normalized_arguments": json.dumps({"session_id": 7}),
+        }
+    )
+    complete = controller.prompt_sandwich("executor", state, "12 passed", "continue")
+    assert "Call only write_stdin with session_id 7" not in complete
+
+
 def test_unbounded_codex_oauth_skips_only_the_frontier_specific_budget(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

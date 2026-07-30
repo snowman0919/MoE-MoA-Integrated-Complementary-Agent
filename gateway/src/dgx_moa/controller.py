@@ -2358,6 +2358,34 @@ class Controller:
             if role == "executor" and state.review_status == "rejected"
             else ""
         )
+        latest_continuation = next(
+            (
+                execution
+                for execution in reversed(state.tool_executions)
+                if execution.get("validation_continuation")
+            ),
+            None,
+        )
+        validation_poll_constraint = ""
+        if (
+            role == "executor"
+            and latest_continuation
+            and latest_continuation.get("validation_evidence_status")
+            == "rejected_missing_terminal_verdict"
+        ):
+            arguments = latest_continuation.get("normalized_arguments", {})
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+            session_id = arguments.get("session_id") if isinstance(arguments, dict) else None
+            if session_id is not None:
+                validation_poll_constraint = (
+                    f"Validation process session {session_id} is still active. Call only "
+                    f"write_stdin with session_id {session_id} until its terminal verdict and "
+                    "exit are observed; do not edit, replan, or start another validation first."
+                )
         prompt_artifact = self.prompts.active_artifact(role) if self.prompts else None
         registered_policy = (
             str(prompt_artifact.payload["template"]) if prompt_artifact is not None else None
@@ -2388,6 +2416,8 @@ class Controller:
                 + mcp_fallback_constraint
                 + " "
                 + review_correction_constraint
+                + " "
+                + validation_poll_constraint
                 + " "
                 + tool_constraint,
                 "ROLE CONTEXT\n"
