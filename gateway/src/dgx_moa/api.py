@@ -2567,6 +2567,7 @@ def create_app(
                                     "failure_detail": getattr(
                                         error, "detail", "unclassified"
                                     ),
+                                    "failure_terms": getattr(error, "terms", []),
                                     "routing_reason": executor_routing_reason,
                                 },
                             )

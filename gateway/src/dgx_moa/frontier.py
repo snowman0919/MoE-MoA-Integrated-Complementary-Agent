@@ -484,9 +484,48 @@ class FrontierCollaborationResult(BaseModel):
 
 
 class FrontierExecutionError(RuntimeError):
-    def __init__(self, code: str, detail: str) -> None:
+    def __init__(self, code: str, detail: str, terms: list[str]) -> None:
         super().__init__(code)
         self.detail = detail
+        self.terms = terms
+
+
+SAFE_FAILURE_TERMS = frozenset(
+    {
+        "access",
+        "argument",
+        "busy",
+        "configuration",
+        "context",
+        "create",
+        "database",
+        "denied",
+        "directory",
+        "failed",
+        "file",
+        "input",
+        "invalid",
+        "locked",
+        "model",
+        "open",
+        "output",
+        "parse",
+        "permission",
+        "prompt",
+        "read",
+        "request",
+        "resource",
+        "schema",
+        "stdin",
+        "temporary",
+        "unavailable",
+    }
+)
+
+
+def frontier_failure_terms(output: str) -> list[str]:
+    words = set(re.findall(r"[a-z]+", output.lower()))
+    return sorted(words & SAFE_FAILURE_TERMS)
 
 
 def classify_frontier_failure_detail(stdout: str, stderr: str = "") -> str:
@@ -710,6 +749,7 @@ class CodexOAuthCollaboration:
             selected_profile = ""
             final_failure = "FRONTIER_PROTOCOL_ERROR"
             final_failure_detail = "unclassified"
+            final_failure_terms: list[str] = []
             validated_result: dict[str, Any] | None = None
             validation_error: OSError | ValueError | None = None
             for profile_index, (profile, provider) in enumerate(self.providers):
@@ -761,6 +801,9 @@ class CodexOAuthCollaboration:
                     final_failure_detail = classify_frontier_failure_detail(
                         completed.stdout, completed.stderr
                     )
+                    final_failure_terms = frontier_failure_terms(
+                        completed.stdout + "\n" + completed.stderr
+                    )
                     has_fallback = profile_index + 1 < len(self.providers)
                     if failure in PROFILE_FAILOVER_FAILURES and has_fallback:
                         completed = None
@@ -805,7 +848,11 @@ class CodexOAuthCollaboration:
                         started,
                     )
                 self._failed()
-                raise FrontierExecutionError(final_failure, final_failure_detail)
+                raise FrontierExecutionError(
+                    final_failure,
+                    final_failure_detail,
+                    final_failure_terms,
+                )
             assert validated_result is not None
             result = validated_result
             prompt, completion, cached = codex_usage(completed.stdout)

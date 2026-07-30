@@ -649,6 +649,7 @@ def test_busy_executor_remote_stream_failure_is_observable(
             "failure_class": "RuntimeError",
             "failure_code": "FRONTIER_OPENROUTER_FAILURE",
             "failure_detail": "unclassified",
+            "failure_terms": [],
             "routing_reason": "local_busy",
         }
 

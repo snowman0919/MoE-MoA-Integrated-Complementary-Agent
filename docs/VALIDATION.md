@@ -8801,3 +8801,14 @@ quality-contract SHA-256 values are respectively
 `8289123424d8ba4fa6fefad50d30674e4883965fb434650bff079db505ae1c66`
 and
 `d9325c410c49ac1cfa151fffbcd84e021881f18e4a1f7ba1a9abc08b31be4a7b`.
+
+V126 narrowed the real Executor failure to a stderr-only Codex CLI exit; no
+raw output was retained. Protocol v44 records only the intersection with a
+small fixed vocabulary of generic diagnostic terms so the next run can
+identify the failing initialization boundary without exposing a sentence,
+path, payload, or credential. Its focused regression passed 75 tests; Ruff
+and strict mypy passed after import normalization. The v44 completion-plan and
+quality-contract SHA-256 values are respectively
+`5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
+and
+`2922d2ff695eb84038b1624d967817552dcc21bfe76fe63eea50cd07f0969f7d`.

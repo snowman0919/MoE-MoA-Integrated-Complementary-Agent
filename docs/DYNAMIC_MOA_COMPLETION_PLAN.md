@@ -526,6 +526,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v43은 raw output 없이 Codex JSON event 실패와 stderr-only
   실패를 구분하고 고정된 CLI 오류 범주를 확장한다. v42 결과는 진단
   자료로만 보존한다.
+- protocol v44는 stderr 문장을 저장하지 않고 사전 승인된 일반 진단
+  단어의 교집합만 sanitized failure event에 기록한다. v43 결과는 진단
+  자료로만 보존한다.
 
 ## 10. Release, rollback, 배포
 

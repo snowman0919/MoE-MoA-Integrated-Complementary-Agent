@@ -24,6 +24,7 @@ from dgx_moa.frontier import (
     codex_usage,
     evaluate_frontier_candidate,
     frontier_eligible,
+    frontier_failure_terms,
     frontier_invocation_limit_reached,
     load_frontier_config,
     normalize_openrouter_tool_calls,
@@ -344,6 +345,11 @@ def test_frontier_failure_detail_never_returns_payload(
 ) -> None:
     assert classify_frontier_failure_detail(output) == expected
     assert classify_frontier_failure_detail("", "unknown stderr") == "stderr_only"
+    assert frontier_failure_terms("failed to read secret schema at /private/path") == [
+        "failed",
+        "read",
+        "schema",
+    ]
 
 
 @pytest.mark.parametrize(
