@@ -7,6 +7,15 @@ from .config import Limits
 from .security import redact
 
 
+def summarize_text(text: str, limit: int = 500) -> str:
+    safe = str(redact(text))
+    if len(safe) <= limit:
+        return safe
+    marker = "\n...[truncated]...\n"
+    head = (limit - len(marker)) // 2
+    return safe[:head] + marker + safe[-(limit - len(marker) - head) :]
+
+
 def compress_text(text: str, limits: Limits) -> str:
     if len(text) <= limits.max_tool_output_characters:
         return str(redact(text))

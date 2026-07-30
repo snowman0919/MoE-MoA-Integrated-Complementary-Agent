@@ -13,7 +13,7 @@ from typing import Any, Literal, cast
 
 import httpx
 
-from .compression import compress_messages, compress_text
+from .compression import compress_messages, compress_text, summarize_text
 from .config import Settings
 from .evidence import EvidenceEdge, EvidenceNode, classify_evidence
 from .evolution import PromptRegistry
@@ -1608,8 +1608,8 @@ class Controller:
                 "exit_code": result["exit_code"],
                 "stdout_bytes": len(result["stdout"].encode()),
                 "stderr_bytes": len(result["stderr"].encode()),
-                "stdout_summary": result["stdout"][:500],
-                "stderr_summary": result["stderr"][:500],
+                "stdout_summary": summarize_text(result["stdout"]),
+                "stderr_summary": summarize_text(result["stderr"]),
                 "truncated": result["truncated"],
                 "failure_class": failure_class,
                 "filesystem_effect": effect,

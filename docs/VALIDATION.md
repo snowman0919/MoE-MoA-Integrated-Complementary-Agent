@@ -9022,6 +9022,27 @@ SHA-256 values are respectively
 and
 `5c72babec48a2bc085eaef7e2b3227cd0459b98df0520e6574152c898b466584`.
 
+V149 physically exercised v55 for about 12 minutes. It added the requested
+Phase 0 test, ran pytest repeatedly, and ultimately issued the exact unpiped
+validation command twice with exit zero. The Reviewer nevertheless repeated
+`MISSING_TEST_EVIDENCE` three times and the loop failed closed at the duplicate
+finding limit with no commit and one dirty entry. Inspection showed that the
+500-character execution summary retained only pytest progress prefixes and
+dropped the final pass-count suffix. The Reviewer therefore had no trustworthy
+pass-count evidence; V149 is a telemetry/evidence failure, not a PASS.
+
+Protocol v56 replaces the execution record's head-only stdout/stderr slice with
+one redacted, fixed-size head-and-tail summary. This preserves command context
+and terminal test verdicts without increasing the 500-character bound or
+storing credentials. The focused summary and correction tests passed three
+cases; the full regression passed 1,179 tests in 42.17 seconds. Ruff passed and
+strict mypy reported zero issues across 59 source files. Physical v56
+confirmation has not yet run, so v56 is not a PASS. The v56 completion-plan
+and quality-contract SHA-256 values remain respectively
+`5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
+and
+`5c72babec48a2bc085eaef7e2b3227cd0459b98df0520e6574152c898b466584`.
+
 V142 through V147 are preserved launch diagnostics and are not quality runs.
 They identified, in order, a zsh volume-target expansion error, a shared-clone
 object path outside the sandbox, a missing runner GPU device request, a missing

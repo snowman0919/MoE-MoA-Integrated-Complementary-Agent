@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from dgx_moa.compression import compress_messages, compress_text
+from dgx_moa.compression import compress_messages, compress_text, summarize_text
 from dgx_moa.config import Limits, ModelConfig
 from dgx_moa.security import redact
 from dgx_moa.state import SessionState
@@ -26,6 +26,14 @@ def test_redaction_and_compression(tmp_path) -> None:  # type: ignore[no-untyped
     messages = compress_messages([{"role": "tool", "content": structured}], limits)
     assert isinstance(messages[0]["content"], str)
     assert len(messages[0]["content"]) <= 80
+
+
+def test_summary_preserves_head_tail_and_redacts() -> None:
+    summary = summarize_text("start\n" + "x" * 600 + "\n42 passed token=secret", 80)
+
+    assert summary.startswith("start")
+    assert summary.endswith("42 passed token=[REDACTED]")
+    assert len(summary) == 80
 
 
 def test_redaction_covers_http_credential_keys() -> None:
