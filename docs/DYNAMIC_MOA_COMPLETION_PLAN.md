@@ -510,6 +510,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v37은 client 비정상 종료의 원문을 보존하지 않고 고정된
   payload-free 오류 분류만 failure sidecar에 기록한다. v36 결과는 진단
   자료로만 보존하고 새 clean seed와 새 run ID에서 다시 시작한다.
+- protocol v38은 OpenCode의 디렉터리 단위 외부 접근 계약에 맞춰 동결
+  입력 각각의 부모 디렉터리만 허용한다. 전체 attachments와 그 밖의 외부
+  경로는 계속 deny하며 v37 결과는 진단 자료로만 보존한다.
 
 ## 10. Release, rollback, 배포
 

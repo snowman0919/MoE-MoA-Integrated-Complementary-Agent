@@ -8719,3 +8719,19 @@ The v37 completion-plan and quality-contract SHA-256 values are respectively
 `da82cf4d512e7c9cf3404805d0b19cb2c780b4c65c3b8faa3626b64a48d67e29`
 and
 `f5bbe95baa3134503db7ed84af93ad0b79cd30c00ab04e8962f2ef6d0907ecc8`.
+
+V118 proved that the payload-free classifier distinguishes permission
+failures, but the outer validation runner itself had omitted Docker socket
+group 988. V119 restored the group and exercised the local Reasoner, Executor,
+and Planner. It then failed while reading a frozen input: OpenCode evaluates
+`external_directory` at directory granularity, so the prior exact-file allow
+entries did not match. Both runs remain diagnostic failures.
+
+Protocol v38 permits only the isolated workspace and each mounted frozen
+input's immediate parent directory; the global external-directory deny
+remains. Its focused regression passed 34 tests, Ruff passed, and strict mypy
+reported zero issues. The v38 completion-plan and quality-contract SHA-256
+values are respectively
+`234ccd39c939cf3f554fbea4298ef9b53071a623c18c203dd8f702d362917596`
+and
+`b9a0bf9cdfcc60c9361d65a7328f2530092da8e3f6566000af91c7452ee9fbdb`.

@@ -30,7 +30,7 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v37"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v38"
 AVATARFORGE_PHASES = (
     "avatarforge_phase_0_contract",
     "avatarforge_phase_1_plugin",
@@ -330,9 +330,9 @@ def opencode_config(args: argparse.Namespace, gateway_session: str) -> str:
                     str(path): "allow"
                     for path in (
                         args.workspace,
-                        args.objective,
-                        args.acceptance,
-                        args.plan,
+                        args.objective.parent,
+                        args.acceptance.parent,
+                        args.plan.parent,
                     )
                 },
             },

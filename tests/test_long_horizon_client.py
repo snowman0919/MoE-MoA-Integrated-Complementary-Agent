@@ -320,9 +320,9 @@ def test_client_commands_resume_the_same_private_session(
         assert permissions["*"] == "deny"
         assert {path for path, action in permissions.items() if action == "allow"} == {
             str(args.workspace),
-            str(args.objective),
-            str(args.acceptance),
-            str(args.plan),
+            str(args.objective.parent),
+            str(args.acceptance.parent),
+            str(args.plan.parent),
         }
 
 
