@@ -263,7 +263,7 @@ latency, context/cache tokens, tool/retry/provider-error counts, memory/swap,
 and variable cost.
 
 The additional AvatarForge active-work profile uses protocol
-`avatarforge-long-goal-v46` with consecutive checkpoints
+`avatarforge-long-goal-v47` with consecutive checkpoints
 `avatarforge_phase_0_contract`, `avatarforge_phase_1_plugin`,
 `avatarforge_phase_2_environment`, and `avatarforge_phase_3_state`. Every
 checkpoint must contain a baseline-relative change, discovered tests, a clean
@@ -290,6 +290,11 @@ path. A repository-changing turn cannot enter review until the current turn
 contains a successful file mutation; an empty `git diff` or validation of only
 prior work is insufficient. Provider provenance and variable cost remain
 mandatory.
+
+The AvatarForge OpenCode sandbox mounts the already pinned Hermes Python 3.11
+runtime and the candidate gateway source read-only. This is the execution
+environment for the frozen full-repository validation command; dependency
+installation or network access during a checkpoint is forbidden.
 
 The final review artifact uses the exact host-tool-writable repository path
 `<workspace>/state/long-review.json`. It must be changed after the baseline,

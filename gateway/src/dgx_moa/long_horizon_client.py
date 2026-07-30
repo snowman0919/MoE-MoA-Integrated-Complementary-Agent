@@ -30,7 +30,7 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v46"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v47"
 AVATARFORGE_OPENCODE_STEPS = 32
 AVATARFORGE_OPENCODE_AGENT = "avatarforge"
 AVATARFORGE_PHASES = (
@@ -478,6 +478,13 @@ def client_command(
             **QUALITY.OPENCODE_ISOLATION_ENV,
             "OPENCODE_CONFIG_CONTENT": opencode_config(args, gateway_session),
         }
+        if getattr(args, "profile", "journal") == "avatarforge":
+            isolation.update(
+                {
+                    "PATH": f"{QUALITY.HERMES_PYTHON_ROOT}/bin:/tools:/usr/bin:/bin",
+                    "PYTHONPATH": str(args.workspace / "gateway/src"),
+                }
+            )
         command = QUALITY.docker_command(
             args.workspace,
             state,
@@ -487,6 +494,11 @@ def client_command(
             read_only_mounts=(
                 (QUALITY.OPENCODE_BINARY, "/tools/opencode"),
                 *QUALITY.opencode_runtime_mounts(state),
+                *(
+                    ((QUALITY.HERMES_PYTHON_ROOT, str(QUALITY.HERMES_PYTHON_ROOT)),)
+                    if getattr(args, "profile", "journal") == "avatarforge"
+                    else ()
+                ),
                 *inputs,
             ),
         )

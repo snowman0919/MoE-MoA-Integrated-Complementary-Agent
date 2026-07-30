@@ -8861,3 +8861,24 @@ respectively
 `5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
 and
 `9f92b64a3041e95e1764ae11be44b3898b5f1d783aa8db3eeae349e71e671556`.
+
+V131 physically selected the dedicated `avatarforge` agent and enforced its
+32-step setting. It produced three clean Phase 0 commits before the frozen
+full-repository validation reported 46 import errors. The client sandbox lacked
+`pytest`, `httpx`, `yaml`, and the candidate `dgx_moa` package, so the Gateway
+correctly kept the session blocked and OpenCode continued into a dirty
+checkpoint before its bounded terminal turn. V131 remains a failed immutable
+run; this is a client validation-environment defect rather than model-runtime
+evidence.
+
+Protocol v47 mounts the existing pinned Hermes Python 3.11 runtime and the
+candidate gateway source read-only into the AvatarForge OpenCode sandbox. A
+network-disabled physical import probe for all four previously missing modules
+passed without installing anything. The journal profile and other harnesses
+remain unchanged. The focused client/analyzer regression passed 50 tests and
+Ruff passed. The full regression then passed 1,175 tests in 44.66 seconds;
+Ruff passed and strict mypy reported zero issues across 59 source files. The
+v47 completion-plan and quality-contract SHA-256 values are respectively
+`5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
+and
+`e6530bb9cccc7e5333b294279fe5ac92be54c700d0feea82257a80a630b17af7`.
