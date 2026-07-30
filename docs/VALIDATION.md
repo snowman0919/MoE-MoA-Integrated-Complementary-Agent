@@ -9250,3 +9250,11 @@ JSON with 83 completion tokens in 3.24 seconds. The focused retry regression
 passed; the full regression passed 1,181 tests in 44.95 seconds. Ruff passed and
 strict mypy reported zero issues across 59 source files. End-to-end v63
 confirmation has not yet run, so v63 is not a PASS.
+
+V161 is the fresh end-to-end v63 confirmation epoch. Its first ten tool
+continuations and eleven completed client requests produced no orchestration
+retry or request failure. Across the first fourteen local Executor
+orchestration calls, completion length stayed between 101 and 255 tokens
+(163.8 mean) and latency stayed between 3.6 and 7.9 seconds. The run remains
+active and has not yet reached its clean phase checkpoint, so this is preserved
+intermediate evidence rather than a PASS.
