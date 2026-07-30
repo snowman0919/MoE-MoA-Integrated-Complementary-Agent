@@ -97,6 +97,20 @@ def test_prompt_sandwich_keeps_dynamic_context_after_stable_prefix(
     assert "new dynamic plan" not in first_prefix
 
 
+def test_executor_prompt_requires_direct_reviewer_correction(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="review-correction", objective="implement")
+
+    ordinary = controller.prompt_sandwich("executor", state, "evidence", "continue")
+    state.review_status = "rejected"
+    correction = controller.prompt_sandwich("executor", state, "evidence", "continue")
+
+    assert "binding correction evidence" not in ordinary
+    assert "run the exact current validation command" in correction
+
+
 def test_unbounded_codex_oauth_skips_only_the_frontier_specific_budget(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

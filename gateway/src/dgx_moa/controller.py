@@ -2302,6 +2302,13 @@ class Controller:
             if role == "executor" and has_mcp_server_failure(state)
             else ""
         )
+        review_correction_constraint = (
+            "The prior Reviewer finding is binding correction evidence. Apply its required "
+            "correction directly; when it requests verification or test evidence, run the exact "
+            "current validation command before replanning or editing unrelated files."
+            if role == "executor" and state.review_status == "rejected"
+            else ""
+        )
         prompt_artifact = self.prompts.active_artifact(role) if self.prompts else None
         registered_policy = (
             str(prompt_artifact.payload["template"]) if prompt_artifact is not None else None
@@ -2330,6 +2337,8 @@ class Controller:
                 + workspace_constraint
                 + " "
                 + mcp_fallback_constraint
+                + " "
+                + review_correction_constraint
                 + " "
                 + tool_constraint,
                 "ROLE CONTEXT\n"

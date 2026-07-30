@@ -9022,6 +9022,38 @@ SHA-256 values are respectively
 and
 `5c72babec48a2bc085eaef7e2b3227cd0459b98df0520e6574152c898b466584`.
 
+V142 through V147 are preserved launch diagnostics and are not quality runs.
+They identified, in order, a zsh volume-target expansion error, a shared-clone
+object path outside the sandbox, a missing runner GPU device request, a missing
+fixed Frontier binary mount, a missing Frontier binary PATH entry, and missing
+gateway tmpfs mounts required by the read-only root. No missing checkpoint is
+counted as a pass.
+
+V148 restored the complete isolated launch contract and ran protocol v54 for
+about eight minutes without a stream disconnect or provider error. Codex OAuth
+Executor dispatch completed, four acceptance criteria remained stable, and 14
+tool executions produced three implementation evidence records. The local
+Reviewer rejected one critical verification finding. The new
+`local_reviewer_correction_required` artifact reuse trigger then fired four
+times, physically confirming that the sanitized Reviewer contribution reached
+subsequent Executor turns. Executor nevertheless failed to run the exact
+post-review validation command, reached two consecutive no-progress
+iterations, and ended with no commit and two dirty entries. V148 is a quality
+failure, not a PASS.
+
+Protocol v55 adds one conditional Executor instruction at the existing prompt
+boundary: a rejected Reviewer finding is binding correction evidence, and a
+verification or test finding requires the exact current validation command
+before replanning or unrelated edits. It adds no provider, cache, or
+collaboration abstraction. The focused correction tests passed four cases; the
+full regression passed 1,178 tests in 44.54 seconds. Ruff passed and strict
+mypy reported zero issues across 59 source files. Physical v55 confirmation has
+not yet run, so v55 is not a PASS. The v55 completion-plan and quality-contract
+SHA-256 values remain respectively
+`5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
+and
+`5c72babec48a2bc085eaef7e2b3227cd0459b98df0520e6574152c898b466584`.
+
 V141 physically confirmed that v53 kept all three initial acceptance criteria
 unchanged across replanning. It produced one clean checkpoint before the local
 Reviewer rejected one critical test-gap finding. The correction path did not
