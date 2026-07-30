@@ -2448,6 +2448,69 @@ def test_validation_without_terminal_verdict_is_not_success_evidence(
     assert not controller.successful_validation_execution(execution)
 
 
+def test_validation_continuation_inherits_command_and_terminal_verdict(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    state = SessionState(session_id="continued-validation")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    controller._observe(
+        state,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "validation",
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "arguments": json.dumps({"cmd": "python -m pytest -q"}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "validation",
+                "content": json.dumps({"exit_code": 0, "stdout": "tests still running"}),
+            },
+        ],
+    )
+    controller._observe(
+        state,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "poll",
+                        "type": "function",
+                        "function": {
+                            "name": "write_stdin",
+                            "arguments": json.dumps({"session_id": 7}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "poll",
+                "content": json.dumps({"exit_code": 0, "stdout": "1181 passed in 45.57s"}),
+            },
+        ],
+    )
+
+    execution = state.tool_executions[-1]
+    assert execution["tool_name"] == "write_stdin"
+    assert json.loads(execution["normalized_arguments"]) == {"session_id": 7}
+    assert json.loads(execution["validation_arguments"]) == {
+        "cmd": "python -m pytest -q"
+    }
+    assert execution["validation_continuation"] is True
+    assert controller.successful_validation_execution(execution)
+
+
 def test_failure_classification() -> None:
     assert classify_failure("No such file or directory") == "NONEXISTENT_PATH"
     assert classify_failure("unsupported call: read_mcp_resources") == "UNSUPPORTED_TOOL"

@@ -9305,3 +9305,20 @@ is active. Both focused harness tests passed; the full regression passed 1,181
 tests in 45.57 seconds. Ruff passed and strict mypy reported zero issues across
 59 source files. End-to-end v66 confirmation has not yet run, so v66 is not a
 PASS.
+
+V164 physically followed v66: the Codex child used `write_stdin` after the
+initial pytest execution yielded and produced one clean Phase 0 commit.
+However, the gateway stored the poll as a distinct `write_stdin` execution and
+did not associate its terminal output with the originating pytest command.
+The initial partial result therefore remained
+`rejected_missing_terminal_verdict`. V164 was stopped with its database,
+generated implementation, and clean commit preserved and is not a PASS.
+
+Protocol v67 associates a `write_stdin` poll with the latest unresolved
+validation execution while preserving the poll's real arguments and tool name.
+The continuation inherits only the original validation arguments for verdict,
+filter, and success classification; successful terminal output then uses the
+existing failure-resolution path. The focused initial/continuation cases
+passed; the full regression passed 1,182 tests in 45.49 seconds. Ruff passed and
+strict mypy reported zero issues across 59 source files. End-to-end v67
+confirmation has not yet run, so v67 is not a PASS.

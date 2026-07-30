@@ -1519,11 +1519,24 @@ class Controller:
                 "terminal",
                 "execute_code",
             }
+            validation_arguments = arguments
+            if tool_name == "write_stdin":
+                pending_validation = next(
+                    (
+                        execution
+                        for execution in reversed(state.tool_executions)
+                        if execution.get("validation_evidence_status")
+                        == "rejected_missing_terminal_verdict"
+                    ),
+                    None,
+                )
+                if pending_validation is not None:
+                    validation_arguments = pending_validation.get("normalized_arguments", {})
             validation_attempted = self.validation_execution(
-                {"tool_name": tool_name, "normalized_arguments": arguments}
+                {"tool_name": tool_name, "normalized_arguments": validation_arguments}
             )
             filtered_validation = self.filtered_validation_execution(
-                {"tool_name": tool_name, "normalized_arguments": arguments}
+                {"tool_name": tool_name, "normalized_arguments": validation_arguments}
             )
             if filtered_validation:
                 result["validation_evidence_status"] = "rejected_filtered_output"
@@ -1538,7 +1551,7 @@ class Controller:
                 and not filtered_validation
                 and not empty_validation
                 and not self.validation_verdict_present(
-                    {"tool_name": tool_name, "normalized_arguments": arguments},
+                    {"tool_name": tool_name, "normalized_arguments": validation_arguments},
                     result["stdout"] + "\n" + result["stderr"],
                 )
             )
@@ -1632,6 +1645,16 @@ class Controller:
                 "stderr_summary": summarize_text(result["stderr"]),
                 "truncated": result["truncated"],
                 "failure_class": failure_class,
+                **(
+                    {
+                        "validation_arguments": self.safe_payload(
+                            state, validation_arguments
+                        ),
+                        "validation_continuation": True,
+                    }
+                    if validation_attempted and tool_name == "write_stdin"
+                    else {}
+                ),
                 **(
                     {"validation_evidence_status": result["validation_evidence_status"]}
                     if filtered_validation or missing_validation_verdict
@@ -3971,7 +3994,9 @@ class Controller:
 
     @staticmethod
     def validation_execution(execution: dict[str, Any]) -> bool:
-        arguments = execution.get("normalized_arguments")
+        arguments = execution.get(
+            "validation_arguments", execution.get("normalized_arguments")
+        )
         if isinstance(arguments, str):
             try:
                 arguments = json.loads(arguments)
@@ -4001,7 +4026,9 @@ class Controller:
 
     @classmethod
     def filtered_validation_execution(cls, execution: dict[str, Any]) -> bool:
-        arguments = execution.get("normalized_arguments")
+        arguments = execution.get(
+            "validation_arguments", execution.get("normalized_arguments")
+        )
         if isinstance(arguments, str):
             try:
                 arguments = json.loads(arguments)
@@ -4020,7 +4047,9 @@ class Controller:
 
     @staticmethod
     def validation_verdict_present(execution: dict[str, Any], output: str) -> bool:
-        arguments = execution.get("normalized_arguments")
+        arguments = execution.get(
+            "validation_arguments", execution.get("normalized_arguments")
+        )
         if isinstance(arguments, str):
             try:
                 arguments = json.loads(arguments)
