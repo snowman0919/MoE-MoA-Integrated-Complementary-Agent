@@ -491,6 +491,13 @@ reconnect, plan/context 보존을 대체하지 않는다.
   ID를 Gateway에 보내는 동작을 계측 계약에 반영한다. OpenCode 출력에서
   확인된 client session으로 Gateway state와 provider telemetry를 조회하며,
   Codex·Hermes의 configured session 계약은 변경하지 않는다.
+- protocol v34는 Gemma batch-one decode에 full CUDA Graph를 사용하고
+  prefill Graph는 비활성으로 유지한다. Gemma context count는 멀티모달
+  placeholder ID를 직렬화하는 `/tokenize` 대신 SGLang의 native
+  `/v1/messages/count_tokens`를 사용한다. V105에서 측정한 255.24초 Planner
+  호출과 고정 two-pass token budget에 따라 ordinary routing의 local latency
+  기본값을 Planner 260초, Reviewer 340초로 사용한다. V105는 중단 진단으로
+  보존하며 v34는 새 clean seed와 새 run ID에서 시작한다.
 
 ## 10. Release, rollback, 배포
 

@@ -8616,3 +8616,7 @@ analysis pass and up to 1,500 final tokens. The default local completion
 estimates are therefore now 260 seconds for Planner and 340 seconds for
 Reviewer. Local-only validation remains local, but an ordinary request may no
 longer select Gemma using the unsupported 30/45-second assumptions.
+Protocol v34 is frozen with completion-plan SHA-256
+`c4d887038caf6e6bc9555977d1993f5678141cd08b81534d173f4ab23be2b0d1`
+and current committed quality-contract SHA-256
+`3e68d0472b22f9a16ef41eafbfef150b6f2d4933f77135510208438efa6ec5ab`.
