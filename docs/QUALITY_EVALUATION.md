@@ -331,6 +331,9 @@ successful repository mutation occurs after that review. Plan updates,
 inspection, and validation of the unchanged snapshot cannot consume another
 Reviewer call.
 
+Acceptance criteria are frozen when first supplied by the user or Planner.
+Replanning may change ordered steps but cannot replace or append criteria.
+
 The full run must observe Reasoner, Executor, Planner, and Reviewer provenance.
 At least one intentional reconnect and one positive cache read are mandatory.
 Any provider error, unjustified repeated read, premature completion, identity

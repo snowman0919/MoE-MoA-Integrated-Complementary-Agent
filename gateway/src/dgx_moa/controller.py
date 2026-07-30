@@ -3302,7 +3302,8 @@ class Controller:
                 safe_planner = cast(dict[str, Any], self.safe_payload(state, policy_planner))
                 safe_planner["ordered_steps"] = safe_planner.pop("plan", [])
                 state.plan = safe_planner.get("ordered_steps", [])
-                state.acceptance_criteria = safe_planner.get("acceptance_criteria", [])
+                if not state.acceptance_criteria:
+                    state.acceptance_criteria = safe_planner.get("acceptance_criteria", [])
                 state.agent_artifacts.append(
                     {
                         "role": "planner",

@@ -8999,3 +8999,25 @@ completion-plan and quality-contract SHA-256 values are respectively
 `5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
 and
 `59a4c6af868ce4f6fecb4d48ce549b8a10981c0ef105a674fc562df528bb82ab`.
+
+V140 physically exercised v52 through the real Codex client for more than 20
+minutes. It produced one clean Phase 0 commit, performed 30 reviewed tool
+executions, and used local Reasoner, Executor, Planner, Reviewer, Codex OAuth
+primary Executor, and a separate Codex Frontier without provider errors. The
+Reviewer rejected one critical Python/pytest environment-configuration issue.
+During correction, Planner replanning replaced the five original acceptance
+criteria with five differently worded criteria while `_sync_loop_criteria`
+retained the originals, leaving ten unsatisfied criteria. V140 was stopped with
+a clean worktree and its commit preserved; it is a context-contract failure,
+not a completed checkpoint.
+
+Protocol v53 freezes acceptance criteria on first assignment. Subsequent
+Planner calls may replace ordered steps but cannot redefine or append the
+completion contract. The focused orchestration and evidence tests passed; the
+full regression passed 1,176 tests in 43.36 seconds. Ruff passed and strict
+mypy reported zero issues across 59 source files. Physical v53 confirmation has
+not yet run, so v53 is not a PASS. The v53 completion-plan and quality-contract
+SHA-256 values are respectively
+`5188b879a5e4f3e69a7fe9f9dff172c7d6c2824c43f70ac612ec8dc80821b5a9`
+and
+`5c72babec48a2bc085eaef7e2b3227cd0459b98df0520e6574152c898b466584`.

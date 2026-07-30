@@ -2851,6 +2851,7 @@ async def test_resolved_goal_continuation_runs_orchestration_once(
         roles_required=["reasoner", "executor"],
         objective="/goal 목표 파일을 읽어",
         resolved_objective="기능을 설계하고 구현한 뒤 코드 검토를 수행한다.",
+        acceptance_criteria=["사용자가 지정한 완료 조건"],
     )
     request = {"messages": [{"role": "user", "content": state.objective}], "metadata": {}}
 
@@ -2867,6 +2868,7 @@ async def test_resolved_goal_continuation_runs_orchestration_once(
     planner_index = stub_provider.calls.index("planner")
     assert stub_provider.requests[planner_index]["messages"][0]["role"] == "user"
     assert state.resolved_objective_orchestrated is True
+    assert state.acceptance_criteria == ["사용자가 지정한 완료 조건"]
     assert stub_provider.calls.count("reasoner") == 1
     assert any(
         event["event_type"] == "resolved_goal_orchestration_started"
