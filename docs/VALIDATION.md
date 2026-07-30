@@ -9122,3 +9122,18 @@ abstraction was added. The focused regression passed one case; the full
 regression passed 1,179 tests in 48.34 seconds. Ruff passed and strict mypy
 reported zero issues across 59 source files. Physical v57 confirmation has not
 yet run, so v57 is not a PASS.
+
+V151 through V154 are preserved v57 launch diagnostics, not quality runs. V151
+identified a missing absolute runner state DB environment variable. V152
+identified a missing Python entrypoint override that started a second gateway
+on port 9000. V153 identified a missing absolute gateway state path. V154
+reached one real tool continuation, then failed because the reproduced gateway
+PATH omitted the mounted Codex binary; six Frontier Executor invocations failed
+with `FileNotFoundError` in about 10--13 milliseconds each and the client
+correctly classified the result as `stream_disconnected`.
+
+V155 restores the complete original V150 environment, PATH, Python entrypoint,
+absolute state paths, read-only root, tmpfs, GPU device, and loopback-only
+listener contract. It started the gateway, runner, and real Codex child on
+protocol v57 with zero initial failures. Its physical result remains in
+progress and is not a PASS.
