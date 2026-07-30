@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -154,9 +154,13 @@ class OrchestrationDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["respond", "invoke_agents"]
-    required_agents: list[Literal["planner", "reviewer", "frontier", "judge"]]
-    optional_agents: list[Literal["planner", "reviewer", "frontier", "judge"]]
-    reason: dict[str, str]
+    required_agents: list[
+        Literal["planner", "reviewer", "frontier", "judge"]
+    ] = Field(max_length=4)
+    optional_agents: list[
+        Literal["planner", "reviewer", "frontier", "judge"]
+    ] = Field(max_length=4)
+    reason: dict[str, Annotated[str, Field(max_length=160)]] = Field(max_length=4)
     parallelizable: bool
     continue_after: Literal["respond", "synthesize", "reason_again"]
     confidence: float = Field(ge=0, le=1)

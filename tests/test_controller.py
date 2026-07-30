@@ -780,8 +780,13 @@ async def test_invalid_executor_orchestration_gets_one_minimal_retry(
         == "orchestration_decision"
     ]
     assert orchestration_requests[0]["max_tokens"] == 512
+    assert orchestration_requests[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    schema = orchestration_requests[0]["response_format"]["json_schema"]["schema"]
+    assert schema["properties"]["reason"]["maxProperties"] == 4
+    assert schema["properties"]["reason"]["additionalProperties"]["maxLength"] == 160
     retry_request = orchestration_requests[-1]
     assert retry_request["max_tokens"] == 512
+    assert retry_request["chat_template_kwargs"] == {"enable_thinking": False}
     assert "fewer than 300 tokens" in retry_request["messages"][0]["content"]
     assert [
         invocation["mode"]

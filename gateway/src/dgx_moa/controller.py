@@ -2516,6 +2516,7 @@ class Controller:
             ],
             "stream": False,
             "max_tokens": min(self.settings.limits.planner_tokens, 512),
+            "chat_template_kwargs": {"enable_thinking": False},
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {"name": "orchestration_decision", "strict": True, "schema": schema},

@@ -9233,3 +9233,20 @@ structured-output probes at the new limit returned valid JSON in 3.34 seconds
 with 102 completion tokens and 3.24 seconds with 99 completion tokens. This is
 physical latency evidence, but end-to-end v62 confirmation has not yet run, so
 v62 is not a PASS.
+
+V160 physically confirmed that v62 removed the initial 4,096-token
+orchestration runaway: the first real orchestration completed with 283 tokens
+in 9.5 seconds and its next orchestration completed with 90 tokens in 4.6
+seconds. The run completed multiple tool continuations without a provider
+switch, but a later evidence-rich orchestration and its retry both reached the
+512-token limit. V160 was stopped with its database, generated source, tests,
+and contract document preserved. It is a diagnostic epoch, not a PASS.
+
+Protocol v63 disables thinking only for the bounded internal Executor
+orchestration decision and constrains its reason map to four entries of at most
+160 characters each. General Executor synthesis and specialist reasoning remain
+enabled. A physical long-input structured-output probe returned schema-valid
+JSON with 83 completion tokens in 3.24 seconds. The focused retry regression
+passed; the full regression passed 1,181 tests in 44.95 seconds. Ruff passed and
+strict mypy reported zero issues across 59 source files. End-to-end v63
+confirmation has not yet run, so v63 is not a PASS.
