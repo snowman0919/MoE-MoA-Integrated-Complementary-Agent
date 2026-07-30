@@ -9197,3 +9197,19 @@ the exact new mounts. Both focused client-command tests passed; the full
 regression passed 1,180 tests in 48.42 seconds. Ruff passed and strict mypy
 reported zero issues across 59 source files. Physical v60 confirmation has not
 yet run, so v60 is not a PASS.
+
+V158 physically confirmed the corrected absolute Python root mount inside the
+real Codex child and reached an unfiltered pytest execution with exit zero.
+That execution emitted no `N passed`, `Ran N tests`, `OK`, or `100%` terminal
+verdict, but v60 still treated exit zero as validation success. The run later
+reached eight correction iterations, five failures, and one separately rejected
+filtered validation. V158 was stopped for a required evidence-contract change
+and is not a PASS.
+
+Protocol v61 requires a nonzero pytest `N passed` verdict or a nonzero unittest
+`Ran N tests` plus `OK` before exit zero counts as validation evidence. Missing
+verdicts retain the real exit code and output but receive
+`validation_evidence_status=rejected_missing_terminal_verdict` and
+`TEST_FAILURE`. Ruff passed, strict mypy reported zero issues across 59 source
+files, and the full regression passed 1,181 tests in 42.61 seconds. Physical
+v61 confirmation has not yet run, so v61 is not a PASS.

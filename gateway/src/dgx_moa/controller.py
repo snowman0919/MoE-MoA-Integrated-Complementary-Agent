@@ -1532,10 +1532,24 @@ class Controller:
                 marker in (result["stdout"] + "\n" + result["stderr"]).lower()
                 for marker in ("ran 0 tests", "no tests ran", "collected 0 items")
             )
+            missing_validation_verdict = (
+                validation_attempted
+                and result["exit_code"] == 0
+                and not filtered_validation
+                and not empty_validation
+                and not self.validation_verdict_present(
+                    {"tool_name": tool_name, "normalized_arguments": arguments},
+                    result["stdout"] + "\n" + result["stderr"],
+                )
+            )
+            if missing_validation_verdict:
+                result["validation_evidence_status"] = "rejected_missing_terminal_verdict"
+                observation = json.dumps(result, sort_keys=True)
             failed = (
                 result["exit_code"] != 0
                 or empty_validation
                 or filtered_validation
+                or missing_validation_verdict
                 or any(
                     marker in result["stderr"].lower()
                     for marker in (
@@ -1620,7 +1634,7 @@ class Controller:
                 "failure_class": failure_class,
                 **(
                     {"validation_evidence_status": result["validation_evidence_status"]}
-                    if filtered_validation
+                    if filtered_validation or missing_validation_verdict
                     else {}
                 ),
                 "filesystem_effect": effect,
@@ -3988,6 +4002,30 @@ class Controller:
             and isinstance(command, str)
             and bool(re.search(r"(?<!\|)\|(?!\|)|(?:^|\s)(?:\d*>>?|&>)", command))
         )
+
+    @staticmethod
+    def validation_verdict_present(execution: dict[str, Any], output: str) -> bool:
+        arguments = execution.get("normalized_arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                arguments = {}
+        command = (
+            arguments.get("cmd") or arguments.get("command")
+            if isinstance(arguments, dict)
+            else ""
+        )
+        if not isinstance(command, str):
+            return False
+        if re.search(r"(?:python -m )?pytest\b", command):
+            return bool(re.search(r"\b[1-9]\d* passed\b", output))
+        if re.search(r"(?:python -m )?unittest\b", command):
+            return bool(
+                re.search(r"\bRan [1-9]\d* tests?\b", output)
+                and re.search(r"(?m)^OK\b", output)
+            )
+        return True
 
     def requires_implementation_tool_action(
         self, state: SessionState, metadata: dict[str, Any]

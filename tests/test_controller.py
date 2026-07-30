@@ -2114,11 +2114,13 @@ def test_successful_changes_between_identical_validations_reset_no_progress(
                         }
                     ],
                 },
-                {
-                    "role": "tool",
-                    "tool_call_id": f"validation-{index}",
-                    "content": json.dumps({"exit_code": 0, "stdout": "OK\n"}),
-                },
+                    {
+                        "role": "tool",
+                        "tool_call_id": f"validation-{index}",
+                        "content": json.dumps(
+                            {"exit_code": 0, "stdout": "Ran 1 test in 0.001s\n\nOK\n"}
+                        ),
+                    },
             ],
         )
         if index < 2:
@@ -2325,6 +2327,7 @@ def test_test_failure_requires_successful_validation_to_resolve(
                 "content": json.dumps(
                     {
                         "exit_code": exit_code,
+                        "stdout": "1 passed" if exit_code == 0 and "pytest" in command else "",
                         "stderr": "FAILED" if exit_code else "",
                     }
                 ),
@@ -2380,6 +2383,43 @@ def test_filtered_validation_is_not_success_evidence(
     assert execution["exit_code"] == 0
     assert execution["failure_class"] == "TEST_FAILURE"
     assert execution["validation_evidence_status"] == "rejected_filtered_output"
+    assert not controller.successful_validation_execution(execution)
+
+
+def test_validation_without_terminal_verdict_is_not_success_evidence(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    state = SessionState(session_id="missing-validation-verdict")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    controller._observe(
+        state,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "validation",
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "arguments": json.dumps({"cmd": "python -m pytest -q"}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "validation",
+                "content": json.dumps({"exit_code": 0, "stdout": "1 skipped"}),
+            },
+        ],
+    )
+
+    execution = state.tool_executions[-1]
+    assert execution["exit_code"] == 0
+    assert execution["failure_class"] == "TEST_FAILURE"
+    assert execution["validation_evidence_status"] == "rejected_missing_terminal_verdict"
     assert not controller.successful_validation_execution(execution)
 
 
