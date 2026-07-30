@@ -4124,6 +4124,34 @@ def test_review_evidence_survives_non_file_tools_but_not_a_new_change(
     assert controller.has_review_evidence(state, {}) is False
 
 
+def test_review_tool_evidence_keeps_older_mutations() -> None:
+    state = SessionState(
+        session_id="review-mutation-window",
+        tool_executions=[
+            {
+                "tool_name": "apply_patch",
+                "normalized_arguments": {"input": "*** Add File: first.py\n+x = 1"},
+                "exit_code": 0,
+            },
+            *[
+                {
+                    "tool_name": "exec_command",
+                    "normalized_arguments": {"cmd": f"python check_{index}.py"},
+                    "exit_code": 0,
+                }
+                for index in range(8)
+            ],
+        ],
+    )
+
+    evidence = Controller.review_tool_executions(state)
+
+    assert evidence[0]["tool_name"] == "apply_patch"
+    assert [item["normalized_arguments"]["cmd"] for item in evidence[1:]] == [
+        f"python check_{index}.py" for index in range(2, 8)
+    ]
+
+
 def test_repeated_successful_inspection_marks_executor_stalled(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -4722,11 +4750,11 @@ def test_review_observation_is_bounded_redacted_and_complete(
         "validation_results": ["pytest: pass"],
     }
     bounded_observation = controller.review_observation(
-        state, response, {"diff_summary": "x" * 20_000}
+        state, response, {"diff_summary": "x" * 40_000}
     )
     bounded_evidence = json.loads(bounded_observation)
 
-    assert len(bounded_observation) <= 10_000
+    assert len(bounded_observation) <= settings.limits.max_review_evidence_characters
     assert set(bounded_evidence) == set(evidence)
     assert bounded_evidence["original_objective"] == "fix api_key=[REDACTED]"
     assert bounded_evidence["finish_reason"] == "stop"

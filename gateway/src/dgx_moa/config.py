@@ -51,7 +51,7 @@ class Limits(BaseModel):
     judge_tokens: int = 2_500
     max_stream_capture_bytes: int = 1_000_000
     max_sse_event_bytes: int = 1_000_000
-    max_review_evidence_characters: int = 10_000
+    max_review_evidence_characters: int = 24_000
     planner_timeout_seconds: float = 120
     reasoner_timeout_seconds: float = 120
     executor_first_byte_timeout_seconds: float = 120

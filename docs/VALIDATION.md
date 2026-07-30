@@ -8380,3 +8380,36 @@ Starlette warning. Ruff passed and strict mypy reported zero errors across 59
 source files. The v27 completion plan is frozen at SHA-256
 `6e52c29a9eae5ace511212af03f2537e033c38a46a7c5b35d068bf0204a71df7`.
 A fresh v27 run is required; V96 cannot be promoted.
+
+### 2026-07-30 — AvatarForge V97 Reviewer evidence-window diagnostic
+
+AvatarForge V97 used protocol v27 and the real Codex client through the
+authenticated loopback Gateway. It performed 144 engineering steps, 140 host
+tool executions, 18 clean commits, 15 local Reviewer rounds, three Codex OAuth
+Frontier calls, and one successful reused tool-call ID remap. OpenRouter was
+not used. Repeated critical findings moved from implementation gaps to
+correctness and missing-evidence findings while the implementation continued
+to grow.
+
+The run exposed a bounded-evidence defect rather than a useful reason to keep
+spending Reviewer rounds: state retained only the latest three implementation
+mutations and Reviewer input retained only the latest six tool executions.
+After many correction commits, earlier source implementation fell out of the
+review window, causing the Reviewer to repeatedly request source evidence that
+existed in the clean workspace. The diagnostic was explicitly terminated and
+preserved as `client_nonzero_exit`; it is not a long-horizon pass. The immutable
+Gateway DB and failure sidecar SHA-256 values are
+`52fb97fc9e627033037c6e65958cc477e6fd52671433162e91783a7ccfacbb22`
+and
+`b558585e67522438cdb6ee0d58b06c18cee3095a8c25586c86aa22e9b6ed2422`.
+
+Protocol v28 keeps up to eight implementation mutations, includes the latest
+four repository mutations alongside the latest six tool executions, and raises
+the redacted Reviewer evidence ceiling from 10k to 24k characters. The focused
+mutation-window and correction-review checks passed `2/2`; Controller,
+long-horizon, client-quality, and config coverage passed `213/213`; the
+complete suite passed `1162/1162` with the existing Starlette warning. Ruff
+passed and strict mypy reported zero errors across 59 source files. The v28
+completion plan is frozen at SHA-256
+`67846161c090affc5233e9f4bfe2711d2fae8036c6070428eb026041ffdaadc8`.
+A fresh v28 run is required; V97 cannot be promoted.

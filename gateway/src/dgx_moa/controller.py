@@ -1641,7 +1641,7 @@ class Controller:
                         "change_arguments": change_arguments,
                     }
                 )
-                state.implementation_evidence = state.implementation_evidence[-3:]
+                state.implementation_evidence = state.implementation_evidence[-8:]
             if state.frontier_correction_required:
                 if changed_files:
                     state.frontier_correction_mutation_observed = True
@@ -4098,6 +4098,15 @@ class Controller:
 
     @staticmethod
     def review_tool_executions(state: SessionState) -> list[dict[str, Any]]:
+        executions = current_turn_executions(state)
+        mutation_indexes = [
+            index
+            for index, execution in enumerate(executions)
+            if Controller.tool_execution_changes_files(execution)
+        ][-4:]
+        selected_indexes = sorted(
+            set((*mutation_indexes, *range(max(0, len(executions) - 6), len(executions))))
+        )
         return [
             {
                 key: execution[key]
@@ -4110,7 +4119,7 @@ class Controller:
                 )
                 if key in execution
             }
-            for execution in state.tool_executions[-6:]
+            for execution in (executions[index] for index in selected_indexes)
         ]
 
     @staticmethod

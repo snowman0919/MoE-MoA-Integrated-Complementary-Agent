@@ -469,6 +469,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v27은 `long-horizon` workspace에서 마지막 파일 변경 뒤 clean
   `git status` 증거가 없으면 완료를 허용하지 않고 commit·artifact 정리·
   `git status --porcelain` 확인을 계속 요구한다.
+- protocol v28은 장기 correction에서 최근 mutation 4개와 최근 도구 6개를
+  Reviewer evidence에 함께 유지하고, implementation evidence를 8개 및
+  redacted reviewer 입력을 24k 문자로 제한해 전체 구현 맥락 유실을 줄인다.
 
 ## 10. Release, rollback, 배포
 
