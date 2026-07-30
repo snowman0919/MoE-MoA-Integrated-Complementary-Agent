@@ -2564,6 +2564,9 @@ def create_app(
                                     "provider": "frontier",
                                     "failure_class": type(error).__name__,
                                     "failure_code": str(error)[:128],
+                                    "failure_detail": getattr(
+                                        error, "detail", "unclassified"
+                                    ),
                                     "routing_reason": executor_routing_reason,
                                 },
                             )

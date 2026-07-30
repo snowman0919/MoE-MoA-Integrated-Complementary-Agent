@@ -645,11 +645,12 @@ def test_busy_executor_remote_stream_failure_is_observable(
     assert "frontier_required_unavailable" in response.text
     failed = next(event for event in events if event["event_type"] == "executor_remote_failed")
     assert failed["payload"] == {
-        "provider": "frontier",
-        "failure_class": "RuntimeError",
-        "failure_code": "FRONTIER_OPENROUTER_FAILURE",
-        "routing_reason": "local_busy",
-    }
+            "provider": "frontier",
+            "failure_class": "RuntimeError",
+            "failure_code": "FRONTIER_OPENROUTER_FAILURE",
+            "failure_detail": "unclassified",
+            "routing_reason": "local_busy",
+        }
 
 
 def test_busy_executor_remote_stream_records_cost_and_cache(

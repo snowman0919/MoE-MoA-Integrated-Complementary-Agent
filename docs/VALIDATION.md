@@ -8763,3 +8763,18 @@ are respectively
 `17c3c781937c806d5172005451f14d4044606a2d5d7b943201d7c7b8fcf77f79`
 and
 `f1cf56b82e22701498c5501c124809c4f8ee5784872f74130fb17db39d94b9db`.
+
+V123 used the shared writable profile HOME and reached Codex OAuth execution,
+but the real Executor payload still returned generic
+`FRONTIER_PROTOCOL_ERROR`; the synthetic executor-schema probe passed. V123 is
+diagnostic, not a PASS. Protocol v41 adds a fixed payload-free subprocess
+detail enum to the sanitized failure event while continuing to discard raw
+stdout, stderr, prompts, and provider output. Its focused regression passed 57
+tests; Ruff and strict mypy passed. The v41 completion-plan and
+quality-contract SHA-256 values are respectively
+`a3a6fc99939214bdb946debd6574368bbcdec27cbc93987733ff1823cbc395cc`
+and
+`b95e59e396a4217522669f125a9d60466afff38dc6e180240cf71b003237507d`.
+After updating the exact sanitized event assertion, the full regression passed
+1,174 tests in 47.41 seconds; Ruff passed and strict mypy reported zero issues
+across 59 source files.

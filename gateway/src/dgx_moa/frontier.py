@@ -483,6 +483,31 @@ class FrontierCollaborationResult(BaseModel):
     profile: str = "unknown"
 
 
+class FrontierExecutionError(RuntimeError):
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(code)
+        self.detail = detail
+
+
+def classify_frontier_failure_detail(output: str) -> str:
+    normalized = output.lower()
+    patterns = (
+        ("failed to initialize in-process app-server client", "app_server_init"),
+        ("read-only file system", "read_only_fs"),
+        ("argument list too long", "argument_list_too_long"),
+        ("unexpected argument", "cli_argument"),
+        ("output schema", "output_schema"),
+        ("invalid request", "invalid_request"),
+        ("stream disconnected", "stream_disconnected"),
+        ("error sending request", "network_request"),
+        ("not valid utf", "encoding"),
+        ("panicked", "panic"),
+    )
+    if not output.strip():
+        return "empty_error"
+    return next((detail for marker, detail in patterns if marker in normalized), "unclassified")
+
+
 def codex_usage(output: str) -> tuple[int | None, int | None, int | None]:
     prompt = completion = cached = 0
     prompt_found = completion_found = cached_found = False
@@ -656,6 +681,7 @@ class CodexOAuthCollaboration:
             completed: subprocess.CompletedProcess[str] | None = None
             selected_profile = ""
             final_failure = "FRONTIER_PROTOCOL_ERROR"
+            final_failure_detail = "unclassified"
             validated_result: dict[str, Any] | None = None
             validation_error: OSError | ValueError | None = None
             for profile_index, (profile, provider) in enumerate(self.providers):
@@ -703,6 +729,9 @@ class CodexOAuthCollaboration:
                         break
                     failure = classify_frontier_failure(completed.stdout + completed.stderr)
                     final_failure = failure
+                    final_failure_detail = classify_frontier_failure_detail(
+                        completed.stdout + completed.stderr
+                    )
                     has_fallback = profile_index + 1 < len(self.providers)
                     if failure in PROFILE_FAILOVER_FAILURES and has_fallback:
                         completed = None
@@ -747,7 +776,7 @@ class CodexOAuthCollaboration:
                         started,
                     )
                 self._failed()
-                raise RuntimeError(final_failure)
+                raise FrontierExecutionError(final_failure, final_failure_detail)
             assert validated_result is not None
             result = validated_result
             prompt, completion, cached = codex_usage(completed.stdout)

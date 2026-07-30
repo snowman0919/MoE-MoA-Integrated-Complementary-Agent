@@ -518,6 +518,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v40은 non-default Codex OAuth profile의 `HOME`과
   `CODEX_HOME`을 동일한 writable 격리 profile로 고정한다. v39 결과는
   진단 자료로만 보존한다.
+- protocol v41은 Codex subprocess 원문을 저장하지 않고 고정된
+  payload-free protocol-error detail만 관측 이벤트에 기록한다. v40
+  결과는 진단 자료로만 보존한다.
 
 ## 10. Release, rollback, 배포
 

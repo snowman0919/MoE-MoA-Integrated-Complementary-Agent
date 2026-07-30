@@ -19,6 +19,7 @@ from dgx_moa.frontier import (
     bounded_external_evidence,
     build_frontier_task,
     classify_frontier_failure,
+    classify_frontier_failure_detail,
     codex_command,
     codex_usage,
     evaluate_frontier_candidate,
@@ -327,6 +328,21 @@ def test_codex_oauth_environment_excludes_gateway_secrets(
     assert environment["HOME"] == environment["CODEX_HOME"]
     assert "DGX_MOA_API_KEYS" not in environment
     assert "OPENAI_API_KEY" not in environment
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    (
+        ("failed to initialize in-process app-server client", "app_server_init"),
+        ("argument list too long", "argument_list_too_long"),
+        ("provider returned an unfamiliar failure", "unclassified"),
+        ("", "empty_error"),
+    ),
+)
+def test_frontier_failure_detail_never_returns_payload(
+    output: str, expected: str
+) -> None:
+    assert classify_frontier_failure_detail(output) == expected
 
 
 @pytest.mark.parametrize(
