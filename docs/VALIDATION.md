@@ -8619,4 +8619,4 @@ longer select Gemma using the unsupported 30/45-second assumptions.
 Protocol v34 is frozen with completion-plan SHA-256
 `c4d887038caf6e6bc9555977d1993f5678141cd08b81534d173f4ab23be2b0d1`
 and current committed quality-contract SHA-256
-`3e68d0472b22f9a16ef41eafbfef150b6f2d4933f77135510208438efa6ec5ab`.
+`10142343e003abcf00be7351a36d05061e01b70b3fb8cfd350b74d983938a054`.
