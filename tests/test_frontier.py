@@ -324,6 +324,7 @@ def test_codex_oauth_environment_excludes_gateway_secrets(
 
     assert environment["PATH"] == "/usr/bin"
     assert environment["CODEX_HOME"] == str(tmp_path / "primary")
+    assert environment["HOME"] == environment["CODEX_HOME"]
     assert "DGX_MOA_API_KEYS" not in environment
     assert "OPENAI_API_KEY" not in environment
 

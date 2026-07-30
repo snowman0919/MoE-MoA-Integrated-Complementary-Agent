@@ -8746,3 +8746,20 @@ The v39 completion-plan and quality-contract SHA-256 values are respectively
 `03567278100679ed8d1011d88fb018abff99bbbe32dda32f6ba042759a234188`
 and
 `99cd69ab949653a15cf5bbbccb101785ef7863e5edd9e83aa0f75f8837a5efab`.
+
+V121 proved the recursive OpenCode permission pattern: the frozen-input read
+completed without a permission error. Frontier fallback then failed because
+the candidate gateway PATH omitted the mounted Codex binary. V122 added the
+fixed Codex release directory to PATH; the CLI started but returned
+`FRONTIER_PROTOCOL_ERROR`. A payload-free direct capability probe classified
+the failure as read-only filesystem initialization. The same probe passed
+when both `HOME` and `CODEX_HOME` pointed at the writable isolated primary
+profile. V121 and V122 remain diagnostic failures.
+
+Protocol v40 applies that HOME isolation in the shared Codex OAuth provider.
+The focused Frontier and long-horizon regression passed 70 tests; Ruff and
+strict mypy passed. The v40 completion-plan and quality-contract SHA-256 values
+are respectively
+`17c3c781937c806d5172005451f14d4044606a2d5d7b943201d7c7b8fcf77f79`
+and
+`f1cf56b82e22701498c5501c124809c4f8ee5784872f74130fb17db39d94b9db`.

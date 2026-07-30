@@ -1064,7 +1064,9 @@ class CodexOAuthProvider:
             key: value for key, value in os.environ.items() if key in CODEX_ENVIRONMENT_ALLOWLIST
         }
         if self.profile_root is not None:
-            environment["CODEX_HOME"] = str(profile_home(self.profile, self.profile_root))
+            home = str(profile_home(self.profile, self.profile_root))
+            environment["HOME"] = home
+            environment["CODEX_HOME"] = home
         else:
             environment.pop("CODEX_HOME", None)
         return environment
