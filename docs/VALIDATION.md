@@ -8533,3 +8533,24 @@ and strict mypy passed. The complete suite passed `1162/1162` with the existing
 Starlette warning, and strict mypy reported zero errors across 59 source files.
 The v32 completion plan is frozen at SHA-256
 `a3ac652c7d57d1a8c61a622535c742dc48191db488f6d76ee738639b0881163a`.
+
+### 2026-07-30 — AvatarForge V103 real-client restart diagnostic
+
+Protocol v32 ran the real OpenCode client through the authenticated Gateway for
+approximately 4 hours 50 minutes. It reached 186 engineering steps, executed
+191 host tools, and produced 21 commits. The observed provider calls included
+local Planner, Reviewer, Reasoner, and Executor calls plus Codex OAuth
+Executor/Frontier calls. Twelve OpenRouter Executor calls occurred only after
+Codex OAuth returned `FRONTIER_USAGE_LIMIT`; they carried the
+`local_no_progress` routing reason.
+
+The original Gateway PTY ended at a task boundary while the OpenCode container
+remained alive. Restarting the Gateway with the same DB and configuration
+advanced the same session from step 175/tool 181 to step 186/tool 191,
+demonstrating actual reconnect and context recovery. The parent checkpoint
+writer had already exited, however, so no checkpoint/final JSONL could be
+created. The run ended dirty with Reviewer approval absent and was explicitly
+stopped. This is useful recovery evidence, not a long-horizon PASS. The
+preserved pre-stop Gateway DB SHA-256 is
+`b575d3d4eab5c24ccf94625eb1d40a0b00ba64e68acc8784294968c21398fb1e`.
+V103 cannot be promoted.
