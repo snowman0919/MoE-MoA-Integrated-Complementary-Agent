@@ -3732,6 +3732,10 @@ class Controller:
         implementation_complete = self.implementation_completion_ready(
             state, dict(request.get("metadata", {}))
         )
+        workspace_finalization_pending = (
+            state.repository.get("workspace_identifier") == "long-horizon"
+            and not self.long_horizon_workspace_finalized(state)
+        )
         requests_change = (
             state.active_turn_requires_change
             if state.active_user_turn_sha256
@@ -3824,12 +3828,18 @@ class Controller:
                             "Return the concise final result now; do not call more tools."
                             if implementation_complete
                             else (
+                                "Commit all intended changes, remove generated artifacts, then "
+                                "verify the workspace with `git status --porcelain`. Do not finish "
+                                "until that command succeeds with empty output."
+                                if workspace_finalization_pending
+                                else (
                                 "Repeated inspection is stalled. The very next tool call must "
                                 "modify the target source file. If only exec_command is available, "
                                 "use it to write or replace that file now. Do not read, list, "
                                 "search, inspect, or run tests first."
                                 if inspection_stalled
                                 else "Take one useful step"
+                                )
                             )
                         )
                     ),
@@ -3964,7 +3974,12 @@ class Controller:
                 )
             )
         )
-        return not (changed and validated and review_ready)
+        return not (
+            changed
+            and validated
+            and review_ready
+            and self.long_horizon_workspace_finalized(state)
+        )
 
     def implementation_completion_ready(
         self, state: SessionState, metadata: dict[str, Any]
@@ -3973,6 +3988,46 @@ class Controller:
             execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
             for execution in current_turn_executions(state)
         ) and not self.requires_implementation_tool_action(state, metadata)
+
+    def long_horizon_workspace_finalized(self, state: SessionState) -> bool:
+        if state.repository.get("workspace_identifier") != "long-horizon":
+            return True
+        executions = current_turn_executions(state)
+        last_change = max(
+            (
+                index
+                for index, execution in enumerate(executions)
+                if execution.get("exit_code") == 0
+                and self.tool_execution_changes_files(execution)
+            ),
+            default=-1,
+        )
+        for execution in executions[last_change + 1 :]:
+            arguments = execution.get("normalized_arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except ValueError:
+                    arguments = {}
+            command = (
+                arguments.get("cmd") or arguments.get("command")
+                if isinstance(arguments, dict)
+                else None
+            )
+            output = str(execution.get("stdout_summary") or "")
+            if (
+                execution.get("exit_code") == 0
+                and isinstance(command, str)
+                and re.search(r"\bgit\s+status\b", command)
+                and (
+                    re.search(r"\bgit\s+status\s+--porcelain\b", command)
+                    and not output.strip()
+                    or "working tree clean" in output
+                    or "nothing to commit" in output
+                )
+            ):
+                return True
+        return False
 
     def executor_stalled(self, state: SessionState, *, inspection_limit: int = 6) -> bool:
         """Detect repeated successful inspection since the latest file change."""

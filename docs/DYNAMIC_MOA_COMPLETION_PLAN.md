@@ -466,6 +466,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
   provider dispatch 단위의 deterministic ID로 remap한다. ID 재사용 때문에
   성공한 host mutation 결과가 duplicate로 누락되어 correction retry가
   고갈되는 것을 막되, provider pinning과 안전한 tool-call 검증은 유지한다.
+- protocol v27은 `long-horizon` workspace에서 마지막 파일 변경 뒤 clean
+  `git status` 증거가 없으면 완료를 허용하지 않고 commit·artifact 정리·
+  `git status --porcelain` 확인을 계속 요구한다.
 
 ## 10. Release, rollback, 배포
 

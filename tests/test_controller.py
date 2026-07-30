@@ -4306,6 +4306,60 @@ async def test_completed_implementation_is_told_to_return_final(
 
 
 @pytest.mark.asyncio
+async def test_long_horizon_requires_clean_status_after_last_change(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="long-horizon-finalization",
+        objective="Implement and test the current phase.",
+        active_user_turn_sha256="a" * 64,
+        active_turn_requires_change=True,
+        active_turn_targets_repository=True,
+        repository={"workspace_identifier": "long-horizon"},
+        roles_required=["executor", "reviewer"],
+        review_status="approved",
+        tool_executions=[
+            {"tool_name": "apply_patch", "exit_code": 0},
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m unittest discover -s tests -v"},
+                "exit_code": 0,
+            },
+        ],
+    )
+    request = {
+        "model": "dgx-moa",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {"repository_identity": {"workspace_identifier": "long-horizon"}},
+        "tools": [{"type": "function", "function": {"name": "exec_command", "parameters": {}}}],
+        "tool_choice": "auto",
+    }
+
+    assert controller.long_horizon_workspace_finalized(state) is False
+    assert controller.requires_implementation_tool_action(state, {}) is True
+    prepared = await controller.prepare_executor(
+        state, request, ("executor", "reviewer"), tool_continuation=True
+    )
+
+    assert prepared["tool_choice"] == "required"
+    assert "git status --porcelain" in prepared["messages"][0]["content"]
+    state.tool_executions.append(
+        {
+            "tool_name": "exec_command",
+            "normalized_arguments": {"cmd": "git status --porcelain"},
+            "stdout_summary": "",
+            "exit_code": 0,
+        }
+    )
+    prepared = await controller.prepare_executor(
+        state, request, ("executor", "reviewer"), tool_continuation=True
+    )
+    assert "Return the concise final result now" in prepared["messages"][0]["content"]
+    assert "tools" not in prepared
+
+
+@pytest.mark.asyncio
 async def test_incomplete_implementation_requires_a_tool_action(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

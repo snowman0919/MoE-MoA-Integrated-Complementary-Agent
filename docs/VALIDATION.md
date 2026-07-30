@@ -8355,3 +8355,28 @@ passed and strict mypy reported zero errors across 59 source files. The v26
 completion plan is frozen at SHA-256
 `f9fbb7916c1736465f3155037cf8bf71268e2a1a3e94eca2da5dfb90c83da314`.
 A fresh v26 run is required; V95 cannot be promoted.
+
+### 2026-07-30 — AvatarForge V96 dirty-finalization diagnostic
+
+AvatarForge V96 used the real Codex client, authenticated loopback Gateway,
+local Reasoner, local SGLang Executor and Planner, and Codex OAuth Frontier.
+Phase 0 produced two clean commits, then an approved correction added a
+contract clause and six contract tests. The final validation passed, but the
+client returned without committing those last changes or removing generated
+`__pycache__`; the harness correctly rejected the attempt as
+`dirty_checkpoint`. V96 is diagnostic evidence only.
+
+The shared completion predicate previously required a file mutation,
+successful validation, and review approval but did not require repository
+finalization after the latest mutation. Protocol v27 adds a narrowly scoped
+`long-horizon` gate: after the last successful repository mutation, a
+successful clean `git status` must be observed. Until then the Executor is
+required to commit intended changes, remove generated artifacts, and run
+`git status --porcelain`. Ordinary API implementation turns retain their
+existing non-commit behavior. The focused clean-finalization and ordinary
+completion regressions passed `2/2`; Controller and long-horizon coverage
+passed `181/181`; the complete suite passed `1161/1161` with the existing
+Starlette warning. Ruff passed and strict mypy reported zero errors across 59
+source files. The v27 completion plan is frozen at SHA-256
+`6e52c29a9eae5ace511212af03f2537e033c38a46a7c5b35d068bf0204a71df7`.
+A fresh v27 run is required; V96 cannot be promoted.
