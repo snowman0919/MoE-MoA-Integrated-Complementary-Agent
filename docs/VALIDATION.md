@@ -8443,3 +8443,23 @@ with the existing Starlette warning. Ruff passed and strict mypy reported zero
 errors across 59 source files. The v29 completion plan is frozen at SHA-256
 `f57d279cd1d1f10bc0d5f2338d47450f596a3f7e52b4a8fd1405b0629b60c615`.
 A fresh v29 run is required; V98 cannot be promoted.
+
+### 2026-07-30 — AvatarForge V99 semantic fail-closed evidence
+
+AvatarForge V99 used protocol v29 and the real Codex client through the
+authenticated loopback Gateway. It reached 36 engineering steps, produced one
+clean commit, and used 35 local Executor calls, nine Codex OAuth Executor
+calls, one local Planner, eight local Reasoner calls, and three local Reviewer
+rounds. The same `missing-type-and-boundary-checks` finding survived three
+correction attempts.
+
+The v29 semantic fingerprint correctly treated the reworded findings as one
+failure family and terminated the loop with `DUPLICATE_FAILURE_LIMIT` on the
+third occurrence. The session failed closed as `blocked`; the Codex client
+reported `client_nonzero_exit`. This is correct reliability behavior but a
+quality failure, not a long-horizon pass. The immutable Gateway DB and failure
+sidecar SHA-256 values are
+`a3d9dd3ac66481bb068f41d8c2fceec40d6724f43e41cf2f3827351fb927d899`
+and
+`1d89850c602752d92b7424fdb016c7232cfaae9930e0aa3fdfd7cb996d7ff52e`.
+V99 cannot be promoted.
