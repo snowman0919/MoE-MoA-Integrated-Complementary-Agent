@@ -310,6 +310,18 @@ def test_client_commands_resume_the_same_private_session(
         assert '"X-Workspace-ID" = "long-horizon"' in headers
     elif harness == "opencode":
         assert inner[inner.index("--title") + 1] == "DGX MoA long horizon"
+        raw_config = next(
+            value.removeprefix("OPENCODE_CONFIG_CONTENT=")
+            for value in command
+            if value.startswith("OPENCODE_CONFIG_CONTENT=")
+        )
+        permissions = json.loads(raw_config)["permission"]["external_directory"]
+        assert permissions["*"] == "deny"
+        assert {path for path, action in permissions.items() if action == "allow"} == {
+            str(args.objective),
+            str(args.acceptance),
+            str(args.plan),
+        }
 
 
 def test_client_metrics_and_provider_pinning_are_aggregated_without_payloads(

@@ -8488,3 +8488,25 @@ The v30 completion plan is frozen at SHA-256
 The preserved V100 Gateway DB SHA-256 is
 `d62ee1b1a3a5cbe9335405e9c632c5d443d49587e8aad7f960a2f8944dbfdd8a`.
 V100 cannot be promoted.
+
+### 2026-07-30 — AvatarForge V101 OpenCode external-input denial
+
+Protocol v30 bypassed title generation: OpenCode made four successful Gateway
+requests and executed four host read tools. Three reads were rejected by
+OpenCode's `external_directory` permission because the frozen inputs are
+read-only mounts outside the workspace; the workspace-local read completed.
+Gateway reached executing step four, but OpenCode created no subsequent
+step-start, repository mutation, commit, or checkpoint. The diagnostic was
+manually stopped and produced no evidence JSONL. The preserved Gateway DB
+SHA-256 is
+`facd858661beab56d86c1ff8a5b42b52d41aa996a8514812150bdc4fbc1a473d`.
+V101 cannot be promoted.
+
+Protocol v31 retains wildcard denial for external paths and allows only the
+exact frozen objective, acceptance, and plan files already mounted read-only
+into the isolated container. The focused command/permission and analyzer
+checks passed `4/4`; the complete suite passed `1162/1162` with the existing
+Starlette warning; Ruff passed and strict mypy reported zero errors across 59
+source files. The v31 completion plan is
+frozen at SHA-256
+`11f1ac59dd81712a93b1940c366fa450b600f6d8fad53dc4920d5d0e511c86c3`.

@@ -481,6 +481,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
   V100에서 첫 Gateway 응답 후 네트워크·파일·checkpoint 진척 없이
   OpenCode 프로세스만 계속 실행되는 정체를 만들었다. 기존 v29 실행은
   진단으로 보존하고 v30부터 제목 생성 경로를 평가 대상에서 제외한다.
+- protocol v31은 OpenCode의 기본 외부 경로 deny를 유지하면서 동결
+  objective·acceptance·plan 세 파일만 정확한 경로 allowlist로 허용한다.
+  workspace 밖의 다른 경로와 비밀 파일은 계속 거부한다.
 
 ## 10. Release, rollback, 배포
 
