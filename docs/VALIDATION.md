@@ -8705,3 +8705,17 @@ The v36 completion-plan and quality-contract SHA-256 values are respectively
 `370edfd303d875a777ec249fc5bac786616dc437553ab42a1aaa8360b4e58881`
 and
 `8534f832e5f4e3b5ac5f6f23a633e1b5391223f59f9070a661803617a1f9e104`.
+
+V116 and V117 failed before producing a checkpoint and remain immutable
+diagnostic evidence. V116 omitted the outer runner's GPU telemetry injection.
+V117 restored it, but the child client's captured error was reduced to the
+generic `client_nonzero_exit`, preventing a payload-safe root-cause
+classification. Neither run is a functional or quality PASS.
+
+Protocol v37 records only a fixed payload-free client-exit category in the
+failure sidecar and never records client stdout, stderr, prompts, or provider
+output. Its focused regression passed 34 tests; Ruff and strict mypy passed.
+The v37 completion-plan and quality-contract SHA-256 values are respectively
+`da82cf4d512e7c9cf3404805d0b19cb2c780b4c65c3b8faa3626b64a48d67e29`
+and
+`f5bbe95baa3134503db7ed84af93ad0b79cd30c00ab04e8962f2ef6d0907ecc8`.

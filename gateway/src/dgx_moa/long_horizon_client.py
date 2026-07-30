@@ -30,7 +30,7 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v36"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v37"
 AVATARFORGE_PHASES = (
     "avatarforge_phase_0_contract",
     "avatarforge_phase_1_plugin",
@@ -961,6 +961,30 @@ def observed_gateway_session(harness: str, configured: str, client: str) -> str:
     return client if harness == "opencode" else configured
 
 
+class ClientNonzeroExit(RuntimeError):
+    def __init__(self, detail: str) -> None:
+        super().__init__("client_nonzero_exit")
+        self.detail = detail
+
+
+def classify_client_exit(stdout: str, stderr: str) -> str:
+    lowered = (stdout + "\n" + stderr).lower()
+    patterns = (
+        ("remote executor fallback unavailable", "fallback_unavailable"),
+        ("gateway is draining", "gateway_draining"),
+        ("bad gateway", "gateway_bad_response"),
+        ("stream disconnected", "stream_disconnected"),
+        ("connection refused", "gateway_unreachable"),
+        ("authentication failed", "authentication_failed"),
+        ("unauthorized", "authentication_failed"),
+        ("error response from daemon", "container_runtime"),
+        ("invalid mount config", "container_runtime"),
+        ("prevents you from using this specific tool", "permission_denied"),
+        ("permission denied", "permission_denied"),
+    )
+    return next((detail for marker, detail in patterns if marker in lowered), "unclassified")
+
+
 def run_checkpoint(
     args: argparse.Namespace,
     state: Path,
@@ -1003,7 +1027,7 @@ def run_checkpoint(
             "client_goal_timeout" if profile == "avatarforge" else "client_checkpoint_timeout"
         )
     if run.returncode:
-        raise RuntimeError("client_nonzero_exit")
+        raise ClientNonzeroExit(classify_client_exit(run.stdout, run.stderr))
     if not metrics["terminal"]:
         raise RuntimeError("client_terminal_missing")
     if not session:
@@ -1225,6 +1249,7 @@ def main() -> int:
                     "invalid_review_evidence",
                 }
                 else "long_horizon_failure",
+                "failure_detail": getattr(error, "detail", None),
             },
         )
         raise

@@ -507,6 +507,9 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v36은 OpenCode에 전체 호스트가 아닌 격리 workspace 루트만
   `external_directory` 예외로 허용한다. v35 실행은 진단 자료로만
   보존하고 새 clean seed와 새 run ID에서 다시 시작한다.
+- protocol v37은 client 비정상 종료의 원문을 보존하지 않고 고정된
+  payload-free 오류 분류만 failure sidecar에 기록한다. v36 결과는 진단
+  자료로만 보존하고 새 clean seed와 새 run ID에서 다시 시작한다.
 
 ## 10. Release, rollback, 배포
 

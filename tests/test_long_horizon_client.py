@@ -747,6 +747,21 @@ def test_checkpoint_failures_are_distinguished(
         MODULE.run_checkpoint(args, state, control, 0)
 
 
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    (
+        ("Error response from daemon", "container_runtime"),
+        ("Gateway is draining", "gateway_draining"),
+        ("stream disconnected before completion", "stream_disconnected"),
+        ("unrecognized client failure", "unclassified"),
+    ),
+)
+def test_client_exit_classification_never_returns_payload(
+    output: str, expected: str
+) -> None:
+    assert MODULE.classify_client_exit(output, "") == expected
+
+
 @pytest.mark.parametrize(("profile", "index"), (("journal", 1), ("avatarforge", 0)))
 def test_checkpoint_requires_committed_implementation(
     tmp_path: Path,
