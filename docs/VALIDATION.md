@@ -8778,3 +8778,15 @@ and
 After updating the exact sanitized event assertion, the full regression passed
 1,174 tests in 47.41 seconds; Ruff passed and strict mypy reported zero issues
 across 59 source files.
+
+V124 confirmed that the real Executor payload still returned
+`FRONTIER_PROTOCOL_ERROR` with the safe detail `unclassified`; no raw
+subprocess output was retained. A short executor-schema probe continued to
+pass. Protocol v42 moves the complete redacted evidence from the process
+argument vector to Codex's documented stdin mode, reducing argv exposure and
+removing argument transport as a failure source. Its focused regression passed
+74 tests; Ruff and strict mypy passed. The v42 completion-plan and
+quality-contract SHA-256 values are respectively
+`ba7cabbc53d847a687caec67ce8892e7dd43cafd9dec0c2565c447823ee4a9b0`
+and
+`fb35d51c21390f1e7b76e9a3ef9b248deaf0b40fa71b18af08e81f9895bfe633`.

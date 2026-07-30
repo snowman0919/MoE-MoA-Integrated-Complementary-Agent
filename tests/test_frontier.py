@@ -389,7 +389,7 @@ def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
 
     def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
         observed["command"] = command
-        observed["task"] = command[-1]
+        observed["task"] = kwargs["input"]
         result_path = Path(command[command.index("--output-last-message") + 1])
         result_path.write_text(json.dumps(output))
         return subprocess.CompletedProcess(
@@ -421,6 +421,7 @@ def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
     command = observed["command"]
     assert isinstance(command, list)
     assert command[command.index("--sandbox") + 1] == "read-only"
+    assert command[-1] == "-"
     assert "sk-secret-value" not in str(observed["task"])
     if mode == "executor":
         assert "Never invoke a tool name as a shell command" in str(observed["task"])

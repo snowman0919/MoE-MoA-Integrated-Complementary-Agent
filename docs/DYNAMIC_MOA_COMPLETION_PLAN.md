@@ -521,6 +521,8 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v41은 Codex subprocess 원문을 저장하지 않고 고정된
   payload-free protocol-error detail만 관측 이벤트에 기록한다. v40
   결과는 진단 자료로만 보존한다.
+- protocol v42는 redacted Frontier evidence를 process argv가 아니라
+  Codex 공식 stdin 모드로 전달한다. v41 결과는 진단 자료로만 보존한다.
 
 ## 10. Release, rollback, 배포
 
