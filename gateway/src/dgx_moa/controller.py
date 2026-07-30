@@ -1510,7 +1510,6 @@ class Controller:
             for key in ("stdout", "stderr"):
                 result[key] = compress_text(result[key], self.settings.limits)
             result = cast(dict[str, Any], self.safe_payload(state, result))
-            observation = json.dumps(result, sort_keys=True)
             function = call.get("function") or {}
             tool_name = str(function.get("name", result["tool_name"]))
             arguments = function.get("arguments", result.get("arguments", {}))
@@ -1523,6 +1522,12 @@ class Controller:
             validation_attempted = self.validation_execution(
                 {"tool_name": tool_name, "normalized_arguments": arguments}
             )
+            filtered_validation = self.filtered_validation_execution(
+                {"tool_name": tool_name, "normalized_arguments": arguments}
+            )
+            if filtered_validation:
+                result["validation_evidence_status"] = "rejected_filtered_output"
+            observation = json.dumps(result, sort_keys=True)
             empty_validation = validation_attempted and any(
                 marker in (result["stdout"] + "\n" + result["stderr"]).lower()
                 for marker in ("ran 0 tests", "no tests ran", "collected 0 items")
@@ -1530,6 +1535,7 @@ class Controller:
             failed = (
                 result["exit_code"] != 0
                 or empty_validation
+                or filtered_validation
                 or any(
                     marker in result["stderr"].lower()
                     for marker in (
@@ -1612,6 +1618,11 @@ class Controller:
                 "stderr_summary": summarize_text(result["stderr"]),
                 "truncated": result["truncated"],
                 "failure_class": failure_class,
+                **(
+                    {"validation_evidence_status": result["validation_evidence_status"]}
+                    if filtered_validation
+                    else {}
+                ),
                 "filesystem_effect": effect,
             }
             state.tool_executions.append(execution)
@@ -3957,6 +3968,25 @@ class Controller:
             execution.get("exit_code") == 0
             and execution.get("failure_class") is None
             and cls.validation_execution(execution)
+        )
+
+    @classmethod
+    def filtered_validation_execution(cls, execution: dict[str, Any]) -> bool:
+        arguments = execution.get("normalized_arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                arguments = {}
+        command = (
+            arguments.get("cmd") or arguments.get("command")
+            if isinstance(arguments, dict)
+            else None
+        )
+        return (
+            cls.validation_execution(execution)
+            and isinstance(command, str)
+            and bool(re.search(r"(?<!\|)\|(?!\|)|(?:^|\s)(?:\d*>>?|&>)", command))
         )
 
     def requires_implementation_tool_action(

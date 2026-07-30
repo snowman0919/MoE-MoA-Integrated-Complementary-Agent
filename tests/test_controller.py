@@ -2346,6 +2346,43 @@ def test_test_failure_requires_successful_validation_to_resolve(
     assert active_failures(state) == []
 
 
+def test_filtered_validation_is_not_success_evidence(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    state = SessionState(session_id="filtered-validation")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "validation",
+                    "type": "function",
+                    "function": {
+                        "name": "exec_command",
+                        "arguments": json.dumps(
+                            {"cmd": "python -m pytest -q 2>&1 | head"}
+                        ),
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "validation",
+            "content": json.dumps({"exit_code": 0, "stdout": "tests passed"}),
+        },
+    ]
+
+    controller._observe(state, messages)
+
+    execution = state.tool_executions[-1]
+    assert execution["exit_code"] == 0
+    assert execution["failure_class"] == "TEST_FAILURE"
+    assert execution["validation_evidence_status"] == "rejected_filtered_output"
+    assert not controller.successful_validation_execution(execution)
+
+
 def test_failure_classification() -> None:
     assert classify_failure("No such file or directory") == "NONEXISTENT_PATH"
     assert classify_failure("unsupported call: read_mcp_resources") == "UNSUPPORTED_TOOL"

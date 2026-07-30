@@ -9165,3 +9165,18 @@ provider without storing provider output. Two focused fallback cases passed;
 the full regression passed 1,179 tests in 49.79 seconds. Ruff passed and strict
 mypy reported zero issues across 59 source files. Physical v58 confirmation
 has not yet run, so v58 is not a PASS.
+
+V156 then exposed that the v57 prompt-only rule was insufficient. After
+Reviewer rejection, Executor again ran pytest through redirection and a `head`
+pipeline. The real command exited zero but omitted its terminal verdict, and
+the correction loop continued to nine iterations with one dirty entry. V156
+remains preserved as an active diagnostic epoch and is not a PASS.
+
+Protocol v59 rejects piped or redirected validation at the common tool-result
+observation boundary. It preserves the real process exit code and output while
+adding `validation_evidence_status=rejected_filtered_output`, classifying the
+attempt as `TEST_FAILURE`, and withholding successful-validation credit. The
+focused filtered-output and failure-resolution tests passed; the full
+regression passed 1,180 tests in 43.72 seconds. Ruff passed and strict mypy
+reported zero issues across 59 source files. Physical v59 confirmation has not
+yet run, so v59 is not a PASS.
