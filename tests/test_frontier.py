@@ -470,7 +470,16 @@ def test_codex_oauth_timeout_opens_circuit(tmp_path, monkeypatch: pytest.MonkeyP
     assert profiles == ["primary"]
 
 
-@pytest.mark.parametrize("primary_failure", ["not logged in", "usage limit", "rate limit"])
+@pytest.mark.parametrize(
+    "primary_failure",
+    [
+        "not logged in",
+        "usage limit",
+        "rate limit",
+        "connection refused",
+        "failed to initialize in-process app-server client",
+    ],
+)
 def test_codex_oauth_falls_back_to_secondary_profile(
     tmp_path, monkeypatch: pytest.MonkeyPatch, primary_failure: str
 ) -> None:  # type: ignore[no-untyped-def]
@@ -789,24 +798,14 @@ def test_optional_review_does_not_use_paid_fallback_while_oauth_circuit_is_open(
         runner._run("code_review", {"bounded_diff": "bounded"}, "optional-review")
 
 
-@pytest.mark.parametrize(
-    ("primary_failure", "failure_class"),
-    [
-        ("connection refused", "FRONTIER_PROVIDER_UNAVAILABLE"),
-        ("malformed response", "FRONTIER_PROTOCOL_ERROR"),
-    ],
-)
 def test_codex_oauth_does_not_fail_over_unapproved_failures(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-    primary_failure: str,
-    failure_class: str,
+    tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # type: ignore[no-untyped-def]
     profiles: list[str] = []
 
     def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
         profiles.append(Path(kwargs["env"]["CODEX_HOME"]).name)
-        return subprocess.CompletedProcess(command, 1, stdout="", stderr=primary_failure)
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="malformed response")
 
     monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
     runner = CodexOAuthCollaboration(
@@ -822,7 +821,7 @@ def test_codex_oauth_does_not_fail_over_unapproved_failures(
         tmp_path,
     )
 
-    with pytest.raises(RuntimeError, match=failure_class):
+    with pytest.raises(RuntimeError, match="FRONTIER_PROTOCOL_ERROR"):
         runner._run("architecture", {"objective": "x"}, "no-fallback")
 
     assert profiles == ["primary"]

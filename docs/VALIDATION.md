@@ -9367,3 +9367,23 @@ completed continuation removes both restrictions. Three focused regressions
 passed; the full regression passed 1,184 tests in 47.73 seconds. Ruff passed,
 strict mypy reported zero issues across 59 source files, and `git diff --check`
 passed. End-to-end v69 confirmation has not yet run, so v69 is not a PASS.
+
+V168 physically ran v69 for about 17 hours before its long-horizon runner
+exited nonzero. It exercised local Reasoner, Planner, Reviewer, Executor, and
+Codex OAuth Frontier, produced five dirty workspace paths, and reached 21 tool
+executions. No accepted terminal validation or phase commit was recorded. Nine
+Frontier reviews rejected incomplete evidence, while three later
+`local_no_progress` Frontier dispatches all failed with
+`FRONTIER_PROTOCOL_ERROR/app_server_init`. The primary OAuth profile passed a
+fresh harmless schema probe afterward, proving a transient app-server startup
+failure rather than permanent authentication loss. V168 was stopped with its
+database and workspace preserved and is not a PASS.
+
+Protocol v70 classifies Codex's explicit in-process app-server initialization
+failure as `FRONTIER_PROVIDER_UNAVAILABLE` and includes provider unavailability
+in OAuth profile failover. Secondary and tertiary Codex OAuth profiles are
+therefore attempted before the existing last-resort paid OpenRouter fallback;
+unknown malformed protocol output remains fail-closed. Six focused regressions
+passed; the full regression passed 1,185 tests in 40.59 seconds. Ruff passed,
+strict mypy reported zero issues across 59 source files, and `git diff --check`
+passed. End-to-end v70 confirmation has not yet run, so v70 is not a PASS.

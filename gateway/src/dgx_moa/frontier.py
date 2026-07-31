@@ -72,6 +72,7 @@ PROFILE_FAILOVER_FAILURES = frozenset(
         "FRONTIER_USAGE_LIMIT",
         "FRONTIER_RATE_LIMIT",
         "FRONTIER_PROFILE_BUSY",
+        "FRONTIER_PROVIDER_UNAVAILABLE",
         "FRONTIER_VALIDATION_FAILURE",
     }
 )
@@ -1408,6 +1409,8 @@ def codex_command(
 
 def classify_frontier_failure(output: str) -> str:
     normalized = output.lower()
+    if "failed to initialize in-process app-server client" in normalized:
+        return "FRONTIER_PROVIDER_UNAVAILABLE"
     if any(
         marker in normalized
         for marker in (
