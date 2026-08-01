@@ -9815,3 +9815,21 @@ Measured checks from the experiment worktree:
 - full regression: `1204 passed` in 44.87 s;
 - Ruff: pass;
 - strict mypy: zero issues across 60 source files.
+
+## 2026-08-02 AvatarForge Codex V182 terminal result
+
+Fresh protocol-v84 attempt V182 passed its Docker/GPU capability preflight and
+ran through the authenticated candidate Gateway with the isolated Codex
+harness. It terminated after 922.587 seconds with exit code 1 and the
+payload-free sidecar classification `client_nonzero_exit/stream_disconnected`.
+The immutable evidence header and failure sidecar remain unchanged at
+`/var/tmp/dgx-moa-avatarforge-v182`; their SHA-256 values are recorded in the
+0600 preservation audit `v182-terminal-audit-0314.json`.
+
+The run produced 698 Gateway events, 33 received requests, 28 completed
+streams, 59 recorded model invocations, and 419,414 Codex client tokens. Its
+classified runtime failures included six test failures, four type errors,
+three repeated actions, and one nonexistent-path tool failure. Only the
+allowed `avatarforge/` workspace root became dirty, but no completion evidence
+row was appended. V182 is diagnostic only and is not eligible for the frozen
+blind or long-horizon confirmation gates.
