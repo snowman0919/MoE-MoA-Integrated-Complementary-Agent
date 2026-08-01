@@ -164,6 +164,7 @@ class ApiKeyStore:
         now = self.clock()
         expires_at = now + request.expires_in_days * 86_400
         with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
             exists = database.execute(
                 "SELECT kind, expires_at, revoked_at FROM api_keys WHERE name = ?", (name,)
             ).fetchone()
@@ -233,6 +234,7 @@ class ApiKeyStore:
             return self.get(name)
         parameters.append(name)
         with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
             existing = database.execute(
                 "SELECT kind, expires_at, revoked_at FROM api_keys WHERE name = ?", (name,)
             ).fetchone()

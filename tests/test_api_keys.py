@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import stat
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from dgx_moa.api import create_app
@@ -82,6 +84,26 @@ def test_key_store_enforces_expiry_limits_admin_cap_and_file_mode(tmp_path: Path
     assert store.verify_admin_session(session_token) is None
     database_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("state.db*"))
     assert session_token.encode() not in database_bytes
+
+
+def test_admin_key_cap_is_atomic_across_concurrent_creates(tmp_path: Path) -> None:
+    store = ApiKeyStore(tmp_path / "state.db", {}, admin_token_ids=(), max_admin_keys=1)
+    barrier = Barrier(2)
+
+    def create(name: str) -> bool:
+        barrier.wait()
+        try:
+            store.create(ApiKeyRequest(name=name, kind="admin"))
+        except ValueError as error:
+            assert str(error) == "admin API key limit reached"
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(create, ("admin-one", "admin-two")))
+
+    assert sorted(results) == [False, True]
+    assert sum(key["status"] == "active" for key in store.list()) == 1
 
 
 def test_admin_key_api_separates_permissions_and_returns_no_store(

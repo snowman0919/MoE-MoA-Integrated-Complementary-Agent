@@ -9614,3 +9614,16 @@ the worktree HEAD. Candidate ports 18101 and 18102 remain loopback-only, while
 the authenticated gateway alone listens on loopback and the tailnet address.
 This preservation preflight permits later non-destructive reconstruction but
 does not authorize ref movement, integration, release, or deployment.
+
+Protocol v82 closes the administrator-key-count check/write race at the SQLite
+boundary. Managed key creation and expired-admin reactivation now acquire an
+immediate write transaction before reading the active administrator count, so
+concurrent gateway workers cannot both admit the last available slot. A
+two-thread regression creates distinct administrator keys against a cap of one
+and requires exactly one success and one explicit cap rejection. The race test
+passed 20 consecutive executions; all API-key tests passed, and the full suite
+passed 1,198 tests in 59.65 seconds. Ruff passed, strict mypy reported zero
+issues across 59 source files, and `git diff --check` passed. This does not yet
+make request/token quota admission atomic: authorization still checks completed
+and accepted usage before the request row is inserted, so that separate quota
+reservation boundary remains an open reliability gate.
