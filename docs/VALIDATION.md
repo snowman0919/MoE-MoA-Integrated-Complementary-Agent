@@ -9852,3 +9852,22 @@ contract; V182 itself remains failed and immutable. Measured checks were 56
 focused long-horizon tests passing, Ruff passing, strict mypy reporting zero
 issues over 60 source files, and the full suite passing 1205 tests in 44.58 s.
 No new long-run confirmation is claimed until a fresh v85 run ID completes.
+
+### V183 diagnostic and V184 replacement
+
+V183 physically exercised the v85 recovery path: after the first Codex stream
+disconnected before a session event, the runner recovered the sole active
+isolated thread and attempted one same-session resume. The attempt still
+failed after 90.65 seconds because its newly launched Gateway omitted the
+mounted Codex OAuth binary directory from `PATH`. Six planned-complex-change
+Frontier dispatches consequently failed with a fixed `FileNotFoundError`
+classification. V183 stayed clean, has immutable launch/terminal audits, and
+is not confirmation evidence.
+
+V184 replaced it from the same clean `0f2c68c` baseline and frozen v85 plan,
+with a fresh Gateway token and the verified Codex binary directory explicitly
+in Gateway `PATH`. Its loopback Gateway, hardened runner, client child, local
+Reasoner, and local Executor were running without provider failures at launch.
+The 0600 evidence header SHA-256 is
+`f3867bd2e30f681d7cafc77d8bb9f698060c80a89b4461fef9b9151d8d08942d`.
+V184 remains running and is not yet pass evidence.
