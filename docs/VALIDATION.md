@@ -9746,3 +9746,21 @@ regression passed 1,201 tests in 45.12 seconds; Ruff passed and strict mypy
 reported zero issues across 60 source files. The remaining 2,100-line Chat
 orchestration core still requires responsibility extraction, so this is not a
 Goal PASS.
+
+## 2026-08-02 AvatarForge V179 terminal result
+
+V179 terminated after 9,141 seconds with runner exit code 1,
+`client_nonzero_exit`, and `stream_disconnected`; it did not create the success
+evidence JSONL and left `docs/AVATARFORGE_PHASE_0_COMMIT_EVIDENCE.md` dirty.
+Gateway evidence shows five stream aborts, five remote Executor failures, and a
+terminal sequence of upstream error frames, HTTP 409 responses, and repeated
+`loop_new_evidence_required` admission failures. The run made 57 local Executor
+calls but 244 Codex OAuth Executor calls, plus one OpenRouter call, so it is not
+evidence of local-MoA non-inferiority even apart from the terminal failure.
+
+The mode-`0600` sanitized terminal audit is
+`/home/kotori9/code/.moa-preservation/20260802-0135/v179-terminal-audit-0233.json`,
+SHA-256 `52eb5a383bb0b3646cba0da52b1f59b27d070ef8af8266c689312842699bbc6f`.
+V179 remains immutable failed diagnostic evidence. Protocol v84's bounded
+project paths, durable first-call evidence header, and checkpoint scope guard
+require a fresh run ID; they do not retroactively repair V179.
