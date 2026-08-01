@@ -325,6 +325,32 @@ async def test_opencode_specialist_uses_role_model_and_drops_tools(
     assert requests[0].headers["authorization"] == "Bearer synthetic-secret"
 
 
+@pytest.mark.asyncio
+async def test_remote_specialist_reuses_injected_http_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    monkeypatch.setenv("TEST_OPENCODE_KEY", "synthetic-secret")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        provider = RemotePlannerProvider(
+            endpoint="https://opencode.invalid",
+            api_key_env="TEST_OPENCODE_KEY",
+            model="deepseek-v4-pro",
+            client=client,
+        )
+        await provider.complete({"messages": []}, timeout_seconds=5)
+        await provider.complete({"messages": []}, timeout_seconds=5)
+        assert not client.is_closed
+
+    assert calls == 2
+
+
 def test_remote_planner_reserves_tokens_for_hidden_reasoning() -> None:
     settings = SpecialistRoutingConfig()
 

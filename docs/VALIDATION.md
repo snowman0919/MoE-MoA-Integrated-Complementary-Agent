@@ -9576,3 +9576,18 @@ strict mypy reported zero issues across 59 source files, and `git diff --check`
 passed. Physical gateway and direct-SGLang repeated-prefix TTFT/cache equality
 remain pending because V179 still owns the single-sequence candidates. v79 is
 not a cache or quality PASS.
+
+Protocol v80 gives the FastAPI lifespan one shared `httpx.AsyncClient` and
+injects it into the model provider, remote specialists, remote judge, Telegram
+observation, lifecycle readiness probes, and `/readyz`. Shutdown closes the
+lifecycle coordinator before closing the shared client exactly once. Four
+focused modules passed 270 tests, then the full regression passed 1,197 tests
+in 48.24 seconds. Ruff passed and strict mypy reported zero issues across 59
+source files. Physical inspection found the SGLang specialist healthy on
+loopback port 18102, mounted only from
+`gemma-4-26b-a4b-nvfp4-a19cfe00`, serving the 65,536-context specialist alias
+with ModelOpt FP4 and Gemma 4 parsers. The model store contains that 18 GiB
+Gemma directory and no Gemma 31B directory; the sole remaining `31B` text is
+historical validation context. This records the active candidate boundary but
+does not promote, deploy, or establish quality noninferiority. v80 is not a
+Goal PASS.

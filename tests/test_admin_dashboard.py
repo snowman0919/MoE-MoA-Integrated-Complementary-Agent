@@ -100,7 +100,7 @@ def test_admin_dashboard_runs_bounded_custom_provider_codex(
         return Process(args, kwargs)
 
     monkeypatch.setattr("dgx_moa.admin_codex.Path.home", lambda: home)
-    monkeypatch.setattr("dgx_moa.api.ModelProvider", lambda: StubProvider())
+    monkeypatch.setattr("dgx_moa.api.ModelProvider", lambda **_: StubProvider())
     monkeypatch.setattr(
         "dgx_moa.admin_codex.asyncio.create_subprocess_exec", create_subprocess_exec
     )

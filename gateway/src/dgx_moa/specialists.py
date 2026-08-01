@@ -97,6 +97,7 @@ class _RemoteProvider:
         model: str,
         min_completion_tokens: int = 1,
         transport: httpx.AsyncBaseTransport | None = None,
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         self.role = role
         self.endpoint = endpoint.rstrip("/")
@@ -104,6 +105,7 @@ class _RemoteProvider:
         self.model = model
         self.min_completion_tokens = min_completion_tokens
         self.transport = transport
+        self.client = client
 
     async def complete(self, request: dict[str, Any], *, timeout_seconds: float) -> dict[str, Any]:
         api_key = os.getenv(self.api_key_env)
@@ -135,14 +137,21 @@ class _RemoteProvider:
             body["response_format"] = {"type": "json_object"}
         try:
             async with asyncio.timeout(timeout_seconds):
-                async with httpx.AsyncClient(transport=self.transport, timeout=None) as client:
-                    response = await client.post(
+                if self.client is not None:
+                    response = await self.client.post(
                         f"{self.endpoint}/v1/chat/completions",
                         headers={"Authorization": f"Bearer {api_key}"},
                         json=body,
                     )
-                    response.raise_for_status()
-                    return cast(dict[str, Any], response.json())
+                else:
+                    async with httpx.AsyncClient(transport=self.transport, timeout=None) as client:
+                        response = await client.post(
+                            f"{self.endpoint}/v1/chat/completions",
+                            headers={"Authorization": f"Bearer {api_key}"},
+                            json=body,
+                        )
+                response.raise_for_status()
+                return cast(dict[str, Any], response.json())
         except (TimeoutError, httpx.TimeoutException) as error:
             raise StageTimeout(f"remote_{self.role}") from error
 

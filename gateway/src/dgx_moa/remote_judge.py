@@ -154,6 +154,7 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
         max_retries: int = 1,
         max_calls_per_request: int = 2,
         transport: httpx.AsyncBaseTransport | None = None,
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.api_key_env = api_key_env
@@ -162,9 +163,20 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
         self.max_retries = max_retries
         self.max_calls_per_request = max_calls_per_request
         self.transport = transport
+        self.client = client
         self._calls: OrderedDict[str, int] = OrderedDict()
         self._usage: OrderedDict[str, dict[str, int]] = OrderedDict()
         self._call_lock = asyncio.Lock()
+
+    async def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        if self.client is not None:
+            return await self.client.request(
+                method, url, timeout=self.timeout_seconds, **kwargs
+            )
+        async with httpx.AsyncClient(
+            transport=self.transport, timeout=self.timeout_seconds
+        ) as client:
+            return await client.request(method, url, **kwargs)
 
     def _url(self, resource: str) -> str:
         base = self.endpoint if self.endpoint.endswith("/v1") else f"{self.endpoint}/v1"
@@ -191,11 +203,10 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
 
     async def available(self) -> bool:
         try:
-            async with httpx.AsyncClient(
-                transport=self.transport, timeout=self.timeout_seconds
-            ) as client:
-                response = await client.get(self._url("models"), headers=self._headers())
-                response.raise_for_status()
+            response = await self._request(
+                "GET", self._url("models"), headers=self._headers()
+            )
+            response.raise_for_status()
             return True
         except (httpx.HTTPError, JudgeUnavailable):
             return False
@@ -238,18 +249,16 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
         }
         for attempt in range(self.max_retries + 1):
             try:
-                async with httpx.AsyncClient(
-                    transport=self.transport, timeout=self.timeout_seconds
-                ) as client:
-                    response = await client.post(
-                        self._url("chat/completions"),
-                        headers=self._headers(),
-                        json=body,
-                    )
-                    if response.status_code == 429 or response.status_code >= 500:
-                        response.raise_for_status()
+                response = await self._request(
+                    "POST",
+                    self._url("chat/completions"),
+                    headers=self._headers(),
+                    json=body,
+                )
+                if response.status_code == 429 or response.status_code >= 500:
                     response.raise_for_status()
-                    payload = response.json()
+                response.raise_for_status()
+                payload = response.json()
                 content = payload["choices"][0]["message"]["content"]
                 verdict = RemoteJudgeVerdict.model_validate_json(content)
                 raw_usage = payload.get("usage", {})

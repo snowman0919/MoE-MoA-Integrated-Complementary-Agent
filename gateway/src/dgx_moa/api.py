@@ -224,43 +224,45 @@ def create_app(
     )
     auth = auth_dependency(configured, api_keys)
     admin_auth = admin_dependency(configured, api_keys)
+    http_client: httpx.AsyncClient | None = None
 
     async def default_lifecycle_health_probe(role: str) -> bool:
         model = configured.models.get(role)
-        if model is None:
+        if model is None or http_client is None:
             return False
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                if role in {"planner", "reviewer"} and model.provider != "ollama":
-                    response = await client.post(
-                        f"{model.base_url.rstrip('/')}/v1/chat/completions",
-                        json={
-                            "model": model.served_name,
-                            "messages": [
-                                {
-                                    "role": "user",
-                                    "content": "Reply with exactly READY.",
-                                }
-                            ],
-                            "temperature": 0,
-                            "max_tokens": 256,
-                            "stream": False,
-                        },
-                    )
-                    if response.status_code != 200:
-                        return False
-                    payload = response.json()
-                    choices = payload.get("choices", [])
-                    return bool(
-                        choices
-                        and isinstance(choices[0], dict)
-                        and choices[0].get("message", {}).get("content")
-                    )
-                response = await client.get(
-                    f"{model.base_url.rstrip('/')}/api/ps"
-                    if model.provider == "ollama"
-                    else f"{model.base_url.rstrip('/')}/v1/models"
+            if role in {"planner", "reviewer"} and model.provider != "ollama":
+                response = await http_client.post(
+                    f"{model.base_url.rstrip('/')}/v1/chat/completions",
+                    timeout=30,
+                    json={
+                        "model": model.served_name,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "Reply with exactly READY.",
+                            }
+                        ],
+                        "temperature": 0,
+                        "max_tokens": 256,
+                        "stream": False,
+                    },
                 )
+                if response.status_code != 200:
+                    return False
+                payload = response.json()
+                choices = payload.get("choices", [])
+                return bool(
+                    choices
+                    and isinstance(choices[0], dict)
+                    and choices[0].get("message", {}).get("content")
+                )
+            response = await http_client.get(
+                f"{model.base_url.rstrip('/')}/api/ps"
+                if model.provider == "ollama"
+                else f"{model.base_url.rstrip('/')}/v1/models",
+                timeout=30,
+            )
         except httpx.HTTPError:
             return False
         except (TypeError, ValueError):
@@ -273,14 +275,17 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+        nonlocal http_client
         store = StateStore(configured.state_db)
-        provider = ModelProvider()
+        http_client = httpx.AsyncClient(timeout=None)
+        provider = ModelProvider(client=http_client)
         project_root = Path(os.getenv("DGX_MOA_PROJECT_ROOT", ".")).resolve()
         app.state.settings = configured
         app.state.draining = False
         app.state.executor_admission_lock = asyncio.Lock()
         app.state.api_keys = api_keys
         app.state.store = store
+        app.state.http_client = http_client
         app.state.runtime_metrics = RuntimeMetrics()
         store.subscribe_events(app.state.runtime_metrics.observe_event)
         observation_providers: list[ObservationProvider] = []
@@ -292,6 +297,7 @@ def create_app(
                     observation.telegram.chat_id,
                     message_thread_id=observation.telegram.message_thread_id,
                     timeout=observation.request_timeout_seconds,
+                    client=http_client,
                 )
             )
         app.state.observation = (
@@ -387,6 +393,7 @@ def create_app(
                 timeout_seconds=configured.remote_judge.timeout_seconds,
                 max_retries=configured.remote_judge.max_retries,
                 max_calls_per_request=configured.remote_judge.max_calls_per_request,
+                client=http_client,
             )
         app.state.remote_judge = remote_judge
         if remote_judge is None:
@@ -445,6 +452,7 @@ def create_app(
             remote_values = {
                 "endpoint": configured.specialist_routing.endpoint,
                 "api_key_env": configured.specialist_routing.api_key_env,
+                "client": http_client,
             }
 
             async def acquire_specialist(request_id: str, role: str) -> tuple[str, ...]:
@@ -720,6 +728,8 @@ def create_app(
             if close_provider is not None:
                 await close_provider()
             await app.state.lifecycle.close()
+            await http_client.aclose()
+            http_client = None
 
     app = FastAPI(title="DGX MoA Agent", version="2.0.0", lifespan=lifespan)
     app.include_router(build_admin_router(admin_auth))
@@ -1052,18 +1062,18 @@ def create_app(
             )
         service_status = {role: "stopped" for role in configured.models}
         try:
-            async with httpx.AsyncClient(timeout=2) as client:
-                results = await asyncio.gather(
-                    *(
-                        client.get(
-                            f"{model.base_url.rstrip('/')}/api/ps"
-                            if model.provider == "ollama"
-                            else f"{model.base_url.rstrip('/')}/v1/models"
-                        )
-                        for model in configured.models.values()
-                    ),
-                    return_exceptions=True,
-                )
+            results = await asyncio.gather(
+                *(
+                    request.app.state.http_client.get(
+                        f"{model.base_url.rstrip('/')}/api/ps"
+                        if model.provider == "ollama"
+                        else f"{model.base_url.rstrip('/')}/v1/models",
+                        timeout=2,
+                    )
+                    for model in configured.models.values()
+                ),
+                return_exceptions=True,
+            )
             for (role, model), result in zip(configured.models.items(), results, strict=True):
                 if isinstance(result, httpx.Response) and (
                     ollama_model_ready(result, model)

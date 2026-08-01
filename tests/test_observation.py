@@ -209,6 +209,24 @@ async def test_telegram_uses_configured_thread_target() -> None:
 
 
 @pytest.mark.asyncio
+async def test_telegram_reuses_injected_http_client() -> None:
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        provider = TelegramProvider("synthetic-token", "chat-1", client=client)
+        await provider.send([])
+        await provider.send([])
+        assert not client.is_closed
+
+    assert calls == 2
+
+
+@pytest.mark.asyncio
 async def test_provider_rate_limit_and_outage_are_isolated() -> None:
     async def rate_limited(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, request=request, headers={"Retry-After": "1"})

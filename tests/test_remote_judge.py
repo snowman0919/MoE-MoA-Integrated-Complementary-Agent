@@ -85,6 +85,35 @@ async def test_opencode_judge_sends_redacted_bounded_strict_package(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_remote_judge_reuses_injected_http_client(monkeypatch) -> None:
+    calls = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(verdict())}}]},
+            request=request,
+        )
+
+    monkeypatch.setenv("TEST_OPENCODE_KEY", "synthetic-secret")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        provider = OpenCodeGoJudgeProvider(
+            endpoint="https://opencode.invalid",
+            api_key_env="TEST_OPENCODE_KEY",
+            max_calls_per_request=2,
+            client=client,
+        )
+        package = JudgeEvidencePackage(request_id="shared-client", objective="judge")
+        await provider.judge(package)
+        await provider.judge(package)
+        assert not client.is_closed
+
+    assert calls == 2
+
+
+@pytest.mark.asyncio
 async def test_nim_judge_retries_rate_limit_and_enforces_two_calls(monkeypatch) -> None:
     attempts = 0
 

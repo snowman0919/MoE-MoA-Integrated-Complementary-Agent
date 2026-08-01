@@ -6675,7 +6675,10 @@ def test_profile_aware_readiness(settings, stub_provider: StubProvider, monkeypa
         async def __aexit__(self, *args) -> None:  # type: ignore[no-untyped-def]
             return None
 
-        async def get(self, url: str) -> httpx.Response:
+        async def aclose(self) -> None:
+            return None
+
+        async def get(self, url: str, *, timeout=None) -> httpx.Response:  # type: ignore[no-untyped-def]
             status_code = (
                 200 if url.endswith(":8101/v1/models") or url.endswith(":8104/v1/models") else 503
             )

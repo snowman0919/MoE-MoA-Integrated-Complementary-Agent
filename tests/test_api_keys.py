@@ -101,7 +101,7 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         }
     )
     stub = StubProvider()
-    monkeypatch.setattr("dgx_moa.api.ModelProvider", lambda: stub)
+    monkeypatch.setattr("dgx_moa.api.ModelProvider", lambda **_: stub)
     with TestClient(create_app(configured), base_url="https://testserver") as client:
         general = {"Authorization": "Bearer general-secret-value"}
         operator = {"Authorization": "Bearer operator-secret-value"}
@@ -323,7 +323,7 @@ def test_frontier_device_auth_is_admin_only_streamed_and_profile_bounded(
         (home / "auth.json").write_text("{}")
         return Process()
 
-    monkeypatch.setattr("dgx_moa.api.ModelProvider", lambda: StubProvider())
+    monkeypatch.setattr("dgx_moa.api.ModelProvider", lambda **_: StubProvider())
     monkeypatch.setattr("dgx_moa.api.asyncio.create_subprocess_exec", create_subprocess_exec)
     with TestClient(create_app(configured), base_url="https://testserver") as client:
         general = {"Authorization": "Bearer general-secret-value"}

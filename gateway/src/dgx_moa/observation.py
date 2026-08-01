@@ -460,12 +460,14 @@ class TelegramProvider:
         message_thread_id: int | None = None,
         timeout: float = 10,
         transport: httpx.AsyncBaseTransport | None = None,
+        client: httpx.AsyncClient | None = None,
     ):
         self.url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         self.chat_id = chat_id
         self.message_thread_id = message_thread_id
         self.timeout = timeout
         self.transport = transport
+        self.client = client
 
     async def send(self, events: Sequence[ObservationEvent]) -> None:
         payload: dict[str, Any] = {
@@ -474,9 +476,12 @@ class TelegramProvider:
         }
         if self.message_thread_id is not None:
             payload["message_thread_id"] = self.message_thread_id
-        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
-            response = await client.post(self.url, json=payload)
-            response.raise_for_status()
+        if self.client is not None:
+            response = await self.client.post(self.url, json=payload, timeout=self.timeout)
+        else:
+            async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
+                response = await client.post(self.url, json=payload)
+        response.raise_for_status()
 
 
 class ObservationBus:
