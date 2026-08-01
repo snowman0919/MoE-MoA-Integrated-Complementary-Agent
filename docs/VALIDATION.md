@@ -9462,3 +9462,20 @@ A normal partial continuation remains pinned even though its evidence failure
 class is `TEST_FAILURE`. Three focused regressions passed; the full regression,
 Ruff, strict mypy across 59 source files, and `git diff --check` passed.
 End-to-end v73 confirmation has not yet run, so v73 is not a PASS.
+
+V176 physically exercised v73 and produced clean Phase 0 commit `868a5d4` after
+local and Frontier work. It did not run the frozen exact validation command at
+that clean boundary. The Executor instead received general tools, invoked goal
+management and other commands, and later dirtied
+`scripts/isolated-sglang-topology.sh`. V176 was stopped with its database and
+workspace preserved. It has no accepted terminal validation and is not a PASS.
+
+Protocol v74 treats a changed, clean, finalized long-horizon workspace without
+accepted validation as an exact-validation boundary. Request preparation skips
+specialists, exposes only `exec_command`, requires the frozen command with
+`login=false`, and records only its SHA-256. This reuses the v71 restriction
+instead of adding another execution path. The focused finalized-boundary and
+existing retry/poll regressions passed; the full regression passed 1,188 tests
+in 47.36 seconds. Ruff passed, strict mypy reported zero issues across 59
+source files, and `git diff --check` passed. End-to-end v74 confirmation has not
+yet run, so v74 is not a PASS.

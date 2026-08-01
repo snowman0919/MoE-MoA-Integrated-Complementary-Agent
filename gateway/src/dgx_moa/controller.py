@@ -2281,6 +2281,25 @@ class Controller:
             else None
         )
 
+    def finalized_validation_command(
+        self, state: SessionState, metadata: dict[str, Any]
+    ) -> str | None:
+        command = metadata.get("validation_command")
+        if not isinstance(command, str) or not command.strip():
+            return None
+        changed = any(
+            execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
+            for execution in current_turn_executions(state)
+        )
+        return (
+            command.strip()
+            if state.repository.get("workspace_identifier") == "long-horizon"
+            and changed
+            and not self.has_validation_evidence(state, metadata)
+            and self.long_horizon_workspace_finalized(state)
+            else None
+        )
+
     def prompt_sandwich(
         self,
         role: str,
@@ -2773,6 +2792,8 @@ class Controller:
         body = request.copy()
         metadata = dict(request.get("metadata", {}))
         filtered_validation_retry = self.filtered_validation_retry_command(state, metadata)
+        finalized_validation = self.finalized_validation_command(state, metadata)
+        required_validation = filtered_validation_retry or finalized_validation
         pending_prerequisites = pending_goal_prerequisites(state)
         if (
             tool_continuation
@@ -2805,7 +2826,7 @@ class Controller:
                 {role: self.settings.models[role].revision for role in ("planner", "reviewer")},
             )
         roles = tuple(dict.fromkeys((*roles, *state.roles_required)))
-        if filtered_validation_retry is not None:
+        if required_validation is not None:
             roles = ("executor",)
             tool_continuation = True
         if state.control_state != "running":
@@ -3931,7 +3952,7 @@ class Controller:
                     {"tools": list(selected_names)},
                 )
         pending_validation_session = self.pending_validation_poll_session(state)
-        if filtered_validation_retry is not None and body.get("tools"):
+        if required_validation is not None and body.get("tools"):
             body["tools"] = [
                 tool
                 for tool in body["tools"]
@@ -3948,7 +3969,7 @@ class Controller:
                     function["parameters"] = {
                         "type": "object",
                         "properties": {
-                            "cmd": {"type": "string", "const": filtered_validation_retry},
+                            "cmd": {"type": "string", "const": required_validation},
                             "login": {"type": "boolean", "const": False},
                         },
                         "required": ["cmd", "login"],
@@ -3959,8 +3980,12 @@ class Controller:
                 body["tool_choice"] = "required"
             self.store.event(
                 state.session_id,
-                "filtered_validation_retry_restricted",
-                {"command_sha256": hashlib.sha256(filtered_validation_retry.encode()).hexdigest()},
+                (
+                    "filtered_validation_retry_restricted"
+                    if filtered_validation_retry is not None
+                    else "finalized_validation_restricted"
+                ),
+                {"command_sha256": hashlib.sha256(required_validation.encode()).hexdigest()},
             )
         if pending_validation_session is not None and body.get("tools"):
             body["tools"] = [
@@ -3980,7 +4005,7 @@ class Controller:
             )
         if (
             pending_validation_session is None
-            and filtered_validation_retry is None
+            and required_validation is None
             and implementation_complete
             and (tool_continuation or progress_retry)
         ):
