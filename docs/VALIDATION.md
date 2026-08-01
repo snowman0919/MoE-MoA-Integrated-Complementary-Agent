@@ -10141,3 +10141,22 @@ success rows are not mixed. The v5 atomic score remains immutable, but its
 corrected telemetry status is failed with one orphan provider error. This is a
 diagnostic instrumentation epoch, not a Hermes panel pass; a new committed run
 must restart the five tasks.
+
+Committed diagnostic `20260802-hermes-five-6cbae3d-v6` then passed the
+rate-limiter fixture in 235.967 s with complete telemetry, but the external
+panel driver looked for the score under the wrong directory and stopped the
+remaining four tasks. The completed result remains valid diagnostic evidence;
+the incomplete epoch is not a panel pass and was not reused.
+
+Fresh epoch `20260802-hermes-five-6cbae3d-v7` ran all five Docker-isolated
+Hermes fixtures from head `6cbae3d`. Rate limiter, atomic store, DAG runner,
+webhook verifier, and JSONL report passed all functional, hidden, scope,
+test-integrity, Korean-output, tool-evidence, isolation, and telemetry checks.
+Durations were 236.305 s, 210.533 s, 227.193 s, 345.416 s, and 214.092 s,
+respectively (1,233.539 s total). The run consumed 1,070,829 total tokens;
+43 cache rows were reported, 39 explicitly unavailable, and none missing.
+Provider errors, orphan provider errors, and provider switches were all zero.
+This establishes Hermes 5/5 diagnostic functionality and telemetry only. Its
+high token volume remains an efficiency concern, and the run has no matched
+native baseline, blinded scores, or confidence interval, so it is not
+non-inferiority evidence.
