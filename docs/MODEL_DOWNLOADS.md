@@ -1,6 +1,16 @@
 # Model Downloads
 
-## Executor
+## Executor candidate
+
+- Repository: `Cirrascale/Qwen3-Coder-Next-NVFP4`
+- Revision: `15c399c8189eccc9c47d17dcf8adf3c16e8bb3f8`
+- Classification: community-maintained
+- Actual directory size: `47500860663` bytes
+- Shards: `10`; all hashes are pinned in `config/sglang-executor.sha256`
+- Structural result: verified; no incomplete files
+- Runtime result: isolated SGLang inference and readiness validated
+
+## vLLM rollback Executor
 
 - Repository: `RedHatAI/Qwen3-Coder-Next-NVFP4`
 - Revision: `27a8f16f463b9a13c91c332c40cf93e09717347e`
@@ -12,7 +22,18 @@
 - Structural result: verified; no incomplete files
 - Runtime result: downloaded-and-validated
 
-## Reviewer
+## Shared Planner and Reviewer candidate
+
+- Repository: `nvidia/Gemma-4-26B-A4B-NVFP4`
+- Revision: `a19cfe00be84568a6867111c9a68c9c44fdcffe6`
+- Classification: vendor-provided
+- Actual directory size: `18825681233` bytes
+- Shards: `2`; both hashes are pinned in `config/sglang-specialist.sha256`
+- Structural result: verified; no incomplete files
+- Runtime result: isolated SGLang inference and readiness validated
+- The model is shared by Planner and Reviewer; it does not replace Executor.
+
+## vLLM rollback Reviewer
 
 - Repository: `CohereLabs/North-Mini-Code-1.0-w4a16`
 - Revision: `1e55f4aa327aba4c0b7a1da0d0f24626d3af5c90`
@@ -27,7 +48,7 @@
 - Structural result: verified; no incomplete files
 - Runtime result: downloaded-and-validated
 
-## Planner
+## vLLM rollback Planner
 
 - Repository: `cyankiwi/Nemotron-Cascade-2-30B-A3B-AWQ-4bit`
 - Revision: `49cee6bbed2edd4e2d305d948ac443714a2ab242`
