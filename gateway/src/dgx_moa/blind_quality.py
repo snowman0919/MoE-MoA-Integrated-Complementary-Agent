@@ -18,9 +18,6 @@ from typing import Any
 from dgx_moa import confirmation_seal as SEAL_TOOL
 
 PROJECT = Path(__file__).resolve().parents[3]
-RUNNER = SEAL_TOOL.RUNNER
-TASKS = RUNNER.TASKS
-TASK_BY_SLUG = RUNNER.TASK_BY_SLUG
 PRIMARY_MODEL = "gpt-5.6-sol"
 SECONDARY_MODEL = "anthropic/claude-opus-5"
 SECONDARY_PROVIDER = "amazon-bedrock"
@@ -36,14 +33,6 @@ SECRET_PATTERNS = (
     re.compile(r"\bnvapi-[A-Za-z0-9_-]{8,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
 )
-
-
-def configure_panel(args: argparse.Namespace) -> None:
-    global RUNNER, TASKS, TASK_BY_SLUG
-    configuration = SEAL_TOOL.configure_panel(getattr(args, "panel", "coding"))
-    RUNNER = configuration["runner"]
-    TASKS = configuration["tasks"]
-    TASK_BY_SLUG = configuration["task_by_slug"]
 
 
 def score_schema() -> dict[str, Any]:
@@ -191,7 +180,7 @@ def hard_gate_pass(harness: str, score: dict[str, Any]) -> bool:
 
 
 def package_all(args: argparse.Namespace) -> dict[str, Any]:
-    configure_panel(args)
+    config = SEAL_TOOL.configure_panel(getattr(args, "panel", "coding"))
     SEAL_TOOL.verify_seal(args)
     seal, routing = load_protocol(args)
     blind_root = args.output_root / args.protocol_id / "blind"
@@ -202,7 +191,7 @@ def package_all(args: argparse.Namespace) -> dict[str, Any]:
     for attempt in seal["attempts"]:
         route = routing["variant_routes"][attempt["variant"]]
         harness = route["harness"]
-        task = TASK_BY_SLUG[attempt["task"]]
+        task = config.task_by_slug[attempt["task"]]
         evidence = args.output_root / attempt["attempt_id"] / harness / task.slug
         manifest = json.loads((evidence / "manifest.json").read_text())
         score = json.loads((evidence / "score.json").read_text())
@@ -216,7 +205,7 @@ def package_all(args: argparse.Namespace) -> dict[str, Any]:
             )
             continue
         workspace = Path(manifest["workspace"])
-        starter = RUNNER.git(
+        starter = config.runner.git(
             workspace,
             "show",
             f"{manifest['initial_commit']}:{task.source_name}",
@@ -259,7 +248,9 @@ def initial_secondary_ids(
     seal: dict[str, Any],
     routing: dict[str, Any],
     primary: dict[str, dict[str, Any]],
+    config: SEAL_TOOL.PanelConfig | None = None,
 ) -> set[str]:
+    config = config or SEAL_TOOL.configure_panel("coding")
     baseline = next(
         label
         for label, route in routing["variant_routes"].items()
@@ -271,7 +262,7 @@ def initial_secondary_ids(
         if row["attempt_id"] in primary
     }
     selected: set[str] = set()
-    for task in TASKS:
+    for task in config.tasks:
         for label in routing["variant_routes"]:
             candidates = [
                 rows[(repeat, task.slug, label)]
@@ -280,12 +271,12 @@ def initial_secondary_ids(
             ]
             candidates.sort(
                 key=lambda attempt_id: hashlib.sha256(
-                    f"{SEAL_TOOL.BOOTSTRAP_SEED}:{attempt_id}".encode()
+                    f"{config.bootstrap_seed}:{attempt_id}".encode()
                 ).hexdigest()
             )
             selected.update(candidates[:2])
     for repeat in range(1, SEAL_TOOL.REPEATS + 1):
-        for task in TASKS:
+        for task in config.tasks:
             baseline_id = rows.get((repeat, task.slug, baseline))
             if baseline_id is None:
                 continue
@@ -302,12 +293,12 @@ def initial_secondary_ids(
 
 
 def secondary_plan(args: argparse.Namespace) -> dict[str, Any]:
-    configure_panel(args)
+    config = SEAL_TOOL.configure_panel(getattr(args, "panel", "coding"))
     seal, routing = load_protocol(args)
     root = args.output_root / args.protocol_id
     primary = load_judges(root, "primary")
     secondary = load_judges(root, "secondary")
-    initial = initial_secondary_ids(seal, routing, primary)
+    initial = initial_secondary_ids(seal, routing, primary, config)
     scored = initial & secondary.keys()
     agreement = (
         sum(
@@ -340,7 +331,6 @@ def secondary_plan(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def assemble(args: argparse.Namespace) -> dict[str, Any]:
-    configure_panel(args)
     plan = secondary_plan(args)
     if plan["missing_attempt_ids"]:
         raise RuntimeError(f"required secondary scores missing: {len(plan['missing_attempt_ids'])}")
@@ -396,8 +386,11 @@ def judge_prompt(package: dict[str, Any]) -> str:
     return rubric + json.dumps(package, sort_keys=True, separators=(",", ":"))
 
 
-def primary_score(package: dict[str, Any], *, timeout: int) -> dict[str, Any]:
-    codex = RUNNER.CODEX_BINARY
+def primary_score(
+    package: dict[str, Any], *, timeout: int, config: SEAL_TOOL.PanelConfig | None = None
+) -> dict[str, Any]:
+    config = config or SEAL_TOOL.configure_panel("coding")
+    codex = config.runner.CODEX_BINARY
     with tempfile.TemporaryDirectory(prefix="moa-blind-judge-") as directory:
         root = Path(directory)
         schema_path = root / "schema.json"
@@ -474,13 +467,13 @@ def secondary_score(
 
 
 def judge_one(args: argparse.Namespace) -> dict[str, Any]:
-    configure_panel(args)
+    config = SEAL_TOOL.configure_panel(getattr(args, "panel", "coding"))
     blind_root = args.output_root / args.protocol_id / "blind"
     package = json.loads((blind_root / f"{args.attempt_id}.json").read_text())
     assert_sanitized(package)
     started = time.monotonic()
     if args.judge == "primary":
-        score = primary_score(package, timeout=args.timeout)
+        score = primary_score(package, timeout=args.timeout, config=config)
         accounting = {"input_tokens": None, "output_tokens": None, "cost_usd": 0.0}
         model = PRIMARY_MODEL
     else:

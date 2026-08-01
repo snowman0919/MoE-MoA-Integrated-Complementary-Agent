@@ -48,7 +48,7 @@ def test_blind_artifact_secret_scan_rejects_credential_like_values() -> None:
 
 
 def test_artifact_payload_has_only_blinded_evidence() -> None:
-    task = MODULE.RUNNER.TASKS[0]
+    task = MODULE.SEAL_TOOL.configure_panel("coding").tasks[0]
     package = MODULE.artifact_payload(
         {
             "attempt_id": "confirm-a001",

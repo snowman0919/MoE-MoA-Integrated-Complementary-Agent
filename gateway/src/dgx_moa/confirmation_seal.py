@@ -10,7 +10,10 @@ import os
 import random
 import subprocess
 from argparse import Namespace
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from dgx_moa import (
@@ -21,51 +24,49 @@ from dgx_moa import (
 )
 
 PROJECT = Path(__file__).resolve().parents[3]
-RUNNER_PATH = Path(quality_matrix.__file__)
-ANALYZER_PATH = Path(frontier_noninferiority.__file__)
 SCORER_PATH = PROJECT / "gateway/src/dgx_moa/blind_quality.py"
 PROTOCOL_PATH = PROJECT / "docs/QUALITY_EVALUATION.md"
-RUNNER = quality_matrix
-TASKS: tuple[quality_matrix.Task, ...] = quality_matrix.TASKS
-TASK_BY_SLUG: dict[str, quality_matrix.Task] = quality_matrix.TASK_BY_SLUG
 
 REPEATS = 10
 CODING_SEED = 56_052_026
 BREADTH_SEED = 56_052_027
-BOOTSTRAP_SEED = CODING_SEED
 QUALITY_MARGIN = -5.0
 SPEED_MARGIN = 1.5
 OPAQUE_LABELS = ("variant-a", "variant-b", "variant-c", "variant-d")
 
 
-def configure_panel(panel: str) -> dict[str, Any]:
-    global ANALYZER_PATH, BOOTSTRAP_SEED, RUNNER_PATH, TASKS, TASK_BY_SLUG
+@dataclass(frozen=True)
+class PanelConfig:
+    name: str
+    bootstrap_seed: int
+    runner: Any
+    tasks: tuple[quality_matrix.Task, ...]
+    task_by_slug: Mapping[str, quality_matrix.Task]
+    runner_path: Path
+    analyzer_path: Path
+
+
+def configure_panel(panel: str) -> PanelConfig:
     if panel == "coding":
-        RUNNER_PATH = Path(quality_matrix.__file__)
-        ANALYZER_PATH = Path(frontier_noninferiority.__file__)
-        BOOTSTRAP_SEED = CODING_SEED
-        TASKS = quality_matrix.TASKS
-        TASK_BY_SLUG = quality_matrix.TASK_BY_SLUG
-        return {
-            "panel": panel,
-            "bootstrap_seed": BOOTSTRAP_SEED,
-            "runner": RUNNER,
-            "tasks": TASKS,
-            "task_by_slug": TASK_BY_SLUG,
-        }
+        return PanelConfig(
+            panel,
+            CODING_SEED,
+            quality_matrix,
+            quality_matrix.TASKS,
+            MappingProxyType(quality_matrix.TASK_BY_SLUG),
+            Path(quality_matrix.__file__),
+            Path(frontier_noninferiority.__file__),
+        )
     if panel == "breadth":
-        RUNNER_PATH = Path(breadth_quality.__file__)
-        ANALYZER_PATH = Path(breadth_noninferiority.__file__)
-        BOOTSTRAP_SEED = BREADTH_SEED
-        TASKS = breadth_quality.TASKS
-        TASK_BY_SLUG = {task.slug: task for task in TASKS}
-        return {
-            "panel": panel,
-            "bootstrap_seed": BOOTSTRAP_SEED,
-            "runner": RUNNER,
-            "tasks": TASKS,
-            "task_by_slug": TASK_BY_SLUG,
-        }
+        return PanelConfig(
+            panel,
+            BREADTH_SEED,
+            quality_matrix,
+            breadth_quality.TASKS,
+            MappingProxyType({task.slug: task for task in breadth_quality.TASKS}),
+            Path(breadth_quality.__file__),
+            Path(breadth_noninferiority.__file__),
+        )
     raise ValueError(f"unknown panel: {panel}")
 
 
@@ -89,10 +90,10 @@ def repository_revision() -> str:
     return command_output(["git", "-C", str(PROJECT), "rev-parse", "HEAD"])
 
 
-def client_metadata() -> dict[str, dict[str, str]]:
-    codex = RUNNER.CODEX_BINARY
-    opencode = RUNNER.OPENCODE_BINARY
-    hermes_root = RUNNER.HERMES_ROOT
+def client_metadata(config: PanelConfig) -> dict[str, dict[str, str]]:
+    codex = config.runner.CODEX_BINARY
+    opencode = config.runner.OPENCODE_BINARY
+    hermes_root = config.runner.HERMES_ROOT
     hermes_python = hermes_root / "venv/bin/python"
     hermes_revision = command_output(["git", "-C", str(hermes_root), "rev-parse", "HEAD"])
     if command_output(["git", "-C", str(hermes_root), "status", "--porcelain"]):
@@ -124,11 +125,11 @@ def client_metadata() -> dict[str, dict[str, str]]:
     }
 
 
-def provider_fingerprints() -> dict[str, str]:
+def provider_fingerprints(config: PanelConfig) -> dict[str, str]:
     models = file_sha256(PROJECT / "config/models.yaml")
     frontier = file_sha256(PROJECT / "config/codex-frontier.yaml")
     hermes = file_sha256(Path("/home/kotori9/.hermes/config.yaml"))
-    catalog = canonical_sha256(RUNNER.codex_model_catalog())
+    catalog = canonical_sha256(config.runner.codex_model_catalog())
     return {
         "baseline": canonical_sha256({"model": "gpt-5.6-sol", "reasoning": "high"}),
         "codex": canonical_sha256({"models": models, "frontier": frontier, "catalog": catalog}),
@@ -139,17 +140,20 @@ def provider_fingerprints() -> dict[str, str]:
     }
 
 
-def container_image_digest() -> str:
-    image = RUNNER.DOCKER_IMAGE
+def container_image_digest(config: PanelConfig) -> str:
+    image = config.runner.DOCKER_IMAGE
     return command_output(["docker", "image", "inspect", image, "--format", "{{.Id}}"])
 
 
-def attempt_plan(protocol_id: str) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    harnesses = tuple(RUNNER.HARNESSES)
+def attempt_plan(
+    protocol_id: str, config: PanelConfig | None = None
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    config = config or configure_panel("coding")
+    harnesses = tuple(config.runner.HARNESSES)
     if len(harnesses) != len(OPAQUE_LABELS):
         raise RuntimeError("opaque label count does not match harness count")
     labels = list(OPAQUE_LABELS)
-    random.Random(BOOTSTRAP_SEED).shuffle(labels)
+    random.Random(config.bootstrap_seed).shuffle(labels)
     routing = dict(zip(labels, harnesses, strict=True))
     attempts = [
         {
@@ -158,10 +162,10 @@ def attempt_plan(protocol_id: str) -> tuple[list[dict[str, Any]], dict[str, str]
             "variant": label,
         }
         for repeat in range(1, REPEATS + 1)
-        for task in TASKS
+        for task in config.tasks
         for label in labels
     ]
-    random.Random(BOOTSTRAP_SEED + 1).shuffle(attempts)
+    random.Random(config.bootstrap_seed + 1).shuffle(attempts)
     for index, attempt in enumerate(attempts, 1):
         attempt["attempt_id"] = f"{protocol_id}-a{index:03d}"
         attempt["order"] = index
@@ -177,12 +181,12 @@ def exclusive_json(path: Path, value: Any, *, mode: int = 0o644) -> None:
 
 
 def create_seal(args: argparse.Namespace) -> dict[str, Any]:
-    configure_panel(getattr(args, "panel", "coding"))
+    config = configure_panel(getattr(args, "panel", "coding"))
     revision = repository_revision()
-    attempts, routing = attempt_plan(args.protocol_id)
-    clients = client_metadata()
-    providers = provider_fingerprints()
-    image_digest = container_image_digest()
+    attempts, routing = attempt_plan(args.protocol_id, config)
+    clients = client_metadata(config)
+    providers = provider_fingerprints(config)
+    image_digest = container_image_digest(config)
     seal_dir = args.output_root / args.protocol_id
     seal_path = seal_dir / "confirmation-seal.json"
     routing_path = seal_dir / "confirmation-routing.json"
@@ -192,14 +196,14 @@ def create_seal(args: argparse.Namespace) -> dict[str, Any]:
     manifests: list[dict[str, Any]] = []
     for attempt in attempts:
         harness = routing[attempt["variant"]]
-        task = TASK_BY_SLUG[attempt["task"]]
+        task = config.task_by_slug[attempt["task"]]
         runner_args = Namespace(
             run_id=attempt["attempt_id"],
             workspace_root=args.workspace_root,
             output_root=args.output_root,
             gateway=args.gateway,
         )
-        manifest = RUNNER.prepare_one(runner_args, harness, task)
+        manifest = config.runner.prepare_one(runner_args, harness, task)
         manifests.append(
             {
                 **attempt,
@@ -228,19 +232,19 @@ def create_seal(args: argparse.Namespace) -> dict[str, Any]:
         "analysis_commit": revision,
         "repeats": REPEATS,
         "attempts_total": len(manifests),
-        "bootstrap_seed": BOOTSTRAP_SEED,
+        "bootstrap_seed": config.bootstrap_seed,
         "bootstrap_samples": 10_000,
         "quality_noninferiority_margin": QUALITY_MARGIN,
         "speed_noninferiority_margin": SPEED_MARGIN,
-        "runner_sha256": file_sha256(RUNNER_PATH),
-        "analyzer_sha256": file_sha256(ANALYZER_PATH),
+        "runner_sha256": file_sha256(config.runner_path),
+        "analyzer_sha256": file_sha256(config.analyzer_path),
         "scorer_sha256": file_sha256(SCORER_PATH),
         "protocol_sha256": file_sha256(PROTOCOL_PATH),
-        "container_image": RUNNER.DOCKER_IMAGE,
+        "container_image": config.runner.DOCKER_IMAGE,
         "container_image_digest": image_digest,
         "prompt_sha256": {
-            task.slug: hashlib.sha256(RUNNER.prompt(task).encode()).hexdigest()
-            for task in TASKS
+            task.slug: hashlib.sha256(config.runner.prompt(task).encode()).hexdigest()
+            for task in config.tasks
         },
         "routing_sha256": canonical_sha256(private),
         "attempt_order_sha256": canonical_sha256(manifests),
@@ -251,27 +255,28 @@ def create_seal(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def verify_seal(args: argparse.Namespace) -> dict[str, Any]:
-    configure_panel(getattr(args, "panel", "coding"))
+    config = configure_panel(getattr(args, "panel", "coding"))
     seal_dir = args.output_root / args.protocol_id
     routing_path = seal_dir / "confirmation-routing.json"
     seal = json.loads((seal_dir / "confirmation-seal.json").read_text())
     private = json.loads(routing_path.read_text())
-    expected_attempts, expected_routes = attempt_plan(args.protocol_id)
-    clients = client_metadata()
-    providers = provider_fingerprints()
+    expected_attempts, expected_routes = attempt_plan(args.protocol_id, config)
+    clients = client_metadata(config)
+    providers = provider_fingerprints(config)
     checks = {
         "analysis_commit": repository_revision() == seal["analysis_commit"],
         "panel": seal.get("panel") == getattr(args, "panel", "coding"),
-        "runner_sha256": file_sha256(RUNNER_PATH) == seal["runner_sha256"],
-        "analyzer_sha256": file_sha256(ANALYZER_PATH) == seal["analyzer_sha256"],
+        "runner_sha256": file_sha256(config.runner_path) == seal["runner_sha256"],
+        "analyzer_sha256": file_sha256(config.analyzer_path) == seal["analyzer_sha256"],
         "scorer_sha256": file_sha256(SCORER_PATH) == seal["scorer_sha256"],
         "protocol_sha256": file_sha256(PROTOCOL_PATH) == seal["protocol_sha256"],
         "routing_sha256": canonical_sha256(private) == seal["routing_sha256"],
         "attempt_order_sha256": canonical_sha256(seal["attempts"]) == seal["attempt_order_sha256"],
-        "container_image_digest": container_image_digest() == seal["container_image_digest"],
+        "container_image_digest": container_image_digest(config)
+        == seal["container_image_digest"],
         "routing_permissions": routing_path.stat().st_mode & 0o777 == 0o600,
         "attempt_count": len(seal["attempts"])
-        == REPEATS * len(TASKS) * len(OPAQUE_LABELS),
+        == REPEATS * len(config.tasks) * len(OPAQUE_LABELS),
     }
     sealed_order = [
         {key: row[key] for key in ("attempt_id", "order", "repeat", "task", "variant")}
@@ -305,9 +310,9 @@ def verify_seal(args: argparse.Namespace) -> dict[str, Any]:
                 == row["fixture_commit"]
             )
         checks[f"fixture:{row['attempt_id']}"] = fixture_ok
-    for task in TASKS:
+    for task in config.tasks:
         checks[f"prompt_sha256:{task.slug}"] = (
-            hashlib.sha256(RUNNER.prompt(task).encode()).hexdigest()
+            hashlib.sha256(config.runner.prompt(task).encode()).hexdigest()
             == seal["prompt_sha256"][task.slug]
         )
     result = {

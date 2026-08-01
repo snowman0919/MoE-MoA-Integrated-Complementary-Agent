@@ -9545,3 +9545,17 @@ all 134 controller tests passed. The full regression passed 1,192 tests in
 47.73 seconds. Ruff, strict mypy for the changed controller, and
 `git diff --check` passed. End-to-end v77 confirmation has not yet run, so v77
 is not a PASS.
+
+Protocol v78 removes process-global panel mutation from the sealed confirmation
+and blind-quality tools. Coding and breadth selection now returns one frozen
+`PanelConfig` containing the shared runner, immutable task index, runner and
+analyzer paths, and panel-specific bootstrap seed. Every seal, verification,
+package, secondary-sample, and primary-judge operation receives that config
+explicitly; running a breadth plan no longer changes a later coding plan in the
+same process. No `runpy` execution remains in the gateway or evaluation
+scripts. Twelve focused seal/scorer tests passed. The full regression passed
+1,192 tests in 44.66 seconds. Ruff passed, strict mypy reported zero issues
+across 59 source files, and `git diff --check` passed. Because scorer and seal
+code hashes changed, any later confirmatory evaluation must use a fresh sealed
+protocol/run ID; prior epochs remain diagnostic evidence only. v78 is not a
+quality or noninferiority PASS.

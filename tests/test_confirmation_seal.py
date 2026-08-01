@@ -10,6 +10,7 @@ from dgx_moa import confirmation_seal as MODULE
 
 
 def test_attempt_plan_is_complete_deterministic_and_opaque() -> None:
+    config = MODULE.configure_panel("coding")
     first, routes = MODULE.attempt_plan("confirm")
     second, second_routes = MODULE.attempt_plan("confirm")
 
@@ -17,30 +18,31 @@ def test_attempt_plan_is_complete_deterministic_and_opaque() -> None:
     assert routes == second_routes
     assert len(first) == 200
     assert len({row["attempt_id"] for row in first}) == 200
-    assert set(routes.values()) == set(MODULE.RUNNER.HARNESSES)
-    assert all(row["variant"] not in MODULE.RUNNER.HARNESSES for row in first)
+    assert set(routes.values()) == set(config.runner.HARNESSES)
+    assert all(row["variant"] not in config.runner.HARNESSES for row in first)
     assert {(row["repeat"], row["task"], row["variant"]) for row in first} == {
         (repeat, task.slug, label)
         for repeat in range(1, 11)
-        for task in MODULE.RUNNER.TASKS
+        for task in config.tasks
         for label in MODULE.OPAQUE_LABELS
     }
 
 
 def test_breadth_attempt_plan_has_160_separate_attempts() -> None:
     configuration = MODULE.configure_panel("breadth")
-    try:
-        attempts, _routes = MODULE.attempt_plan("breadth")
-        assert len(attempts) == 160
-        assert {row["task"] for row in attempts} == {
-            "scientific-meta-analysis",
-            "scientific-decay-fit",
-            "general-ranked-choice",
-            "general-timezone-schedule",
-        }
-        assert configuration["bootstrap_seed"] == 56_052_027
-    finally:
-        MODULE.configure_panel("coding")
+    attempts, _routes = MODULE.attempt_plan("breadth", configuration)
+
+    assert len(attempts) == 160
+    assert {row["task"] for row in attempts} == {
+        "scientific-meta-analysis",
+        "scientific-decay-fit",
+        "general-ranked-choice",
+        "general-timezone-schedule",
+    }
+    assert configuration.bootstrap_seed == 56_052_027
+    assert len(MODULE.attempt_plan("coding")[0]) == 200
+    with pytest.raises(TypeError):
+        configuration.task_by_slug["replacement"] = configuration.tasks[0]  # type: ignore[index]
 
 
 def test_exclusive_json_refuses_overwrite_and_protects_routing(tmp_path: Path) -> None:
@@ -55,19 +57,22 @@ def test_exclusive_json_refuses_overwrite_and_protects_routing(tmp_path: Path) -
 
 def test_created_seal_records_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     globals_ = MODULE.create_seal.__globals__
-    monkeypatch.setitem(globals_, "configure_panel", lambda _panel: None)
-    monkeypatch.setitem(globals_, "repository_revision", lambda: "revision")
-    monkeypatch.setitem(globals_, "attempt_plan", lambda _protocol: ([], {}))
-    monkeypatch.setitem(globals_, "client_metadata", lambda: {})
-    monkeypatch.setitem(globals_, "provider_fingerprints", lambda: {})
-    monkeypatch.setitem(globals_, "container_image_digest", lambda: "image-digest")
-    monkeypatch.setitem(
-        globals_,
-        "RUNNER",
-        SimpleNamespace(DOCKER_IMAGE="test-image", prompt=lambda _task: ""),
+    runner = SimpleNamespace(DOCKER_IMAGE="test-image", prompt=lambda _task: "")
+    config = MODULE.PanelConfig(
+        "breadth",
+        56_052_027,
+        runner,
+        (),
+        {},
+        Path(MODULE.__file__),
+        Path(MODULE.__file__),
     )
-    monkeypatch.setitem(globals_, "TASKS", ())
-    monkeypatch.setitem(globals_, "TASK_BY_SLUG", {})
+    monkeypatch.setitem(globals_, "configure_panel", lambda _panel: config)
+    monkeypatch.setitem(globals_, "repository_revision", lambda: "revision")
+    monkeypatch.setitem(globals_, "attempt_plan", lambda _protocol, _config: ([], {}))
+    monkeypatch.setitem(globals_, "client_metadata", lambda _config: {})
+    monkeypatch.setitem(globals_, "provider_fingerprints", lambda _config: {})
+    monkeypatch.setitem(globals_, "container_image_digest", lambda _config: "image-digest")
     args = Namespace(
         panel="breadth",
         protocol_id="panel-metadata",
