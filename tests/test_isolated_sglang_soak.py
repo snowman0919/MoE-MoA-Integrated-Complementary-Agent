@@ -1,18 +1,29 @@
 from __future__ import annotations
 
-import importlib.util
 import json
+import signal
 from pathlib import Path
 from typing import Any
 
 import pytest
+from dgx_moa import isolated_sglang_soak as MODULE
 
-ROOT = Path(__file__).parents[1]
-SCRIPT = ROOT / "scripts" / "soak-isolated-sglang.py"
-SPEC = importlib.util.spec_from_file_location("isolated_sglang_soak", SCRIPT)
-assert SPEC and SPEC.loader
-MODULE = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(MODULE)
+SCRIPT = Path(MODULE.__file__)
+
+
+def test_soak_defaults_to_continuous_performance_load() -> None:
+    source = SCRIPT.read_text()
+    assert 'run.add_argument("--interval-seconds", type=positive_float, default=1)' in source
+
+
+def test_soak_records_the_stop_signal_for_future_attempts() -> None:
+    try:
+        MODULE.request_stop(signal.SIGTERM, None)
+        assert MODULE.STOP_REQUESTED is True
+        assert MODULE.STOP_SIGNAL == signal.SIGTERM
+    finally:
+        MODULE.STOP_REQUESTED = False
+        MODULE.STOP_SIGNAL = None
 
 
 def runtime_snapshot() -> dict[str, Any]:
@@ -43,9 +54,13 @@ def runtime_snapshot() -> dict[str, Any]:
 def test_soak_cycle_runs_both_roles_concurrently_without_retaining_payloads(
     monkeypatch,
 ) -> None:
+    specialist_payloads: list[dict[str, Any]] = []
+
     def fake_post(
         _url: str, payload: dict[str, Any], _timeout: float
     ) -> tuple[dict[str, Any], float]:
+        if payload["model"] == MODULE.SPECIALIST_MODEL:
+            specialist_payloads.append(payload)
         marker = payload["messages"][0]["content"].rsplit("Reply exactly: ", 1)[1]
         return {
             "choices": [{"message": {"content": marker}}],
@@ -75,6 +90,8 @@ def test_soak_cycle_runs_both_roles_concurrently_without_retaining_payloads(
         "specialist",
     }
     assert all(request["status"] == "passed" for request in cycle["requests"])
+    assert specialist_payloads[0]["max_tokens"] == 32
+    assert specialist_payloads[0]["chat_template_kwargs"] == {"enable_thinking": False}
     rendered = json.dumps(cycle)
     assert "private shared prefix" not in rendered
     assert "SOAK_EXECUTOR" not in rendered
@@ -113,8 +130,10 @@ def test_soak_evidence_is_durable_and_summary_fails_closed(tmp_path: Path) -> No
     assert passed["passed"] is True
     assert passed["requests"] == 2
     assert passed["cached_tokens_total"] == 0
+    assert passed["cache_by_role"] == {}
     assert passed["maximum_container_memory_bytes"]["executor"] == 64_000_000_000
     assert passed["minimum_memavailable_kib"] == 20_000_000
+    assert passed["memory_headroom_passed"] is True
     assert evidence.stat().st_mode & 0o777 == 0o600
 
     failed_cycle = {
@@ -148,6 +167,12 @@ def test_soak_evidence_is_durable_and_summary_fails_closed(tmp_path: Path) -> No
     assert oom["passed"] is False
     assert oom["runtime_failure_or_oom"] is True
 
+    low_memory = runtime_snapshot()
+    low_memory["memory"]["memavailable_kib"] = MODULE.RUNTIME.MINIMUM_AVAILABLE_MEMORY_KIB - 1
+    memory_failed = MODULE.summarize([{**header}, {**passed_cycle, "runtime": low_memory}, footer])
+    assert memory_failed["passed"] is False
+    assert memory_failed["memory_headroom_passed"] is False
+
     truncated = MODULE.summarize([header, passed_cycle])
     assert truncated["passed"] is False
     assert truncated["completed"] is False
@@ -155,3 +180,27 @@ def test_soak_evidence_is_durable_and_summary_fails_closed(tmp_path: Path) -> No
     invalid_header = {**header, "duration_target_seconds": 0}
     with pytest.raises(ValueError, match="duration target"):
         MODULE.summarize([invalid_header, passed_cycle, footer])
+
+
+def test_soak_reports_cache_reuse_per_role() -> None:
+    header = {"type": "header", "duration_target_seconds": 1}
+    cycle = {
+        "type": "cycle",
+        "elapsed_seconds": 1,
+        "requests": [
+            {"role": "executor", "status": "passed", "cached_tokens": 8192},
+            {"role": "specialist", "status": "passed", "cached_tokens": 5000},
+        ],
+        "runtime": runtime_snapshot(),
+    }
+    footer = {
+        "type": "footer",
+        "finished_at": "2026-07-27T00:00:01+00:00",
+        "interrupted": False,
+    }
+
+    result = MODULE.summarize([header, cycle, footer])
+
+    assert result["cache_by_role"]["executor"]["positive_requests"] == 1
+    assert result["cache_by_role"]["executor"]["cached_tokens_total"] == 8192
+    assert result["cache_by_role"]["specialist"]["positive_requests"] == 1

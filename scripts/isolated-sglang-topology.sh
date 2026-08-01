@@ -3,10 +3,10 @@ set -Eeuo pipefail
 
 repository_root="$(cd "$(dirname "$0")/.." && pwd)"
 image="lmsysorg/sglang:dev-cu13@sha256:26f620b13e49900cc6ab59ed693f9ce8f9ea4f3531074c1e39a3bf9db06ab8f0"
-executor_model="${DGX_MOA_EXPERIMENT_EXECUTOR_MODEL:-/home/kotori9/models/dgx-moa/executor}"
-specialist_model="${DGX_MOA_EXPERIMENT_SPECIALIST_MODEL:-/home/kotori9/models/experimental/gemma-4-31b-it-nvfp4-4135a98a}"
-executor_revision="27a8f16f463b9a13c91c332c40cf93e09717347e"
-specialist_revision="4135a98a9b728a548947683219633b25682223ac"
+executor_model="${DGX_MOA_EXPERIMENT_EXECUTOR_MODEL:-/home/kotori9/models/experimental/qwen3-coder-next-modelopt-nvfp4-15c399c8}"
+specialist_model="${DGX_MOA_EXPERIMENT_SPECIALIST_MODEL:-/home/kotori9/models/experimental/gemma-4-26b-a4b-nvfp4-a19cfe00}"
+executor_revision="15c399c8189eccc9c47d17dcf8adf3c16e8bb3f8"
+specialist_revision="a19cfe00be84568a6867111c9a68c9c44fdcffe6"
 executor_container="dgx-moa-exp-sglang-executor"
 specialist_container="dgx-moa-exp-sglang-specialist"
 runtime_user="${SUDO_USER:-$(id -un)}"
@@ -33,6 +33,7 @@ run_as_runtime_user() {
 
 executor_command=(
   docker run -d --name "$executor_container" --pull never
+  --restart unless-stopped
   --gpus all --network bridge -p 127.0.0.1:18101:18101
   --memory 72g --memory-swap 72g --oom-score-adj 1000
   -v "$executor_model:/model:ro"
@@ -41,9 +42,10 @@ executor_command=(
   python -m sglang.launch_server
   --model-path /model --host 0.0.0.0 --port 18101
   --served-model-name dgx-moa-executor-candidate
-  --context-length 65536 --mem-fraction-static 0.54
+  --context-length 65536 --mem-fraction-static 0.45
   --max-running-requests 1 --max-total-tokens 65536
-  --max-mamba-cache-size 5 --quantization compressed-tensors
+  --max-mamba-cache-size 5 --quantization modelopt_fp4
+  --disable-overlap-schedule
   --cuda-graph-backend-decode disabled
   --cuda-graph-backend-prefill disabled
   --tool-call-parser qwen3_coder
@@ -52,6 +54,7 @@ executor_command=(
 
 specialist_command=(
   docker run -d --name "$specialist_container" --pull never
+  --restart unless-stopped
   --gpus all --network bridge -p 127.0.0.1:18102:18102
   --memory 48g --memory-swap 48g --oom-score-adj 1000
   -v "$specialist_model:/model:ro"
@@ -60,10 +63,11 @@ specialist_command=(
   python -m sglang.launch_server
   --model-path /model --host 0.0.0.0 --port 18102
   --served-model-name dgx-moa-specialist-candidate
-  --context-length 65536 --mem-fraction-static 0.75
+  --context-length 65536 --mem-fraction-static 0.90
   --max-running-requests 1 --max-total-tokens 65536
+  --swa-full-tokens-ratio 0.06
   --quantization modelopt_fp4
-  --cuda-graph-backend-decode disabled
+  --cuda-graph-backend-decode full --cuda-graph-max-bs-decode 1
   --cuda-graph-backend-prefill disabled
   --reasoning-parser gemma4 --tool-call-parser gemma4
   --enable-metrics --enable-cache-report --incremental-streaming-output
@@ -135,6 +139,18 @@ wait_server() {
   done
 }
 
+stop_candidates() {
+  local container
+  for container in "$specialist_container" "$executor_container"; do
+    if docker container inspect "$container" >/dev/null 2>&1; then
+      if [[ "$(docker container inspect -f '{{.State.Running}}' "$container")" == "true" ]]; then
+        docker stop -t 180 "$container" >/dev/null
+      fi
+      docker rm "$container" >/dev/null
+    fi
+  done
+}
+
 case "${1:-}" in
   print)
     print_command "${executor_command[@]}"
@@ -147,24 +163,20 @@ case "${1:-}" in
     preflight
     "${executor_command[@]}"
     if ! wait_server "$executor_container" "http://127.0.0.1:18101"; then
-      docker stop -t 180 "$executor_container" >/dev/null 2>&1 || true
+      stop_candidates
       exit 1
     fi
     if ! "${specialist_command[@]}"; then
-      docker stop -t 180 "$executor_container" >/dev/null
+      stop_candidates
       exit 1
     fi
     if ! wait_server "$specialist_container" "http://127.0.0.1:18102"; then
-      docker stop -t 180 "$specialist_container" "$executor_container" >/dev/null 2>&1 || true
+      stop_candidates
       exit 1
     fi
     ;;
   stop)
-    for container in "$specialist_container" "$executor_container"; do
-      if docker container inspect "$container" >/dev/null 2>&1; then
-        docker stop -t 180 "$container" >/dev/null
-      fi
-    done
+    stop_candidates
     ;;
   status)
     docker ps --filter "name=dgx-moa-exp-sglang-" \
