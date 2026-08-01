@@ -9499,3 +9499,26 @@ Five focused exact-validation, continuation, and expired-session regressions
 passed. The full regression passed 1,188 tests in 47.38 seconds. Ruff passed,
 strict mypy reported zero issues across 59 source files, and `git diff --check`
 passed. End-to-end v75 confirmation has not yet run, so v75 is not a PASS.
+
+V178 did not reach the v75 terminal-poll boundary. It completed local Reasoner,
+Qwen Executor, Gemma Planner, and primary Executor calls and created a dirty
+Phase 0 workspace. The final Executor response emitted seven distinct parallel
+`exec_command` calls. As their results arrived, two successful results with
+identical normalized payloads shared one progress fingerprint because
+`tool_call_id` was discarded as unstable. The second pending-call result was
+therefore recorded but not admitted as new loop evidence, producing repeated
+`loop_new_evidence_required` responses and a nonzero Codex exit. The runner's
+failure classifier then incorrectly labeled the output `gateway_draining`
+because it scanned an earlier natural-language phrase; the isolated gateway's
+drain latch was false and no drain event existed. V178's database, dirty
+workspace, and stopped containers remain preserved. V178 is not a PASS.
+
+Protocol v76 retains `tool_call_id` only inside the internal progress evidence
+fingerprint. The existing observed-call-ID guard still rejects replay of the
+same result, while distinct calls in one parallel batch now count as distinct
+evidence. The client failure classifier examines only its final 8 KiB and
+prioritizes structured loop error codes over incidental natural-language
+markers. Seven focused regressions passed. The full regression passed 1,190
+tests in 46.43 seconds. Ruff passed, strict mypy reported zero issues across 59
+source files, and `git diff --check` passed. End-to-end v76 confirmation has not
+yet run, so v76 is not a PASS.

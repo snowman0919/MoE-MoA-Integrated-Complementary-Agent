@@ -116,6 +116,17 @@ def test_progress_fingerprint_ignores_timing_noise() -> None:
     assert not record_progress(loop, "evidence-2", evidence_fingerprint=second)
 
 
+def test_progress_fingerprint_distinguishes_parallel_tool_calls() -> None:
+    first = progress_evidence_fingerprint(
+        "tool_observed_fact", {"tool_call_id": "call-1", "exit_code": 0, "stdout": ""}
+    )
+    second = progress_evidence_fingerprint(
+        "tool_observed_fact", {"tool_call_id": "call-2", "exit_code": 0, "stdout": ""}
+    )
+
+    assert first != second
+
+
 def test_successful_same_path_evidence_resolves_open_failure() -> None:
     loop = new_loop("request", "fix it")
     register_failure(

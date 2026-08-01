@@ -255,7 +255,6 @@ def _drop_unstable_evidence_fields(value: object) -> object:
                 "duration_ms",
                 "latency_ms",
                 "request_id",
-                "tool_call_id",
             }
         }
     if isinstance(value, list):

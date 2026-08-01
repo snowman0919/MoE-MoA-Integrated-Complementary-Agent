@@ -836,6 +836,11 @@ def test_checkpoint_failures_are_distinguished(
     (
         ("Error response from daemon", "container_runtime"),
         ("Gateway is draining", "gateway_draining"),
+        (
+            "Gateway is draining from earlier context\n"
+            '{"error":{"code":"loop_new_evidence_required"}}',
+            "loop_new_evidence_required",
+        ),
         ("stream disconnected before completion", "stream_disconnected"),
         ("unrecognized client failure", "unclassified"),
     ),

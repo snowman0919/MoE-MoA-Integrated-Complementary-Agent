@@ -1037,8 +1037,10 @@ class ClientNonzeroExit(RuntimeError):
 
 
 def classify_client_exit(stdout: str, stderr: str) -> str:
-    lowered = (stdout + "\n" + stderr).lower()
+    lowered = (stdout + "\n" + stderr)[-8192:].lower()
     patterns = (
+        ("loop_new_evidence_required", "loop_new_evidence_required"),
+        ("loop_budget_exhausted", "loop_budget_exhausted"),
         ("remote executor fallback unavailable", "fallback_unavailable"),
         ("gateway is draining", "gateway_draining"),
         ("bad gateway", "gateway_bad_response"),
