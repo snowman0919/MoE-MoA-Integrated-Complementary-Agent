@@ -10177,3 +10177,19 @@ credential-named left-hand parameter. Literal or different values remain
 redacted. The focused security suite passed 11 tests, and the full suite passed
 1,214 tests in 48.09 s; Ruff and strict mypy over all 60 gateway source files
 also passed. A fresh OpenCode epoch is required.
+
+Fresh OpenCode diagnostic `20260802-opencode-five-7ef469a-v2` passed rate
+limiter in 172.889 s, then timed out atomic store at the frozen 1,800-second
+limit. The implementation and both public and hidden tests had passed, but the
+OpenCode client did not terminate. Telemetry remained complete with zero
+provider errors, orphan errors, or switches. Atomic store consumed 1,404,225
+tokens across 196 invocations, including 173 completed local Executor calls.
+This is a client tool-loop reliability and efficiency failure, not a panel
+pass, and the epoch remains immutable.
+
+The installed OpenCode 1.17.18 schema natively supports `AgentConfig.maxSteps`.
+The isolated quality fixture now fixes the primary `build` agent at 40 steps,
+enough for the five bounded implementations while preventing an unbounded
+173-turn loop. The focused quality-runner suite passed 21 tests; the full suite
+passed 1,214 tests in 44.73 s, and Ruff plus strict mypy passed. This harness
+contract change requires another fresh OpenCode epoch.

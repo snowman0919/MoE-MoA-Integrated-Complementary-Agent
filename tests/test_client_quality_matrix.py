@@ -92,6 +92,7 @@ def test_opencode_fixture_bounds_output_tokens(tmp_path: Path) -> None:
     model = config["provider"]["dgx-moa"]["models"]["dgx-moa-agent"]
 
     assert model["limit"] == {"context": 65_536, "output": 4_096}
+    assert config["agent"]["build"]["maxSteps"] == 40
 
 
 def test_opencode_runtime_cache_is_mounted_read_only(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

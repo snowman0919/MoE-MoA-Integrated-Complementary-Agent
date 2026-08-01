@@ -966,6 +966,7 @@ def prepare_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str,
                 }
             },
             "model": "dgx-moa/dgx-moa-agent",
+            "agent": {"build": {"maxSteps": 40}},
             "permission": {
                 "*": "deny",
                 "bash": "allow",
