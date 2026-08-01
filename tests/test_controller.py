@@ -67,7 +67,7 @@ def test_local_invocation_preserves_unknown_cache_detail(
     assert state.engineering_loop.remaining_budget.tokens == before - 10
 
 
-def test_local_openai_invocation_normalizes_missing_cache_to_zero(
+def test_local_openai_invocation_preserves_unreported_cache_detail(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
@@ -84,7 +84,7 @@ def test_local_openai_invocation_normalizes_missing_cache_to_zero(
         provider="local",
     )
 
-    assert state.agent_invocations[-1]["cached_tokens"] == 0
+    assert state.agent_invocations[-1]["cached_tokens"] is None
 
 
 def test_remote_invocation_preserves_unreported_cache_detail(

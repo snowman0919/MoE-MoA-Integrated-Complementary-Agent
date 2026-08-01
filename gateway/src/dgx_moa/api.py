@@ -2600,15 +2600,7 @@ def create_app(
                                     "prompt_tokens": observation.usage.get("prompt_tokens"),
                                     "completion_tokens": observation.usage.get("completion_tokens"),
                                     "total_tokens": observation.usage.get("total_tokens"),
-                                    "cached_tokens": (
-                                        observation.cached_tokens
-                                        if observation.cached_tokens is not None or executor_remote
-                                        else (
-                                            0
-                                            if observation.usage.get("prompt_tokens") is not None
-                                            else None
-                                        )
-                                    ),
+                                    "cached_tokens": observation.cached_tokens,
                                     "cost_usd": (
                                         remote_invocation_provenance.get("cost_usd")
                                         if executor_remote

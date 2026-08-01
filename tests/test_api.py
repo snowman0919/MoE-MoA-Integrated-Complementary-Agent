@@ -6929,7 +6929,7 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         assert usage.total_tokens == 1
 
 
-def test_local_stream_records_explicit_zero_cache_usage(
+def test_local_stream_preserves_unreported_cache_usage(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
     async def stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
@@ -6962,7 +6962,7 @@ def test_local_stream_records_explicit_zero_cache_usage(
             ).fetchone()[0]
 
     assert response.status_code == 200
-    assert cached_tokens == 0
+    assert cached_tokens is None
 
 
 @pytest.mark.parametrize(

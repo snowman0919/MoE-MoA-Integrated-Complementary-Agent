@@ -10017,3 +10017,23 @@ Reviewer FAIL or satisfy the full provider-specific physical gate.
 
 AvatarForge protocol v87 freezes the completion plan at SHA-256
 `058f69c421e09628bca151991310c25c6807d0ce0a2bf6aedd83aefa926f5ec1`.
+
+## 2026-08-02 Dual-SGLang Radix cache probe
+
+The Gateway no longer converts an absent local OpenAI-compatible
+`cached_tokens` field into a measured zero. Missing provider telemetry is
+stored as NULL; an explicitly reported zero remains zero. This preserves the
+difference between no reuse and no report, including streaming final
+synthesis and Planner/Reviewer invocation accounting. Six focused regression
+tests passed.
+
+Both already-resident loopback SGLang candidates were probed without a service
+restart, using a unique immutable prefix followed by two small requests. The
+Qwen Executor reported 0 then 8,192 cached tokens and improved from 2.872 s to
+1.481 s. The Gemma Specialist reported 4 then 14,214 cached tokens and improved
+from 4.126 s to 0.163 s. Both responses passed the fixed output marker check.
+GPU allocations were unchanged at approximately 21,754 MiB for Executor and
+50,696 MiB for Specialist. Host available memory changed by approximately
+3.2 MiB and swap usage was unchanged at 1,189,220,352 bytes. This is physical
+Radix reuse evidence, but not the pending concurrent-load or long-horizon
+cache-retention gate.

@@ -825,14 +825,6 @@ class Controller:
         provenance = cast(dict[str, Any], provenance) if isinstance(provenance, dict) else {}
         cached_tokens = prompt_details.get("cached_tokens")
         effective_provider = provider or provenance.get("provider")
-        if (
-            cached_tokens is None
-            and usage.get("prompt_tokens") is not None
-            and role in {"executor", "planner", "reviewer"}
-            and effective_provider in {None, "local"}
-            and self.settings.models[role].provider == "openai"
-        ):
-            cached_tokens = 0
         self.record_observed_invocation(
             state,
             {
