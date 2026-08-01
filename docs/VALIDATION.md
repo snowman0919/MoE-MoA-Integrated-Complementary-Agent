@@ -10106,3 +10106,22 @@ took 312.354 s across 33 role calls and consumed 264,887 total tokens. It is
 therefore evidence that the correctness/telemetry root fixes work, not speed or
 cost-quality non-inferiority evidence. A clean committed epoch and the other
 four tasks remain required.
+
+Clean committed Codex diagnostic `20260802-codex-five-ab504f2-v4` then ran all
+five Docker-isolated fixtures against branch head `ab504f2`, the dual-SGLang
+candidate, local Qwythos Reasoner, and opt-in Codex OAuth Frontier. All five
+passed public tests, hidden tests, test-integrity, scope, Korean terminal,
+tool-evidence, isolation, provider-pinning, retry, variable-cost, and cache
+status completeness checks. There were zero provider errors, zero provider
+switches, zero paid variable cost, and zero missing cache-status rows.
+
+Task durations were 476.878 s (rate limiter), 349.663 s (atomic store),
+199.751 s (DAG runner), 182.155 s (webhook verifier), and 278.178 s (JSONL
+report), totaling 1,486.625 s. The five tasks consumed 1,010,210 total tokens
+across 123 role calls. Fifty-seven calls reported numeric cache values and
+sixty-six explicitly reported unavailable cache details. The run establishes
+Codex 5/5 diagnostic functionality and telemetry after the Gemma replacement,
+but its call volume and wall time are a material efficiency concern. No matched
+native baseline, blinded quality scores, confidence interval, OpenCode panel,
+or Hermes panel exists for this epoch, so it is not non-inferiority evidence
+and does not satisfy the Goal.
