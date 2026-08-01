@@ -9871,3 +9871,19 @@ Reasoner, and local Executor were running without provider failures at launch.
 The 0600 evidence header SHA-256 is
 `f3867bd2e30f681d7cafc77d8bb9f698060c80a89b4461fef9b9151d8d08942d`.
 V184 remains running and is not yet pass evidence.
+
+## 2026-08-02 Admin workflow canvas client
+
+The existing dependency-free admin dashboard now consumes the disabled-by-
+default authenticated workflow WebSocket. It renders sanitized event type and
+allowlisted role/provider/model/status/routing fields through `textContent`,
+keeps at most 100 DOM cards, reconnects with the last sequence cursor using
+bounded exponential delay, and stops retrying when the server explicitly
+reports the feature disabled. No raw payload, prompt, credential, or hidden
+reasoning field is rendered.
+
+Measured checks were JavaScript syntax validation through `node --check`, two
+focused admin/API tests passing, Ruff passing, strict mypy reporting zero
+issues across 60 source files, and the full suite passing 1205 tests in 42.95
+seconds. Browser/network physical reconnect, slow-client backpressure, and
+one-observation-host failure tests remain required before enabling the feature.

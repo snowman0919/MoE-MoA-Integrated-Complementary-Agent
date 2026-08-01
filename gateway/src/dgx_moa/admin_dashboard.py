@@ -20,6 +20,10 @@ textarea{width:100%;min-height:90px;resize:vertical}.chat{margin-top:16px}.messa
 max-height:540px;overflow:auto;display:grid;gap:10px;margin:14px 0}.message{white-space:pre-wrap;
 word-break:break-word;border-radius:10px;padding:11px}.user{background:#20304f}.assistant{background:#12283a}
 .event{color:var(--muted);font:12px ui-monospace,monospace}.usage{color:var(--ok)}
+.workflow{margin-top:16px}.workflow-head{display:flex;justify-content:space-between;gap:12px}
+.workflow-events{display:flex;gap:8px;overflow:auto;padding:8px 0}.workflow-event{min-width:190px;
+border-left:3px solid var(--accent);background:#0e1528;border-radius:7px;padding:9px}
+.workflow-event small{display:block;color:var(--muted);margin-top:5px}
 #workspace{min-width:270px}.composer{display:grid;grid-template-columns:1fr auto;gap:8px}
 @media(max-width:600px){main{padding:16px}.composer{grid-template-columns:1fr}}
 </style>
@@ -58,12 +62,17 @@ word-break:break-word;border-radius:10px;padding:11px}.user{background:#20304f}.
       </form>
       <p id="codex-state" class="muted">독립된 Codex CLI 세션을 사용합니다.</p>
     </section>
+    <section class="card workflow">
+      <div class="workflow-head"><h2>Workflow</h2>
+        <span id="workflow-state" class="muted">비활성 또는 연결 대기</span></div>
+      <div id="workflow-events" class="workflow-events" aria-live="polite"></div>
+    </section>
     <button id="logout">로그아웃</button>
   </div>
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let sessionId=null,busy=false;
+let sessionId=null,busy=false,workflow=null,workflowCursor=0,workflowRetry=1000;
 const api=async(path,options={})=>{
   const response=await fetch(path,{...options,headers:{"Content-Type":"application/json",
     ...(options.headers||{})}});
@@ -79,8 +88,23 @@ async function load(){
   const data=await api("/v1/admin/codex/workspaces");
   $("login").hidden=true;$("content").hidden=false;$("workspace").replaceChildren();
   data.workspaces.forEach(name=>{const option=document.createElement("option");
-    option.value=name;option.textContent=name;$("workspace").append(option)});
+    option.value=name;option.textContent=name;$("workspace").append(option)});connectWorkflow();
 }
+function workflowEvent(event){workflowCursor=Math.max(workflowCursor,event.sequence||0);
+  const item=document.createElement("div");item.className="workflow-event";
+  const title=document.createElement("strong");title.textContent=event.event_type||"event";
+  const detail=document.createElement("small");const fields=event.details||{};
+  detail.textContent=[fields.role,fields.provider,fields.model,fields.status,fields.routing_reason]
+    .filter(Boolean).join(" · ")||event.created_at||"";item.append(title,detail);
+  const stream=$("workflow-events");stream.append(item);while(stream.children.length>100)
+    stream.firstElementChild.remove();stream.scrollLeft=stream.scrollWidth}
+function connectWorkflow(){if(workflow)workflow.close();const scheme=location.protocol==="https:"?"wss":"ws";
+  workflow=new WebSocket(scheme+"://"+location.host+"/v1/admin/observation/workflow?after="+
+    workflowCursor);workflow.onopen=()=>{$("workflow-state").textContent="실시간 연결";
+    workflowRetry=1000};workflow.onmessage=event=>workflowEvent(JSON.parse(event.data));
+  workflow.onclose=event=>{workflow=null;$('workflow-state').textContent=event.code===1008?
+    "기능 비활성":"재연결 대기";if(event.code!==1008)setTimeout(connectWorkflow,workflowRetry);
+    workflowRetry=Math.min(workflowRetry*2,30000)}}
 function reset(){sessionId=null;$("messages").replaceChildren();
   $("codex-state").textContent="새 독립 Codex CLI 세션입니다."}
 function render(event,assistant){
@@ -119,7 +143,7 @@ $("workspace").onchange=reset;$("new-session").onclick=reset;$("composer").onsub
 $("runtime").onclick=async()=>addMessage(JSON.stringify(
   await api("/v1/admin/runtime-status"),null,2),"event");
 $("logout").onclick=async()=>{await api("/v1/admin/session",{method:"DELETE"});
-  $("content").hidden=true;$("login").hidden=false;reset()};
+  if(workflow)workflow.close(1000);$("content").hidden=true;$("login").hidden=false;reset()};
 load().catch(()=>$("login").hidden=false);
 </script>
 </html>"""

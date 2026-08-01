@@ -112,6 +112,10 @@ def test_admin_dashboard_runs_bounded_custom_provider_codex(
         assert dashboard.status_code == 200
         assert "/admin/api-keys" in dashboard.text
         assert "DGX MoA custom provider" in dashboard.text
+        assert "/v1/admin/observation/workflow?after=" in dashboard.text
+        assert "workflowCursor" in dashboard.text
+        assert "while(stream.children.length>100)" in dashboard.text
+        assert "detail.textContent=" in dashboard.text
         assert client.get("/v1/admin/codex/workspaces", headers=general).status_code == 403
         assert client.get("/v1/admin/codex/workspaces", headers=operator).json() == {
             "root": "~/code",
