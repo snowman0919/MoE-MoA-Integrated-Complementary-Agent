@@ -3995,6 +3995,25 @@ class Controller:
                 and str(tool.get("name") or tool.get("function", {}).get("name"))
                 == "write_stdin"
             ]
+            for tool in body["tools"]:
+                function = tool.get("function")
+                if isinstance(function, dict):
+                    function["description"] = (
+                        "Wait for the active validation process to return its terminal result."
+                    )
+                    function["parameters"] = {
+                        "type": "object",
+                        "properties": {
+                            "session_id": {
+                                "type": "integer",
+                                "const": pending_validation_session,
+                            },
+                            "chars": {"type": "string", "const": ""},
+                            "yield_time_ms": {"type": "integer", "const": 300_000},
+                        },
+                        "required": ["session_id", "chars", "yield_time_ms"],
+                        "additionalProperties": False,
+                    }
             available_tools = ("write_stdin",) if body["tools"] else ()
             if available_tools:
                 body["tool_choice"] = "required"

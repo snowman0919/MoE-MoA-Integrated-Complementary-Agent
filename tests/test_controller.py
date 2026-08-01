@@ -180,6 +180,16 @@ async def test_pending_validation_poll_exposes_only_write_stdin(
 
     assert [tool["function"]["name"] for tool in prepared["tools"]] == ["write_stdin"]
     assert prepared["tool_choice"] == "required"
+    assert prepared["tools"][0]["function"]["parameters"] == {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "integer", "const": 7},
+            "chars": {"type": "string", "const": ""},
+            "yield_time_ms": {"type": "integer", "const": 300_000},
+        },
+        "required": ["session_id", "chars", "yield_time_ms"],
+        "additionalProperties": False,
+    }
     assert any(
         event["event_type"] == "validation_poll_tools_restricted"
         and event["payload"]["session_id"] == 7

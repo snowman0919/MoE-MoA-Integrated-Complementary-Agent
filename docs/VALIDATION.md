@@ -9479,3 +9479,23 @@ existing retry/poll regressions passed; the full regression passed 1,188 tests
 in 47.36 seconds. Ruff passed, strict mypy reported zero issues across 59
 source files, and `git diff --check` passed. End-to-end v74 confirmation has not
 yet run, so v74 is not a PASS.
+
+V177 physically ran v74 for approximately 41 minutes, 37 loop iterations, and
+85 tool executions. Local Reasoner, Qwen Executor, Gemma Planner, and Codex
+OAuth Frontier calls completed; no OOM or no-progress condition occurred, and
+15 implementation failures were resolved. Four filtered validation attempts
+were followed by the required exact command. Each exact pytest execution
+yielded partial output, then its short `write_stdin` poll returned before the
+terminal verdict; the process exited during the following model turn and the
+next poll found an expired session. V177 therefore produced no accepted
+validation or clean phase commit. Its database, dirty workspace, and stopped
+containers remain preserved, and V177 is not a PASS.
+
+Protocol v75 keeps the existing pending-validation singleflight but pins its
+only exposed `write_stdin` call to the active session, empty input, and a
+300-second yield. This lets the poll itself wait for pytest's terminal output
+instead of racing the next model turn; it adds no client adapter or retry loop.
+Five focused exact-validation, continuation, and expired-session regressions
+passed. The full regression passed 1,188 tests in 47.38 seconds. Ruff passed,
+strict mypy reported zero issues across 59 source files, and `git diff --check`
+passed. End-to-end v75 confirmation has not yet run, so v75 is not a PASS.
