@@ -11,6 +11,7 @@ dependencies = [
   "pydantic>=2.10",
   "pyyaml>=6.0",
   "uvicorn>=0.34",
+  "wsproto>=1.2,<2",
   "zstandard>=0.23",
 ]
 

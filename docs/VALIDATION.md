@@ -9903,3 +9903,30 @@ Qwythos Reasoner (3.062 s), local Qwen SGLang Executor twice (3.494 s and
 model latency exceeded client wall time, providing physical evidence of
 overlapped independent-role work, but this single probe is not the complete
 multi-client reliability gate.
+
+## 2026-08-02 Admin workflow WebSocket physical protocol correction
+
+The first isolated workflow container returned HTTP 404 for RFC6455 upgrade
+requests even though the application route was present. Its image contained
+neither a Uvicorn WebSocket protocol backend nor a compatible optional extra;
+Uvicorn logged an unsupported upgrade and handled the request as HTTP. The
+candidate now declares the minimal `wsproto` runtime dependency while retaining
+the existing authenticated admin-router boundary.
+
+An isolated `workflow-v2` image passed authenticated readiness (HTTP 200),
+same-origin WebSocket upgrade (HTTP 101), forged-origin rejection (HTTP 403),
+and cursor replay. A synthetic isolated request completed with HTTP 200; the
+stream delivered sequence 1 `request_received`, then a reconnect after cursor
+1 replayed sequence 2 `reasoner_started`. No prompt, response content, token,
+or raw provider payload was printed or retained. Ruff and strict mypy passed,
+255 focused tests passed, and the full suite passed 1205 tests in 42.53 s.
+Physical slow-client backpressure and one-observation-host failure remain open.
+
+AvatarForge V184 was manually stopped without a completion row after the user
+requested that the long measurement stop while runtime latency is corrected.
+Its existing directory remains immutable diagnostic evidence and is not PASS
+evidence. At stop time both SGLang model processes were resident with zero GPU
+utilization; historical Gemma decode telemetry was approximately 29 tokens/s,
+so the observed 36.526-second Planner latency is not evidence of a continuously
+slow NVFP4 kernel by itself. Output length and orchestration latency remain to
+be corrected and revalidated before any new confirmation epoch.
