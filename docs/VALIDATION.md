@@ -9627,3 +9627,18 @@ issues across 59 source files, and `git diff --check` passed. This does not yet
 make request/token quota admission atomic: authorization still checks completed
 and accepted usage before the request row is inserted, so that separate quota
 reservation boundary remains an open reliability gate.
+
+Protocol v83 reuses the existing `request_usage` row as the API-key request
+admission reservation. `UsageStore.start()` now acquires an immediate SQLite
+write transaction, returns idempotently for an existing request ID, checks the
+key's current accepted-request and consumed-token totals, and inserts the new
+request before releasing the lock. Concurrent requests can therefore no longer
+both consume the final request slot. A typed quota failure is mapped by the
+gateway to HTTP 429 with code `api_key_quota_exceeded`, rather than leaking into
+the generic 502 path. The two-thread admission regression passed 20 consecutive
+runs; 43 focused API-key/usage tests passed, followed by 1,199 full-suite tests
+in 48.77 seconds. Ruff and strict mypy passed for the changed source. Token
+quota semantics remain intentionally consumption-based: the gateway blocks new
+admission once recorded token usage reaches the configured limit, but does not
+pre-reserve an unknown future completion size or claim an exact no-overshoot
+token budget.

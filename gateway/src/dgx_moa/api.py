@@ -142,6 +142,7 @@ from .usage import (
     RequestUsageStart,
     RetryableFailureClass,
     Role,
+    UsageQuotaExceeded,
     UsageStore,
     classify_client,
 )
@@ -203,7 +204,6 @@ def error_response(
         status_code=status_code,
         headers=headers,
     )
-
 
 
 def create_app(
@@ -499,9 +499,9 @@ def create_app(
                     if configured.models[role].lifecycle_control != "external":
                         continue
                     try:
-                        healthy = await (
-                            lifecycle_health_probe or default_lifecycle_health_probe
-                        )(role)
+                        healthy = await (lifecycle_health_probe or default_lifecycle_health_probe)(
+                            role
+                        )
                     except Exception:
                         healthy = False
                     app.state.lifecycle_store.recover_state(
@@ -1421,9 +1421,7 @@ def create_app(
                 getattr(request.state, "api_token_id", ""),
             )
         except (KeyError, OSError, ValueError):
-            raise HTTPException(
-                status.HTTP_404_NOT_FOUND, "image artifact not found"
-            ) from None
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "image artifact not found") from None
         return FileResponse(
             artifact.path,
             media_type=artifact.media_type,
@@ -1670,38 +1668,46 @@ def create_app(
                         unavailable_record = check.record
                     else:
                         loading_record = check.record
-        request.app.state.usage.start(
-            RequestUsageStart(
-                request_id=usage_request_id,
-                session_id=str(
-                    uuid.uuid5(
-                        request.app.state.usage_session_namespace,
-                        state_session_id,
-                    )
-                ),
-                api_token_id=api_token_id,
-                client_class=classify_client(
-                    request.headers.get("user-agent") if "headers" in request.scope else None
-                ),
-                model_alias=cast(
-                    ModelAlias,
-                    model_alias,
-                ),
-                runtime_mode=mode,
-                request_class=request_class,
-                roles_required=cast(tuple[Role, ...], candidate_roles),
-                accepted_at=accepted_at,
-                streaming=body.stream,
-                model_state=(
-                    "loading"
-                    if loading_record is not None
-                    else "cold"
-                    if unavailable_record is not None or unmanaged_role is not None
-                    else "warm"
-                ),
-                load_triggered=load_triggered,
+        try:
+            request.app.state.usage.start(
+                RequestUsageStart(
+                    request_id=usage_request_id,
+                    session_id=str(
+                        uuid.uuid5(
+                            request.app.state.usage_session_namespace,
+                            state_session_id,
+                        )
+                    ),
+                    api_token_id=api_token_id,
+                    client_class=classify_client(
+                        request.headers.get("user-agent") if "headers" in request.scope else None
+                    ),
+                    model_alias=cast(
+                        ModelAlias,
+                        model_alias,
+                    ),
+                    runtime_mode=mode,
+                    request_class=request_class,
+                    roles_required=cast(tuple[Role, ...], candidate_roles),
+                    accepted_at=accepted_at,
+                    streaming=body.stream,
+                    model_state=(
+                        "loading"
+                        if loading_record is not None
+                        else "cold"
+                        if unavailable_record is not None or unmanaged_role is not None
+                        else "warm"
+                    ),
+                    load_triggered=load_triggered,
+                )
             )
-        )
+        except UsageQuotaExceeded as error:
+            return error_response(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                str(error),
+                "rate_limit_error",
+                "api_key_quota_exceeded",
+            )
         request.app.state.usage.start_roles(
             usage_request_id,
             candidate_roles,
@@ -2585,9 +2591,7 @@ def create_app(
                                     "provider": "frontier",
                                     "failure_class": type(error).__name__,
                                     "failure_code": str(error)[:128],
-                                    "failure_detail": getattr(
-                                        error, "detail", "unclassified"
-                                    ),
+                                    "failure_detail": getattr(error, "detail", "unclassified"),
                                     "failure_terms": getattr(error, "terms", []),
                                     "routing_reason": executor_routing_reason,
                                 },
@@ -2972,9 +2976,7 @@ def create_app(
                         "content": json.dumps(
                             {
                                 "artifact_id": artifact.artifact_id,
-                                "download_url": (
-                                    f"/v1/image-artifacts/{artifact.artifact_id}"
-                                ),
+                                "download_url": (f"/v1/image-artifacts/{artifact.artifact_id}"),
                                 "media_type": artifact.media_type,
                                 "width": artifact.width,
                                 "height": artifact.height,

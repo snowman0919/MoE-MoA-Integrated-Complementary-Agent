@@ -83,6 +83,10 @@ ROLE_REQUEST_COLUMNS = (
 )
 
 
+class UsageQuotaExceeded(RuntimeError):
+    pass
+
+
 def classify_client(user_agent: str | None) -> SafeClientClass:
     normalized = (user_agent or "").lower()
     for marker, client_class in CLIENT_MARKERS:
@@ -510,8 +514,34 @@ class UsageStore:
 
     def start(self, record: RequestUsageStart) -> None:
         with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            if database.execute(
+                "SELECT 1 FROM request_usage WHERE request_id = ?", (record.request_id,)
+            ).fetchone():
+                return
+            has_keys = database.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'api_keys'"
+            ).fetchone()
+            key = (
+                database.execute(
+                    "SELECT request_limit, token_limit FROM api_keys WHERE name = ?",
+                    (record.api_token_id,),
+                ).fetchone()
+                if has_keys
+                else None
+            )
+            if key is not None:
+                used = database.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(total_tokens), 0) FROM request_usage "
+                    "WHERE api_token_id = ?",
+                    (record.api_token_id,),
+                ).fetchone()
+                if key["request_limit"] is not None and used[0] >= key["request_limit"]:
+                    raise UsageQuotaExceeded("API key request limit reached")
+                if key["token_limit"] is not None and used[1] >= key["token_limit"]:
+                    raise UsageQuotaExceeded("API key token limit reached")
             database.execute(
-                "INSERT OR IGNORE INTO request_usage "
+                "INSERT INTO request_usage "
                 "(request_id, session_id, api_token_id, client_class, model_alias, runtime_mode, "
                 "request_class, roles_required, accepted_at, streaming, model_state, "
                 "load_triggered) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

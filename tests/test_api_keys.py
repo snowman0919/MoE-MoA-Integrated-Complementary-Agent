@@ -15,7 +15,7 @@ from dgx_moa.security import (
     ApiKeyStore,
     ApiKeyUpdate,
 )
-from dgx_moa.usage import RequestUsageStart, UsageStore
+from dgx_moa.usage import RequestUsageStart, UsageQuotaExceeded, UsageStore
 from fastapi.testclient import TestClient
 
 from .conftest import StubProvider
@@ -104,6 +104,43 @@ def test_admin_key_cap_is_atomic_across_concurrent_creates(tmp_path: Path) -> No
 
     assert sorted(results) == [False, True]
     assert sum(key["status"] == "active" for key in store.list()) == 1
+
+
+def test_request_quota_admission_is_atomic(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    usage = UsageStore(path)
+    keys = ApiKeyStore(path, {}, admin_token_ids=())
+    token, _ = keys.create(ApiKeyRequest(name="limited", request_limit=1))
+    assert keys.verify(token) == "limited"
+    barrier = Barrier(2)
+
+    def admit(request_id: str) -> bool:
+        record = RequestUsageStart(
+            request_id=request_id,
+            session_id=f"session-{request_id}",
+            api_token_id="limited",
+            client_class="openai-compatible",
+            model_alias="dgx-moa-agent",
+            runtime_mode="agent",
+            request_class="native_agent_turn",
+            roles_required=("executor",),
+            accepted_at=100,
+            streaming=False,
+            model_state="warm",
+        )
+        barrier.wait()
+        try:
+            usage.start(record)
+        except UsageQuotaExceeded as error:
+            assert str(error) == "API key request limit reached"
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(admit, ("request-one", "request-two")))
+
+    assert sorted(results) == [False, True]
+    assert len(usage.recent_requests()) == 1
 
 
 def test_admin_key_api_separates_permissions_and_returns_no_store(
@@ -207,6 +244,23 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
             client.get("/v1/models", headers={"Authorization": f"Bearer {new_token}"}).status_code
             == 200
         )
+        original_start = client.app.state.usage.start
+
+        def reject_quota(_: RequestUsageStart) -> None:
+            raise UsageQuotaExceeded("API key request limit reached")
+
+        monkeypatch.setattr(client.app.state.usage, "start", reject_quota)
+        rejected = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {new_token}"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "READY"}],
+            },
+        )
+        assert rejected.status_code == 429
+        assert rejected.json()["error"]["code"] == "api_key_quota_exceeded"
+        monkeypatch.setattr(client.app.state.usage, "start", original_start)
         completion = client.post(
             "/v1/chat/completions",
             headers={"Authorization": f"Bearer {new_token}"},
