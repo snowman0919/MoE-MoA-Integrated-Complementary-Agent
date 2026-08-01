@@ -19,6 +19,7 @@ data/training-staging/
 data/weekly-packages/
 data/benchmarks/*.json
 !data/benchmarks/mvp-baseline.json
+data/validation/
 data/datasets/*.jsonl
 data/run/
 data/state/*-completion.json
