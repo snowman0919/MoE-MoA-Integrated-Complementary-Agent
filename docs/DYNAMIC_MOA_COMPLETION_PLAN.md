@@ -540,6 +540,11 @@ reconnect, plan/context 보존을 대체하지 않는다.
   fsync하고, 안정 session hash는 처음부터 알려진 gateway session으로
   계산한다. v76/V179는 진단 자료로만 보존하며 새 clean seed와 새 run ID를
   사용한다.
+- protocol v85는 Codex stream이 session event를 내보내기 전에 단절되더라도
+  격리 `state_*.sqlite`에 활성 thread가 정확히 하나일 때만 그 ID를 복구해
+  동일 provider·gateway session으로 한 번 resume한다. 둘 이상이거나 재시도도
+  실패하면 fail closed하며 raw client output과 thread ID는 evidence에 저장하지
+  않는다. 첫 시도의 tool/cache/usage 관측은 성공한 resume와 합산한다.
 
 ## 10. Release, rollback, 배포
 

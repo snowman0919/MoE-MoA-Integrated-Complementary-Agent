@@ -9833,3 +9833,22 @@ three repeated actions, and one nonexistent-path tool failure. Only the
 allowed `avatarforge/` workspace root became dirty, but no completion evidence
 row was appended. V182 is diagnostic only and is not eligible for the frozen
 blind or long-horizon confirmation gates.
+
+## 2026-08-02 AvatarForge protocol v85 bounded Codex resume
+
+V182 exposed a harness durability defect: a Codex stream could disconnect
+before emitting `thread.started` even though its isolated `state_*.sqlite`
+contained exactly one active thread. The runner discarded that recoverable
+session and failed the entire attempt. Protocol v85 now reads only active
+thread IDs from the isolated Codex state, resumes once through the same model
+provider and Gateway session, aggregates both attempts for client metrics, and
+fails closed when the state is absent, ambiguous, or the resume also fails.
+The raw thread ID and client output are not written to public evidence.
+
+The frozen completion-plan SHA-256 for this epoch is
+`1ae39aaeec2cb78ad0cf365ae6120e277eff6190f9557d5ee9dda670e828455e`.
+The V182 state was read-only probed and was recoverable by the new unique-thread
+contract; V182 itself remains failed and immutable. Measured checks were 56
+focused long-horizon tests passing, Ruff passing, strict mypy reporting zero
+issues over 60 source files, and the full suite passing 1205 tests in 44.58 s.
+No new long-run confirmation is claimed until a fresh v85 run ID completes.

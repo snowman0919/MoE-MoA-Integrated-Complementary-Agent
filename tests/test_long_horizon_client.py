@@ -923,6 +923,56 @@ def test_client_exit_classification_never_returns_payload(
     assert MODULE.classify_client_exit(output, "") == expected
 
 
+def test_codex_disconnect_resumes_the_only_isolated_thread_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = arguments(tmp_path, "codex")
+    args.profile = "avatarforge"
+    args.timeout = 60
+    state = tmp_path / "state"
+    state.mkdir()
+    with sqlite3.connect(state / "state_5.sqlite") as database:
+        database.execute("CREATE TABLE threads (id TEXT, archived INTEGER)")
+        database.execute("INSERT INTO threads VALUES ('private-thread', 0)")
+    control = {
+        "started_at_epoch": MODULE.time.time(),
+        "baseline": {},
+        "gateway_session": "private-gateway",
+        "client_session": None,
+    }
+    sessions: list[str | None] = []
+    runs = iter(
+        (
+            __import__("subprocess").CompletedProcess([], 1, "", "stream disconnected"),
+            __import__("subprocess").CompletedProcess([], 1, "", "stream disconnected"),
+        )
+    )
+    monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
+    monkeypatch.setattr(MODULE.QUALITY, "run_process", lambda *_args, **_kwargs: next(runs))
+    monkeypatch.setattr(
+        MODULE,
+        "client_command",
+        lambda _args, _state, session, _index, _gateway: (
+            sessions.append(session) or ["docker", "run", "--rm", "image", "command"],
+            {},
+            None,
+        ),
+    )
+    monkeypatch.setattr(MODULE, "wait_until", lambda _target: None)
+    monkeypatch.setattr(MODULE, "container_exists", lambda _name: False)
+
+    with pytest.raises(MODULE.ClientNonzeroExit):
+        MODULE.run_checkpoint(args, state, control, 0)
+
+    assert sessions == [None, "private-thread"]
+    assert json.loads((state / "long-control.json").read_text())["client_session"] == (
+        "private-thread"
+    )
+    with sqlite3.connect(state / "state_5.sqlite") as database:
+        database.execute("INSERT INTO threads VALUES ('ambiguous-thread', 0)")
+    assert MODULE.recover_codex_session(state) is None
+
+
 @pytest.mark.parametrize(("profile", "index"), (("journal", 1), ("avatarforge", 0)))
 def test_checkpoint_requires_committed_implementation(
     tmp_path: Path,

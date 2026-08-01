@@ -30,7 +30,7 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v84"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v85"
 AVATARFORGE_OPENCODE_STEPS = 32
 AVATARFORGE_OPENCODE_AGENT = "avatarforge"
 AVATARFORGE_PYTHON_ROOT = Path("/home/kotori9/dgx-moa-agent/.venv")
@@ -675,6 +675,23 @@ def client_metrics(
     }
 
 
+def recover_codex_session(state: Path) -> str | None:
+    sessions: set[str] = set()
+    for database in state.glob("state_*.sqlite"):
+        try:
+            with sqlite3.connect(f"file:{database}?mode=ro", uri=True) as connection:
+                sessions.update(
+                    str(row[0])
+                    for row in connection.execute(
+                        "SELECT id FROM threads WHERE archived = 0"
+                    ).fetchall()
+                    if row[0]
+                )
+        except sqlite3.Error:
+            continue
+    return next(iter(sessions)) if len(sessions) == 1 else None
+
+
 def hermes_tool_metrics(state: Path, session: str) -> tuple[int, list[str]]:
     database = state / "state.db"
     if not database.is_file():
@@ -1083,37 +1100,59 @@ def run_checkpoint(
     wait_until(scheduled)
     before = RUNTIME.runtime_snapshot()
     started = time.time()
-    command, environment, usage_file = client_command(
-        args,
-        state,
-        control.get("client_session"),
-        index,
-        control["gateway_session"],
-    )
     container_name = client_container_name(args, state, index)
-    if container_exists(container_name):
-        raise RuntimeError("client_container_already_exists")
-    try:
-        run = QUALITY.run_process(
-            with_container_name(command, container_name),
-            cwd=args.workspace,
-            environment=environment,
-            timeout=client_timeout(args, control),
+    outputs: list[tuple[str, str]] = []
+    reconnects = 0
+    while True:
+        command, environment, usage_file = client_command(
+            args,
+            state,
+            control.get("client_session"),
+            index,
+            control["gateway_session"],
         )
-    finally:
         if container_exists(container_name):
-            remove_client_container(container_name)
-        secure_client_state(state)
+            raise RuntimeError("client_container_already_exists")
+        try:
+            run = QUALITY.run_process(
+                with_container_name(command, container_name),
+                cwd=args.workspace,
+                environment=environment,
+                timeout=client_timeout(args, control),
+            )
+        finally:
+            if container_exists(container_name):
+                remove_client_container(container_name)
+            secure_client_state(state)
+        outputs.append((run.stdout, run.stderr))
+        stdout = "\n".join(item[0] for item in outputs)
+        stderr = "\n".join(item[1] for item in outputs)
+        metrics = client_metrics(args.harness, stdout, stderr, usage_file, state)
+        session = metrics.get("session")
+        if run.returncode == 124:
+            raise RuntimeError(
+                "client_goal_timeout" if profile == "avatarforge" else "client_checkpoint_timeout"
+            )
+        detail = classify_client_exit(run.stdout, run.stderr) if run.returncode else ""
+        if (
+            run.returncode
+            and args.harness == "codex"
+            and detail == "stream_disconnected"
+            and reconnects == 0
+        ):
+            recovered = session or recover_codex_session(state)
+            if recovered and control.get("client_session") in {None, recovered}:
+                control["client_session"] = recovered
+                write_private(state / "long-control.json", control)
+                reconnects += 1
+                continue
+        if run.returncode:
+            raise ClientNonzeroExit(detail)
+        break
     completed = time.time()
     after = RUNTIME.runtime_snapshot()
-    metrics = client_metrics(args.harness, run.stdout, run.stderr, usage_file, state)
+    metrics["retries"] += reconnects
     session = metrics.pop("session")
-    if run.returncode == 124:
-        raise RuntimeError(
-            "client_goal_timeout" if profile == "avatarforge" else "client_checkpoint_timeout"
-        )
-    if run.returncode:
-        raise ClientNonzeroExit(classify_client_exit(run.stdout, run.stderr))
     if not metrics["terminal"]:
         raise RuntimeError("client_terminal_missing")
     if not session:
