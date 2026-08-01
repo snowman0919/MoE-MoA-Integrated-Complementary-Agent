@@ -9445,3 +9445,20 @@ Its initial physical calls completed through local Reasoner, Qwen Executor,
 local Gemma Planner, and Codex OAuth Frontier. V175 is still running and is not
 a PASS until terminal validation, independent review, and a clean phase commit
 are recorded.
+
+V175 continued for 16 loop iterations and 47 tool executions, produced four
+dirty Phase 0 paths, and reached an independent Frontier rejection followed by
+correction. It never accepted validation. Three exact pytest attempts and their
+continuations returned partial output. Protocol v72 then released each live PTY
+after a partial continuation because `rejected_missing_terminal_verdict` is
+recorded with `TEST_FAILURE`; this prevented the third and later polls needed
+for a terminal verdict. Fourteen exact-command retry restrictions could not
+repair that state-machine error. V175 was stopped with its database and dirty
+workspace preserved and is not a PASS.
+
+Protocol v73 releases a validation poll only when its output reports the
+terminal adapter markers `Unknown process id` or `No active process session`.
+A normal partial continuation remains pinned even though its evidence failure
+class is `TEST_FAILURE`. Three focused regressions passed; the full regression,
+Ruff, strict mypy across 59 source files, and `git diff --check` passed.
+End-to-end v73 confirmation has not yet run, so v73 is not a PASS.

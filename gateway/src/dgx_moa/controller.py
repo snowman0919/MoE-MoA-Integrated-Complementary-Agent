@@ -2239,9 +2239,12 @@ class Controller:
         )
         if (
             not latest
-            or latest.get("failure_class")
             or latest.get("validation_evidence_status")
             != "rejected_missing_terminal_verdict"
+            or any(
+                marker in str(latest.get("stdout_summary", ""))
+                for marker in ("Unknown process id", "No active process session")
+            )
         ):
             return None
         arguments = latest.get("normalized_arguments", {})

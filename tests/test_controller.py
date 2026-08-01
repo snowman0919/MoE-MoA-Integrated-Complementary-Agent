@@ -142,6 +142,9 @@ def test_executor_prompt_pins_only_latest_unfinished_validation_poll(
         validation_evidence_status="rejected_missing_terminal_verdict",
         failure_class="TEST_FAILURE",
     )
+    assert controller.pending_validation_poll_session(state) == 7
+
+    state.tool_executions[-1]["stdout_summary"] = "write_stdin failed: Unknown process id 7"
     assert controller.pending_validation_poll_session(state) is None
 
 
