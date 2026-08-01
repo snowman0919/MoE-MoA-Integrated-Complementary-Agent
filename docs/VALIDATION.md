@@ -10160,3 +10160,20 @@ This establishes Hermes 5/5 diagnostic functionality and telemetry only. Its
 high token volume remains an efficiency concern, and the run has no matched
 native baseline, blinded scores, or confidence interval, so it is not
 non-inferiority evidence.
+
+OpenCode diagnostic `20260802-opencode-five-82077df-v1` passed rate limiter,
+atomic store, and DAG runner, then failed webhook verifier and stopped before
+the JSONL report. The generated source contained an invalid literal where a
+normal credential-named parameter assignment had been redacted. The shared
+security regex treated `self.secret = secret` as a credential value and
+replaced the right-hand identifier, corrupting executable code. This was a
+runtime response-boundary defect rather than a provider error; telemetry was
+complete with zero provider errors, orphan errors, or switches. The four tasks
+took 1,343.691 s and consumed 1,245,627 tokens, reinforcing the efficiency
+concern. The failed epoch remains immutable and is not panel evidence.
+
+Redaction now preserves only a bare right-hand identifier exactly equal to its
+credential-named left-hand parameter. Literal or different values remain
+redacted. The focused security suite passed 11 tests, and the full suite passed
+1,214 tests in 48.09 s; Ruff and strict mypy over all 60 gateway source files
+also passed. A fresh OpenCode epoch is required.

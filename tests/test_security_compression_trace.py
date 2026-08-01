@@ -63,6 +63,15 @@ def test_redaction_preserves_token_and_cost_measurements() -> None:
     }
 
 
+def test_redaction_preserves_bare_credential_parameter_assignments() -> None:
+    assert redact("self.secret = secret\nself.token=token") == (
+        "self.secret = secret\nself.token=token"
+    )
+    assert redact("secret=actual-value token=abc123") == (
+        "secret=[REDACTED] token=[REDACTED]"
+    )
+
+
 def test_trace_schema_and_secret_redaction(tmp_path) -> None:  # type: ignore[no-untyped-def]
     path = tmp_path / "trace.jsonl"
     export_trace(path, {"objective": "x", "tool_observation": "Authorization: Bearer secret"})

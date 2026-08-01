@@ -19,7 +19,10 @@ from .database import connect_sqlite
 
 SECRET_PATTERNS = (
     re.compile(r"(?i)(authorization:\s*bearer\s+)[^\s]+"),
-    re.compile(r"(?i)((?:api[_-]?key|token|password|secret)\s*[=:]\s*)[^\s,;]+"),
+    re.compile(
+        r"(?i)((?P<name>api[_-]?key|token|password|secret)\s*[=:]\s*)"
+        r"(?P<value>[^\s,;]+)"
+    ),
     re.compile(r"\b(?:hf|sk)-[A-Za-z0-9_-]{12,}\b"),
     re.compile(r"\bmoa_[A-Za-z0-9_-]{32,}\b"),
 )
@@ -393,7 +396,13 @@ def redact(value: Any) -> Any:
         return value
     for pattern in SECRET_PATTERNS:
         value = pattern.sub(
-            lambda match: (match.group(1) if match.lastindex else "") + "[REDACTED]", value
+            lambda match: (
+                match.group(0)
+                if "name" in match.groupdict()
+                and match.group("value").lower() == match.group("name").lower()
+                else (match.group(1) if match.lastindex else "") + "[REDACTED]"
+            ),
+            value,
         )
     return value
 
