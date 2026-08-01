@@ -10125,3 +10125,19 @@ but its call volume and wall time are a material efficiency concern. No matched
 native baseline, blinded quality scores, confidence interval, OpenCode panel,
 or Hermes panel exists for this epoch, so it is not non-inferiority evidence
 and does not satisfy the Goal.
+
+Hermes diagnostic `20260802-hermes-five-7faf943-v5` passed the rate-limiter
+functional and then-current telemetry checks in 427.840 s. Atomic store also
+passed every functional check in 224.249 s. During atomic execution, however,
+the isolated database recorded one cancelled local Executor final-synthesis
+invocation belonging to a different observed session. Session-filtered scoring
+incorrectly omitted that orphan row and reported telemetry complete. The panel
+was stopped before DAG completion; webhook and JSONL report were not started.
+
+The collector now counts non-success invocations from other sessions when a
+configured client session was ignored and correlation fell back to the one
+observed session in an otherwise isolated time window. Normal concurrent
+success rows are not mixed. The v5 atomic score remains immutable, but its
+corrected telemetry status is failed with one orphan provider error. This is a
+diagnostic instrumentation epoch, not a Hermes panel pass; a new committed run
+must restart the five tasks.

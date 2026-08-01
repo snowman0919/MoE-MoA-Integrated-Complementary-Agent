@@ -1363,6 +1363,7 @@ def invocation_telemetry(
         "cached_tokens": None,
         "retryable_failures": None,
         "provider_errors": 0,
+        "orphan_provider_errors": 0,
         "invocations": [],
         "routing_events": {},
     }
@@ -1406,6 +1407,7 @@ def invocation_telemetry(
                 "ELSE CAST(strftime('%s', accepted_at) AS REAL) END"
             )
             effective_session_id = session_id
+            session_fallback = False
             if session_id is not None and "session_id" in request_columns:
                 matched = connection.execute(
                     "SELECT COUNT(*) FROM request_usage WHERE session_id = ?",
@@ -1420,6 +1422,7 @@ def invocation_telemetry(
                     if len(observed) != 1:
                         return incomplete | {"reason": "session_correlation_ambiguous"}
                     effective_session_id = observed[0][0]
+                    session_fallback = True
             if effective_session_id is not None and "session_id" in request_columns:
                 invocation_join = (
                     " JOIN request_usage AS request"
@@ -1453,6 +1456,18 @@ def invocation_telemetry(
                 f"WHERE {invocation_where} ORDER BY invocation.invoked_at",
                 invocation_parameters,
             ).fetchall()
+            orphan_provider_errors = (
+                connection.execute(
+                    "SELECT COUNT(*) FROM model_invocation_usage AS invocation "
+                    "JOIN request_usage AS request ON request.request_id = invocation.request_id "
+                    "WHERE invocation.invoked_at BETWEEN ? AND ? "
+                    "AND request.session_id != ? "
+                    "AND invocation.status NOT IN ('completed', 'success')",
+                    (started_at, ended_at, effective_session_id),
+                ).fetchone()[0]
+                if session_fallback and can_join_requests
+                else 0
+            )
             allowed_events = (
                 "specialist_provider_selected",
                 "specialist_provider_completed",
@@ -1526,7 +1541,7 @@ def invocation_telemetry(
         round(sum(float(row[11]) for row in paid_rows), 9) if remote_cost_complete else None
     )
     successful_rows = [row for row in rows if row[4] in {"completed", "success"}]
-    provider_errors = len(rows) - len(successful_rows)
+    provider_errors = len(rows) - len(successful_rows) + orphan_provider_errors
     token_complete = bool(successful_rows) and all(
         all(value is not None for value in row[7:10]) for row in successful_rows
     )
@@ -1605,6 +1620,7 @@ def invocation_telemetry(
         "cache_status_counts": cache_status_counts,
         "retryable_failures": retryable_failures,
         "provider_errors": provider_errors,
+        "orphan_provider_errors": orphan_provider_errors,
         "invocations": invocations,
         "routing_events": routing_events,
     }

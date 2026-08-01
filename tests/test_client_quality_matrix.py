@@ -512,6 +512,46 @@ def test_invocation_telemetry_correlates_one_observed_session_when_header_is_ign
     assert result["total_tokens"] == 10
 
 
+def test_invocation_telemetry_fails_on_orphan_error_during_fallback_window(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "gateway.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE model_invocation_usage ("
+            "request_id TEXT, role TEXT, provider TEXT, model TEXT, status TEXT, "
+            "fallback_reason TEXT, latency_ms REAL, prompt_tokens INTEGER, "
+            "completion_tokens INTEGER, total_tokens INTEGER, cached_tokens INTEGER, "
+            "cost_usd REAL, invoked_at REAL)"
+        )
+        connection.execute(
+            "CREATE TABLE request_usage (request_id TEXT, session_id TEXT, accepted_at REAL, "
+            "retryable_failure_class TEXT)"
+        )
+        connection.execute(
+            "CREATE TABLE events (session_id TEXT, event_type TEXT, payload TEXT, created_at TEXT)"
+        )
+        connection.executemany(
+            "INSERT INTO request_usage VALUES (?, ?, ?, NULL)",
+            (("current", "observed", 2), ("previous", "previous", 0)),
+        )
+        connection.executemany(
+            "INSERT INTO model_invocation_usage VALUES (?, 'executor', 'local', 'model', ?, "
+            "NULL, 10, ?, ?, ?, ?, 0, ?)",
+            (
+                ("current", "completed", 7, 3, 10, 0, 2),
+                ("previous", "cancelled", None, None, None, None, 3),
+            ),
+        )
+
+    result = MODULE.invocation_telemetry(database, 1, 4, session_id="configured")
+
+    assert result["complete"] is False
+    assert result["reason"] == "provider_error"
+    assert result["provider_errors"] == 1
+    assert result["orphan_provider_errors"] == 1
+
+
 def test_invocation_telemetry_accepts_explicitly_unavailable_cache_without_inventing_zero(
     tmp_path: Path,
 ) -> None:
