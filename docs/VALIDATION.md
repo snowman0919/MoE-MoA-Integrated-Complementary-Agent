@@ -9408,3 +9408,20 @@ header regressions passed; the full regression passed 1,186 tests in 43.19
 seconds. Ruff passed, strict mypy reported zero issues across 59 source files,
 and `git diff --check` passed. End-to-end v71 confirmation has not yet run, so
 v71 is not a PASS.
+
+V170 physically exercised v71 through seven loop iterations and ten tool
+executions. The exact unfiltered validation command ran and its continuing PTY
+was correctly pinned to `write_stdin`; the test suite returned eight failures.
+After the PTY exited, however, the client adapter returned `write_stdin failed:
+Unknown process id` with an outer exit code of zero. The controller treated that
+text as success, pinned the dead session for three more polls, then terminated
+`NO_PROGRESS`. V170 has no accepted validation, review, or phase commit; its
+database and clean workspace remain preserved and V170 is not a PASS.
+
+Protocol v72 classifies expired process-session messages as tool failures and
+never treats a failed validation continuation as a pending poll. This releases
+the Executor to address the real test failures instead of repeatedly polling a
+dead process. Five focused regressions passed, including the physical failure
+shape; the full regression passed 1,187 tests. Ruff passed, strict mypy reported
+zero issues across 59 source files, and `git diff --check` passed. End-to-end
+v72 confirmation has not yet run, so v72 is not a PASS.

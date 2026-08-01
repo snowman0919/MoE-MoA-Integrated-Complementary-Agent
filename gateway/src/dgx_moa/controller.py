@@ -1583,6 +1583,8 @@ class Controller:
                         "unsupported call",
                         "resources/read failed",
                         "failed to parse function arguments",
+                        "unknown process id",
+                        "no active process session",
                     )
                 )
                 or (
@@ -2237,6 +2239,7 @@ class Controller:
         )
         if (
             not latest
+            or latest.get("failure_class")
             or latest.get("validation_evidence_status")
             != "rejected_missing_terminal_verdict"
         ):

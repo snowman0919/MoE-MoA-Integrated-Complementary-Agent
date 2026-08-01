@@ -138,6 +138,12 @@ def test_executor_prompt_pins_only_latest_unfinished_validation_poll(
     complete = controller.prompt_sandwich("executor", state, "12 passed", "continue")
     assert "Call only write_stdin with session_id 7" not in complete
 
+    state.tool_executions[-1].update(
+        validation_evidence_status="rejected_missing_terminal_verdict",
+        failure_class="TEST_FAILURE",
+    )
+    assert controller.pending_validation_poll_session(state) is None
+
 
 @pytest.mark.asyncio
 async def test_pending_validation_poll_exposes_only_write_stdin(
@@ -2627,6 +2633,40 @@ def test_validation_continuation_inherits_command_and_terminal_verdict(
     }
     assert execution["validation_continuation"] is True
     assert controller.successful_validation_execution(execution)
+
+
+def test_expired_validation_process_is_a_failure(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    state = SessionState(session_id="expired-validation-process")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    controller._observe(
+        state,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "poll",
+                        "type": "function",
+                        "function": {
+                            "name": "write_stdin",
+                            "arguments": json.dumps({"session_id": 7}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "poll",
+                "content": json.dumps(
+                    {"exit_code": 0, "stdout": "write_stdin failed: Unknown process id 7"}
+                ),
+            },
+        ],
+    )
+
+    assert state.tool_executions[-1]["failure_class"] == "TEST_FAILURE"
 
 
 def test_failure_classification() -> None:
