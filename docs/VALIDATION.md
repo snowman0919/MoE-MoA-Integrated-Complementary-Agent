@@ -10056,3 +10056,35 @@ memory was 7,699,275,776 bytes for Executor and 8,193,298,432 bytes for
 Specialist. The process completed the exact 120-second target without an
 interrupt. This satisfies the bounded dual-runtime load probe only; it does not
 replace the required real MoA long-horizon work or blind quality evaluation.
+
+## 2026-08-02 Codex candidate diagnostics after dual-runtime pass
+
+Diagnostic `20260802-gemma4-postcache-v1` ran the rate-limiter fixture through
+the Docker-isolated Codex client and candidate Gateway. Public tests, tool
+evidence, Korean terminal output, scope, and test-integrity checks passed, but
+the hidden constructor-input check failed after 238.465 s. The candidate had
+accepted Python `bool` as a numeric window. Telemetry also selected no rows
+because Codex 0.145.0 did not preserve the configured custom session header;
+the isolated time window contained one observed Gateway session. The failed
+attempt remains failed and was not replaced.
+
+The quality collector now falls back only when that time window contains
+exactly one observed session; zero or multiple sessions fail closed as
+`session_correlation_ambiguous`. The isolated Gateway launcher also gained an
+explicit Frontier opt-in while retaining disabled as its default. Diagnostic
+`20260802-gemma4-frontier-v2` used that opt-in and passed every functional and
+hidden rate-limiter check in 205.024 s. It recorded local Reasoner, Executor,
+Planner, and Reviewer work plus pinned Codex OAuth Executor/Frontier calls,
+with zero provider errors, zero provider switches, and zero variable remote
+cost. This is one diagnostic functional PASS, not panel or non-inferiority
+evidence.
+
+The v2 telemetry hard gate still failed as `cache_usage_missing`. SGLang
+returned `prompt_tokens_details: null` for five short/streamed Executor calls
+and one Reviewer call. Direct synthetic checks reproduced null cache details
+for short Qwen requests even when repeated, while the longer-prefix physical
+probe reported 8,192 cached tokens; Gemma reported null on the first unique
+short request and 49 cached tokens on its repeat. Missing details remain NULL
+and are not relabeled as measured zero. A provider-supported per-request cache
+report or an explicitly modeled unavailable/not-eligible state is required
+before confirmation; the frozen telemetry gate is not weakened.

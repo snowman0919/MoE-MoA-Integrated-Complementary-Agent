@@ -136,6 +136,8 @@ def start_gateway(
     secret: str,
     executor_endpoint: str | None = None,
     specialist_endpoint: str | None = None,
+    *,
+    frontier_enabled: bool = False,
 ) -> tuple[uvicorn.Server, threading.Thread]:
     original_auth = os.environ.get("DGX_MOA_AUTH_ENABLED")
     os.environ["DGX_MOA_AUTH_ENABLED"] = "false"
@@ -158,7 +160,7 @@ def start_gateway(
         "runtime_channel": "dev",
         "trace_origin": "validation",
         "controller_commit": "dirty-predeployment-validation",
-        "frontier_enabled": False,
+        "frontier_enabled": frontier_enabled,
         "lifecycle_mode": "disabled",
         "lifecycle_unit_map": {},
     }

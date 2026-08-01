@@ -478,6 +478,40 @@ def test_invocation_telemetry_isolated_by_session(tmp_path: Path) -> None:
     assert result["total_tokens"] == 10
 
 
+def test_invocation_telemetry_correlates_one_observed_session_when_header_is_ignored(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "gateway.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE model_invocation_usage ("
+            "request_id TEXT, role TEXT, provider TEXT, model TEXT, status TEXT, "
+            "fallback_reason TEXT, latency_ms REAL, prompt_tokens INTEGER, "
+            "completion_tokens INTEGER, total_tokens INTEGER, cached_tokens INTEGER, "
+            "cost_usd REAL, invoked_at REAL)"
+        )
+        connection.execute(
+            "CREATE TABLE request_usage (request_id TEXT, session_id TEXT, accepted_at REAL, "
+            "retryable_failure_class TEXT)"
+        )
+        connection.execute(
+            "CREATE TABLE events (session_id TEXT, event_type TEXT, payload TEXT, created_at TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO request_usage VALUES ('request', 'observed', 2, NULL)"
+        )
+        connection.execute(
+            "INSERT INTO model_invocation_usage VALUES "
+            "('request', 'executor', 'local', 'model', 'completed', NULL, "
+            "10, 7, 3, 10, 0, 0, 2)"
+        )
+
+    result = MODULE.invocation_telemetry(database, 1, 4, session_id="configured")
+
+    assert result["complete"] is True
+    assert result["total_tokens"] == 10
+
+
 def test_invocation_telemetry_uses_call_identity_and_requires_paid_cost(
     tmp_path: Path,
 ) -> None:

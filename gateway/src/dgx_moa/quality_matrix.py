@@ -1398,13 +1398,32 @@ def invocation_telemetry(
                 str(row[1]) for row in connection.execute("PRAGMA table_info(request_usage)")
             }
             can_join_requests = {"request_id", "accepted_at"} <= request_columns
+            accepted_epoch = (
+                "CASE WHEN typeof(accepted_at) IN ('integer', 'real') THEN accepted_at "
+                "ELSE CAST(strftime('%s', accepted_at) AS REAL) END"
+            )
+            effective_session_id = session_id
             if session_id is not None and "session_id" in request_columns:
+                matched = connection.execute(
+                    "SELECT COUNT(*) FROM request_usage WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()[0]
+                if not matched:
+                    observed = connection.execute(
+                        "SELECT DISTINCT session_id FROM request_usage "
+                        f"WHERE ({accepted_epoch}) BETWEEN ? AND ?",
+                        (started_at, ended_at),
+                    ).fetchall()
+                    if len(observed) != 1:
+                        return incomplete | {"reason": "session_correlation_ambiguous"}
+                    effective_session_id = observed[0][0]
+            if effective_session_id is not None and "session_id" in request_columns:
                 invocation_join = (
                     " JOIN request_usage AS request"
                     " ON request.request_id = invocation.request_id"
                 )
                 invocation_where = "request.session_id = ?"
-                invocation_parameters: tuple[object, ...] = (session_id,)
+                invocation_parameters: tuple[object, ...] = (effective_session_id,)
             elif can_join_requests:
                 invocation_join = (
                     " JOIN request_usage AS request"
@@ -1445,9 +1464,9 @@ def invocation_telemetry(
             event_columns = {
                 str(row[1]) for row in connection.execute("PRAGMA table_info(events)")
             }
-            if session_id is not None and "session_id" in event_columns:
+            if effective_session_id is not None and "session_id" in event_columns:
                 event_where = "session_id = ?"
-                event_parameters: tuple[object, ...] = (session_id,)
+                event_parameters: tuple[object, ...] = (effective_session_id,)
             else:
                 event_where = "CAST(strftime('%s', created_at) AS REAL) BETWEEN ? AND ?"
                 event_parameters = (started_at, ended_at)
@@ -1459,18 +1478,14 @@ def invocation_telemetry(
                     (*allowed_events, *event_parameters),
                 ).fetchall()
             )
-            accepted_epoch = (
-                "CASE WHEN typeof(accepted_at) IN ('integer', 'real') THEN accepted_at "
-                "ELSE CAST(strftime('%s', accepted_at) AS REAL) END"
-            )
             retry_where = (
                 "session_id = ?"
-                if session_id is not None and "session_id" in request_columns
+                if effective_session_id is not None and "session_id" in request_columns
                 else f"({accepted_epoch}) BETWEEN ? AND ?"
             )
             retry_parameters: tuple[object, ...] = (
-                (session_id,)
-                if session_id is not None and "session_id" in request_columns
+                (effective_session_id,)
+                if effective_session_id is not None and "session_id" in request_columns
                 else (started_at, ended_at)
             )
             retryable_failures = (

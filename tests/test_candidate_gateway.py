@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from dgx_moa import live_client_validation as MODULE
@@ -69,3 +71,43 @@ def test_candidate_gateway_pins_executor_and_unified_specialist() -> None:
 def test_candidate_gateway_rejects_non_loopback_endpoint(endpoint: str) -> None:
     with pytest.raises(argparse.ArgumentTypeError):
         MODULE.local_endpoint(endpoint)
+
+
+def test_candidate_gateway_frontier_is_explicit_opt_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured = []
+
+    class Server:
+        should_exit = False
+
+        def __init__(self, _config) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def run(self) -> None:
+            while not self.should_exit:
+                time.sleep(0.001)
+
+    monkeypatch.setattr(
+        MODULE, "create_app", lambda settings: captured.append(settings) or object()
+    )
+    monkeypatch.setattr(MODULE.uvicorn, "Server", Server)
+    monkeypatch.setattr(MODULE.uvicorn, "Config", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        MODULE.httpx,
+        "get",
+        lambda *args, **kwargs: SimpleNamespace(status_code=200),
+    )
+
+    server, thread = MODULE.start_gateway(
+        tmp_path,
+        19300,
+        "secret",
+        "http://127.0.0.1:18101",
+        "http://127.0.0.1:18102",
+        frontier_enabled=True,
+    )
+    server.should_exit = True
+    thread.join(timeout=1)
+
+    assert captured[0].frontier_enabled is True
