@@ -9711,3 +9711,23 @@ focused observation/admin selection passed 48 tests. The full regression passed
 files. Chat/Responses route extraction and the authenticated WebSocket workflow
 remain open cleanup and capability gates; this boundary change is not a Goal
 PASS.
+
+## 2026-08-02 Gemma 4 26B-A4B specialist revalidation
+
+The active isolated specialist container mounts only the pinned
+`nvidia/Gemma-4-26B-A4B-NVFP4` revision
+`a19cfe00be84568a6867111c9a68c9c44fdcffe6` read-only and serves the shared
+Planner/Reviewer endpoint on loopback port `18102`. The two-shard checked-in
+manifest passed SHA-256 verification. No Gemma 31B model directory remains
+under `/home/kotori9/models`; older 31B entries in this document are preserved
+as historical evidence rather than active configuration.
+
+Fresh physical validation passed all runtime-before/after, real inference
+readiness, Executor and Gemma tool parser, separated reasoning, Planner and
+Reviewer structured output, streaming, Radix cache, catalog, 65,536-token
+capacity, memory-headroom, and OOM checks in 93.214 seconds with exit code 0.
+The mode-`0600` result is
+`/var/tmp/sglang-gemma4-26b-physical-20260802-022835.json`, SHA-256
+`95f667ad74ca9e94e6abbe162bac798a25e4a5b8f03765244241e4351739f112`.
+This validates the isolated model boundary; it does not authorize a production
+deployment or satisfy the remaining blind-quality and long-horizon Goal gates.
