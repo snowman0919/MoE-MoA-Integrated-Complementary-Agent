@@ -296,6 +296,73 @@ async def test_finalized_long_horizon_change_pins_validation_before_review(
     )
 
 
+@pytest.mark.asyncio
+async def test_long_horizon_pins_full_validation_after_targeted_pass(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="targeted-validation",
+        objective="implement",
+        roles_required=["executor", "reviewer"],
+        repository={"workspace_identifier": "long-horizon"},
+        tool_executions=[
+            {"tool_name": "apply_patch", "exit_code": 0},
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m pytest -q tests/test_one.py"},
+                "validation_arguments": {"cmd": "python -m pytest -q tests/test_one.py"},
+                "validation_evidence_status": "accepted",
+                "exit_code": 0,
+                "failure_class": None,
+            },
+        ],
+    )
+    request = {
+        "messages": [{"role": "user", "content": "continue"}],
+        "metadata": {"validation_command": "python -m pytest -q"},
+        "tools": [
+            {"type": "function", "function": {"name": name, "parameters": {}}}
+            for name in ("exec_command", "apply_patch")
+        ],
+    }
+
+    prepared = await controller.prepare_executor(
+        state, request, ("executor", "reviewer"), tool_continuation=True
+    )
+
+    assert [tool["function"]["name"] for tool in prepared["tools"]] == ["exec_command"]
+    assert prepared["tools"][0]["function"]["parameters"]["properties"]["cmd"] == {
+        "type": "string",
+        "const": "python -m pytest -q",
+    }
+    assert "reviewer" not in stub_provider.calls
+
+
+def test_failed_full_validation_allows_a_fix_before_retry(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="failed-full-validation",
+        repository={"workspace_identifier": "long-horizon"},
+        tool_executions=[
+            {"tool_name": "apply_patch", "exit_code": 0},
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m pytest -q"},
+                "validation_arguments": {"cmd": "python -m pytest -q"},
+                "exit_code": 1,
+                "failure_class": "TEST_FAILURE",
+            },
+        ],
+    )
+
+    assert controller.finalized_validation_command(
+        state, {"validation_command": "python -m pytest -q"}
+    ) is None
+
+
 def test_unbounded_codex_oauth_skips_only_the_frontier_specific_budget(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

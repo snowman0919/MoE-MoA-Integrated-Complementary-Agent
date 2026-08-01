@@ -2287,16 +2287,16 @@ class Controller:
         command = metadata.get("validation_command")
         if not isinstance(command, str) or not command.strip():
             return None
-        changed = any(
-            execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
-            for execution in current_turn_executions(state)
-        )
+        attempted, _ = self.required_validation_evidence(state, command)
         return (
             command.strip()
             if state.repository.get("workspace_identifier") == "long-horizon"
-            and changed
-            and not self.has_validation_evidence(state, metadata)
-            and self.long_horizon_workspace_finalized(state)
+            and any(
+                execution.get("exit_code") == 0
+                and self.tool_execution_changes_files(execution)
+                for execution in current_turn_executions(state)
+            )
+            and not attempted
             else None
         )
 
@@ -4136,6 +4136,13 @@ class Controller:
         return False
 
     def has_validation_evidence(self, state: SessionState, metadata: dict[str, Any]) -> bool:
+        required = metadata.get("validation_command")
+        if (
+            state.repository.get("workspace_identifier") == "long-horizon"
+            and isinstance(required, str)
+            and required.strip()
+        ):
+            return self.required_validation_evidence(state, required)[1]
         completion_evidence = metadata.get("completion_evidence")
         if isinstance(completion_evidence, dict) and completion_evidence:
             return True
@@ -4157,6 +4164,37 @@ class Controller:
             if self.tool_execution_changes_files(execution):
                 break
         return False
+
+    def required_validation_evidence(
+        self, state: SessionState, command: str
+    ) -> tuple[bool, bool]:
+        executions = current_turn_executions(state)
+        last_change = max(
+            (
+                index
+                for index, execution in enumerate(executions)
+                if execution.get("exit_code") == 0
+                and self.tool_execution_changes_files(execution)
+            ),
+            default=-1,
+        )
+        for execution in reversed(executions[last_change + 1 :]):
+            arguments = execution.get(
+                "validation_arguments", execution.get("normalized_arguments")
+            )
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except ValueError:
+                    arguments = {}
+            observed = (
+                arguments.get("cmd") or arguments.get("command")
+                if isinstance(arguments, dict)
+                else None
+            )
+            if isinstance(observed, str) and observed.strip() == command.strip():
+                return True, self.successful_validation_execution(execution)
+        return False, False
 
     @staticmethod
     def validation_execution(execution: dict[str, Any]) -> bool:
