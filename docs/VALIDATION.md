@@ -9887,3 +9887,19 @@ focused admin/API tests passing, Ruff passing, strict mypy reporting zero
 issues across 60 source files, and the full suite passing 1205 tests in 42.95
 seconds. Browser/network physical reconnect, slow-client backpressure, and
 one-observation-host failure tests remain required before enabling the feature.
+
+## 2026-08-02 V184 concurrent-client probe
+
+While the V184 AvatarForge Codex child had an active Gateway request, a second
+authenticated candidate session submitted a separate non-streaming
+orchestrated request. It completed with HTTP 200 and `finish_reason=stop` in
+approximately 38 seconds without interrupting V184. Content and raw provider
+output were neither stored nor printed.
+
+The isolated session telemetry recorded five completed invocations: local
+Qwythos Reasoner (3.062 s), local Qwen SGLang Executor twice (3.494 s and
+2.375 s), local Gemma SGLang Planner (36.526 s), and Codex OAuth Frontier
+(12.993 s). Each invocation remained pinned to one provider/model. The summed
+model latency exceeded client wall time, providing physical evidence of
+overlapped independent-role work, but this single probe is not the complete
+multi-client reliability gate.
