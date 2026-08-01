@@ -10037,3 +10037,22 @@ GPU allocations were unchanged at approximately 21,754 MiB for Executor and
 3.2 MiB and swap usage was unchanged at 1,189,220,352 bytes. This is physical
 Radix reuse evidence, but not the pending concurrent-load or long-horizon
 cache-retention gate.
+
+The sealed full physical validator subsequently passed every runtime contract,
+model catalog, 65,536-token capacity, real-inference readiness, Executor tool
+parser, Specialist reasoning/tool parser, Planner/Reviewer structured output,
+streaming, and Executor Radix check in 77.068 seconds. Before/after container
+contracts remained healthy, neither container was OOM-killed, and host memory
+headroom remained above 30.6 GiB. Planner and Reviewer structured probes still
+took 33.555 s and 29.458 s respectively; this is accepted functional evidence,
+not a claim that Specialist latency is competitive.
+
+A bounded two-minute concurrent soak then passed after a fresh admission run.
+Twenty-three cycles issued 92 requests with two simultaneous clients per role:
+92 passed, zero request failures, zero runtime/OOM failures, p50 3.647 s, and
+p95 4.234 s. Executor and Specialist reported 368,640 and 449,988 cached tokens
+respectively. Minimum host available memory was 32,118,520 KiB; maximum cgroup
+memory was 7,699,275,776 bytes for Executor and 8,193,298,432 bytes for
+Specialist. The process completed the exact 120-second target without an
+interrupt. This satisfies the bounded dual-runtime load probe only; it does not
+replace the required real MoA long-horizon work or blind quality evaluation.
