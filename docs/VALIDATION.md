@@ -9656,8 +9656,9 @@ and the production model override is in
 `production-dirty-snapshot.bundle` (1,741,586 bytes, SHA-256
 `af997233477e5a07547bccd7623e6875ac549a61c75e8d8c16df6c9891a9f5e1`).
 Both passed `git bundle verify` with complete history. The external mode-0600
-manifest SHA-256 is
-`5ecbe7da20e7a24bf6fc5c86d12f979cf6ce1b24417f063c6de5d62a2ad6fdd8`.
+manifest at that capture had SHA-256
+`5ecbe7da20e7a24bf6fc5c86d12f979cf6ce1b24417f063c6de5d62a2ad6fdd8`;
+later append-only bundle entries intentionally produce a new manifest hash.
 
 A read-only `git merge-tree --write-tree origin/main
 auto/runtime/sglang-gemma4-v1` then failed with content or add/add conflicts in
