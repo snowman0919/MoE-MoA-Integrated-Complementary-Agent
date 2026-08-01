@@ -2601,6 +2601,7 @@ def create_app(
                                     "completion_tokens": observation.usage.get("completion_tokens"),
                                     "total_tokens": observation.usage.get("total_tokens"),
                                     "cached_tokens": observation.cached_tokens,
+                                    "cache_status": observation.cache_status,
                                     "cost_usd": (
                                         remote_invocation_provenance.get("cost_usd")
                                         if executor_remote

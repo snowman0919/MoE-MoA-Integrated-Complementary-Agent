@@ -364,6 +364,7 @@ class StreamObservation:
     done_seen: bool = False
     usage: dict[str, int] = field(default_factory=dict)
     cached_tokens: int | None = None
+    cache_status: str = "missing"
 
     def observe(self, event: bytes) -> None:
         remaining = self.max_capture_bytes - len(self.captured)
@@ -383,6 +384,9 @@ class StreamObservation:
                 cached = details.get("cached_tokens") if isinstance(details, dict) else None
                 if type(cached) is int and 0 <= cached <= SQLITE_MAX_INTEGER:
                     self.cached_tokens = cached
+                    self.cache_status = "reported"
+                elif "prompt_tokens_details" in raw_usage:
+                    self.cache_status = "unavailable"
             choice = (payload.get("choices") or [{}])[0]
             delta = choice.get("delta") or {}
             if isinstance(delta.get("content"), str):

@@ -10088,3 +10088,21 @@ short request and 49 cached tokens on its repeat. Missing details remain NULL
 and are not relabeled as measured zero. A provider-supported per-request cache
 report or an explicitly modeled unavailable/not-eligible state is required
 before confirmation; the frozen telemetry gate is not weakened.
+
+The runtime now records `cache_status` independently as `reported`,
+`unavailable`, or `missing`. A numeric cached-token value is stored only with
+`reported`; explicit backend null remains NULL with `unavailable`; an absent
+field remains `missing`. Quality telemetry is complete only when every
+successful invocation is either numeric/reporting or explicitly unavailable.
+It never sums a partial cache total. This is a schema-compatible additive
+migration and retains the distinction required for future backend fixes.
+
+Dirty-code diagnostic `20260802-gemma4-frontier-v3` repeated rate-limiter after
+that change. All functional and hidden checks passed, telemetry was complete,
+provider pinning held, provider errors and switches were zero, and variable
+remote cost was zero. Sixteen invocations reported numeric cache use, seventeen
+reported explicit unavailability, and none were missing. The run nevertheless
+took 312.354 s across 33 role calls and consumed 264,887 total tokens. It is
+therefore evidence that the correctness/telemetry root fixes work, not speed or
+cost-quality non-inferiority evidence. A clean committed epoch and the other
+four tasks remain required.

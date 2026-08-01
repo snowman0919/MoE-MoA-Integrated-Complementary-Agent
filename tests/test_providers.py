@@ -399,6 +399,8 @@ async def test_specialist_separates_reasoning_from_final_json(  # type: ignore[n
     }
     if reported_cache:
         expected_usage["prompt_tokens_details"] = {"cached_tokens": 30}
+    else:
+        expected_usage["prompt_tokens_details"] = None
     assert result["usage"] == expected_usage
 
 

@@ -1048,6 +1048,21 @@ async def test_observation_extracts_only_reported_token_counts() -> None:
         "total_tokens": 5,
     }
     assert observation.cached_tokens == 1
+    assert observation.cache_status == "reported"
+
+
+@pytest.mark.asyncio
+async def test_observation_preserves_explicitly_unavailable_cache_detail() -> None:
+    event = (
+        b'data: {"choices":[{"delta":{}}],"usage":{"prompt_tokens":2,'
+        b'"completion_tokens":1,"total_tokens":3,"prompt_tokens_details":null}}\n\n'
+    )
+    observation = StreamObservation(max_capture_bytes=1_000)
+
+    _ = [chunk async for chunk in forward_sse(chunks(event), observation, max_event_bytes=1_000)]
+
+    assert observation.cached_tokens is None
+    assert observation.cache_status == "unavailable"
 
 
 @pytest.mark.parametrize("value", [True, -1, 2**63, "5", 1.0])

@@ -324,7 +324,7 @@ class ModelProvider:
             analysis_cached = reported_cached_tokens(analysis_usage)
             final_cached = reported_cached_tokens(usage)
             if analysis_cached is None or final_cached is None:
-                usage.pop("prompt_tokens_details", None)
+                usage["prompt_tokens_details"] = None
             else:
                 usage["prompt_tokens_details"] = {
                     **dict(usage.get("prompt_tokens_details") or {}),

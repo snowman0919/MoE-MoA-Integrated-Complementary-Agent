@@ -351,6 +351,7 @@ class UsageStore:
                     completion_tokens INTEGER,
                     total_tokens INTEGER,
                     cached_tokens INTEGER,
+                    cache_status TEXT NOT NULL DEFAULT 'missing',
                     cost_usd REAL
                 );
                 CREATE INDEX IF NOT EXISTS model_invocation_usage_role_time
@@ -381,6 +382,11 @@ class UsageStore:
                 database.execute(
                     "ALTER TABLE model_invocation_usage ADD COLUMN cached_tokens INTEGER"
                 )
+            if "cache_status" not in invocation_columns:
+                database.execute(
+                    "ALTER TABLE model_invocation_usage ADD COLUMN cache_status "
+                    "TEXT NOT NULL DEFAULT 'missing'"
+                )
         self.write_model_invocation_rates()
 
     def record_model_invocation(
@@ -398,6 +404,7 @@ class UsageStore:
         completion_tokens: int | None = None,
         total_tokens: int | None = None,
         cached_tokens: int | None = None,
+        cache_status: str | None = None,
         cost_usd: float | None = None,
     ) -> None:
         if role not in {*self.model_catalog, "frontier"}:
@@ -415,12 +422,18 @@ class UsageStore:
             or cached_tokens < 0
         ):
             raise ValueError("cached_tokens must be a nonnegative integer")
+        cache_status = cache_status or ("reported" if cached_tokens is not None else "missing")
+        if cache_status not in {"reported", "unavailable", "missing"}:
+            raise ValueError("invalid cache_status")
+        if (cached_tokens is None) == (cache_status == "reported"):
+            raise ValueError("reported cache_status requires cached_tokens")
         with self._connect() as database:
             database.execute(
                 "INSERT INTO model_invocation_usage "
                 "(invocation_id, request_id, role, model, provider, fallback_reason, mode, "
                 "invoked_at, status, latency_ms, prompt_tokens, completion_tokens, total_tokens, "
-                "cached_tokens, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "cached_tokens, cache_status, cost_usd) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     str(uuid.uuid4()),
                     request_id,
@@ -436,6 +449,7 @@ class UsageStore:
                     completion_tokens,
                     total_tokens,
                     cached_tokens,
+                    cache_status,
                     cost_usd,
                 ),
             )

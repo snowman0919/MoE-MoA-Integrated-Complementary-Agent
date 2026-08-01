@@ -1394,6 +1394,9 @@ def invocation_telemetry(
             invocation_column = (
                 "invocation.invocation_id" if "invocation_id" in columns else "NULL"
             )
+            cache_status_column = (
+                "invocation.cache_status" if "cache_status" in columns else "NULL"
+            )
             request_columns = {
                 str(row[1]) for row in connection.execute("PRAGMA table_info(request_usage)")
             }
@@ -1445,7 +1448,7 @@ def invocation_telemetry(
                 "invocation.model, invocation.status, invocation.fallback_reason, "
                 "invocation.latency_ms, invocation.prompt_tokens, "
                 "invocation.completion_tokens, invocation.total_tokens, "
-                f"{cache_column}, {cost_column}, {invocation_column} "
+                f"{cache_column}, {cost_column}, {invocation_column}, {cache_status_column} "
                 f"FROM model_invocation_usage AS invocation{invocation_join} "
                 f"WHERE {invocation_where} ORDER BY invocation.invoked_at",
                 invocation_parameters,
@@ -1530,8 +1533,14 @@ def invocation_telemetry(
     cache_complete = (
         "cached_tokens" in columns
         and bool(successful_rows)
-        and all(row[10] is not None for row in successful_rows)
+        and all(
+            row[10] is not None or row[13] == "unavailable" for row in successful_rows
+        )
     )
+    cache_status_counts = {
+        status: sum(row[13] == status for row in successful_rows)
+        for status in ("reported", "unavailable", "missing")
+    }
     invocations = [
         {
             "role": role,
@@ -1588,7 +1597,12 @@ def invocation_telemetry(
             sum(int(row[8]) for row in successful_rows) if token_complete else None
         ),
         "total_tokens": (sum(int(row[9]) for row in successful_rows) if token_complete else None),
-        "cached_tokens": (sum(int(row[10]) for row in successful_rows) if cache_complete else None),
+        "cached_tokens": (
+            sum(int(row[10]) for row in successful_rows)
+            if cache_complete and all(row[10] is not None for row in successful_rows)
+            else None
+        ),
+        "cache_status_counts": cache_status_counts,
         "retryable_failures": retryable_failures,
         "provider_errors": provider_errors,
         "invocations": invocations,

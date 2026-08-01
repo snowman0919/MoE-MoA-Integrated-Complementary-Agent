@@ -644,8 +644,9 @@ def test_api_token_dashboard_tracks_fallback_provenance(tmp_path: Path) -> None:
 
     with sqlite3.connect(store.path) as database:
         assert database.execute(
-            "SELECT cached_tokens, cost_usd FROM model_invocation_usage WHERE request_id = 'remote'"
-        ).fetchone() == (6, 0.25)
+            "SELECT cached_tokens, cache_status, cost_usd FROM model_invocation_usage "
+            "WHERE request_id = 'remote'"
+        ).fetchone() == (6, "reported", 0.25)
 
     dashboard = store.api_token_dashboard(name="client")
 

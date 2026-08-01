@@ -824,6 +824,13 @@ class Controller:
         provenance = response.get("provider_provenance")
         provenance = cast(dict[str, Any], provenance) if isinstance(provenance, dict) else {}
         cached_tokens = prompt_details.get("cached_tokens")
+        cache_status = (
+            "reported"
+            if isinstance(cached_tokens, int) and not isinstance(cached_tokens, bool)
+            else "unavailable"
+            if "prompt_tokens_details" in usage
+            else "missing"
+        )
         effective_provider = provider or provenance.get("provider")
         self.record_observed_invocation(
             state,
@@ -836,6 +843,7 @@ class Controller:
                 "completion_tokens": usage.get("completion_tokens"),
                 "total_tokens": usage.get("total_tokens"),
                 "cached_tokens": cached_tokens,
+                "cache_status": cache_status,
                 "cost_usd": (cost_usd if cost_usd is not None else provenance.get("cost_usd")),
                 "status": "completed",
                 **(
@@ -881,6 +889,10 @@ class Controller:
             else self.settings.models[role].served_name
         )
         try:
+            cached_tokens = invocation.get("cached_tokens")
+            cache_status = invocation.get("cache_status") or (
+                "reported" if cached_tokens is not None else "missing"
+            )
             self.usage.record_model_invocation(
                 state.current_request_id or state.session_id,
                 role=role,
@@ -897,7 +909,8 @@ class Controller:
                 prompt_tokens=invocation.get("prompt_tokens"),
                 completion_tokens=invocation.get("completion_tokens"),
                 total_tokens=invocation.get("total_tokens"),
-                cached_tokens=invocation.get("cached_tokens"),
+                cached_tokens=cached_tokens,
+                cache_status=str(cache_status),
                 cost_usd=invocation.get("cost_usd"),
             )
         except Exception as error:
