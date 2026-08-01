@@ -10193,3 +10193,19 @@ enough for the five bounded implementations while preventing an unbounded
 173-turn loop. The focused quality-runner suite passed 21 tests; the full suite
 passed 1,214 tests in 44.73 s, and Ruff plus strict mypy passed. This harness
 contract change requires another fresh OpenCode epoch.
+
+Fresh OpenCode epoch `20260803-opencode-five-6c19701-v3` ran all five fixtures
+with the native 40-step cap. Rate limiter, atomic store, DAG runner, webhook
+verifier, and JSONL report passed all functional, hidden, scope, integrity,
+Korean-output, tool-evidence, isolation, and telemetry checks. Durations were
+203.600 s, 736.618 s, 720.259 s, 156.505 s, and 139.940 s respectively
+(1,956.922 s total). The run consumed 2,113,617 tokens; 91 cache rows were
+reported, 115 explicitly unavailable, and none missing. Provider errors,
+orphan provider errors, and switches were zero. The cap prevented the prior
+30-minute runaway and preserved task completion, including the webhook source
+that previously suffered false-positive redaction.
+
+This establishes OpenCode 5/5 diagnostic functionality and telemetry only.
+Atomic-store and DAG latency and token volume are materially inefficient. No
+matched native baseline, blinded quality scores, or confidence interval exists
+for this epoch, so it is not non-inferiority evidence.
