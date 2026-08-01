@@ -132,6 +132,43 @@ async def test_ready_local_is_skipped_when_remote_prediction_is_faster() -> None
 
 
 @pytest.mark.asyncio
+async def test_measured_planner_estimates_route_to_faster_fixed_plan_remote() -> None:
+    local = MockPlannerProvider({"provider": "local"})
+    remote = MockPlannerProvider({"provider": "remote"})
+    routing = SpecialistRoutingConfig(
+        enabled=True,
+        provider="opencode_go",
+        local_latency_seconds={"planner": 45.0, "reviewer": 35.0},
+        remote_latency_seconds={"planner": 25.0, "reviewer": 5.0},
+        network_latency_seconds=0.25,
+        remote_queue_latency_seconds=0.5,
+        local_preference_margin_seconds=5.0,
+        remote_cost_per_million_tokens_usd=0.0,
+    )
+    router = SpecialistRouter(
+        routing,
+        local={"planner": local, "reviewer": MockReviewerProvider({})},
+        remote={"planner": remote, "reviewer": MockReviewerProvider({})},
+        lifecycle_store=Records(planner=record("ready")),
+    )
+
+    _, decision = await router.complete(
+        "planner",
+        {"max_tokens": 4096},
+        request_id="measured",
+        revision="rev",
+        timeout_seconds=60,
+    )
+
+    assert decision["selected_provider"] == "remote"
+    assert decision["routing_reason"] == "remote_predicted_faster"
+    assert decision["predicted_local_completion_seconds"] == 45.0
+    assert decision["predicted_remote_completion_seconds"] == 25.75
+    assert not local.requests
+    assert len(remote.requests) == 1
+
+
+@pytest.mark.asyncio
 async def test_busy_local_specialist_immediately_uses_remote_provider() -> None:
     local = MockPlannerProvider({"provider": "local"})
     remote = MockPlannerProvider({"provider": "remote"})
@@ -263,6 +300,35 @@ async def test_provider_is_pinned_after_remote_dispatch_failure() -> None:
     failure = next(payload for event, payload in events if event == "specialist_provider_failed")
     assert failure["selected_provider"] == "remote"
     assert failure["provider_switch_prevented"] is True
+
+
+@pytest.mark.asyncio
+async def test_remote_failure_cooldown_uses_ready_local_on_next_call() -> None:
+    local = MockPlannerProvider({"provider": "local"})
+    remote = MockPlannerProvider(RuntimeError("remote failed"))
+    routing = config()
+    routing.local_latency_seconds = {"planner": 100.0, "reviewer": 100.0}
+    routing.remote_latency_seconds = {"planner": 1.0, "reviewer": 1.0}
+    router = SpecialistRouter(
+        routing,
+        local={"planner": local, "reviewer": MockReviewerProvider({})},
+        remote={"planner": remote, "reviewer": MockReviewerProvider({})},
+        lifecycle_store=Records(planner=record("ready")),
+    )
+
+    with pytest.raises(RuntimeError, match="remote failed"):
+        await router.complete(
+            "planner", {}, request_id="first", revision="rev", timeout_seconds=5
+        )
+    response, decision = await router.complete(
+        "planner", {}, request_id="second", revision="rev", timeout_seconds=5
+    )
+
+    assert response == {"provider": "local"}
+    assert decision["selected_provider"] == "local"
+    assert decision["routing_reason"] == "remote_cooldown"
+    assert len(remote.requests) == 1
+    assert len(local.requests) == 1
 
 
 @pytest.mark.asyncio

@@ -216,6 +216,7 @@ class SpecialistRouter:
         self._completed_warmups: dict[tuple[str, str, str], int] = {}
         self._used_warmups: set[tuple[str, str, str, int]] = set()
         self._unused_watchers: dict[tuple[str, str, str, int], asyncio.Task[None]] = {}
+        self._remote_cooldown_until: dict[SpecialistRole, float] = {}
 
     @staticmethod
     def public_state(state: str) -> str:
@@ -396,6 +397,7 @@ class SpecialistRouter:
             + self.config.remote_latency_seconds[role]
         )
         local_available = local_state in {"READY", "BUSY"}
+        remote_cooling = time.monotonic() < self._remote_cooldown_until.get(role, 0.0)
         estimated_remote_cost = (
             max(int(request.get("max_tokens", 0) or 0), 1)
             * self.config.remote_cost_per_million_tokens_usd
@@ -406,8 +408,11 @@ class SpecialistRouter:
         )
         use_local = (
             local_state == "READY"
-            and predicted_local
-            <= cost_adjusted_remote + self.config.local_preference_margin_seconds
+            and (
+                remote_cooling
+                or predicted_local
+                <= cost_adjusted_remote + self.config.local_preference_margin_seconds
+            )
         )
         local_context_fits: bool | None = None
         if use_local or (local_only and local_available):
@@ -445,6 +450,8 @@ class SpecialistRouter:
             if local_only
             else "local_context_exceeded"
             if local_context_fits is False
+            else "remote_cooldown"
+            if use_local and remote_cooling
             else "local_ready"
             if use_local
             else "local_busy"
@@ -477,6 +484,10 @@ class SpecialistRouter:
         try:
             response = await provider.complete(request, timeout_seconds=provider_timeout)
         except Exception as error:
+            if not use_local:
+                self._remote_cooldown_until[role] = (
+                    time.monotonic() + self.config.remote_failure_cooldown_seconds
+                )
             decision.update(
                 actual_completion_latency_seconds=time.monotonic() - started,
                 provider_error=type(error).__name__,

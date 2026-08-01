@@ -361,9 +361,10 @@ class SpecialistRoutingConfig(BaseModel):
     )
     network_latency_seconds: float = Field(default=0.25, ge=0, allow_inf_nan=False)
     remote_queue_latency_seconds: float = Field(default=0.5, ge=0, allow_inf_nan=False)
-    local_preference_margin_seconds: float = Field(default=60.0, ge=0, allow_inf_nan=False)
+    local_preference_margin_seconds: float = Field(default=5.0, ge=0, allow_inf_nan=False)
     cost_seconds_per_usd: float = Field(default=60.0, ge=0, allow_inf_nan=False)
     remote_cost_per_million_tokens_usd: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    remote_failure_cooldown_seconds: float = Field(default=60.0, gt=0, le=3_600)
     warmup_watch_seconds: float = Field(default=1_200, gt=0, le=7_200)
     race_mode_enabled: bool = False
 

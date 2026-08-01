@@ -9961,3 +9961,59 @@ AvatarForge protocol v86 freezes the completion plan at SHA-256
 `ce0ff5d1ecc12b4661299a715fc56ef5a364d1fd5e246e8e8ecb6cd79350dc96`.
 Any subsequent prompt, schema, model, fixture, scorer, or plan change requires a
 new protocol/run ID; v86 results produced before such a change remain diagnostic.
+
+### Rejected Planner verbosity experiments
+
+An isolated v86 Gateway integration request completed in 52.925 s. Its local
+Planner used 1,082 completion tokens and 37.328 s; Reasoner, orchestration, and
+final synthesis used 5.515 s, 3.450 s, and 6.511 s respectively. The parsed
+plan contained four actions totaling 625 characters. This shows that the
+remaining Planner latency is not explained by client-visible plan text alone.
+
+Three subsequent diagnostic variants were evaluated and rejected. A stricter
+supporting-array schema produced a valid direct response in 18.030 s but used
+533 tokens and all eight allowed steps, so it did not improve on the v86 direct
+probe. Adding temperature 0.2 yielded an integrated 52.207 s request with a
+37.562 s, 1,090-token Planner call. Adding an explicit 200-token internal
+analysis instruction yielded an integrated 59.473 s request; Planner remained
+36.589 s and 1,063 tokens while final synthesis increased to 14.575 s. Reported
+Planner cache counts were 14, 85, and 772 tokens across these isolated runs and
+were preserved as reported rather than normalized.
+
+The schema, sampling, and reasoning-instruction variants were therefore
+reverted. Their v87-v89 labels and isolated databases remain diagnostic only;
+the checked-in protocol remains v86. The inference that hidden reasoning is a
+large part of completion usage is based on completion tokens versus the
+structural size of the parsed plan, not on inspecting or retaining reasoning
+content. Further latency work must use a model-supported reasoning budget or a
+routing threshold rather than another unverified prompt instruction.
+
+## 2026-08-02 OpenCode Go specialist routing gate
+
+The checked-in OpenCode Go specialist route remained disabled. An isolated
+Gateway enabled it only through an environment override, using the existing
+0600 plaintext credential without copying it into Git or evidence. With local
+Planner predicted at 45.0 s, remote Planner predicted at 25.75 s, zero marginal
+fixed-plan cost, and a five-second local preference margin, the Gateway selected
+remote `deepseek-v4-pro` for `remote_predicted_faster`. The pinned call completed
+in 21.139 s with 1,475 completion tokens and zero reported marginal cost. The
+complete integrated request finished in 36.946 s, compared with 52.925 s for
+the isolated local-Planner v86 diagnostic. No provider switch occurred.
+
+The Reviewer provider gate failed. `deepseek-v4-flash` returned HTTP 403 for
+both a minimal chat request and the structured Reviewer request, while the same
+credential and endpoint successfully served `deepseek-v4-pro`. The official
+model ID and endpoint matched the current OpenCode Go documentation, but the
+error response exposed no structured code or type. The failure is therefore
+account/provider-specific and unresolved; it is not treated as a missing model
+name and no alternate paid model was silently substituted.
+
+Specialist routing consequently remains disabled by default. The Router now
+opens a role-specific 60-second remote cooldown after a dispatched remote call
+fails. The failed current call remains pinned and fails normally; only a later
+call may use an already-READY local specialist, preventing repeated remote
+failures without mixing providers. Planner remote PASS does not override the
+Reviewer FAIL or satisfy the full provider-specific physical gate.
+
+AvatarForge protocol v87 freezes the completion plan at SHA-256
+`058f69c421e09628bca151991310c25c6807d0ce0a2bf6aedd83aefa926f5ec1`.

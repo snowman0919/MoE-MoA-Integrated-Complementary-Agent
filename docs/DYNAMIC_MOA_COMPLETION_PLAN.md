@@ -552,6 +552,14 @@ reconnect, plan/context 보존을 대체하지 않는다.
   없다. Specialist SGLang은 JSON schema decoding에서 임의 공백을 허용하지 않아
   compact JSON을 강제한다. v85까지의 실행은 진단 자료로 보존하며 v86에서 새
   run ID와 clean seed로 다시 시작한다.
+- protocol v87은 v86 통합 probe에서 local Planner가 37.328초인 반면 동결
+  remote estimate가 25.75초인데도 60초 local preference margin 때문에 local을
+  선택한 정책 결함을 수정한다. 정액제 remote 비용은 0으로 유지하고 margin을
+  5초로 낮춰 local이 비용 조정 remote 예측보다 5초 이내일 때만 local을
+  선호한다. provider dispatch 이후 전환 금지와 local-only fail-closed는 유지한다.
+  Remote provider 실패는 해당 호출에서 provider를 전환하지 않고 role별 60초
+  cooldown을 연다. 후속 호출은 local이 READY일 때만 local을 사용하며 remote를
+  반복 호출하지 않는다.
 
 ## 10. Release, rollback, 배포
 
