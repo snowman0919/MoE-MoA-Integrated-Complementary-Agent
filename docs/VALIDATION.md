@@ -9642,3 +9642,28 @@ quota semantics remain intentionally consumption-based: the gateway blocks new
 admission once recorded token usage reaches the configured limit, but does not
 pre-reserve an unknown future completion size or claim an exact no-overshoot
 token budget.
+
+V184 strengthened dirty-state preservation before any integration work. Using
+temporary Git indexes, the current contents of dirty dev, observability,
+controller, detached long-v35, and production worktrees were captured as
+synthetic commits under `refs/preservation/20260802/*` without changing their
+branches, indexes, or files. `.env*`, `auth.json`, and all `data/**` paths were
+explicitly excluded; path inspection found no forbidden file in any snapshot.
+The four shared snapshots are in mode-0600 bundle
+`shared-dirty-snapshots.bundle` (2,010,080 bytes, SHA-256
+`d046a016fae0c498c0ef5c9bd3fea8e559d9c0dc5a364e6d6d2909dbf9a8a9e8`),
+and the production model override is in
+`production-dirty-snapshot.bundle` (1,741,586 bytes, SHA-256
+`af997233477e5a07547bccd7623e6875ac549a61c75e8d8c16df6c9891a9f5e1`).
+Both passed `git bundle verify` with complete history. The external mode-0600
+manifest SHA-256 is
+`5ecbe7da20e7a24bf6fc5c86d12f979cf6ce1b24417f063c6de5d62a2ad6fdd8`.
+
+A read-only `git merge-tree --write-tree origin/main
+auto/runtime/sglang-gemma4-v1` then failed with content or add/add conflicts in
+`config/models.yaml`, `docs/QUALITY_EVALUATION.md`, `docs/VALIDATION.md`,
+`config.py`, `controller.py`, `frontier.py`, the quality-matrix CLI and test,
+`test_controller.py`, and `test_usage.py`. All 194 experiment commits are
+patch-unique relative to origin/main. Therefore a whole-branch merge is rejected
+as a normalization method; functionality must be reconstructed and validated in
+separate origin-main/dev integration branches as the frozen plan requires.
