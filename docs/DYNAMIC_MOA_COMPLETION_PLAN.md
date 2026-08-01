@@ -560,6 +560,13 @@ reconnect, plan/context 보존을 대체하지 않는다.
   Remote provider 실패는 해당 호출에서 provider를 전환하지 않고 role별 60초
   cooldown을 연다. 후속 호출은 local이 READY일 때만 local을 사용하며 remote를
   반복 호출하지 않는다.
+- protocol v88은 OpenCode 1.17.18의 공식 `AgentConfig.maxSteps`를 사용해
+  격리 quality fixture의 primary `build` agent를 40단계로 제한한다. 상한에
+  도달하면 OpenCode가 text-only 종료를 수행해야 하며 timeout, 미완료 구현,
+  terminal marker 누락은 실패다. v87까지의 OpenCode 실행과 v1-v3 기능 패널은
+  진단 자료로만 보존하고, 새 protocol hash·run ID·clean seed에서 확증 평가를
+  시작한다. Codex·Hermes 계약과 동결 quality margin·bootstrap seed는 바꾸지
+  않는다.
 
 ## 10. Release, rollback, 배포
 
