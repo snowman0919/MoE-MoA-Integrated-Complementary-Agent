@@ -1437,6 +1437,7 @@ def create_app(
         x_repository_branch: str | None = Header(default=None),
         x_repository_commit: str | None = Header(default=None),
         x_dirty_state: str | None = Header(default=None),
+        x_validation_command: str | None = Header(default=None, max_length=512),
     ) -> Response:
         accepted = time.monotonic()
         accepted_at = time.time()
@@ -1524,6 +1525,16 @@ def create_app(
             )
         raw["metadata"]["runtime_channel"] = x_runtime_channel or configured.runtime_channel
         raw["metadata"]["trace_origin"] = x_trace_origin or configured.trace_origin
+        if isinstance(x_validation_command, str) and x_validation_command.strip():
+            if any(character in x_validation_command for character in "\r\n\0"):
+                return error_response(
+                    status.HTTP_400_BAD_REQUEST,
+                    "invalid validation command header",
+                    "invalid_request_error",
+                    "invalid_request",
+                    "x-validation-command",
+                )
+            raw["metadata"]["validation_command"] = x_validation_command.strip()
         if x_task_id:
             raw["metadata"]["task_id"] = x_task_id
         if x_workspace_path:
@@ -3590,6 +3601,7 @@ def create_app(
         x_repository_branch: str | None = Header(default=None),
         x_repository_commit: str | None = Header(default=None),
         x_dirty_state: str | None = Header(default=None),
+        x_validation_command: str | None = Header(default=None, max_length=512),
     ) -> Response:
         messages = _coerce_responses_input_messages(body.input)
         if body.instructions:
@@ -3720,6 +3732,7 @@ def create_app(
                                 x_repository_branch,
                                 x_repository_commit,
                                 x_dirty_state,
+                                x_validation_command,
                             )
                         )
                         if not initial_heartbeat_sent:
@@ -4007,6 +4020,7 @@ def create_app(
         x_repository_branch: str | None = Header(default=None),
         x_repository_commit: str | None = Header(default=None),
         x_dirty_state: str | None = Header(default=None),
+        x_validation_command: str | None = Header(default=None, max_length=512),
     ) -> Response:
         if input is None:
             raise HTTPException(status.HTTP_405_METHOD_NOT_ALLOWED, "Method Not Allowed")
@@ -4022,6 +4036,7 @@ def create_app(
             x_repository_branch=x_repository_branch,
             x_repository_commit=x_repository_commit,
             x_dirty_state=x_dirty_state,
+            x_validation_command=x_validation_command,
         )
 
     return app

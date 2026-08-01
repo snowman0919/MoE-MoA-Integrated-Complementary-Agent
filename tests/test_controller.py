@@ -178,6 +178,58 @@ async def test_pending_validation_poll_exposes_only_write_stdin(
     )
 
 
+@pytest.mark.asyncio
+async def test_filtered_validation_retry_pins_exact_command_without_specialists(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="filtered-validation-retry",
+        objective="implement",
+        roles_required=["planner", "reviewer", "executor"],
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": json.dumps(
+                    {"cmd": "python -m pytest -q 2>&1 | tail"}
+                ),
+                "validation_evidence_status": "rejected_filtered_output",
+            }
+        ],
+    )
+    request = {
+        "messages": [{"role": "user", "content": "continue"}],
+        "metadata": {"validation_command": "python -m pytest -q"},
+        "tools": [
+            {"type": "function", "function": {"name": name, "parameters": {}}}
+            for name in ("exec_command", "write_stdin", "apply_patch")
+        ],
+    }
+
+    prepared = await controller.prepare_executor(
+        state, request, ("planner", "reviewer", "executor")
+    )
+
+    assert "planner" not in stub_provider.calls
+    assert "reviewer" not in stub_provider.calls
+    assert [tool["function"]["name"] for tool in prepared["tools"]] == ["exec_command"]
+    assert prepared["tool_choice"] == "required"
+    assert prepared["tools"][0]["function"]["parameters"] == {
+        "type": "object",
+        "properties": {
+            "cmd": {"type": "string", "const": "python -m pytest -q"},
+            "login": {"type": "boolean", "const": False},
+        },
+        "required": ["cmd", "login"],
+        "additionalProperties": False,
+    }
+    assert any(
+        event["event_type"] == "filtered_validation_retry_restricted"
+        for event in store.events(state.session_id)
+    )
+
+
 def test_unbounded_codex_oauth_skips_only_the_frontier_specific_budget(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

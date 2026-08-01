@@ -342,6 +342,7 @@ def opencode_config(args: argparse.Namespace, gateway_session: str) -> str:
                         "X-Runtime-Channel": "dev",
                         "X-Trace-Origin": "validation",
                         "X-Workspace-ID": "long-horizon",
+                        "X-Validation-Command": args.validation_command,
                     },
                 },
                 "models": {
@@ -381,7 +382,7 @@ def opencode_config(args: argparse.Namespace, gateway_session: str) -> str:
 codex_model_catalog = QUALITY.codex_model_catalog
 
 
-def prepare_hermes(state: Path, args: argparse.Namespace) -> None:
+def prepare_hermes(state: Path, args: argparse.Namespace, gateway_session: str) -> None:
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     config = state / "config.yaml"
     if config.exists():
@@ -394,6 +395,15 @@ def prepare_hermes(state: Path, args: argparse.Namespace) -> None:
         f"  api_key: ${{{args.api_key_env}}}\n"
         "  context_length: 65536\n"
         "  max_tokens: 16384\n"
+        "custom_providers:\n"
+        "  - name: dgx-moa-agent\n"
+        f"    base_url: {json.dumps(args.gateway + '/v1')}\n"
+        "    extra_headers:\n"
+        f"      X-Session-ID: {json.dumps(gateway_session)}\n"
+        "      X-Runtime-Channel: candidate\n"
+        "      X-Trace-Origin: candidate_evaluation\n"
+        "      X-Workspace-ID: long-horizon\n"
+        f"      X-Validation-Command: {json.dumps(args.validation_command)}\n"
     )
     config.chmod(0o600)
 
@@ -444,7 +454,8 @@ def client_command(
             f'"X-Session-ID" = {json.dumps(gateway_session)}, '
             f'"X-Runtime-Channel" = "candidate", '
             f'"X-Trace-Origin" = "candidate_evaluation", '
-            f'"X-Workspace-ID" = "long-horizon"'
+            f'"X-Workspace-ID" = "long-horizon", '
+            f'"X-Validation-Command" = {json.dumps(args.validation_command)}'
             " }"
         )
         common = [
@@ -531,7 +542,7 @@ def client_command(
             ),
         )
     else:
-        prepare_hermes(state, args)
+        prepare_hermes(state, args, gateway_session)
         usage_file = state / f"usage-{index}.json"
         inner = [
             str(QUALITY.HERMES_ROOT / "venv/bin/python"),

@@ -2254,6 +2254,27 @@ class Controller:
             else None
         )
 
+    def filtered_validation_retry_command(
+        self, state: SessionState, metadata: dict[str, Any]
+    ) -> str | None:
+        command = metadata.get("validation_command")
+        if not isinstance(command, str) or not command.strip():
+            return None
+        latest = next(
+            (
+                execution
+                for execution in reversed(state.tool_executions)
+                if self.validation_execution(execution)
+            ),
+            None,
+        )
+        return (
+            command.strip()
+            if latest
+            and latest.get("validation_evidence_status") == "rejected_filtered_output"
+            else None
+        )
+
     def prompt_sandwich(
         self,
         role: str,
@@ -2745,6 +2766,7 @@ class Controller:
     ) -> dict[str, Any]:
         body = request.copy()
         metadata = dict(request.get("metadata", {}))
+        filtered_validation_retry = self.filtered_validation_retry_command(state, metadata)
         pending_prerequisites = pending_goal_prerequisites(state)
         if (
             tool_continuation
@@ -2777,6 +2799,9 @@ class Controller:
                 {role: self.settings.models[role].revision for role in ("planner", "reviewer")},
             )
         roles = tuple(dict.fromkeys((*roles, *state.roles_required)))
+        if filtered_validation_retry is not None:
+            roles = ("executor",)
+            tool_continuation = True
         if state.control_state != "running":
             raise PolicyBlocked(f"request control state is {state.control_state}")
         body["max_tokens"] = self.executor_tokens(body)
@@ -3900,6 +3925,37 @@ class Controller:
                     {"tools": list(selected_names)},
                 )
         pending_validation_session = self.pending_validation_poll_session(state)
+        if filtered_validation_retry is not None and body.get("tools"):
+            body["tools"] = [
+                tool
+                for tool in body["tools"]
+                if isinstance(tool, dict)
+                and str(tool.get("name") or tool.get("function", {}).get("name"))
+                == "exec_command"
+            ]
+            for tool in body["tools"]:
+                function = tool.get("function")
+                if isinstance(function, dict):
+                    function["description"] = (
+                        "Run the exact required validation command without wrappers or filters."
+                    )
+                    function["parameters"] = {
+                        "type": "object",
+                        "properties": {
+                            "cmd": {"type": "string", "const": filtered_validation_retry},
+                            "login": {"type": "boolean", "const": False},
+                        },
+                        "required": ["cmd", "login"],
+                        "additionalProperties": False,
+                    }
+            available_tools = ("exec_command",) if body["tools"] else ()
+            if available_tools:
+                body["tool_choice"] = "required"
+            self.store.event(
+                state.session_id,
+                "filtered_validation_retry_restricted",
+                {"command_sha256": hashlib.sha256(filtered_validation_retry.encode()).hexdigest()},
+            )
         if pending_validation_session is not None and body.get("tools"):
             body["tools"] = [
                 tool
@@ -3918,6 +3974,7 @@ class Controller:
             )
         if (
             pending_validation_session is None
+            and filtered_validation_retry is None
             and implementation_complete
             and (tool_continuation or progress_retry)
         ):

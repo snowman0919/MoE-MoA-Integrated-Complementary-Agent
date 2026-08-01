@@ -308,6 +308,7 @@ def test_client_commands_resume_the_same_private_session(
         assert '"X-Runtime-Channel" = "candidate"' in headers
         assert '"X-Trace-Origin" = "candidate_evaluation"' in headers
         assert '"X-Workspace-ID" = "long-horizon"' in headers
+        assert f'"X-Validation-Command" = {json.dumps(args.validation_command)}' in headers
     elif harness == "opencode":
         assert inner[inner.index("--title") + 1] == "DGX MoA long horizon"
         assert "OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=1" in command
@@ -317,6 +318,12 @@ def test_client_commands_resume_the_same_private_session(
             if value.startswith("OPENCODE_CONFIG_CONTENT=")
         )
         permissions = json.loads(raw_config)["permission"]["external_directory"]
+        assert (
+            json.loads(raw_config)["provider"]["dgx-moa"]["options"]["headers"][
+                "X-Validation-Command"
+            ]
+            == args.validation_command
+        )
         assert permissions["*"] == "deny"
         assert {path for path, action in permissions.items() if action == "allow"} == {
             f"{args.workspace}/**",
@@ -324,6 +331,9 @@ def test_client_commands_resume_the_same_private_session(
             f"{args.acceptance.parent}/**",
             f"{args.plan.parent}/**",
         }
+    else:
+        config = (state / "config.yaml").read_text()
+        assert f"X-Validation-Command: {json.dumps(args.validation_command)}" in config
 
 
 def test_client_metrics_and_provider_pinning_are_aggregated_without_payloads(

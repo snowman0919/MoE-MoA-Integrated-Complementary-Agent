@@ -9368,7 +9368,7 @@ passed; the full regression passed 1,184 tests in 47.73 seconds. Ruff passed,
 strict mypy reported zero issues across 59 source files, and `git diff --check`
 passed. End-to-end v69 confirmation has not yet run, so v69 is not a PASS.
 
-V168 physically ran v69 for about 17 hours before its long-horizon runner
+V168 physically ran v69 for 2,416.305 seconds before its long-horizon runner
 exited nonzero. It exercised local Reasoner, Planner, Reviewer, Executor, and
 Codex OAuth Frontier, produced five dirty workspace paths, and reached 21 tool
 executions. No accepted terminal validation or phase commit was recorded. Nine
@@ -9387,3 +9387,24 @@ unknown malformed protocol output remains fail-closed. Six focused regressions
 passed; the full regression passed 1,185 tests in 40.59 seconds. Ruff passed,
 strict mypy reported zero issues across 59 source files, and `git diff --check`
 passed. End-to-end v70 confirmation has not yet run, so v70 is not a PASS.
+
+V169 physically ran v70 for 5,173.811 seconds and 56 loop iterations before
+terminating `BUDGET_EXHAUSTED`. OAuth Frontier calls did not record the V168
+app-server initialization failure, confirming that v70 removed that immediate
+failure mode. The run still produced no accepted validation or phase commit:
+all eleven recognized validation attempts used output filters and were
+rejected, while the Executor continued unrelated commands until all 32 Planner
+calls were consumed. V169 preserved four dirty workspace paths and its database
+and is not a PASS.
+
+Protocol v71 transports the frozen validation command as an authenticated
+long-horizon request header through Codex, OpenCode, and Hermes into shared
+Chat/Responses metadata. After the latest validation attempt is rejected for a
+filter, request preparation skips Planner, Reviewer, and Reasoner, exposes only
+`exec_command`, requires a tool call, and replaces its parameter schema with
+the exact command plus `login=false`. The command is recorded only by SHA-256
+in routing events. Six focused harness/controller regressions and two API
+header regressions passed; the full regression passed 1,186 tests in 43.19
+seconds. Ruff passed, strict mypy reported zero issues across 59 source files,
+and `git diff --check` passed. End-to-end v71 confirmation has not yet run, so
+v71 is not a PASS.
