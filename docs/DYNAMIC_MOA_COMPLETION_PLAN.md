@@ -545,6 +545,13 @@ reconnect, plan/context 보존을 대체하지 않는다.
   동일 provider·gateway session으로 한 번 resume한다. 둘 이상이거나 재시도도
   실패하면 fail closed하며 raw client output과 thread ID는 evidence에 저장하지
   않는다. 첫 시도의 tool/cache/usage 관측은 성공한 resume와 합산한다.
+- protocol v86은 v184에서 측정된 Planner·Reviewer 장문 생성 지연을 줄이기
+  위해 Planner를 dependency-critical 8단계, Reviewer를 중요·치명 발견 8개로
+  제한하고 중복·정보성 항목을 생략하는 간결성 계약을 추가한다. 보안, 데이터
+  손실, 정확성, 필수 검증 실패와 blocking risk·acceptance criteria는 생략할 수
+  없다. Specialist SGLang은 JSON schema decoding에서 임의 공백을 허용하지 않아
+  compact JSON을 강제한다. v85까지의 실행은 진단 자료로 보존하며 v86에서 새
+  run ID와 clean seed로 다시 시작한다.
 
 ## 10. Release, rollback, 배포
 

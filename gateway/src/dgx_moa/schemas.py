@@ -171,21 +171,21 @@ class PlannerStep(BaseModel):
 
     step_id: str = Field(min_length=1, max_length=128)
     action: str = Field(min_length=1, max_length=2_000)
-    dependencies: list[str]
-    expected_evidence: list[str]
+    dependencies: list[str] = Field(max_length=8)
+    expected_evidence: list[str] = Field(max_length=8)
 
 
 class PlannerPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    scope: list[str]
-    assumptions: list[str]
-    ordered_steps: list[PlannerStep]
-    dependencies: list[str]
-    risks: list[str]
-    validation_plan: list[str]
-    rollback_plan: list[str]
-    acceptance_criteria: list[str]
+    scope: list[str] = Field(max_length=8)
+    assumptions: list[str] = Field(max_length=8)
+    ordered_steps: list[PlannerStep] = Field(max_length=8)
+    dependencies: list[str] = Field(max_length=8)
+    risks: list[str] = Field(max_length=8)
+    validation_plan: list[str] = Field(max_length=8)
+    rollback_plan: list[str] = Field(max_length=8)
+    acceptance_criteria: list[str] = Field(max_length=8)
 
     @model_validator(mode="before")
     @classmethod
@@ -232,7 +232,7 @@ class ReviewResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: Literal["approved", "rejected"]
-    findings: list[ReviewFinding]
+    findings: list[ReviewFinding] = Field(max_length=8)
 
     @model_validator(mode="after")
     def require_rejection_evidence(self) -> ReviewResult:

@@ -31,6 +31,18 @@ def test_rejected_review_requires_a_finding() -> None:
         ReviewResult.model_validate({"status": "rejected", "findings": []})
 
 
+def test_specialist_schemas_bound_structured_output_items() -> None:
+    with pytest.raises(ValueError, match="at most 8 items"):
+        PlannerPlan.model_validate(
+            {
+                "plan": [{"step": f"step-{index}"} for index in range(9)],
+                "acceptance_criteria": [],
+            }
+        )
+    assert PlannerPlan.model_json_schema()["properties"]["ordered_steps"]["maxItems"] == 8
+    assert ReviewResult.model_json_schema()["properties"]["findings"]["maxItems"] == 8
+
+
 def test_local_invocation_preserves_unknown_cache_detail(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1909,6 +1921,10 @@ def test_goal_file_wrapper_gets_full_completion_constraints(
     assert "total historical requests" in reviewer_prompt
     assert "This review runs before final synthesis" in reviewer_prompt
     assert "client-visible final answer is absent" in reviewer_prompt
+    assert "at most 8 important or critical findings" in reviewer_prompt
+    planner_prompt = controller.prompt_sandwich("planner", state, "evidence", "plan")
+    assert "at most 8 dependency-critical steps" in planner_prompt
+    assert "preserve all blocking risks and acceptance criteria" in planner_prompt
 
 
 def test_bounded_goal_planning_turn_returns_phase_result_without_goal_completion(

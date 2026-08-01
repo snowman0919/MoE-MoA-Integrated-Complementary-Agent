@@ -9930,3 +9930,34 @@ utilization; historical Gemma decode telemetry was approximately 29 tokens/s,
 so the observed 36.526-second Planner latency is not evidence of a continuously
 slow NVFP4 kernel by itself. Output length and orchestration latency remain to
 be corrected and revalidated before any new confirmation epoch.
+
+## 2026-08-02 Gemma structured-output latency root correction
+
+Aggregate V184 telemetry showed that two local Planner calls averaged 47.836 s
+and 1,384.5 completion tokens, while seven local Reviewer calls averaged
+31.158 s and 735.7 completion tokens. Specialist cached-token totals were four
+for Planner and zero for Reviewer; missing cache values were not converted to
+zero. A direct complex Planner-schema probe reproduced the defect: the original
+SGLang process exhausted 4,096 tokens and returned truncated invalid JSON after
+more than 120 seconds. Adding eight-item limits to the Planner and Reviewer
+schemas alone still exhausted 1,536 tokens in 52.172 s and returned invalid
+JSON. The failure was an unconstrained JSON-whitespace loop, not continuously
+slow NVFP4 matrix execution.
+
+The pinned SGLang runtime exposes `--constrained-json-disable-any-whitespace`.
+The isolated Specialist was recreated with that option while the Qwen Executor
+remained resident. A real inference readiness probe returned HTTP 200 in
+1.879 s. The same bounded Planner schema then returned valid JSON with four
+steps, 328 completion tokens, and `finish_reason=stop` in 12.542 s at
+temperature 0.2. With the Gateway's current sampling default and 4,096-token
+ceiling it returned valid JSON with six steps and 494 completion tokens in
+16.652 s; 107 cached prompt tokens were reported. A bounded Reviewer schema
+returned a valid approval with zero findings and 13 completion tokens in
+1.329 s. No generated content or prompt payload was retained in validation
+evidence. Because Gemma SGLang passed after the root correction, the permitted
+same-revision vLLM fallback was not started.
+
+AvatarForge protocol v86 freezes the completion plan at SHA-256
+`ce0ff5d1ecc12b4661299a715fc56ef5a364d1fd5e246e8e8ecb6cd79350dc96`.
+Any subsequent prompt, schema, model, fixture, scorer, or plan change requires a
+new protocol/run ID; v86 results produced before such a change remain diagnostic.

@@ -2329,7 +2329,19 @@ class Controller:
             else f"CURRENT OBJECTIVE\n{effective_objective(state)}"
         )
         final_output = (
-            f"Return one JSON object only: {schema}"
+            "Return one JSON object only. "
+            + (
+                "Use at most 8 dependency-critical steps and at most 8 items in each supporting "
+                "array. Keep every string concise, merge duplicates, and preserve all blocking "
+                "risks and acceptance criteria. "
+                if role == "planner"
+                else "Report at most 8 important or critical findings. Omit informational and "
+                "duplicate findings, keep every field concise, and never omit a security, data "
+                "loss, correctness, or required-validation failure. "
+                if role == "reviewer"
+                else ""
+            )
+            + f"Schema: {schema}"
             if role in {"reasoner", "planner", "reviewer", "judge"}
             else (
                 "Use native OpenAI tool calls when an action is required. Otherwise return normal "

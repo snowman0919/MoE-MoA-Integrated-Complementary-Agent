@@ -45,6 +45,7 @@ def test_candidate_commands_pin_safe_two_model_topology() -> None:
     assert "--kv-cache-dtype" not in specialist
     assert "--reasoning-parser gemma4" in specialist
     assert "--tool-call-parser gemma4" in specialist
+    assert "--constrained-json-disable-any-whitespace" in specialist
     assert "--language-only" not in specialist
     assert "--incremental-streaming-output" in specialist
     assert "--restart unless-stopped" in specialist

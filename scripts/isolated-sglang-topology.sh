@@ -70,6 +70,7 @@ specialist_command=(
   --cuda-graph-backend-decode full --cuda-graph-max-bs-decode 1
   --cuda-graph-backend-prefill disabled
   --reasoning-parser gemma4 --tool-call-parser gemma4
+  --constrained-json-disable-any-whitespace
   --enable-metrics --enable-cache-report --incremental-streaming-output
 )
 
