@@ -235,6 +235,7 @@ def test_main_persists_header_and_control_before_first_checkpoint(
     baseline = {"dirty_state": "clean", "commit": "a" * 40, "branch": "detached"}
     hashes = {field: "b" * 64 for field in MODULE.stable_hashes_fields()}
     monkeypatch.setattr(MODULE, "parse_args", lambda: args)
+    monkeypatch.setattr(MODULE, "runtime_preflight", lambda: None)
     monkeypatch.setattr(MODULE, "ensure_local_git_identity", lambda _workspace: None)
     monkeypatch.setattr(MODULE, "git_snapshot", lambda _workspace: baseline)
     monkeypatch.setattr(MODULE, "stable_hashes", lambda *_args: hashes)
@@ -255,6 +256,27 @@ def test_main_persists_header_and_control_before_first_checkpoint(
     control = json.loads((args.state_dir / "long-control.json").read_text())
     assert control["stable_hashes"] == hashes
     assert args.evidence.with_suffix(".jsonl.failure.json").is_file()
+
+
+def test_runtime_preflight_fails_before_evidence_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = arguments(tmp_path, "codex")
+    args.evidence = tmp_path / "evidence.jsonl"
+    monkeypatch.setattr(MODULE, "parse_args", lambda: args)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda executable: f"/bin/{executable}")
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "run",
+        lambda command, **_kwargs: __import__("subprocess").CompletedProcess(
+            command, 1 if command[0] == "docker" else 0, "", "denied"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="docker_runtime_unavailable"):
+        MODULE.main()
+
+    assert not args.evidence.exists()
 
 
 def test_provider_manifest_hash_rejects_private_fields(tmp_path: Path) -> None:

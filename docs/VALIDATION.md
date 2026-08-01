@@ -9764,3 +9764,21 @@ SHA-256 `52eb5a383bb0b3646cba0da52b1f59b27d070ef8af8266c689312842699bbc6f`.
 V179 remains immutable failed diagnostic evidence. Protocol v84's bounded
 project paths, durable first-call evidence header, and checkpoint scope guard
 require a fresh run ID; they do not retroactively repair V179.
+
+## 2026-08-02 AvatarForge v84 runner capability preflight
+
+Fresh immutable attempts V180 and V181 proved two sandbox prerequisites that
+V179's older imported protocol did not exercise. V180 wrote its mode-`0600`
+v84 header and then failed before checkpoint 0 because `nvidia-smi` was absent.
+V181 added GPU telemetry capability, wrote a separate v84 header, and then
+failed before contacting the Gateway because the outer runner lacked Docker
+socket supplemental GID `988`. A matched child filesystem probe passed every
+workspace, state, Codex binary, Python environment, and frozen-input
+read/write/execute check, while the runner inspection showed the missing group.
+
+The long-horizon client now checks functional `docker info` and `nvidia-smi`
+commands before creating control or public evidence. The focused preflight and
+durability selection passed 2 tests; the full regression passed 1,202 tests in
+42.24 seconds. Ruff passed and strict mypy reported zero issues across 60 source
+files. V180 and V181 remain failed diagnostics. A new run must supply both GPU
+telemetry and Docker socket GID and must use a fresh variant and workspace.

@@ -1257,8 +1257,29 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def runtime_preflight() -> None:
+    for executable, command, failure in (
+        (
+            "docker",
+            ["docker", "info", "--format", "{{.ServerVersion}}"],
+            "docker_runtime_unavailable",
+        ),
+        (
+            "nvidia-smi",
+            ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader,nounits"],
+            "gpu_telemetry_unavailable",
+        ),
+    ):
+        if shutil.which(executable) is None:
+            raise RuntimeError(failure)
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(failure)
+
+
 def main() -> int:
     args = parse_args()
+    runtime_preflight()
     profile = getattr(args, "profile", "journal")
     protocol = AVATARFORGE_PROTOCOL if profile == "avatarforge" else PROTOCOL
     phases = AVATARFORGE_PHASES if profile == "avatarforge" else PHASES
