@@ -9731,3 +9731,18 @@ The mode-`0600` result is
 `95f667ad74ca9e94e6abbe162bac798a25e4a5b8f03765244241e4351739f112`.
 This validates the isolated model boundary; it does not authorize a production
 deployment or satisfy the remaining blind-quality and long-horizon Goal gates.
+
+## 2026-08-02 Responses router boundary
+
+The OpenAI Responses adapter now lives in `responses_routes.py` and registers
+its POST/GET routes against the existing authenticated FastAPI application. It
+receives the existing Chat handler, default model, and load timeout explicitly;
+it does not duplicate execution, provider selection, state, or authentication.
+The shared OpenAI error envelope moved to the existing `inference.py` module.
+This reduces `api.py` from 3,962 to 3,490 lines while preserving direct route
+registration required by the stream-cancellation test and public endpoint
+behavior. The focused Chat/Responses selection passed 25 tests. The full
+regression passed 1,201 tests in 45.12 seconds; Ruff passed and strict mypy
+reported zero issues across 60 source files. The remaining 2,100-line Chat
+orchestration core still requires responsibility extraction, so this is not a
+Goal PASS.

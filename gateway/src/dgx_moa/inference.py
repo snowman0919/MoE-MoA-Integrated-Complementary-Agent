@@ -8,10 +8,25 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any, cast
 
 from fastapi import Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from .schemas import text_content
 from .streaming import compatible_edit_call, response_usage
+
+
+def error_response(
+    status_code: int,
+    message: str,
+    error_type: str,
+    code: str,
+    param: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    return JSONResponse(
+        {"error": {"message": message, "type": error_type, "code": code, "param": param}},
+        status_code=status_code,
+        headers=headers,
+    )
 
 
 def title_request_index(messages: list[dict[str, Any]]) -> int | None:
