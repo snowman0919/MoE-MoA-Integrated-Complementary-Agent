@@ -9696,3 +9696,18 @@ client/analyzer suite passed 54 tests. The full regression passed 1,201 tests
 in 43.27 seconds; Ruff passed and strict mypy reported zero issues across 59
 source files. A fresh immutable run is still required, so v84 is not a Goal
 PASS.
+
+## 2026-08-02 observation admin router boundary
+
+The observation nonce and command endpoints depended only on application state
+but remained embedded in the 4,059-line API assembly module after the existing
+admin router extraction. They now live in `admin_routes.py` with the same admin
+authentication dependency, disabled-by-default control gate, request-scoped
+nonce authorization, idempotency behavior, state mutation, and sanitized status
+responses. `api.py` is reduced to 3,962 lines and no longer imports the two
+observation request schemas or `Phase` solely for administrative routes. The
+focused observation/admin selection passed 48 tests. The full regression passed
+1,201 tests in 45.06 seconds; Ruff and strict mypy passed across 59 source
+files. Chat/Responses route extraction and the authenticated WebSocket workflow
+remain open cleanup and capability gates; this boundary change is not a Goal
+PASS.

@@ -17,6 +17,7 @@ from .admin_codex import AdminCodexRequest, AdminCodexRunner
 from .admin_dashboard import ADMIN_DASHBOARD
 from .frontier import CodexOAuthProvider, profile_home, profile_lock, profile_status
 from .key_dashboard import API_KEY_DASHBOARD
+from .observation import ObservationCommandRequest, ObservationNonceRequest
 from .runtime_status import report as runtime_report
 from .schemas import ProfileResponse
 from .security import (
@@ -25,6 +26,7 @@ from .security import (
     ApiKeyRequest,
     ApiKeyUpdate,
 )
+from .state import Phase
 
 
 def build_admin_router(admin_auth: Callable[..., Any]) -> APIRouter:
@@ -382,5 +384,96 @@ def build_admin_router(admin_auth: Callable[..., Any]) -> APIRouter:
     )
     async def profile(request: Request) -> dict[str, str]:
         return dict(request.app.state.profiles.current())
+
+    @router.post("/v1/admin/observation/nonces", dependencies=protected)
+    async def issue_observation_nonce(
+        body: ObservationNonceRequest, request: Request
+    ) -> dict[str, Any]:
+        controls = request.app.state.settings.live_observation.controls
+        command_store = request.app.state.observation_commands
+        if not controls.enabled or command_store is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "observation controls are disabled")
+        if f"{body.provider}:{body.user_id}" not in controls.allowed_users:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "observation user not allowlisted")
+        if request.app.state.store.get(body.request_id) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown observation request")
+        nonce = command_store.issue_nonce(
+            body.provider,
+            body.user_id,
+            body.request_id,
+            controls.nonce_ttl_seconds,
+        )
+        return {"nonce": nonce, "expires_in_seconds": controls.nonce_ttl_seconds}
+
+    @router.post("/v1/admin/observation/commands", dependencies=protected)
+    async def apply_observation_command(
+        body: ObservationCommandRequest, request: Request
+    ) -> dict[str, Any]:
+        controls = request.app.state.settings.live_observation.controls
+        command_store = request.app.state.observation_commands
+        if not controls.enabled or command_store is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "observation controls are disabled")
+        state = request.app.state.store.get(body.request_id)
+        if state is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown observation request")
+        try:
+            replayed = command_store.authorize(
+                provider=body.provider,
+                user_id=body.user_id,
+                request_id=body.request_id,
+                command=body.command,
+                nonce=body.nonce,
+                idempotency_key=body.idempotency_key,
+                allowed_users=controls.allowed_users,
+                role_permissions=controls.role_permissions,
+            )
+        except PermissionError as error:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        if body.command == "pause":
+            state.control_state = "paused"
+        elif body.command == "resume":
+            state.control_state = "running"
+        elif body.command in {"reject", "terminate"}:
+            state.control_state = "terminated"
+            state.phase = Phase.BLOCKED
+            state.final_status = "cancelled"
+            request.app.state.controller.terminate_loop(state, "CLIENT_CANCELLED")
+        elif body.command == "approve":
+            approval_role = controls.allowed_users[f"{body.provider}:{body.user_id}"]
+            if approval_role not in state.control_approvals:
+                state.control_approvals.append(approval_role)
+        request.app.state.store.event(
+            state.session_id,
+            "observation_command_applied",
+            {"provider": body.provider, "command": body.command, "replayed": replayed},
+        )
+        request.app.state.store.save(state)
+        response: dict[str, Any] = {
+            "command": body.command,
+            "request_id": body.request_id,
+            "replayed": replayed,
+            "control_state": state.control_state,
+        }
+        if body.command == "show-status":
+            response["status"] = {
+                "phase": state.phase,
+                "final_status": state.final_status,
+                "review_status": state.review_status,
+            }
+        elif body.command == "show-findings":
+            response["findings"] = [
+                node
+                for node in state.evidence_nodes[-20:]
+                if node.get("node_type") in {"reviewer_finding", "frontier_finding"}
+            ]
+        elif body.command == "show-budget":
+            response["budget"] = (
+                state.engineering_loop.remaining_budget.model_dump(mode="json")
+                if state.engineering_loop is not None
+                else None
+            )
+        return response
 
     return router
