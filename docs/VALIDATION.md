@@ -9522,3 +9522,26 @@ markers. Seven focused regressions passed. The full regression passed 1,190
 tests in 46.43 seconds. Ruff passed, strict mypy reported zero issues across 59
 source files, and `git diff --check` passed. End-to-end v76 confirmation has not
 yet run, so v76 is not a PASS.
+
+V179 physically confirmed the v76 parallel-evidence fix: one batch increased
+the accepted tool-result count from one to six without
+`engineering_loop_action_rejected`. At the 62-minute diagnostic snapshot it
+was still running at iteration 37 with 99 tool results, 24 resolved failures,
+no OOM, and no commit. Local Reasoner, Qwen Executor, shared Gemma 4
+Planner/Reviewer, and Codex OAuth Frontier all completed calls. The workspace
+still contained an untracked implementation and targeted pytest commands were
+accepted, while the frozen full-workspace validation command had never been
+restricted. Independent reproduction found a duplicate pytest module name,
+six functional failures before later corrections, and three Ruff failures.
+V179 remains an immutable running diagnostic and is not a PASS.
+
+Protocol v77 requires the exact frozen long-horizon validation command after
+every file-changing generation. A targeted validation PASS no longer satisfies
+the long-horizon evidence gate. One failed exact attempt releases the Executor
+to fix the workspace; the next mutation creates a new exact-validation
+generation. This moves full-workspace feedback before Reviewer/Frontier loops
+without adding a second validator. Four focused long-horizon regressions and
+all 134 controller tests passed. The full regression passed 1,192 tests in
+47.73 seconds. Ruff, strict mypy for the changed controller, and
+`git diff --check` passed. End-to-end v77 confirmation has not yet run, so v77
+is not a PASS.
