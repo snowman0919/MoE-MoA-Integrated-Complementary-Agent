@@ -5,6 +5,7 @@ import hashlib
 import secrets
 import sqlite3
 import time
+from collections import deque
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -560,6 +561,49 @@ class ObservationBus:
             finally:
                 for _ in batch:
                     self.queue.task_done()
+
+
+class WorkflowStreamHub:
+    """Fan out sanitized workflow events without blocking request producers."""
+
+    def __init__(self, *, queue_size: int = 256, replay_size: int = 256):
+        self.queue_size = queue_size
+        self.replay: deque[dict[str, Any]] = deque(maxlen=replay_size)
+        self.subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
+        self.sequence = 0
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.dropped = 0
+
+    def start(self) -> None:
+        self.loop = asyncio.get_running_loop()
+
+    def publish_store_event(
+        self, request_id: str, event_type: str, payload: dict[str, Any], created_at: str
+    ) -> None:
+        event = public_event(request_id, event_type, payload, created_at)
+        if event is None or self.loop is None:
+            return
+        self.loop.call_soon_threadsafe(self._publish, event)
+
+    def _publish(self, event: ObservationEvent) -> None:
+        self.sequence += 1
+        item = {"sequence": self.sequence, **event.model_dump()}
+        self.replay.append(item)
+        for queue in tuple(self.subscribers):
+            try:
+                queue.put_nowait(item)
+            except asyncio.QueueFull:
+                self.dropped += 1
+
+    def subscribe(
+        self, after: int = 0
+    ) -> tuple[asyncio.Queue[dict[str, Any]], list[dict[str, Any]]]:
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=self.queue_size)
+        self.subscribers.add(queue)
+        return queue, [item for item in self.replay if item["sequence"] > after]
+
+    def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
+        self.subscribers.discard(queue)
 
 
 COMMANDS = {

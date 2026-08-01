@@ -9,8 +9,17 @@ from collections.abc import AsyncIterator, Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from .admin_codex import AdminCodexRequest, AdminCodexRunner
@@ -86,6 +95,36 @@ def build_admin_router(admin_auth: Callable[..., Any]) -> APIRouter:
             lifecycle_mode=settings.lifecycle_mode,
             managed_roles=tuple(settings.lifecycle_unit_map),
         )
+
+    @router.websocket("/v1/admin/observation/workflow", dependencies=protected)
+    async def observation_workflow(websocket: WebSocket, after: int = 0) -> None:
+        hub = websocket.app.state.workflow_stream
+        if hub is None:
+            await websocket.close(code=1008, reason="workflow observation is disabled")
+            return
+        origin = urlsplit(websocket.headers.get("origin", ""))
+        if origin.scheme not in {"http", "https"} or origin.netloc != websocket.headers.get("host"):
+            await websocket.close(code=1008, reason="invalid workflow origin")
+            return
+        await websocket.accept()
+        operator = websocket.state.api_token_id
+        queue, replay = hub.subscribe(max(0, after))
+        websocket.app.state.store.event(
+            "workflow-observation", "workflow_observer_connected", {"operator": operator}
+        )
+        try:
+            for item in replay:
+                await websocket.send_json(item)
+            while True:
+                await websocket.send_json(await queue.get())
+                queue.task_done()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            hub.unsubscribe(queue)
+            websocket.app.state.store.event(
+                "workflow-observation", "workflow_observer_disconnected", {"operator": operator}
+            )
 
     @router.get("/v1/admin/drain", dependencies=protected)
     async def admin_drain_status(request: Request) -> dict[str, Any]:

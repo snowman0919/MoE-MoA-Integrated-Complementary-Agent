@@ -432,6 +432,8 @@ class LiveObservationConfig(BaseModel):
     batch_size: int = Field(default=10, ge=1, le=50)
     batch_interval_seconds: float = Field(default=2, ge=0.1, le=60)
     request_timeout_seconds: float = Field(default=10, gt=0, le=60)
+    workflow_websocket_enabled: bool = False
+    workflow_replay_size: int = Field(default=256, ge=1, le=10_000)
     telegram: TelegramObservationConfig | None = None
     controls: ObservationControlConfig = Field(default_factory=ObservationControlConfig)
 

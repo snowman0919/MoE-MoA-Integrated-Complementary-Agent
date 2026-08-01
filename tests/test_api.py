@@ -662,7 +662,9 @@ def test_busy_executor_remote_stream_records_cost_and_cache(
         "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
     )
     app = create_app(
-        settings.model_copy(update={"frontier_enabled": True, "frontier_config": frontier_config})
+        settings.model_copy(
+            update={"frontier_enabled": True, "frontier_config": frontier_config}
+        )
     )
 
     async def remote_execute(
@@ -967,9 +969,7 @@ def test_orchestrated_stalled_executor_routes_before_local_dispatch(
         "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
     )
     app = create_app(
-        settings.model_copy(
-            update={"frontier_enabled": True, "frontier_config": frontier_config}
-        )
+        settings.model_copy(update={"frontier_enabled": True, "frontier_config": frontier_config})
     )
     remote_calls: list[str] = []
 
@@ -6221,6 +6221,41 @@ def test_auth_enabled_invalid_key_returns_401(settings, stub_provider: StubProvi
     with client_with_stub(settings, stub_provider) as client:
         response = client.get("/v1/models", headers={"Authorization": "Bearer definitely-wrong"})
         assert response.status_code == 401
+
+
+def test_admin_workflow_websocket_requires_enabled_operator_path(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    enabled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "admin_api_enabled": True,
+            "live_observation": {
+                "workflow_websocket_enabled": True,
+                "workflow_replay_size": 4,
+            },
+        }
+    )
+    with (
+        client_with_stub(enabled, stub_provider) as client,
+        client.websocket_connect(
+            "/v1/admin/observation/workflow",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "Origin": "http://testserver",
+            },
+        ) as websocket,
+    ):
+        client.app.state.store.event(
+            "request-workflow",
+            "executor_started",
+            {"model": "executor", "authorization": "Bearer never-expose"},
+        )
+        item = websocket.receive_json()
+
+    assert item["event_type"] == "executor_started"
+    assert item["request_id"] == "request-workflow"
+    assert item["details"] == {"model": "executor"}
 
 
 def test_metrics_require_auth_and_expose_only_fixed_label_free_values(

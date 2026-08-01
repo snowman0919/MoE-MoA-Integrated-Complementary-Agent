@@ -13,6 +13,7 @@ from dgx_moa.observation import (
     ObservationCommandStore,
     ObservationEvent,
     TelegramProvider,
+    WorkflowStreamHub,
     public_event,
     render_events,
     render_telegram_events,
@@ -176,6 +177,38 @@ async def test_bus_batches_without_blocking_event_producer() -> None:
         ["request-1", "request-2"]
     ]
     assert bus.metrics["sent"] == 2
+
+
+@pytest.mark.asyncio
+async def test_workflow_stream_replays_sanitized_events_and_isolates_slow_clients() -> None:
+    hub = WorkflowStreamHub(queue_size=1, replay_size=2)
+    hub.start()
+    slow, _ = hub.subscribe()
+
+    hub.publish_store_event(
+        "request-1",
+        "request_received",
+        {"phase": "intake", "authorization": "Bearer synthetic-secret"},
+        "2026-08-02T00:00:00Z",
+    )
+    hub.publish_store_event(
+        "request-2",
+        "executor_started",
+        {"model": "executor"},
+        "2026-08-02T00:00:01Z",
+    )
+    await asyncio.sleep(0)
+
+    current = slow.get_nowait()
+    assert current["sequence"] == 1
+    assert current["details"] == {"phase": "intake"}
+    assert hub.dropped == 1
+
+    fast, replay = hub.subscribe(after=1)
+    assert [item["sequence"] for item in replay] == [2]
+    assert fast.empty()
+    hub.unsubscribe(slow)
+    hub.unsubscribe(fast)
 
 
 def test_bus_drops_when_bounded_queue_is_full() -> None:

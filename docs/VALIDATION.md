@@ -9793,3 +9793,25 @@ provider. Historical Discord experiment references remain only in validation and
 frozen planning evidence. The documentation-only cleanup removes 20 lines and
 adds 13, with `git diff --check` passing. No runtime or production setting was
 changed.
+## 2026-08-02 Admin workflow WebSocket foundation
+
+The candidate branch now exposes `/v1/admin/observation/workflow` only when
+`live_observation.workflow_websocket_enabled=true`. The route reuses the
+existing administrator bearer/session dependency and rejects browser Origins
+whose HTTP(S) authority differs from `Host`. It publishes only the existing
+`public_event` allowlist, uses one bounded queue per subscriber, records drops,
+and retains a bounded sequence replay for reconnect cursors. Store callbacks
+only schedule queue insertion and do not await browser I/O.
+
+The feature remains disabled in both checked-in model configurations. This is
+foundation evidence only: the authenticated workflow canvas, physical
+reconnect/backpressure/slow-client tests, 90-day raw-detail retention, explicit
+raw-view audit, summary reports, and local/mathcat host telemetry gates remain
+unmet and must not be inferred from these unit tests.
+
+Measured checks from the experiment worktree:
+
+- focused observation/auth/API tests: `48 passed, 237 deselected` in 3.08 s;
+- full regression: `1204 passed` in 44.87 s;
+- Ruff: pass;
+- strict mypy: zero issues across 60 source files.

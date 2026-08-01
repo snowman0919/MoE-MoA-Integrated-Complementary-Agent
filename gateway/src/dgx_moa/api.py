@@ -73,6 +73,7 @@ from .observation import (
     ObservationCommandStore,
     ObservationProvider,
     TelegramProvider,
+    WorkflowStreamHub,
 )
 from .policy import PolicyEngine
 from .profiles import ProfileManager
@@ -284,6 +285,17 @@ def create_app(
         )
         if app.state.observation is not None:
             store.subscribe_events(app.state.observation.publish_store_event)
+        app.state.workflow_stream = (
+            WorkflowStreamHub(
+                queue_size=observation.queue_size,
+                replay_size=observation.workflow_replay_size,
+            )
+            if observation.workflow_websocket_enabled
+            else None
+        )
+        if app.state.workflow_stream is not None:
+            app.state.workflow_stream.start()
+            store.subscribe_events(app.state.workflow_stream.publish_store_event)
         app.state.observation_commands = (
             ObservationCommandStore(configured.state_db) if observation.controls.enabled else None
         )

@@ -109,6 +109,8 @@ gateway:
     batch_size: 10
     batch_interval_seconds: 2
     request_timeout_seconds: 10
+    workflow_websocket_enabled: false
+    workflow_replay_size: 256
     controls:
       enabled: false
       nonce_ttl_seconds: 300

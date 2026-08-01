@@ -10,8 +10,9 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Header, HTTPException, status
 from pydantic import BaseModel, Field
+from starlette.requests import HTTPConnection
 
 from .config import Settings
 from .database import connect_sqlite
@@ -417,7 +418,7 @@ def auth_dependency(
     settings: Settings, keys: ApiKeyStore | None = None
 ) -> Callable[..., Coroutine[Any, Any, None]]:
     async def authenticate(
-        request: Request, authorization: str | None = Header(default=None)
+        request: HTTPConnection, authorization: str | None = Header(default=None)
     ) -> None:
         if settings.auth_enabled:
             if keys is None:
@@ -442,7 +443,7 @@ def admin_dependency(
     settings: Settings, keys: ApiKeyStore | None = None
 ) -> Callable[..., Coroutine[Any, Any, None]]:
     async def authenticate_admin(
-        request: Request, authorization: str | None = Header(default=None)
+        request: HTTPConnection, authorization: str | None = Header(default=None)
     ) -> None:
         if not settings.admin_api_enabled:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "admin API is disabled")
