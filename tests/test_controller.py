@@ -55,6 +55,46 @@ def test_local_invocation_preserves_unknown_cache_detail(
     assert state.engineering_loop.remaining_budget.tokens == before - 10
 
 
+def test_local_openai_invocation_normalizes_missing_cache_to_zero(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="local-openai-cache")
+
+    controller.record_invocation(
+        state,
+        "planner",
+        {
+            "model": "planner",
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
+        },
+        time.monotonic(),
+        provider="local",
+    )
+
+    assert state.agent_invocations[-1]["cached_tokens"] == 0
+
+
+def test_remote_invocation_preserves_unreported_cache_detail(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="remote-cache")
+
+    controller.record_invocation(
+        state,
+        "planner",
+        {
+            "model": "remote-planner",
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
+        },
+        time.monotonic(),
+        provider="opencode_go",
+    )
+
+    assert state.agent_invocations[-1]["cached_tokens"] is None
+
+
 def test_loop_budget_counts_only_reported_uncached_input_and_output(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -85,16 +125,32 @@ def test_prompt_sandwich_keeps_dynamic_context_after_stable_prefix(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
-    state = SessionState(session_id="cache-prefix", objective="implement")
+    state = SessionState(
+        session_id="cache-prefix",
+        objective="implement",
+        acceptance_criteria=["tests pass"],
+        repository={"workspace_identifier": "fixture"},
+    )
 
-    first = controller.prompt_sandwich("executor", state, "first observation", "first decision")
+    first = controller.prompt_sandwich(
+        "executor", state, "first observation", "first decision", available_tools=("read",)
+    )
     state.plan.append("new dynamic plan")
-    second = controller.prompt_sandwich("executor", state, "second observation", "second decision")
+    state.review_status = "rejected"
+    second = controller.prompt_sandwich(
+        "executor", state, "second observation", "second decision", available_tools=("write",)
+    )
 
-    first_prefix = first.split("\n\nROLE CONTEXT\n", 1)[0]
-    second_prefix = second.split("\n\nROLE CONTEXT\n", 1)[0]
+    first_prefix = first.split("\n\nDYNAMIC EXECUTION CONSTRAINTS\n", 1)[0]
+    second_prefix = second.split("\n\nDYNAMIC EXECUTION CONSTRAINTS\n", 1)[0]
     assert first_prefix == second_prefix
     assert "new dynamic plan" not in first_prefix
+    assert '"acceptance_criteria": ["tests pass"]' in first_prefix
+    assert '"workspace_identifier": "fixture"' in first_prefix
+
+    state.acceptance_criteria.append("lint passes")
+    changed = controller.prompt_sandwich("executor", state, "evidence", "continue")
+    assert changed.split("\n\nDYNAMIC EXECUTION CONSTRAINTS\n", 1)[0] != first_prefix
 
 
 def test_executor_prompt_requires_direct_reviewer_correction(

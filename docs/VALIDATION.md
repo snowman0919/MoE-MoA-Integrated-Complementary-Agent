@@ -9559,3 +9559,20 @@ across 59 source files, and `git diff --check` passed. Because scorer and seal
 code hashes changed, any later confirmatory evaluation must use a fresh sealed
 protocol/run ID; prior epochs remain diagnostic evidence only. v78 is not a
 quality or noninferiority PASS.
+
+Protocol v79 extends the stable prompt prefix through the current objective,
+acceptance criteria, and repository identity. Route, plan, tool evidence,
+review state, available tools, and validation state now begin only after the
+explicit dynamic boundary. A regression changes plan, review status, tools,
+observation, and decision while proving the stable prefix remains identical;
+changing acceptance criteria correctly invalidates it. Local
+Executor/Planner/Reviewer OpenAI-compatible invocations with reported prompt
+usage but omitted cache detail normalize to an explicit zero. Remote and
+Reasoner cache omission remains unknown, while the existing Planner two-pass
+path continues to sum analysis and final token/cache usage and returns unknown
+if either cache component is unreported. Seventeen focused cache/provider tests
+passed. The full regression passed 1,194 tests in 48.18 seconds. Ruff passed,
+strict mypy reported zero issues across 59 source files, and `git diff --check`
+passed. Physical gateway and direct-SGLang repeated-prefix TTFT/cache equality
+remain pending because V179 still owns the single-sequence candidates. v79 is
+not a cache or quality PASS.
