@@ -9668,3 +9668,31 @@ auto/runtime/sglang-gemma4-v1` then failed with content or add/add conflicts in
 patch-unique relative to origin/main. Therefore a whole-branch merge is rejected
 as a normalization method; functionality must be reconstructed and validated in
 separate origin-main/dev integration branches as the frozen plan requires.
+
+## 2026-08-02 AvatarForge v84 path and evidence durability correction
+
+V179 physically exposed two independent protocol defects before its first
+checkpoint. The runner referred to an input-defined `source/test` pair even
+though the frozen objective defines an `avatarforge/` project with
+`avatarforge/tests/` and five `avatarforge/docs/status/` reports. The client
+therefore created two top-level test locations, omitted every required status
+path, modified unrelated SGLang lifecycle scripts, and introduced two `id()`
+definitions in one shell script. It also repeatedly committed a document that
+recorded the immediately preceding evidence commit, making every correction
+create another stale commit hash. At the same time, 4,599+ Gateway events were
+durable in SQLite while the public evidence JSONL did not exist because the
+runner wrote its header only after the first checkpoint returned. V179 remains
+an immutable diagnostic attempt and is not noninferiority or long-horizon PASS
+evidence.
+
+Protocol v84 fixes the common runner boundary rather than the generated
+workspace. It names the exact `avatarforge/`, `avatarforge/tests/`, and five
+`avatarforge/docs/status/` paths, forbids changes outside that project root,
+rejects out-of-scope Git changed paths at checkpoint, and forbids
+self-referential commit-evidence documents. The runner now derives stable hashes
+from its preallocated Gateway session and fsyncs the mode-0600 public header and
+private control before launching the first client. The focused long-horizon
+client/analyzer suite passed 54 tests. The full regression passed 1,201 tests
+in 43.27 seconds; Ruff passed and strict mypy reported zero issues across 59
+source files. A fresh immutable run is still required, so v84 is not a Goal
+PASS.

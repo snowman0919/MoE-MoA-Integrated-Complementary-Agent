@@ -30,7 +30,7 @@ PHASES = (
     "full_validation_and_final",
 )
 CHECKPOINTS = len(PHASES)
-AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v56"
+AVATARFORGE_PROTOCOL = "avatarforge-long-goal-v84"
 AVATARFORGE_OPENCODE_STEPS = 32
 AVATARFORGE_OPENCODE_AGENT = "avatarforge"
 AVATARFORGE_PYTHON_ROOT = Path("/home/kotori9/dgx-moa-agent/.venv")
@@ -275,6 +275,17 @@ def client_prompt(
         if profile == "avatarforge"
         else "계획·검토 전용 단계는 새 커밋을 강제하지 않는다. "
     )
+    avatarforge_scope = (
+        f"모든 AvatarForge 산출물은 {workspace}/avatarforge 아래에만 만들고 tests는 "
+        f"{workspace}/avatarforge/tests, phase 보고서는 "
+        f"{workspace}/avatarforge/docs/status/current-phase.md, completed-phases.md, "
+        "blocked-items.md, decisions.md, test-evidence.md에 기록하라. 기존 MoA의 gateway, "
+        "scripts, config, tests, pyproject.toml과 top-level source/src/tests는 수정하지 마라. "
+        "commit과 clean 상태는 harness가 자동 수집하므로 현재 또는 최종 commit hash를 "
+        "담는 별도 commit-evidence 문서를 만들거나 갱신하지 마라. "
+        if profile == "avatarforge"
+        else ""
+    )
     validation_authority = (
         "이 protocol epoch에서는 위 host 검증 명령이 입력 문서의 이전 검증 "
         "명령보다 우선한다. exec_command로 검증할 때 login=false를 명시하고, "
@@ -287,8 +298,8 @@ def client_prompt(
     return (
         f"장기 작업 단계 {index}/{len(phases) - 1}({phase})를 수행하라. "
         f"현재 저장소 루트는 {workspace}이고 모든 도구의 현재 작업 디렉터리도 이 경로다. "
-        "추측한 경로로 cd하지 말고 입력 문서가 지정한 source/test 경로를 정확히 사용하며 "
-        "별도 대체 src 또는 tests 루트는 허용되지 않는다. "
+        "추측한 경로로 cd하지 말고 현재 저장소 루트를 사용하라. "
+        f"{avatarforge_scope}"
         f"검증 명령은 정확히 `{validation_command}`이다. "
         f"{validation_authority}"
         f"첫 단계에서만 {input_paths[0]}, {input_paths[1]}, {input_paths[2]}와 "
@@ -1017,6 +1028,10 @@ def stable_hashes_fields() -> tuple[str, ...]:
     )
 
 
+def avatarforge_scope_valid(paths: tuple[str, ...]) -> bool:
+    return bool(paths) and all(path.startswith("avatarforge/") for path in paths)
+
+
 def client_timeout(args: argparse.Namespace, control: dict[str, Any]) -> int:
     if getattr(args, "profile", "journal") != "avatarforge":
         return int(args.timeout)
@@ -1127,6 +1142,21 @@ def run_checkpoint(
         ).strip()
     ):
         raise RuntimeError("implementation_checkpoint_unchanged")
+    if profile == "avatarforge":
+        changed_paths = tuple(
+            path
+            for path in git(
+                args.workspace,
+                "diff",
+                "--name-only",
+                "-z",
+                comparison_commit,
+                git_state["commit"],
+            ).split("\0")
+            if path
+        )
+        if not avatarforge_scope_valid(changed_paths):
+            raise RuntimeError("avatarforge_scope_violation")
     control["last_commit"] = git_state["commit"]
     provider = provider_metrics(
         args.state_db,
@@ -1254,7 +1284,23 @@ def main() -> int:
             "client_session": None,
             "last_commit": baseline["commit"],
         }
-        header = {}
+        control["stable_hashes"] = stable_hashes(
+            args, control["gateway_session"], control["baseline"]
+        )
+        header = {
+            "type": "header",
+            "protocol": protocol,
+            "variant": args.variant,
+            "started_at_epoch": control["started_at_epoch"],
+            "expected_checkpoints": len(phases),
+            "checkpoint_interval_seconds": INTERVAL_SECONDS,
+            "client_path": args.harness,
+            "gateway_path": "authenticated_loopback",
+            "baseline_commit": control["baseline"]["commit"],
+            **control["stable_hashes"],
+        }
+        append_event(args.evidence, header, create=True)
+        write_private(control_path, control)
     start_index = sum(event.get("type") == "checkpoint" for event in events)
     active_index = start_index
     last_checkpoint: dict[str, Any] | None = None
@@ -1263,24 +1309,6 @@ def main() -> int:
         for index in range(start_index, len(phases)):
             active_index = index
             checkpoint, control = run_checkpoint(args, state, control, index)
-            if not header:
-                control["stable_hashes"] = stable_hashes(
-                    args, control["client_session"], control["baseline"]
-                )
-                checkpoint.update(control["stable_hashes"])
-                header = {
-                    "type": "header",
-                    "protocol": protocol,
-                    "variant": args.variant,
-                    "started_at_epoch": control["started_at_epoch"],
-                    "expected_checkpoints": len(phases),
-                    "checkpoint_interval_seconds": INTERVAL_SECONDS,
-                    "client_path": args.harness,
-                    "gateway_path": "authenticated_loopback",
-                    "baseline_commit": control["baseline"]["commit"],
-                    **control["stable_hashes"],
-                }
-                append_event(args.evidence, header, create=True)
             write_private(control_path, control)
             append_event(args.evidence, checkpoint)
             last_checkpoint = checkpoint
@@ -1310,6 +1338,7 @@ def main() -> int:
                     "client_terminal_missing",
                     "dirty_checkpoint",
                     "implementation_checkpoint_unchanged",
+                    "avatarforge_scope_violation",
                     "client_container_already_exists",
                     "client_session_changed",
                     "gateway_state_missing",

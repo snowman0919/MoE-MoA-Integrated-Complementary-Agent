@@ -56,7 +56,6 @@ def test_exclusive_json_refuses_overwrite_and_protects_routing(tmp_path: Path) -
 
 
 def test_created_seal_records_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    globals_ = MODULE.create_seal.__globals__
     runner = SimpleNamespace(DOCKER_IMAGE="test-image", prompt=lambda _task: "")
     config = MODULE.PanelConfig(
         "breadth",
@@ -67,12 +66,12 @@ def test_created_seal_records_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         Path(MODULE.__file__),
         Path(MODULE.__file__),
     )
-    monkeypatch.setitem(globals_, "configure_panel", lambda _panel: config)
-    monkeypatch.setitem(globals_, "repository_revision", lambda: "revision")
-    monkeypatch.setitem(globals_, "attempt_plan", lambda _protocol, _config: ([], {}))
-    monkeypatch.setitem(globals_, "client_metadata", lambda _config: {})
-    monkeypatch.setitem(globals_, "provider_fingerprints", lambda _config: {})
-    monkeypatch.setitem(globals_, "container_image_digest", lambda _config: "image-digest")
+    monkeypatch.setattr(MODULE, "configure_panel", lambda _panel: config)
+    monkeypatch.setattr(MODULE, "repository_revision", lambda: "revision")
+    monkeypatch.setattr(MODULE, "attempt_plan", lambda _protocol, _config: ([], {}))
+    monkeypatch.setattr(MODULE, "client_metadata", lambda _config: {})
+    monkeypatch.setattr(MODULE, "provider_fingerprints", lambda _config: {})
+    monkeypatch.setattr(MODULE, "container_image_digest", lambda _config: "image-digest")
     args = Namespace(
         panel="breadth",
         protocol_id="panel-metadata",

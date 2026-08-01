@@ -103,16 +103,10 @@ def test_opencode_runtime_cache_is_mounted_read_only(tmp_path: Path, monkeypatch
     package_json.write_text("{}")
     package_lock.write_text("{}")
     ripgrep.touch()
-    monkeypatch.setitem(
-        MODULE.opencode_runtime_mounts.__globals__, "OPENCODE_NODE_MODULES", node_modules
-    )
-    monkeypatch.setitem(
-        MODULE.opencode_runtime_mounts.__globals__, "OPENCODE_PACKAGE_JSON", package_json
-    )
-    monkeypatch.setitem(
-        MODULE.opencode_runtime_mounts.__globals__, "OPENCODE_PACKAGE_LOCK", package_lock
-    )
-    monkeypatch.setitem(MODULE.opencode_runtime_mounts.__globals__, "OPENCODE_RIPGREP", ripgrep)
+    monkeypatch.setattr(MODULE, "OPENCODE_NODE_MODULES", node_modules)
+    monkeypatch.setattr(MODULE, "OPENCODE_PACKAGE_JSON", package_json)
+    monkeypatch.setattr(MODULE, "OPENCODE_PACKAGE_LOCK", package_lock)
+    monkeypatch.setattr(MODULE, "OPENCODE_RIPGREP", ripgrep)
 
     mounts = MODULE.opencode_runtime_mounts(tmp_path / "state")
 

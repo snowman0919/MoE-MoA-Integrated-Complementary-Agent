@@ -67,6 +67,23 @@ def test_avatarforge_prompts_require_a_commit_per_phase() -> None:
     assert "Character IR" in prompts[3]
     assert f"{workspace}/state/long-review.json" in prompts[3]
     assert '"evidence_sha256":"64 lowercase hex"' in prompts[3]
+    assert all(f"{workspace}/avatarforge/tests" in prompt for prompt in prompts)
+    assert all(
+        f"{workspace}/avatarforge/docs/status/current-phase.md" in prompt for prompt in prompts
+    )
+    assert all("top-level source/src/tests는 수정하지 마라" in prompt for prompt in prompts)
+    assert all("commit-evidence 문서를 만들거나 갱신하지 마라" in prompt for prompt in prompts)
+
+
+def test_avatarforge_scope_allows_only_the_project_root() -> None:
+    assert MODULE.avatarforge_scope_valid(
+        ("avatarforge/plugin.json", "avatarforge/docs/status/current-phase.md")
+    )
+    assert not MODULE.avatarforge_scope_valid(())
+    assert not MODULE.avatarforge_scope_valid(("source/avatarforge.py",))
+    assert not MODULE.avatarforge_scope_valid(
+        ("avatarforge/tests/test_contract.py", "pyproject.toml")
+    )
 
 
 def test_final_validation_rejects_zero_tests(
@@ -203,6 +220,41 @@ def test_evidence_is_durable_and_rejects_private_fields(tmp_path: Path) -> None:
         MODULE.append_event(evidence, {"type": "bad", "raw_prompt": "secret"})
     with pytest.raises(ValueError, match="private evidence"):
         MODULE.append_event(evidence, {"type": "bad", "nested": {"session_id": "raw"}})
+
+
+def test_main_persists_header_and_control_before_first_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = arguments(tmp_path, "codex")
+    args.profile = "avatarforge"
+    args.variant = "V180"
+    args.timeout = 36_000
+    args.evidence = tmp_path / "evidence.jsonl"
+    args.state_dir = tmp_path / "private-state"
+    args.state_db = tmp_path / "state.db"
+    baseline = {"dirty_state": "clean", "commit": "a" * 40, "branch": "detached"}
+    hashes = {field: "b" * 64 for field in MODULE.stable_hashes_fields()}
+    monkeypatch.setattr(MODULE, "parse_args", lambda: args)
+    monkeypatch.setattr(MODULE, "ensure_local_git_identity", lambda _workspace: None)
+    monkeypatch.setattr(MODULE, "git_snapshot", lambda _workspace: baseline)
+    monkeypatch.setattr(MODULE, "stable_hashes", lambda *_args: hashes)
+    monkeypatch.setattr(
+        MODULE,
+        "run_checkpoint",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("client_checkpoint_failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="client_checkpoint_failed"):
+        MODULE.main()
+
+    rows = MODULE.load_events(args.evidence)
+    assert len(rows) == 1
+    assert rows[0]["type"] == "header"
+    assert rows[0]["protocol"] == MODULE.AVATARFORGE_PROTOCOL
+    assert {field: rows[0][field] for field in hashes} == hashes
+    control = json.loads((args.state_dir / "long-control.json").read_text())
+    assert control["stable_hashes"] == hashes
+    assert args.evidence.with_suffix(".jsonl.failure.json").is_file()
 
 
 def test_provider_manifest_hash_rejects_private_fields(tmp_path: Path) -> None:
@@ -683,7 +735,6 @@ def test_checkpoint_interrupt_removes_only_its_named_container(
     }
     existence = iter((False, True))
     removed: list[str] = []
-    globals_ = MODULE.run_checkpoint.__globals__
     monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
     monkeypatch.setattr(
         MODULE.QUALITY,
@@ -691,14 +742,14 @@ def test_checkpoint_interrupt_removes_only_its_named_container(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
     monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
-    monkeypatch.setitem(
-        globals_,
+    monkeypatch.setattr(
+        MODULE,
         "client_command",
         lambda *_args, **_kwargs: (["docker", "run", "--rm", "image", "command"], {}, None),
     )
-    monkeypatch.setitem(globals_, "wait_until", lambda _target: None)
-    monkeypatch.setitem(globals_, "container_exists", lambda _name: next(existence))
-    monkeypatch.setitem(globals_, "remove_client_container", removed.append)
+    monkeypatch.setattr(MODULE, "wait_until", lambda _target: None)
+    monkeypatch.setattr(MODULE, "container_exists", lambda _name: next(existence))
+    monkeypatch.setattr(MODULE, "remove_client_container", removed.append)
 
     with pytest.raises(KeyboardInterrupt):
         MODULE.run_checkpoint(args, state, control, 0)
@@ -795,7 +846,6 @@ def test_checkpoint_failures_are_distinguished(
         "gateway_session": "private-gateway",
         "client_session": None,
     }
-    globals_ = MODULE.run_checkpoint.__globals__
     monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
     monkeypatch.setattr(
         MODULE.QUALITY,
@@ -805,15 +855,15 @@ def test_checkpoint_failures_are_distinguished(
         ),
     )
     monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
-    monkeypatch.setitem(
-        globals_,
+    monkeypatch.setattr(
+        MODULE,
         "client_command",
         lambda *_args, **_kwargs: (["docker", "run", "--rm", "image", "command"], {}, None),
     )
-    monkeypatch.setitem(globals_, "wait_until", lambda _target: None)
-    monkeypatch.setitem(globals_, "container_exists", lambda _name: False)
-    monkeypatch.setitem(
-        globals_,
+    monkeypatch.setattr(MODULE, "wait_until", lambda _target: None)
+    monkeypatch.setattr(MODULE, "container_exists", lambda _name: False)
+    monkeypatch.setattr(
+        MODULE,
         "client_metrics",
         lambda *_args: {
             "session": session,
@@ -871,7 +921,6 @@ def test_checkpoint_requires_committed_implementation(
         "gateway_session": "private-gateway",
         "client_session": None,
     }
-    globals_ = MODULE.run_checkpoint.__globals__
     monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
     monkeypatch.setattr(
         MODULE.QUALITY,
@@ -879,15 +928,15 @@ def test_checkpoint_requires_committed_implementation(
         lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess([], 0, "", ""),
     )
     monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
-    monkeypatch.setitem(
-        globals_,
+    monkeypatch.setattr(
+        MODULE,
         "client_command",
         lambda *_args, **_kwargs: (["docker", "run", "--rm", "image", "command"], {}, None),
     )
-    monkeypatch.setitem(globals_, "wait_until", lambda _target: None)
-    monkeypatch.setitem(globals_, "container_exists", lambda _name: False)
-    monkeypatch.setitem(
-        globals_,
+    monkeypatch.setattr(MODULE, "wait_until", lambda _target: None)
+    monkeypatch.setattr(MODULE, "container_exists", lambda _name: False)
+    monkeypatch.setattr(
+        MODULE,
         "client_metrics",
         lambda *_args: {
             "session": "private-session",
@@ -900,8 +949,8 @@ def test_checkpoint_requires_committed_implementation(
             "output_sha256": "0" * 64,
         },
     )
-    monkeypatch.setitem(
-        globals_,
+    monkeypatch.setattr(
+        MODULE,
         "gateway_progress_state",
         lambda *_args: {
             "phase_index": index,
@@ -916,12 +965,12 @@ def test_checkpoint_requires_committed_implementation(
             "premature_completion": False,
         },
     )
-    monkeypatch.setitem(
-        globals_,
+    monkeypatch.setattr(
+        MODULE,
         "git_snapshot",
         lambda _workspace: {"dirty_state": "clean", "commit": baseline},
     )
-    monkeypatch.setitem(globals_, "git", lambda *_args: "")
+    monkeypatch.setattr(MODULE, "git", lambda *_args: "")
 
     with pytest.raises(RuntimeError, match="implementation_checkpoint_unchanged"):
         MODULE.run_checkpoint(args, state, control, index)

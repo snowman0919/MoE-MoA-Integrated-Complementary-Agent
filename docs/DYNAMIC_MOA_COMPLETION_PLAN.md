@@ -529,6 +529,17 @@ reconnect, plan/context 보존을 대체하지 않는다.
 - protocol v44는 stderr 문장을 저장하지 않고 사전 승인된 일반 진단
   단어의 교집합만 sanitized failure event에 기록한다. v43 결과는 진단
   자료로만 보존한다.
+- protocol v84는 V179에서 확인된 평가 계약 모호성을 제거한다. 새
+  AvatarForge 실행은 모든 산출물을 `<workspace>/avatarforge/`, 테스트를
+  `avatarforge/tests/`, phase 보고서를 `avatarforge/docs/status/`의 고정
+  5개 파일에만 둔다. 기존 MoA runtime·script·config·test·pyproject와
+  top-level `source`/`src`/`tests` 변경은 prompt와 checkpoint changed-path
+  gate에서 모두 거부한다. commit과 clean 상태는 runner가 수집하므로
+  최신 commit hash를 다시 기록하는 self-referential evidence 문서는
+  금지한다. 공개 evidence header와 private control은 첫 client 호출 전에
+  fsync하고, 안정 session hash는 처음부터 알려진 gateway session으로
+  계산한다. v76/V179는 진단 자료로만 보존하며 새 clean seed와 새 run ID를
+  사용한다.
 
 ## 10. Release, rollback, 배포
 
