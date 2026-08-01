@@ -9782,3 +9782,14 @@ durability selection passed 2 tests; the full regression passed 1,202 tests in
 42.24 seconds. Ruff passed and strict mypy reported zero issues across 60 source
 files. V180 and V181 remain failed diagnostics. A new run must supply both GPU
 telemetry and Docker socket GID and must use a fresh variant and workspace.
+
+## 2026-08-02 Discord current-authority cleanup
+
+Repository search found no Discord provider, configuration, metric, test,
+systemd unit, or script implementation. Current README, state, operations, and
+live-observation documentation no longer advertise a disabled compatibility
+transport that does not exist; Telegram remains the sole implemented observation
+provider. Historical Discord experiment references remain only in validation and
+frozen planning evidence. The documentation-only cleanup removes 20 lines and
+adds 13, with `git diff --check` passing. No runtime or production setting was
+changed.

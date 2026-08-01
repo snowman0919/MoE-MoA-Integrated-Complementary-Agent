@@ -227,8 +227,8 @@ by-default user/role policy. Issue request-scoped nonces through
 `POST /v1/admin/observation/nonces` and submit bounded commands through
 `POST /v1/admin/observation/commands`. See `docs/LIVE_OBSERVATION.md`.
 
-The reviewed production override currently enables only Telegram observation;
-Discord and controls remain disabled. The token and target are 0600 files outside
+The reviewed production override currently enables Telegram observation;
+controls remain disabled. The token and target are 0600 files outside
 the worktree and are injected into the ignored 0600 environment. Rollback is to
 remove `DGX_MOA_LIVE_OBSERVATION` from that environment, restart the fixed
 gateway unit, wait for resident restoration, and verify observer metrics stop

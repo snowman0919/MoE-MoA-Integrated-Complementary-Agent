@@ -38,7 +38,6 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 
 - `dev` declares package/runtime version `2.0.0`. The OpenCode Go Judge and
   cold-routing gates passed and were promoted through reviewed PRs `#44`-`#48`.
-  The operator explicitly removed Discord from the release scope on 2026-07-22;
   Telegram is the selected production observation provider.
 - `main` is the reviewed production target and stable recursive control plane.
 - `dev` is the integration branch; recursive experiments must use isolated
@@ -87,8 +86,7 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 - Telegram observation was subsequently enabled through the protected production
   environment after a real Bot API identity, target, safe-payload, and send
   validation. A production `dgx-moa` request emitted three observer events with
-  zero Telegram errors or drops. Discord is intentionally unconfigured and is
-  not a release gate; observation controls remain disabled.
+  zero Telegram errors or drops. Observation controls remain disabled.
 - PRs `#44`-`#48` replaced NVIDIA NIM with OpenCode Go, enabled the separate
   GLM-5.2 Remote Judge and DeepSeek V4 Pro/Flash specialist providers, corrected
   real readiness-probe and structured-output limits, and documented production
@@ -172,10 +170,10 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
 - Task evidence now records canonical node types and trust classes without
   changing the existing edge serialization. Deterministic trust precedence and
   graph consistency passed an isolated exact replay.
-- A bounded internal event bus, Discord/Telegram senders, safe event projection,
+- A bounded internal event bus, Telegram sender, safe event projection,
   batching, drop/error metrics, and optional authenticated control commands are
-  implemented. Telegram observation is production-enabled; Discord and controls
-  remain disabled.
+  implemented. Telegram observation is production-enabled; controls remain
+  disabled.
 - A separate training event/candidate store, content-addressed objects,
   sanitization, repository/opt-out/license gates, role-specific candidates,
   deduplication, transactional review audit, request/repository exclusion, and

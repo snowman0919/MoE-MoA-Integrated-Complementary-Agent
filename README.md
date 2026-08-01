@@ -56,8 +56,7 @@ compatibility fixes were promoted through reviewed `dev`-to-`main` PRs.
 Skills and canaries, a separate Runtime Knowledge registry, OpenCode Go GLM-5.2
 Remote Judge transport, remote-first cold-start routing for local Planner and
 Reviewer specialists, declarative policy, typed Evidence Graph/replay, safe
-Telegram observation (with an optional disabled Discord compatibility transport),
-privacy-filtered training candidates, and Seoul
+Telegram observation, privacy-filtered training candidates, and Seoul
 weekly 7z packaging/retention workflows. These are not production capabilities
 until the physical client/provider/archive gates in `docs/VALIDATION.md` pass.
 
