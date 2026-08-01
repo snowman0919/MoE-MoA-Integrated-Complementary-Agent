@@ -9425,3 +9425,23 @@ dead process. Five focused regressions passed, including the physical failure
 shape; the full regression passed 1,187 tests. Ruff passed, strict mypy reported
 zero issues across 59 source files, and `git diff --check` passed. End-to-end
 v72 confirmation has not yet run, so v72 is not a PASS.
+
+V171 through V174 are preserved launcher-reconstruction failures and are not
+v72 confirmations. V171 used a linked Git worktree without exposing its parent
+Git metadata. V172 corrected that with an independent clone but initially used
+the image UID and omitted NVIDIA runtime injection. V173 corrected UID and GPU
+injection but still omitted the Docker socket supplementary group. V174
+isolated the remaining root cause: the runner lacked socket GID 988, so its
+nested Codex container command returned permission denied before creating a
+session. Minimal Codex and full generated-command probes separately confirmed
+that the V174 gateway, local providers, model mounts, and Codex OAuth path were
+healthy. These attempts remain diagnostic evidence only.
+
+V175 starts from clean detached commit `bed3669` in an independent clone and
+reproduces the V170 runner boundary completely: UID/GID 1000, supplementary
+Docker socket GID 988, NVIDIA device injection, read-only root, dropped
+capabilities, no-new-privileges, bounded memory/PIDs, and loopback gateway.
+Its initial physical calls completed through local Reasoner, Qwen Executor,
+local Gemma Planner, and Codex OAuth Frontier. V175 is still running and is not
+a PASS until terminal validation, independent review, and a clean phase commit
+are recorded.
