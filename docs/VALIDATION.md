@@ -9591,3 +9591,26 @@ Gemma directory and no Gemma 31B directory; the sole remaining `31B` text is
 historical validation context. This records the active candidate boundary but
 does not promote, deploy, or establish quality noninferiority. v80 is not a
 Goal PASS.
+
+V181 refreshed the branch-normalization preservation boundary without changing
+any branch, worktree, or deployed process. Complete-history bundles were written
+outside every repository at
+`/home/kotori9/code/.moa-preservation/20260802-0135`: `shared-all.bundle`
+is 2,507,229 bytes with SHA-256
+`8bbc7ff5169937f80d1e4fe056f8ee1106ff87288426d24e3842b4a7e32bc84f`;
+`production-all.bundle` is 1,790,434 bytes with SHA-256
+`64f043f3fc52e7fa66a45bee5c395d43baee31a40e32a2f269e8199b77cb2ed7`.
+Both are mode 0600 and `git bundle verify` reports complete history. The shared
+bundle contains experiment HEAD `da912113f24c5da5268c8433a902c0ca95a60160`.
+The active branch remains clean except for the pre-existing untracked
+`data/validation/` tree. Dev, observability, controller, and production retain
+their existing dirty paths unchanged. `origin/main...origin/dev` remains
+227/0 and `origin/dev...auto/runtime/sglang-gemma4-v1` is 0/191, so dev's
+integration role is still not restored. Production remains at clean-history
+HEAD/origin-main `396e0458f25977293281b953d2c804cf5b689970` with a dirty model
+override and backup directory; its running process reports controller commit
+`45192c136d6690d2f1115f72c1023131798d98da`, which is an ancestor rather than
+the worktree HEAD. Candidate ports 18101 and 18102 remain loopback-only, while
+the authenticated gateway alone listens on loopback and the tailnet address.
+This preservation preflight permits later non-destructive reconstruction but
+does not authorize ref movement, integration, release, or deployment.
