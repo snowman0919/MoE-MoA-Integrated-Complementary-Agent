@@ -5471,3 +5471,21 @@ only `log_report.py`; public and hidden validation both exited `0`, and all
 required review calls selected remote `deepseek-v4-flash` with
 `routing_reason=local_not_ready` and both completed. The canary recorded no
 failed specialist call, bad terminal, stream abort, or gateway 5xx.
+
+## Origin-main SGLang topology reconstruction — 2026-08-02
+
+Branch `auto/integration/sglang-topology-v1` was created directly from verified
+`origin/main@396e045` after complete-history and dirty-worktree preservation.
+It reconstructs only the loopback dual-SGLang topology, fixed weight manifests,
+importable physical validator, durable soak runner, thin CLIs, and their tests.
+The final specialist path is fixed to
+`nvidia/Gemma-4-26B-A4B-NVFP4@a19cfe00be84568a6867111c9a68c9c44fdcffe6`;
+no 31B path remains in this unit. Static contracts require ModelOpt FP4, Gemma
+4 reasoning/tool parsers, streaming, 65,536 context, one running request, Radix
+cache, loopback ports 18101/18102, and pinned image/model shard hashes.
+
+The three focused topology/runtime/soak modules passed 21 tests. The complete
+origin-main regression passed 1,022 tests in 32.98 seconds. Ruff passed and
+strict mypy reported zero issues across 47 source files. This branch has not
+been merged into dev and has not changed production. A fresh physical validator
+run, sustained load, rollback rehearsal, and release gates remain mandatory.
