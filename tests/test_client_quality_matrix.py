@@ -312,6 +312,51 @@ def test_invocation_telemetry_is_content_free_and_knows_fixed_plan_cost(
     assert "private-request" not in json.dumps(result)
 
 
+def test_baseline_telemetry_uses_direct_codex_usage_without_gateway_rows() -> None:
+    result = MODULE.baseline_telemetry(
+        '{"type":"turn.completed","usage":{"input_tokens":11,'
+        '"cached_input_tokens":7,"output_tokens":5}}',
+        0,
+        1.25,
+    )
+
+    assert result["complete"] is True
+    assert result["provider_pinned"] is True
+    assert result["prompt_tokens"] == 11
+    assert result["completion_tokens"] == 5
+    assert result["total_tokens"] == 16
+    assert result["cached_tokens"] == 7
+    assert result["remote_cost_usd"] == 0
+    assert result["invocations"] == [
+        {
+            "role": "executor",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "completed",
+            "fallback_reason": None,
+            "calls": 1,
+            "average_latency_ms": 1250.0,
+            "maximum_latency_ms": 1250.0,
+        }
+    ]
+
+
+def test_baseline_telemetry_fails_closed_without_usage_or_on_client_failure() -> None:
+    missing = MODULE.baseline_telemetry('{"type":"turn.completed"}', 0, 1)
+    failed = MODULE.baseline_telemetry("", 124, 1)
+
+    assert missing["complete"] is False
+    assert missing["reason"] == "token_usage_missing"
+    assert missing["cache_status_counts"] == {
+        "reported": 0,
+        "unavailable": 1,
+        "missing": 0,
+    }
+    assert failed["complete"] is False
+    assert failed["reason"] == "provider_error"
+    assert failed["provider_errors"] == 1
+
+
 def test_invocation_telemetry_requires_and_collects_retry_cache_and_tokens(
     tmp_path: Path,
 ) -> None:

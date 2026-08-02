@@ -567,6 +567,13 @@ reconnect, plan/context 보존을 대체하지 않는다.
   진단 자료로만 보존하고, 새 protocol hash·run ID·clean seed에서 확증 평가를
   시작한다. Codex·Hermes 계약과 동결 quality margin·bootstrap seed는 바꾸지
   않는다.
+- protocol v89는 Gateway를 의도적으로 거치지 않는 native GPT-5.6 Sol
+  baseline의 Codex JSON terminal usage에서 직접 provider/model, input/output,
+  cached-input 상태, latency, zero variable subscription cost와 단일-provider
+  provenance를 수집한다. usage 누락이나 client 실패는 fail closed하고 Gateway
+  invocation과 혼합하지 않는다. v88의 13개 scored attempt는 baseline
+  `no_invocations` telemetry 결함을 발견한 진단 자료로만 보존하며 새 seal,
+  run ID, attempt order와 clean fixtures에서 200회를 처음부터 다시 시작한다.
 
 ## 10. Release, rollback, 배포
 

@@ -10209,3 +10209,21 @@ This establishes OpenCode 5/5 diagnostic functionality and telemetry only.
 Atomic-store and DAG latency and token volume are materially inefficient. No
 matched native baseline, blinded quality scores, or confidence interval exists
 for this epoch, so it is not non-inferiority evidence.
+
+Confirmatory protocol v88 was sealed for 200 attempts and verified before its
+first result. Thirteen attempts were scored over 4,343.368 s: ten passed every
+hard gate, one failed functionally, and two had incomplete telemetry. The
+second telemetry failure exposed a protocol defect: the native GPT-5.6 Sol
+baseline intentionally bypasses the Gateway, so the Gateway-only collector
+reported `no_invocations` despite a successful direct Codex run. Continuing
+would make every native baseline attempt fail telemetry for an instrumentation
+reason. The runner was stopped during the next unscored attempt; all results,
+the seal, routing, and fixture commits remain immutable diagnostic evidence.
+
+The quality runner now derives content-free baseline telemetry from Codex JSON
+terminal usage, pins provenance to the single native OAuth provider/model,
+records actual variable cost as zero, and fails closed on missing usage or a
+nonzero client exit. It never mixes direct baseline data with Gateway rows.
+Focused quality/frontier tests passed 64 cases; the full suite passed 1,216
+tests in 46.06 s, and Ruff plus strict mypy passed. This protocol change
+requires a fresh v89 seal and all 200 attempts from the beginning.

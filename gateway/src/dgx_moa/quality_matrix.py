@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .frontier import codex_usage
+
 HARNESSES = ("baseline", "opencode", "codex", "hermes")
 CORE_ENV = ("HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "SHELL", "TERM", "USER")
 TEST_COMMAND = (sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v")
@@ -1627,6 +1629,50 @@ def invocation_telemetry(
     }
 
 
+def baseline_telemetry(stdout: str, return_code: int, duration_seconds: float) -> dict[str, Any]:
+    prompt, completion, cached = codex_usage(stdout)
+    success = return_code == 0
+    tokens_complete = prompt is not None and completion is not None
+    total = prompt + completion if prompt is not None and completion is not None else None
+    complete = success and tokens_complete
+    return {
+        "complete": complete,
+        "reason": (
+            None if complete else "provider_error" if not success else "token_usage_missing"
+        ),
+        "provider_pinned": True,
+        "provider_switches": 0,
+        "remote_cost_complete": True,
+        "remote_cost_usd": 0.0,
+        "missing_token_rows": 0 if tokens_complete else 1,
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": total,
+        "cached_tokens": cached,
+        "cache_status_counts": {
+            "reported": int(cached is not None),
+            "unavailable": int(cached is None),
+            "missing": 0,
+        },
+        "retryable_failures": 0,
+        "provider_errors": int(not success),
+        "orphan_provider_errors": 0,
+        "invocations": [
+            {
+                "role": "executor",
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "status": "completed" if success else "failed",
+                "fallback_reason": None,
+                "calls": 1,
+                "average_latency_ms": round(duration_seconds * 1_000, 3),
+                "maximum_latency_ms": round(duration_seconds * 1_000, 3),
+            }
+        ],
+        "routing_events": [],
+    }
+
+
 def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any]:
     workspace, evidence = paths(args, harness, task)
     if not (evidence / "manifest.json").exists():
@@ -1825,11 +1871,15 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             return_code = 1
     duration = round(time.monotonic() - started, 3)
     ended_at = time.time()
-    telemetry = invocation_telemetry(
-        getattr(args, "state_db", None),
-        started_at,
-        ended_at,
-        session_id=session_id,
+    telemetry = (
+        baseline_telemetry(stdout, return_code, duration)
+        if harness == "baseline"
+        else invocation_telemetry(
+            getattr(args, "state_db", None),
+            started_at,
+            ended_at,
+            session_id=session_id,
+        )
     )
     resources_after = resource_snapshot()
     (evidence / "stdout.log").write_text(stdout)
