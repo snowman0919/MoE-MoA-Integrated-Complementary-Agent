@@ -10227,3 +10227,11 @@ nonzero client exit. It never mixes direct baseline data with Gateway rows.
 Focused quality/frontier tests passed 64 cases; the full suite passed 1,216
 tests in 46.06 s, and Ruff plus strict mypy passed. This protocol change
 requires a fresh v89 seal and all 200 attempts from the beginning.
+
+Physical diagnostic `20260803-baseline-telemetry-5b701a9-v1` then ran the
+native GPT-5.6 Sol baseline through the same Docker fixture. Functional and
+hidden checks passed in 69.682 s. Direct telemetry was complete, provider
+pinning held, provider errors and switches were zero, token rows were complete,
+and cached-input usage was numerically reported. This validates the v89
+baseline collector for one diagnostic attempt only; confirmation still
+requires a new sealed 200-attempt epoch.
