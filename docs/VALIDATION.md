@@ -10235,3 +10235,24 @@ pinning held, provider errors and switches were zero, token rows were complete,
 and cached-input usage was numerically reported. This validates the v89
 baseline collector for one diagnostic attempt only; confirmation still
 requires a new sealed 200-attempt epoch.
+
+### 2026-08-02 — Gemma 4 26B-A4B boundary recheck
+
+The active loopback-only specialist still mounts only
+`nvidia/Gemma-4-26B-A4B-NVFP4` revision
+`a19cfe00be84568a6867111c9a68c9c44fdcffe6` and serves the shared Planner and
+Reviewer alias through SGLang. No Gemma 31B checkpoint, Hugging Face model
+cache, or stale lock directory remains. Historical 31B evidence in this file
+was retained; the separate vLLM baseline scripts remain rollback-only assets.
+
+Fresh physical validation passed all runtime contract, real inference
+readiness, streaming, tool-parser, reasoning separation, structured Planner
+and Reviewer output, Radix-cache, context-capacity, memory-headroom, and OOM
+checks in 76.981 seconds with exit code 0. Planner and Reviewer completed in
+32.908 and 24.459 seconds. The mode-`0600` result is
+`/var/tmp/sglang-gemma4-26b-physical-20260802-current.json`, SHA-256
+`a41a0ab665e95a7c8bf88ec53369ddfe7add097e038dc28c0b023a9fef7d840b`.
+Focused runtime/model tests passed 27 cases; the full suite passed 1,216 tests
+in 47.47 seconds. Ruff and strict mypy over all 60 gateway source files passed.
+This revalidates the candidate boundary only; it is not deployment or Goal
+completion approval.
