@@ -10256,3 +10256,12 @@ Focused runtime/model tests passed 27 cases; the full suite passed 1,216 tests
 in 47.47 seconds. Ruff and strict mypy over all 60 gateway source files passed.
 This revalidates the candidate boundary only; it is not deployment or Goal
 completion approval.
+
+Confirmatory protocol v89 was interrupted during its first attempt for the
+explicit Gemma boundary recheck. It produced zero `score.json` files; its
+seal, 200 prepared fixtures, and partial client state remain immutable
+diagnostic evidence. No prepared fixture or partial state is counted as a
+completed attempt. Because the evidence-only validation commit changed the
+sealed analysis revision, confirmation resumes under a fresh v90 seal with the
+same frozen statistical and execution contract and all 200 attempts restarted
+from clean fixtures.

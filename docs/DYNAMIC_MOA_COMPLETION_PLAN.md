@@ -574,6 +574,12 @@ reconnect, plan/context 보존을 대체하지 않는다.
   invocation과 혼합하지 않는다. v88의 13개 scored attempt는 baseline
   `no_invocations` telemetry 결함을 발견한 진단 자료로만 보존하며 새 seal,
   run ID, attempt order와 clean fixtures에서 200회를 처음부터 다시 시작한다.
+- protocol v90은 v89 봉인 후 첫 작업 도중 사용자 요청에 따라 중단된 실행을
+  진단 자료로만 보존한다. v89에는 scored attempt가 없으며 준비된 fixture나
+  부분 client state를 PASS로 계산하지 않는다. Gemma 4 26B-A4B 경계 재검증
+  기록으로 analysis commit이 바뀌었으므로, v89의 품질 margin, bootstrap seed,
+  표본 수, prompt, model, fixture, scorer, telemetry 계약은 변경하지 않은 채 새
+  seal, run ID, attempt order와 clean fixture에서 200회를 처음부터 다시 시작한다.
 
 ## 10. Release, rollback, 배포
 
