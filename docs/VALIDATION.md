@@ -11070,3 +11070,20 @@ cleared the implementation. This is preserved as a model/review quality failure,
 not converted into a fixture-specific prompt hint. Hidden assertion details were
 not fed back into runtime code or prompts. Sanitized immutable evidence is at
 `/home/kotori9/code/.moa-preservation/diagnostics/20260803-codex-rate-limiter-v95-c1`.
+
+Fresh v95 `atomic-store` C2, `dag-runner` C3, `webhook-verifier` C4, and
+`log-report` C5 passed every functional scorer gate in 178.858, 170.284,
+166.712, and 125.911 seconds. All four runs had complete provider-pinned
+telemetry, unchanged tests, allowed source-only changes, public and hidden
+validation success, Korean terminal responses, and no provider error, switch,
+retryable failure, missing token row, or variable remote cost. Sanitized
+immutable evidence is preserved in the matching C2-C5 directories under
+`/home/kotori9/code/.moa-preservation/diagnostics/`.
+
+The complete fresh Codex v95 diagnostic epoch is therefore 4/5, not 5/5,
+because C1 failed its hidden quality gate. Transport, tool execution, telemetry,
+and provider pinning were stable across all five, but functional reliability is
+not sufficient for confirmation. Every task also used bounded fixed-cost Codex
+OAuth secondary or Frontier collaboration, so the four passing rows are not
+local-path non-inferiority evidence. No selective retry is substituted for the
+failed epoch.
