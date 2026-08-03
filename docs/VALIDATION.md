@@ -10926,3 +10926,19 @@ immutable and requires a new run ID.
 The v94 complete gate passed Ruff, strict mypy across 62 source files, and
 `1,226/1,226` tests in 43.11 seconds with the existing Starlette deprecation
 warning.
+
+## Codex v94 dag-runner diagnostic A11 (2026-08-03)
+
+Run `20260803-codex-dag-runner-v94-a11` passed every public, hidden, terminal,
+tool, source-scope, unchanged-test, Korean-output, telemetry, pinning, and Docker
+isolation gate in 236.933 seconds. There was no provider error, retryable
+failure, switch, or variable remote cost. Its longest secondary Executor call
+was 112.358 seconds. The sanitized immutable evidence is preserved at
+`/home/kotori9/code/.moa-preservation/diagnostics/20260803-codex-dag-runner-v94-a11`.
+
+Together with v93 A6, A7, A9, and A10, this provides a fresh Codex functional
+5/5 diagnostic panel on the current candidate. It is not confirmatory
+non-inferiority evidence: every item allowed fixed-cost OAuth collaboration and
+the panel includes the immutable A8 reliability failure before v94. The sealed
+200-attempt epoch must therefore start separately after all client harnesses are
+stable.
