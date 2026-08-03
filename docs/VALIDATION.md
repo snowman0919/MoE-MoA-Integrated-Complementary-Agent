@@ -10265,3 +10265,32 @@ completed attempt. Because the evidence-only validation commit changed the
 sealed analysis revision, confirmation resumes under a fresh v90 seal with the
 same frozen statistical and execution contract and all 200 attempts restarted
 from clean fixtures.
+
+### 2026-08-03 — v90 latency diagnosis and pause
+
+The immutable v90 progress log contains 167 completed rows: 145 functional
+passes and 22 functional failures. Thirty rows fail at least one hard gate,
+including 11 with incomplete telemetry and nine with recorded provider errors;
+provider switches remain zero. Attempt 168 is preserved as an unscored orphan
+after the runner disappeared beyond its 1,800-second deadline. No later attempt
+was started or backfilled.
+
+Across completed score telemetry, local Gemma Planner calls averaged 38.94 s
+(74 calls, 0.80 aggregate hours) and Reviewer calls averaged 28.44 s (195 calls,
+1.54 aggregate hours). SGLang itself decoded at approximately 29 tokens/s;
+its 807 completed requests averaged 14.7 s end-to-end and 3.0 s to first token.
+The larger runtime bottleneck was repeated multi-role execution: GPT-5.6 Sol
+Executor calls consumed 3.73 aggregate hours and local Executor calls consumed
+2.34 aggregate hours. The slowdown is therefore not evidence of an NVFP4
+kernel failure.
+
+The bounded eight-step Planner schema now requests at most 2,048 tokens instead
+of 4,096 in both the checked-in default and active candidate configuration.
+Reviewer limits, structured retry behavior, role pinning, and safety gates are
+unchanged. The exact config loading check and focused Planner routing,
+concurrency, and malformed-output retry suite passed five tests in 0.36 s.
+
+The Reasoner peer at `100.90.167.128` remained offline while both loopback
+SGLang endpoints returned HTTP 200. Confirmation remains paused; readiness is
+not weakened and no new epoch may start until the fixed Reasoner topology is
+physically available. v90 remains diagnostic and cannot pass.

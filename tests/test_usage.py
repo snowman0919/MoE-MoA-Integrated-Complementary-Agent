@@ -878,12 +878,14 @@ def test_usage_limits_have_exact_defaults_and_yaml_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     limits = Limits()
+    assert limits.planner_tokens == 2_048
     assert limits.usage_sample_window == 512
     assert limits.usage_ewma_alpha == 0.25
     assert limits.adaptive_minimum_samples == 20
 
     monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
     configured = load_settings(Path("config/models.yaml"))
+    assert configured.limits.planner_tokens == 2_048
     assert configured.limits.usage_sample_window == 512
     assert configured.limits.usage_ewma_alpha == 0.25
     assert configured.limits.adaptive_minimum_samples == 20

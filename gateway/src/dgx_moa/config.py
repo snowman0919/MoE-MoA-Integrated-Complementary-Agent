@@ -43,7 +43,7 @@ class Limits(BaseModel):
     max_retained_observations: int = 12
     max_error_lines: int = 40
     max_diff_summary_lines: int = 100
-    planner_tokens: int = 4_096
+    planner_tokens: int = 2_048
     reasoner_tokens: int = 1_500
     executor_tokens: int = 4_096
     executor_max_tokens: int = Field(default=32_768, ge=1, le=65_536)
