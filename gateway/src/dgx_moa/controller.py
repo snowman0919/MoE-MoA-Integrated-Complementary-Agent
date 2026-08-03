@@ -82,7 +82,14 @@ from .review import (
 )
 from .review import material_frontier_review as has_material_frontier_review
 from .review import material_review_issue as has_material_review_issue
-from .routing import ChangeRisk, heavy_eligible, needs_planner, needs_reviewer, select_route
+from .routing import (
+    ChangeRisk,
+    heavy_eligible,
+    needs_planner,
+    needs_reviewer,
+    select_route,
+    user_turn_intent,
+)
 from .schemas import (
     JudgeVerdict,
     OrchestrationDecision,
@@ -102,8 +109,10 @@ from .validation import (
     completion_ready,
     filtered_validation_execution,
     has_validation_evidence,
+    implementation_completion_ready,
     long_horizon_workspace_finalized,
     required_validation_evidence,
+    requires_implementation_tool_action,
     validation_execution,
     validation_verdict_present,
 )
@@ -287,50 +296,6 @@ def invocation_budget_tokens(invocation: dict[str, Any]) -> int | None:
     ):
         return prompt - cached + completion
     return total if isinstance(total, int) and not isinstance(total, bool) and total >= 0 else None
-
-
-def user_turn_intent(content: str) -> tuple[bool, bool]:
-    normalized = content.lower()
-    return (
-        any(
-            marker in normalized
-            for marker in (
-                "implement",
-                "modify",
-                "edit ",
-                "fix ",
-                "create",
-                "write ",
-                "add ",
-                "refactor",
-                "구현",
-                "수정",
-                "생성",
-                "작성",
-                "추가",
-                "고쳐",
-                "만들",
-            )
-        ),
-        any(
-            marker in normalized
-            for marker in (
-                "repository",
-                "repo",
-                "codebase",
-                "project",
-                " file",
-                "module",
-                ".py",
-                ".js",
-                ".ts",
-                "저장소",
-                "파일",
-                "모듈",
-                "코드",
-            )
-        ),
-    )
 
 
 def reasoner_context_fingerprint(state: SessionState, messages: list[dict[str, Any]]) -> str:
@@ -3896,7 +3861,7 @@ class Controller:
                 {"tools": list(available_tools)},
             )
         messages = compress_messages(body["messages"], self.settings.limits)
-        implementation_complete = self.implementation_completion_ready(
+        implementation_complete = implementation_completion_ready(
             state, dict(request.get("metadata", {}))
         )
         workspace_finalization_pending = (
@@ -4035,7 +4000,7 @@ class Controller:
                 "completed_implementation_tools_suppressed",
                 {"reason": "change_validation_and_review_complete"},
             )
-        elif available_tools and self.requires_implementation_tool_action(
+        elif available_tools and requires_implementation_tool_action(
             state, dict(request.get("metadata", {}))
         ):
             tool_choice = body.get("tool_choice")
@@ -4092,51 +4057,6 @@ class Controller:
         )
         body["messages"] = messages
         return body
-
-    def requires_implementation_tool_action(
-        self, state: SessionState, metadata: dict[str, Any]
-    ) -> bool:
-        objective = effective_objective(state).lower()
-        work = objective + "\n" + json.dumps(state.plan, ensure_ascii=False, sort_keys=True).lower()
-        requests_change, targets_repository = (
-            (state.active_turn_requires_change, state.active_turn_targets_repository)
-            if state.active_user_turn_sha256
-            else user_turn_intent(work)
-        )
-        if not (requests_change and targets_repository):
-            return False
-        changed = any(
-            execution.get("exit_code") == 0 and tool_execution_changes_files(execution)
-            for execution in current_turn_executions(state)
-        )
-        validated = has_validation_evidence(state, metadata)
-        review_ready = (
-            not state.frontier_correction_required
-            and not state.frontier_correction_pending_verification
-            and (
-                state.review_status == "approved"
-                or (
-                    state.runtime_mode == "fast"
-                    and "reviewer" not in state.roles_required
-                    and state.review_status == "pending"
-                    and not state.review_deferred
-                )
-            )
-        )
-        return not (
-            changed
-            and validated
-            and review_ready
-            and long_horizon_workspace_finalized(state)
-        )
-
-    def implementation_completion_ready(
-        self, state: SessionState, metadata: dict[str, Any]
-    ) -> bool:
-        return any(
-            execution.get("exit_code") == 0 and tool_execution_changes_files(execution)
-            for execution in current_turn_executions(state)
-        ) and not self.requires_implementation_tool_action(state, metadata)
 
     @staticmethod
     def register_frontier_review_failure(state: SessionState, result: dict[str, Any]) -> bool:

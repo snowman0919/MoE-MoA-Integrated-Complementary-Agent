@@ -33,6 +33,7 @@ from .streaming import (
     responses_error_sse,
     responses_sse,
 )
+from .validation import requires_implementation_tool_action
 
 ChatHandler = Callable[
     [ChatRequest, ChatExecutionContext, ChatExecutionHeaders], Coroutine[Any, Any, Response]
@@ -183,7 +184,7 @@ def register_responses_routes(
                                 and state.review_deferred
                                 and state.review_status != "approved"
                             )
-                            or request.app.state.controller.requires_implementation_tool_action(
+                            or requires_implementation_tool_action(
                                 state, current_body.metadata
                             )
                         )

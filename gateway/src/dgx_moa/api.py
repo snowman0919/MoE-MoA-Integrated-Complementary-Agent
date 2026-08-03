@@ -140,6 +140,7 @@ from .usage import (
     UsageStore,
     classify_client,
 )
+from .validation import implementation_completion_ready
 from .weekly import (
     ArchiveRegistry,
     WeeklyPackager,
@@ -1993,7 +1994,7 @@ def create_app(
                 not executor_remote
                 and runtime.frontier is not None
                 and bool(raw["metadata"].get("responses_progress_retry"))
-                and runtime.controller.implementation_completion_ready(
+                and implementation_completion_ready(
                     state, raw["metadata"]
                 )
             )

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from dgx_moa import long_horizon_client as MODULE
-from dgx_moa.controller import user_turn_intent
+from dgx_moa.routing import user_turn_intent
 
 
 def test_phase_prompts_require_changes_only_during_core_implementation() -> None:

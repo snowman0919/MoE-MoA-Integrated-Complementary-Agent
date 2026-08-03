@@ -4,8 +4,13 @@ import json
 import re
 from typing import Any
 
-from .evidence import current_turn_executions, tool_execution_changes_files
+from .evidence import (
+    current_turn_executions,
+    effective_objective,
+    tool_execution_changes_files,
+)
 from .loop_engineering import completion_ready as loop_completion_ready
+from .routing import user_turn_intent
 from .state import SessionState
 
 
@@ -135,6 +140,50 @@ def long_horizon_workspace_finalized(state: SessionState) -> bool:
         ):
             return True
     return False
+
+
+def requires_implementation_tool_action(
+    state: SessionState, metadata: dict[str, Any]
+) -> bool:
+    objective = effective_objective(state).lower()
+    work = objective + "\n" + json.dumps(state.plan, ensure_ascii=False, sort_keys=True).lower()
+    requests_change, targets_repository = (
+        (state.active_turn_requires_change, state.active_turn_targets_repository)
+        if state.active_user_turn_sha256
+        else user_turn_intent(work)
+    )
+    if not (requests_change and targets_repository):
+        return False
+    changed = any(
+        execution.get("exit_code") == 0 and tool_execution_changes_files(execution)
+        for execution in current_turn_executions(state)
+    )
+    review_ready = (
+        not state.frontier_correction_required
+        and not state.frontier_correction_pending_verification
+        and (
+            state.review_status == "approved"
+            or (
+                state.runtime_mode == "fast"
+                and "reviewer" not in state.roles_required
+                and state.review_status == "pending"
+                and not state.review_deferred
+            )
+        )
+    )
+    return not (
+        changed
+        and has_validation_evidence(state, metadata)
+        and review_ready
+        and long_horizon_workspace_finalized(state)
+    )
+
+
+def implementation_completion_ready(state: SessionState, metadata: dict[str, Any]) -> bool:
+    return any(
+        execution.get("exit_code") == 0 and tool_execution_changes_files(execution)
+        for execution in current_turn_executions(state)
+    ) and not requires_implementation_tool_action(state, metadata)
 
 
 def filtered_validation_execution(execution: dict[str, Any]) -> bool:

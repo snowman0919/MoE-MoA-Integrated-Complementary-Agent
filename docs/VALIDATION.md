@@ -10614,3 +10614,16 @@ The focused stall/finalization test bundle passed. Ruff passed, strict mypy
 reported no issues across 61 source files, `git diff --check` passed, and the
 complete suite passed `1,218/1,218` in 44.95 seconds with the existing Starlette
 deprecation warning.
+
+## 2026-08-03 Implementation completion-policy boundary
+
+User-turn change/repository intent classification now lives in `routing.py`;
+implementation mutation, validation, review, and workspace-finalization readiness
+now live in `validation.py`. API, Responses, and Controller orchestration call
+those pure functions directly. Existing bilingual intent markers, fast-mode
+review exemption, Frontier correction gates, and current-turn mutation ordering
+are unchanged. No compatibility methods remain, and Controller shrank by a
+further 80 lines. Four focused completion tests and two long-horizon prompt
+intent tests passed. Ruff passed, strict mypy reported no issues across 61 source
+files, `git diff --check` passed, and the complete suite passed `1,218/1,218` in
+42.86 seconds with the existing Starlette deprecation warning.

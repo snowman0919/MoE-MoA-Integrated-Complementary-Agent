@@ -32,7 +32,9 @@ from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
 from dgx_moa.state import Phase, SessionState, StateStore
 from dgx_moa.validation import (
     has_validation_evidence,
+    implementation_completion_ready,
     long_horizon_workspace_finalized,
+    requires_implementation_tool_action,
     successful_validation_execution,
 )
 
@@ -4555,13 +4557,12 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
 def test_implementation_completion_requires_change_validation_and_review(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
-    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
     state = SessionState(
         session_id="implementation-gate",
         objective="Implement rate_limiter.py in this repository and test it.",
     )
 
-    assert controller.requires_implementation_tool_action(state, {}) is True
+    assert requires_implementation_tool_action(state, {}) is True
     state.tool_executions.append(
         {
             "tool_name": "apply_patch",
@@ -4569,7 +4570,7 @@ def test_implementation_completion_requires_change_validation_and_review(
             "exit_code": 0,
         }
     )
-    assert controller.requires_implementation_tool_action(state, {}) is True
+    assert requires_implementation_tool_action(state, {}) is True
     state.tool_executions.append(
         {
             "tool_name": "exec_command",
@@ -4577,36 +4578,36 @@ def test_implementation_completion_requires_change_validation_and_review(
             "exit_code": 0,
         }
     )
-    assert controller.requires_implementation_tool_action(state, {}) is True
-    assert controller.implementation_completion_ready(state, {}) is False
+    assert requires_implementation_tool_action(state, {}) is True
+    assert implementation_completion_ready(state, {}) is False
     state.runtime_mode = "fast"
-    assert controller.requires_implementation_tool_action(state, {}) is False
-    assert controller.implementation_completion_ready(state, {}) is True
+    assert requires_implementation_tool_action(state, {}) is False
+    assert implementation_completion_ready(state, {}) is True
     state.runtime_mode = "agent"
 
     state.roles_required.append("reviewer")
     state.review_status = "rejected"
-    assert controller.requires_implementation_tool_action(state, {}) is True
-    assert controller.implementation_completion_ready(state, {}) is False
+    assert requires_implementation_tool_action(state, {}) is True
+    assert implementation_completion_ready(state, {}) is False
     state.roles_required = ["executor"]
-    assert controller.requires_implementation_tool_action(state, {}) is True
+    assert requires_implementation_tool_action(state, {}) is True
     state.review_status = "approved"
-    assert controller.requires_implementation_tool_action(state, {}) is False
-    assert controller.implementation_completion_ready(state, {}) is True
+    assert requires_implementation_tool_action(state, {}) is False
+    assert implementation_completion_ready(state, {}) is True
     state.frontier_correction_required = True
-    assert controller.requires_implementation_tool_action(state, {}) is True
-    assert controller.implementation_completion_ready(state, {}) is False
+    assert requires_implementation_tool_action(state, {}) is True
+    assert implementation_completion_ready(state, {}) is False
     state.frontier_correction_required = False
     state.frontier_correction_pending_verification = True
-    assert controller.requires_implementation_tool_action(state, {}) is True
-    assert controller.implementation_completion_ready(state, {}) is False
+    assert requires_implementation_tool_action(state, {}) is True
+    assert implementation_completion_ready(state, {}) is False
 
     question = SessionState(
         session_id="question",
         objective="Explain how a Python rate limiter works.",
         plan=[{"step": "Explain the concept"}],
     )
-    assert controller.requires_implementation_tool_action(question, {}) is False
+    assert requires_implementation_tool_action(question, {}) is False
 
 
 def test_new_user_turn_does_not_reuse_prior_completion_latch(
@@ -4632,7 +4633,7 @@ def test_new_user_turn_does_not_reuse_prior_completion_latch(
         },
     ]
     store.save(state)
-    assert controller.implementation_completion_ready(state, {}) is True
+    assert implementation_completion_ready(state, {}) is True
 
     resumed = controller.session(
         "multi-turn",
@@ -4646,8 +4647,8 @@ def test_new_user_turn_does_not_reuse_prior_completion_latch(
     assert resumed.active_turn_after_tool_execution_id == "validation"
     assert resumed.review_status == "pending"
     assert has_review_evidence(resumed, {}) is False
-    assert controller.implementation_completion_ready(resumed, {}) is False
-    assert controller.requires_implementation_tool_action(resumed, {}) is False
+    assert implementation_completion_ready(resumed, {}) is False
+    assert requires_implementation_tool_action(resumed, {}) is False
     assert executor_stalled(resumed) is False
     assert "CURRENT USER INSTRUCTION\nReview concurrency and run the tests." in (
         controller.prompt_sandwich("executor", resumed, "context", "continue")
@@ -4964,7 +4965,7 @@ async def test_long_horizon_requires_clean_status_after_last_change(
     }
 
     assert long_horizon_workspace_finalized(state) is False
-    assert controller.requires_implementation_tool_action(state, {}) is True
+    assert requires_implementation_tool_action(state, {}) is True
     prepared = await controller.prepare_executor(
         state, request, ("executor", "reviewer"), tool_continuation=True
     )

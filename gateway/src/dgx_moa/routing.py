@@ -36,6 +36,50 @@ HIGH_RISK_FIELDS = (
 )
 
 
+def user_turn_intent(content: str) -> tuple[bool, bool]:
+    normalized = content.lower()
+    return (
+        any(
+            marker in normalized
+            for marker in (
+                "implement",
+                "modify",
+                "edit ",
+                "fix ",
+                "create",
+                "write ",
+                "add ",
+                "refactor",
+                "구현",
+                "수정",
+                "생성",
+                "작성",
+                "추가",
+                "고쳐",
+                "만들",
+            )
+        ),
+        any(
+            marker in normalized
+            for marker in (
+                "repository",
+                "repo",
+                "codebase",
+                "project",
+                " file",
+                "module",
+                ".py",
+                ".js",
+                ".ts",
+                "저장소",
+                "파일",
+                "모듈",
+                "코드",
+            )
+        ),
+    )
+
+
 def resolve_runtime_mode(model: str, configured_name: str) -> RuntimeMode:
     if model in MODEL_MODES:
         return MODEL_MODES[model]
