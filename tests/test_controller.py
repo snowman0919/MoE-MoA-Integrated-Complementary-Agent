@@ -3337,6 +3337,34 @@ def test_goal_text_parts_keep_language_and_require_evidence(
     assert store.find_tool_owner({"call-remapped"}, "client", objective) is None
 
 
+def test_tool_owner_recovery_only_clears_stale_pending(settings) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    direct = SessionState(
+        session_id="direct-owner",
+        objective="direct",
+        api_token_id="client",
+        pending_tool_call_ids=["call-direct"],
+    )
+    stale = SessionState(
+        session_id="stale-owner",
+        objective="fallback",
+        api_token_id="client",
+        pending_tool_call_ids=["call-stale"],
+    )
+    store.save(direct)
+    store.save(stale)
+
+    owner, cleared = store.recover_tool_owner({"call-direct"}, "client", "ignored")
+    assert owner and owner.session_id == "direct-owner"
+    assert cleared is False
+    assert store.get("direct-owner").pending_tool_call_ids == ["call-direct"]  # type: ignore[union-attr]
+
+    owner, cleared = store.recover_tool_owner({"call-remapped"}, "client", "fallback")
+    assert owner and owner.session_id == "stale-owner"
+    assert cleared is True
+    assert store.get("stale-owner").pending_tool_call_ids == []  # type: ignore[union-attr]
+
+
 def test_successful_goal_read_becomes_effective_objective(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

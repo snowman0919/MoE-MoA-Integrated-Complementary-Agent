@@ -17,6 +17,17 @@ def text_content(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def latest_user_content(messages: list[dict[str, Any]]) -> str:
+    return next(
+        (
+            text_content(message.get("content"))
+            for message in reversed(messages)
+            if message.get("role") == "user"
+        ),
+        "",
+    )
+
+
 class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="allow")
 

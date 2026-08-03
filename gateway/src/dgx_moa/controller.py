@@ -68,6 +68,7 @@ from .schemas import (
     PlannerPlan,
     ReasonerContribution,
     ReviewResult,
+    latest_user_content,
     text_content,
 )
 from .security import redact
@@ -1072,14 +1073,7 @@ class Controller:
                 self.store.event(session_id, "title_state_recovered", {})
                 break
         if not state.objective:
-            state.objective = next(
-                (
-                    text_content(message.get("content"))
-                    for message in reversed(messages)
-                    if message["role"] == "user"
-                ),
-                "",
-            )
+            state.objective = latest_user_content(messages)
         latest_user_index = next(
             (
                 index

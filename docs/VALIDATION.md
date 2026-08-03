@@ -10458,3 +10458,16 @@ After rejecting the diagnostic setting, the focused topology/runtime suite
 passed `16/16`. Ruff passed, strict mypy reported no issues across 60 source
 files, `git diff --check` passed, and the complete suite passed `1,217/1,217`
 in 45.75 seconds with the existing Starlette deprecation warning.
+
+## 2026-08-03 Chat/Responses session-recovery core boundary
+
+Chat and streaming Responses independently selected a tool-result owner,
+cleared stale pending calls, and saved the recovered session. `StateStore` now
+owns that protocol-independent recovery transition, while both protocol
+adapters reuse one `latest_user_content` rule also shared by `Controller`.
+This removes the first-user/latest-user mismatch without changing public Chat
+or Responses payloads, streaming, provider pinning, or tool continuation.
+Three focused state/objective tests and all 241 API tests passed. Ruff passed,
+strict mypy reported no issues across 60 source files, `git diff --check`
+passed, and the complete suite passed `1,218/1,218` in 46.56 seconds with the
+existing Starlette deprecation warning.

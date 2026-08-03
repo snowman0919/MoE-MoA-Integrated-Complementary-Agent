@@ -250,6 +250,16 @@ class StateStore:
             return candidates[0]
         return None
 
+    def recover_tool_owner(
+        self, tool_call_ids: set[str], api_token_id: str, objective: str = ""
+    ) -> tuple[SessionState | None, bool]:
+        owner = self.find_tool_owner(tool_call_ids, api_token_id, objective)
+        if owner is None or set(owner.pending_tool_call_ids).intersection(tool_call_ids):
+            return owner, False
+        owner.pending_tool_call_ids = []
+        self.save(owner)
+        return owner, True
+
     def save(self, state: SessionState) -> None:
         state.updated_at = now()
         with self._connect() as database:

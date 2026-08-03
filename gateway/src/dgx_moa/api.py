@@ -93,7 +93,7 @@ from .routing import (
     review_fails_closed,
 )
 from .runtime_status import memory_available as runtime_memory_available
-from .schemas import ChatRequest, text_content
+from .schemas import ChatRequest, latest_user_content
 from .security import (
     ApiKeyStore,
     admin_dependency,
@@ -1065,24 +1065,13 @@ def create_app(
         api_token_id = getattr(request.state, "api_token_id", "legacy")
         recovered_tool_owner = False
         if not provided_session_id:
-            objective = next(
-                (
-                    text_content(message.get("content"))
-                    for message in raw["messages"]
-                    if message.get("role") == "user"
-                ),
-                "",
-            )
-            tool_owner = request.app.state.store.find_tool_owner(
-                tool_result_call_ids(raw["messages"]), api_token_id, objective
+            tool_owner, recovered_tool_owner = request.app.state.store.recover_tool_owner(
+                tool_result_call_ids(raw["messages"]),
+                api_token_id,
+                latest_user_content(raw["messages"]),
             )
             if tool_owner is not None:
                 session_id = tool_owner.session_id
-                supplied_ids = tool_result_call_ids(raw["messages"])
-                if not set(tool_owner.pending_tool_call_ids).intersection(supplied_ids):
-                    tool_owner.pending_tool_call_ids = []
-                    request.app.state.store.save(tool_owner)
-                    recovered_tool_owner = True
         try:
             raw["max_tokens"] = request.app.state.controller.executor_tokens(raw)
         except ValueError as error:

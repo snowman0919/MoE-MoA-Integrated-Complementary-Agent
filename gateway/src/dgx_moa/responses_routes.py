@@ -21,7 +21,7 @@ from .inference import (
 )
 from .lifecycle import continuation_correlation
 from .routing import COMPATIBILITY_MODEL_ALIASES
-from .schemas import ChatMessage, ChatRequest, ResponsesRequest, text_content
+from .schemas import ChatMessage, ChatRequest, ResponsesRequest, latest_user_content, text_content
 from .state import SessionState
 from .streaming import (
     ProgressOnlyResponse,
@@ -107,26 +107,14 @@ def register_responses_routes(
         if body.stream:
             response_session_id = x_session_id or str(body.metadata.get("session_id") or "")
             if not response_session_id:
-                objective = next(
-                    (
-                        text_content(message.get("content"))
-                        for message in messages
-                        if message.get("role") == "user"
-                    ),
-                    "",
-                )
-                owner = request.app.state.store.find_tool_owner(
+                owner, _ = request.app.state.store.recover_tool_owner(
                     tool_result_call_ids(messages),
                     getattr(request.state, "api_token_id", "legacy"),
-                    objective,
+                    latest_user_content(messages),
                 )
                 if owner is not None:
                     response_session_id = owner.session_id
                     request.state.responses_tool_owner_recovered = True
-                    supplied_ids = tool_result_call_ids(messages)
-                    if not set(owner.pending_tool_call_ids).intersection(supplied_ids):
-                        owner.pending_tool_call_ids = []
-                        request.app.state.store.save(owner)
                     request.app.state.lifecycle_store.release_continuation(
                         "executor", continuation_correlation(owner.session_id)
                     )
