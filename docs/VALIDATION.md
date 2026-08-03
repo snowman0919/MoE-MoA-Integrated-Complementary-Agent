@@ -10653,3 +10653,15 @@ fail-closed behavior and split SSE markers. Ruff passed, strict mypy reported no
 issues across 61 source files, `git diff --check` passed, and the complete suite
 passed `1,218/1,218` in 42.12 seconds with the existing Starlette deprecation
 warning.
+
+## 2026-08-03 Isolated SGLang soak I/O boundary
+
+The concurrent dual-role soak evaluator now reuses the physical validator's
+frozen `ValidationBackend` for completion requests and runtime snapshots.
+Worker threads receive the same explicit backend, and tests inject replacements
+without modifying the imported runtime module. No second backend abstraction was
+added. All five soak tests passed, including concurrent Executor/Specialist
+requests, sanitized evidence, duration fail-closed behavior, and interruption
+classification. Ruff passed, strict mypy reported no issues across 61 source
+files, `git diff --check` passed, and the complete suite passed `1,218/1,218` in
+45.27 seconds with the existing Starlette deprecation warning.

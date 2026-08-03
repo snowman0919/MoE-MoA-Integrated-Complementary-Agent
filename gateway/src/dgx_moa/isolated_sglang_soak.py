@@ -43,6 +43,7 @@ def request_one(
     client: int,
     prefix: str,
     timeout: float,
+    backend: RUNTIME.ValidationBackend,
 ) -> dict[str, Any]:
     marker = f"SOAK_{role.upper()}_{sequence}_{client}_{uuid.uuid4().hex[:12]}"
     payload: dict[str, Any] = {
@@ -62,7 +63,7 @@ def request_one(
             chat_template_kwargs={"enable_thinking": False},
         )
     try:
-        response, latency = RUNTIME.post_json(
+        response, latency = backend.post_json(
             f"{endpoint}/v1/chat/completions",
             payload,
             timeout,
@@ -97,7 +98,10 @@ def run_cycle(
     sequence: int,
     prefix: str,
     timeout: float,
+    *,
+    backend: RUNTIME.ValidationBackend | None = None,
 ) -> dict[str, Any]:
+    backend = backend or RUNTIME.validation_backend()
     specs = [
         (executor_endpoint, EXECUTOR_MODEL, "executor", client)
         for client in range(clients_per_role)
@@ -117,6 +121,7 @@ def run_cycle(
                 client,
                 prefix,
                 timeout,
+                backend,
             )
             for endpoint, model, role, client in specs
         ]
@@ -127,7 +132,7 @@ def run_cycle(
         "captured_at": datetime.now(UTC).isoformat(),
         "cycle_seconds": round(time.monotonic() - started, 3),
         "requests": requests,
-        "runtime": RUNTIME.runtime_snapshot(),
+        "runtime": backend.runtime_snapshot(),
     }
 
 

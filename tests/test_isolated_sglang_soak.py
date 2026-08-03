@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import signal
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -51,9 +52,7 @@ def runtime_snapshot() -> dict[str, Any]:
     }
 
 
-def test_soak_cycle_runs_both_roles_concurrently_without_retaining_payloads(
-    monkeypatch,
-) -> None:
+def test_soak_cycle_runs_both_roles_concurrently_without_retaining_payloads() -> None:
     specialist_payloads: list[dict[str, Any]] = []
 
     def fake_post(
@@ -72,8 +71,11 @@ def test_soak_cycle_runs_both_roles_concurrently_without_retaining_payloads(
             },
         }, 0.25
 
-    monkeypatch.setattr(MODULE.RUNTIME, "post_json", fake_post)
-    monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", runtime_snapshot)
+    backend = replace(
+        MODULE.RUNTIME.validation_backend(),
+        post_json=fake_post,
+        runtime_snapshot=runtime_snapshot,
+    )
 
     cycle = MODULE.run_cycle(
         "http://127.0.0.1:18101",
@@ -82,6 +84,7 @@ def test_soak_cycle_runs_both_roles_concurrently_without_retaining_payloads(
         1,
         "private shared prefix",
         1,
+        backend=backend,
     )
 
     assert len(cycle["requests"]) == 4
