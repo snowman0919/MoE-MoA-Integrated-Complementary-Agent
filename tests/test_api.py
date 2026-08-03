@@ -5863,6 +5863,7 @@ def test_responses_get_forwards_trace_headers_and_default_model(
         "X-Repository-Branch": "dev",
         "X-Repository-Commit": "def",
         "X-Dirty-State": "clean",
+        "X-Validation-Command": "python -m pytest -q",
     }
     with client_with_stub(settings, stub_provider) as client:
         response = client.get(
@@ -5884,6 +5885,7 @@ def test_responses_get_forwards_trace_headers_and_default_model(
         "current_commit": "def",
         "dirty_status": "clean",
     }
+    assert "python -m pytest -q" in json.dumps(stub_provider.requests)
 
 
 def test_request_json_cannot_select_runtime_trace_provenance(

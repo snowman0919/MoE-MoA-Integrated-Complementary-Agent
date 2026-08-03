@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .controller import pending_goal_prerequisites
 from .inference import (
+    ChatExecutionHeaders,
     chat_response_payload,
     coerce_responses_input_messages,
     coerce_responses_tools,
@@ -31,7 +32,9 @@ from .streaming import (
     responses_sse,
 )
 
-ChatHandler = Callable[..., Coroutine[Any, Any, Response]]
+ChatHandler = Callable[
+    [ChatRequest, Request, ChatExecutionHeaders], Coroutine[Any, Any, Response]
+]
 
 
 def register_responses_routes(
@@ -104,6 +107,21 @@ def register_responses_routes(
             top_p=body.top_p,
             stop=body.stop,
         )
+
+        def execution_headers(session_id: str | None) -> ChatExecutionHeaders:
+            return ChatExecutionHeaders(
+                session_id=session_id,
+                runtime_channel=x_runtime_channel,
+                trace_origin=x_trace_origin,
+                task_id=x_task_id,
+                workspace_path=x_workspace_path,
+                workspace_id=x_workspace_id,
+                repository_branch=x_repository_branch,
+                repository_commit=x_repository_commit,
+                dirty_state=x_dirty_state,
+                validation_command=x_validation_command,
+            )
+
         if body.stream:
             response_session_id = x_session_id or str(body.metadata.get("session_id") or "")
             if not response_session_id:
@@ -165,16 +183,7 @@ def register_responses_routes(
                             chat_handler(
                                 current_body,
                                 request,
-                                response_session_id,
-                                x_runtime_channel,
-                                x_trace_origin,
-                                x_task_id,
-                                x_workspace_path,
-                                x_workspace_id,
-                                x_repository_branch,
-                                x_repository_commit,
-                                x_dirty_state,
-                                x_validation_command,
+                                execution_headers(response_session_id),
                             )
                         )
                         if not initial_heartbeat_sent:
@@ -395,15 +404,7 @@ def register_responses_routes(
             chat_response = await chat_handler(
                 chat_body,
                 request,
-                chat_session_id,
-                x_runtime_channel,
-                x_trace_origin,
-                x_task_id,
-                x_workspace_path,
-                x_workspace_id,
-                x_repository_branch,
-                x_repository_commit,
-                x_dirty_state,
+                execution_headers(chat_session_id),
             )
         except HTTPException as error:
             if error.status_code in {

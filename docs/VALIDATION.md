@@ -10516,3 +10516,17 @@ or provider requests. The existing 8-result, 4-mutation, 6-recent-execution,
 review/current-turn tests passed. Ruff passed, strict mypy reported no issues
 across 61 source files, `git diff --check` passed, and the complete suite passed
 `1,218/1,218` in 45.64 seconds with the existing Starlette deprecation warning.
+
+## 2026-08-03 Chat/Responses shared execution-header boundary
+
+The shared Chat execution function no longer owns FastAPI Header declarations
+or the former eleven-value positional calling convention. The Chat HTTP route
+and Responses adapter both construct one immutable `ChatExecutionHeaders`
+value and dispatch the same `execute_chat` callable. This keeps protocol header
+parsing outside the execution body and also forwards the validation command on
+non-streaming Responses, which the old positional adapter omitted. The full
+241-test API suite passed before the explicit header assertion; the new
+Responses trace/validation-header assertion then passed independently. Ruff
+passed, strict mypy reported no issues across 61 source files,
+`git diff --check` passed, and the complete suite passed `1,218/1,218` in 46.25
+seconds with the existing Starlette deprecation warning.

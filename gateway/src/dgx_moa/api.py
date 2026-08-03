@@ -46,6 +46,7 @@ from .image_generation import (
     capability_status as image_generation_status,
 )
 from .inference import (
+    ChatExecutionHeaders,
     ResponseOwnedIterator,
     ResponseOwnedStreamingResponse,
     compaction_request_index,
@@ -994,21 +995,21 @@ def create_app(
         record_trace_safely,
     )
 
-    @app.post("/v1/chat/completions", dependencies=[Depends(auth)])
-    async def chat(
+    async def execute_chat(
         body: ChatRequest,
         request: Request,
-        x_session_id: str | None = Header(default=None),
-        x_runtime_channel: str | None = Header(default=None),
-        x_trace_origin: str | None = Header(default=None),
-        x_task_id: str | None = Header(default=None),
-        x_workspace_path: str | None = Header(default=None),
-        x_workspace_id: str | None = Header(default=None),
-        x_repository_branch: str | None = Header(default=None),
-        x_repository_commit: str | None = Header(default=None),
-        x_dirty_state: str | None = Header(default=None),
-        x_validation_command: str | None = Header(default=None, max_length=512),
+        headers: ChatExecutionHeaders,
     ) -> Response:
+        x_session_id = headers.session_id
+        x_runtime_channel = headers.runtime_channel
+        x_trace_origin = headers.trace_origin
+        x_task_id = headers.task_id
+        x_workspace_path = headers.workspace_path
+        x_workspace_id = headers.workspace_id
+        x_repository_branch = headers.repository_branch
+        x_repository_commit = headers.repository_commit
+        x_dirty_state = headers.dirty_state
+        x_validation_command = headers.validation_command
         accepted = time.monotonic()
         accepted_at = time.time()
         stage_status: dict[str, str] = {}
@@ -3076,10 +3077,42 @@ def create_app(
                 "backend_error",
             )
 
+    @app.post("/v1/chat/completions", dependencies=[Depends(auth)])
+    async def chat(
+        body: ChatRequest,
+        request: Request,
+        x_session_id: str | None = Header(default=None),
+        x_runtime_channel: str | None = Header(default=None),
+        x_trace_origin: str | None = Header(default=None),
+        x_task_id: str | None = Header(default=None),
+        x_workspace_path: str | None = Header(default=None),
+        x_workspace_id: str | None = Header(default=None),
+        x_repository_branch: str | None = Header(default=None),
+        x_repository_commit: str | None = Header(default=None),
+        x_dirty_state: str | None = Header(default=None),
+        x_validation_command: str | None = Header(default=None, max_length=512),
+    ) -> Response:
+        return await execute_chat(
+            body,
+            request,
+            ChatExecutionHeaders(
+                session_id=x_session_id,
+                runtime_channel=x_runtime_channel,
+                trace_origin=x_trace_origin,
+                task_id=x_task_id,
+                workspace_path=x_workspace_path,
+                workspace_id=x_workspace_id,
+                repository_branch=x_repository_branch,
+                repository_commit=x_repository_commit,
+                dirty_state=x_dirty_state,
+                validation_command=x_validation_command,
+            ),
+        )
+
     register_responses_routes(
         app,
         auth,
-        chat,
+        execute_chat,
         default_model=configured.model_name,
         model_load_timeout_seconds=configured.limits.model_load_timeout_seconds,
     )

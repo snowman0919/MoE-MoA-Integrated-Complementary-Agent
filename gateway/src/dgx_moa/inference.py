@@ -6,6 +6,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Any, cast
 
 import httpx
@@ -17,6 +18,20 @@ from .image_generation import capability_status as image_generation_status
 from .providers import StageTimeout
 from .schemas import text_content
 from .streaming import compatible_edit_call, response_usage
+
+
+@dataclass(frozen=True)
+class ChatExecutionHeaders:
+    session_id: str | None = None
+    runtime_channel: str | None = None
+    trace_origin: str | None = None
+    task_id: str | None = None
+    workspace_path: str | None = None
+    workspace_id: str | None = None
+    repository_branch: str | None = None
+    repository_commit: str | None = None
+    dirty_state: str | None = None
+    validation_command: str | None = None
 
 
 def error_response(
