@@ -11268,3 +11268,29 @@ calls completed, as did the local Reasoner, shared Gemma Planner and Reviewer,
 Codex Frontier, and permitted remote Executor corrections. This diagnostic is
 root-cause evidence only and is not counted toward the sealed confirmation
 sample.
+
+## Protocol v100 termination and Responses title-role fix (2026-08-04)
+
+The sealed v100 epoch was stopped after its first scored attempt. Attempt 1
+passed functional and hidden validation but telemetry was incomplete with one
+cancelled local Executor invocation and one provider error. The already-started
+attempt 2 was interrupted immediately; it has a manifest but no run or score
+artifact and is not treated as a result.
+
+The v100 terminal drain was loaded and its same-fixture d1 physical probe had
+passed, but it correctly did not apply here because the cancelled request had
+no observed finish reason. Hermes state recorded 12 main API calls and 12
+assistant messages ending in `stop`; Gateway usage recorded those 12 completed
+requests plus a separate thirteenth request cancelled at process exit. This
+proved the cancellation was automatic title generation rather than the main
+response.
+
+The remaining classifier defect was transport-specific. Hermes may send title
+generation through the Responses API, whose adapter converts `instructions`
+to a Chat `developer` message. The matcher accepted only `system`, so the same
+bounded title prompt became a full orchestrated native-agent turn. Protocol
+v101 accepts both instruction roles while retaining the exact title markers and
+user/assistant exchange shape. The focused system/developer title and terminal
+drain suite passed `4/4`. Protocol v101 requires a new full repository gate,
+commit, plan hash, seal, run ID, clean Gateway restart, and 200-attempt restart;
+no v100 result is reused.

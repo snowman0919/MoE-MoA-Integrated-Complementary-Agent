@@ -667,6 +667,18 @@ reconnect, plan/context 보존을 대체하지 않는다.
   재개하지 않는다. 동결 quality/speed margin, bootstrap seed, 표본 수, prompt,
   model, fixture, scorer, telemetry 계약은 변경하지 않고 새 analysis commit,
   plan hash, seal, run ID와 clean fixture에서 200회를 처음부터 시작한다.
+- protocol v101은 v100 attempt 1에서 Hermes Responses auxiliary transport의
+  title request가 다시 full orchestrated 요청으로 분류된 결함을 수정한다.
+  Responses route는 `instructions`를 Chat의 `developer` role로 변환하지만 title
+  matcher는 `system` role만 검사했다. Hermes main session의 API call 12개는 모두
+  완료됐고 별도 13번째 요청만 process exit와 함께 cancelled였으며, state DB에서
+  finish reason이 비어 있어 terminal drain 대상이 아니었다. title marker 검사는
+  bounded `system` 또는 `developer` instruction에 동일하게 적용하되 user exchange
+  shape 요구는 유지한다. v100 a001은 hard reliability FAIL로, a002는 score 없이
+  중단된 증거로 보존하고 재개하지 않는다. 동결 quality/speed margin, bootstrap
+  seed, 표본 수, prompt, model, fixture, scorer, telemetry 계약은 변경하지 않고
+  새 analysis commit, plan hash, seal, run ID와 clean fixture에서 200회를 처음부터
+  시작한다.
 
 ## 10. Release, rollback, 배포
 

@@ -52,10 +52,11 @@ def test_runtime_version_is_2_0(settings: Settings) -> None:
     assert app.version == "2.0.0"
 
 
-def test_hermes_automatic_title_request_is_detected() -> None:
+@pytest.mark.parametrize("instruction_role", ["system", "developer"])
+def test_hermes_automatic_title_request_is_detected(instruction_role: str) -> None:
     messages = [
         {
-            "role": "system",
+            "role": instruction_role,
             "content": (
                 "Generate a short, descriptive title for a conversation. "
                 "Return ONLY the title text, nothing else."
