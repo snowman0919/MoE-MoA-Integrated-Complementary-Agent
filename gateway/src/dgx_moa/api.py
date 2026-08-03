@@ -52,6 +52,7 @@ from .inference import (
     elapsed_ms,
     error_response,
     has_matching_tool_result,
+    ollama_model_ready,
     register_inference_routes,
     remap_reused_tool_call_ids,
     title_request_index,
@@ -159,22 +160,6 @@ class DynamicRoleUnmanagedError(RuntimeError):
     def __init__(self, role: str):
         self.role = role
         super().__init__(role)
-
-
-def ollama_model_ready(response: httpx.Response, model: Any) -> bool:
-    if response.status_code != 200:
-        return False
-    try:
-        models = response.json().get("models", [])
-    except (ValueError, AttributeError):
-        return False
-    return any(
-        isinstance(item, dict)
-        and model.served_name in {item.get("name"), item.get("model")}
-        and isinstance(item.get("context_length"), int)
-        and item["context_length"] >= model.context_length
-        for item in models
-    )
 
 
 def create_app(
@@ -718,6 +703,7 @@ def create_app(
     app.include_router(build_training_router(admin_auth))
     register_inference_routes(
         app,
+        configured,
         auth,
         tuple(MODEL_MODES),
         IMPLEMENTATION_QUALITY_CONTRACT,
@@ -1003,92 +989,6 @@ def create_app(
                     else f"{record.weight_load_percent:g}"
                 ),
             },
-        )
-
-    @app.get("/readyz")
-    async def readyz(request: Request) -> JSONResponse:
-        profile_state = request.app.state.profiles.current()
-        current = profile_state["active_profile"]
-        if profile_state["status"] in {"transitioning", "degraded", "failed"}:
-            return JSONResponse(
-                {
-                    "status": profile_state["status"],
-                    "from": profile_state.get("from", current),
-                    "to": profile_state.get("to", "unknown"),
-                },
-                status_code=503,
-            )
-        roles = {
-            "resident": ("executor", "reasoner"),
-            "judge": ("judge",),
-        }.get(current, ())
-        if not roles:
-            return JSONResponse(
-                {
-                    "status": "not_ready",
-                    "profile": current,
-                    "services": {role: "stopped" for role in configured.models},
-                    "remote_judge": (
-                        "disabled" if request.app.state.remote_judge is None else "unavailable"
-                    ),
-                    "auth_enabled": configured.auth_enabled,
-                },
-                status_code=503,
-            )
-        service_status = {role: "stopped" for role in configured.models}
-        try:
-            results = await asyncio.gather(
-                *(
-                    request.app.state.http_client.get(
-                        f"{model.base_url.rstrip('/')}/api/ps"
-                        if model.provider == "ollama"
-                        else f"{model.base_url.rstrip('/')}/v1/models",
-                        timeout=2,
-                    )
-                    for model in configured.models.values()
-                ),
-                return_exceptions=True,
-            )
-            for (role, model), result in zip(configured.models.items(), results, strict=True):
-                if isinstance(result, httpx.Response) and (
-                    ollama_model_ready(result, model)
-                    if model.provider == "ollama"
-                    else result.status_code == 200
-                ):
-                    service_status[role] = "ready"
-        except KeyError:
-            pass
-        if any(service_status.get(role) != "ready" for role in roles):
-            return JSONResponse(
-                {
-                    "status": "not_ready",
-                    "profile": current,
-                    "services": service_status,
-                    "remote_judge": (
-                        "disabled"
-                        if request.app.state.remote_judge is None
-                        else "available"
-                        if request.app.state.remote_judge_available
-                        else "unavailable"
-                    ),
-                    "auth_enabled": configured.auth_enabled,
-                },
-                status_code=503,
-            )
-        return JSONResponse(
-            {
-                "status": "ready",
-                "profile": current,
-                "services": service_status,
-                "remote_judge": (
-                    "disabled"
-                    if request.app.state.remote_judge is None
-                    else "available"
-                    if request.app.state.remote_judge_available
-                    else "unavailable"
-                ),
-                "auth_enabled": configured.auth_enabled,
-            }
         )
 
     @app.get("/metrics", dependencies=[Depends(auth)])

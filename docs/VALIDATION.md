@@ -10378,6 +10378,13 @@ tests in 44.35 seconds. Ruff, strict mypy across 60 source files, and
 `git diff --check` passed. Readiness, model-status, Chat, image, and Judge routes
 remain in `api.py` for separate behavior-preserving commits.
 
+The second inference-router extraction moved `/readyz` and its Ollama resident
+context probe into `inference.py`. `api.ollama_model_ready` remains importable
+through the existing re-export, the route still uses the lifespan-owned shared
+HTTP client, and profile/degraded/remote-Judge payload semantics are unchanged.
+Two focused readiness contracts passed, followed by all 1,217 tests in 43.47
+seconds. Ruff, strict mypy across 60 source files, and `git diff --check` passed.
+
 `lifecycle_samples` had identical DDL independently owned by `UsageStore` and
 `LifecycleStore`, allowing future initialization-order drift. The schema now
 has one `database.ensure_lifecycle_samples_schema` owner reused by both stores;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -7,9 +8,11 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any, cast
 
+import httpx
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from .config import Settings
 from .schemas import text_content
 from .streaming import compatible_edit_call, response_usage
 
@@ -31,6 +34,7 @@ def error_response(
 
 def register_inference_routes(
     app: FastAPI,
+    configured: Settings,
     auth: Callable[..., Any],
     model_aliases: tuple[str, ...],
     implementation_quality_contract: str,
@@ -47,6 +51,87 @@ def register_inference_routes(
                 else "unavailable"
             ),
         }
+
+    @app.get("/readyz")
+    async def readyz(request: Request) -> JSONResponse:
+        profile_state = request.app.state.profiles.current()
+        current = profile_state["active_profile"]
+        if profile_state["status"] in {"transitioning", "degraded", "failed"}:
+            return JSONResponse(
+                {
+                    "status": profile_state["status"],
+                    "from": profile_state.get("from", current),
+                    "to": profile_state.get("to", "unknown"),
+                },
+                status_code=503,
+            )
+        roles = {
+            "resident": ("executor", "reasoner"),
+            "judge": ("judge",),
+        }.get(current, ())
+        if not roles:
+            return JSONResponse(
+                {
+                    "status": "not_ready",
+                    "profile": current,
+                    "services": {role: "stopped" for role in configured.models},
+                    "remote_judge": (
+                        "disabled" if request.app.state.remote_judge is None else "unavailable"
+                    ),
+                    "auth_enabled": configured.auth_enabled,
+                },
+                status_code=503,
+            )
+        service_status = {role: "stopped" for role in configured.models}
+        try:
+            results = await asyncio.gather(
+                *(
+                    request.app.state.http_client.get(
+                        f"{model.base_url.rstrip('/')}/api/ps"
+                        if model.provider == "ollama"
+                        else f"{model.base_url.rstrip('/')}/v1/models",
+                        timeout=2,
+                    )
+                    for model in configured.models.values()
+                ),
+                return_exceptions=True,
+            )
+            for (role, model), result in zip(configured.models.items(), results, strict=True):
+                if isinstance(result, httpx.Response) and (
+                    ollama_model_ready(result, model)
+                    if model.provider == "ollama"
+                    else result.status_code == 200
+                ):
+                    service_status[role] = "ready"
+        except KeyError:
+            pass
+        remote_judge = (
+            "disabled"
+            if request.app.state.remote_judge is None
+            else "available"
+            if request.app.state.remote_judge_available
+            else "unavailable"
+        )
+        if any(service_status.get(role) != "ready" for role in roles):
+            return JSONResponse(
+                {
+                    "status": "not_ready",
+                    "profile": current,
+                    "services": service_status,
+                    "remote_judge": remote_judge,
+                    "auth_enabled": configured.auth_enabled,
+                },
+                status_code=503,
+            )
+        return JSONResponse(
+            {
+                "status": "ready",
+                "profile": current,
+                "services": service_status,
+                "remote_judge": remote_judge,
+                "auth_enabled": configured.auth_enabled,
+            }
+        )
 
     @app.get("/v1/models", dependencies=[Depends(auth)])
     async def models() -> dict[str, Any]:
@@ -113,6 +198,22 @@ def register_inference_routes(
                 for index, alias in enumerate(model_aliases)
             ],
         }
+
+
+def ollama_model_ready(response: httpx.Response, model: Any) -> bool:
+    if response.status_code != 200:
+        return False
+    try:
+        models = response.json().get("models", [])
+    except (ValueError, AttributeError):
+        return False
+    return any(
+        isinstance(item, dict)
+        and model.served_name in {item.get("name"), item.get("model")}
+        and isinstance(item.get("context_length"), int)
+        and item["context_length"] >= model.context_length
+        for item in models
+    )
 
 
 def title_request_index(messages: list[dict[str, Any]]) -> int | None:
