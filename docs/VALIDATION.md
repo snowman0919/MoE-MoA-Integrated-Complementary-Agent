@@ -11330,3 +11330,18 @@ was found. The existing Qwen3-Coder-Next NVFP4 mount remains the Executor and
 is not part of the retired specialist model. Protocol v102 requires a full
 repository gate, new commit and bundle, new plan hash and seal, clean Gateway
 restart, targeted physical diagnostic, and then a fresh 200-attempt run.
+
+Fresh immutable physical diagnostic
+`20260804-v102-hermes-dag-runner-d1` passed every functional, hidden,
+isolation, changed-path, terminal, and telemetry check in 246.529 seconds. This
+is 56.4% faster than the v101 diagnostic on the same task. All four local
+Executor calls completed, as did one local Reasoner, one shared Gemma Planner,
+one shared Gemma Reviewer, one Codex Frontier call, and three permitted Codex
+Executor fallbacks. Provider errors, orphan errors, provider switches, missing
+token rows, retryable failures, and incomplete remote-cost rows were all zero.
+The run produced no cancelled invocation and reached quiescence normally.
+
+This targeted result validates the v102 root-cause fix but is not confirmation
+evidence. A new sealed 200-attempt epoch must still satisfy the unchanged blind
+quality, speed, cost, and reliability protocol before merge, deployment, or
+Goal completion.
