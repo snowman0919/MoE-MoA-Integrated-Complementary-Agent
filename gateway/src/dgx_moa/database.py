@@ -7,6 +7,15 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+def ensure_lifecycle_samples_schema(database: sqlite3.Connection) -> None:
+    database.execute(
+        "CREATE TABLE IF NOT EXISTS lifecycle_samples ("
+        "sample_id INTEGER PRIMARY KEY, role TEXT NOT NULL, kind TEXT NOT NULL, "
+        "duration_seconds REAL NOT NULL, memory_before_bytes INTEGER, "
+        "memory_after_bytes INTEGER)"
+    )
+
+
 @contextmanager
 def connect_sqlite(
     path: str | Path,

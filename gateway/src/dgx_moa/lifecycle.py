@@ -22,7 +22,7 @@ from .config import (
     LifecycleRolePolicy,
     Limits,
 )
-from .database import connect_sqlite
+from .database import connect_sqlite, ensure_lifecycle_samples_schema
 from .usage import UsageStore
 
 LifecycleState = Literal[
@@ -695,12 +695,7 @@ class LifecycleStore:
                 "next_consecutive_check_count INTEGER NOT NULL, would_unload INTEGER NOT NULL, "
                 "action_allowed INTEGER NOT NULL, reason TEXT NOT NULL, decided_at REAL NOT NULL)"
             )
-            database.execute(
-                "CREATE TABLE IF NOT EXISTS lifecycle_samples ("
-                "sample_id INTEGER PRIMARY KEY, role TEXT NOT NULL, kind TEXT NOT NULL, "
-                "duration_seconds REAL NOT NULL, memory_before_bytes INTEGER, "
-                "memory_after_bytes INTEGER)"
-            )
+            ensure_lifecycle_samples_schema(database)
             database.execute(
                 "CREATE TABLE IF NOT EXISTS lifecycle_failure_events ("
                 "event_id INTEGER PRIMARY KEY, role TEXT NOT NULL, "

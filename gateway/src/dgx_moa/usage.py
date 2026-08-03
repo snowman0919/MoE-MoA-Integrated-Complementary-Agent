@@ -17,7 +17,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .database import connect_sqlite
+from .database import connect_sqlite, ensure_lifecycle_samples_schema
 from .routing import RequestClass, RuntimeMode
 
 SafeClientClass = Literal[
@@ -322,14 +322,6 @@ class UsageStore:
                     completion_tokens INTEGER,
                     total_tokens INTEGER
                 );
-                CREATE TABLE IF NOT EXISTS lifecycle_samples (
-                    sample_id INTEGER PRIMARY KEY,
-                    role TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    duration_seconds REAL NOT NULL,
-                    memory_before_bytes INTEGER,
-                    memory_after_bytes INTEGER
-                );
                 CREATE TABLE IF NOT EXISTS role_request_usage (
                     request_id TEXT NOT NULL,
                     session_id_hash TEXT NOT NULL,
@@ -371,6 +363,7 @@ class UsageStore:
                     ON model_invocation_usage(role, invoked_at);
                 """
             )
+            ensure_lifecycle_samples_schema(database)
             columns = {row[1] for row in database.execute("PRAGMA table_info(request_usage)")}
             if "api_token_id" not in columns:
                 database.execute(

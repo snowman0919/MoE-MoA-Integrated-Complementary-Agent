@@ -10368,3 +10368,11 @@ raises the typed admission error. Thirty-seven focused authentication/quota test
 passed, including concurrent final-slot admission, followed by all 1,216 tests
 in 46.08 seconds. Ruff, strict mypy across 60 source files, and
 `git diff --check` passed.
+
+`lifecycle_samples` had identical DDL independently owned by `UsageStore` and
+`LifecycleStore`, allowing future initialization-order drift. The schema now
+has one `database.ensure_lifecycle_samples_schema` owner reused by both stores;
+table columns, WAL/transaction behavior, migration compatibility, and queries
+are unchanged. Three focused schema/sample tests passed, followed by all 1,217
+tests in 47.71 seconds. Ruff, strict mypy across 60 source files, and
+`git diff --check` passed.
