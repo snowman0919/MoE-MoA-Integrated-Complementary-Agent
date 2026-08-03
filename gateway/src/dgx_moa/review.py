@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, cast
 
 from .evidence import (
@@ -11,6 +12,7 @@ from .evidence import (
 )
 from .security import redact
 from .state import SessionState
+from .validation import successful_validation_execution
 
 REVIEW_CONTRACT_DOCUMENTS = {
     "agents.md",
@@ -81,6 +83,48 @@ def review_observation(
         "finish_reason": choice.get("finish_reason"),
     }
     return serialize_review_evidence(evidence, limit)
+
+
+def has_review_evidence(state: SessionState, metadata: dict[str, Any]) -> bool:
+    completion_evidence = metadata.get("completion_evidence")
+    if (
+        (isinstance(completion_evidence, dict) and completion_evidence)
+        or metadata.get("changed_paths")
+        or metadata.get("diff_summary")
+        or metadata.get("validation_results")
+    ):
+        return True
+    executions = current_turn_executions(state)
+    if (
+        state.active_turn_requires_change
+        and state.active_turn_targets_repository
+        and not any(
+            execution.get("exit_code") == 0 and tool_execution_changes_files(execution)
+            for execution in executions
+        )
+    ):
+        return False
+    for execution in reversed(executions):
+        arguments = execution.get("normalized_arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                arguments = {}
+        command = (
+            arguments.get("cmd") or arguments.get("command")
+            if isinstance(arguments, dict)
+            else None
+        )
+        if successful_validation_execution(execution) or (
+            execution.get("exit_code") == 0
+            and isinstance(command, str)
+            and re.search(r"(?:^|&&|\|\||;|\n|[\"'])\s*git\s+diff\b", command)
+        ):
+            return True
+        if tool_execution_changes_files(execution):
+            break
+    return False
 
 
 def review_tool_results(state: SessionState) -> list[dict[str, Any]]:

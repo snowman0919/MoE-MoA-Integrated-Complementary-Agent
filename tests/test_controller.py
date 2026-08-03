@@ -22,10 +22,15 @@ from dgx_moa.controller import (
 from dgx_moa.evidence import tool_execution_changes_files
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
 from dgx_moa.remote_judge import judge_evidence_package
-from dgx_moa.review import material_frontier_review, review_observation, review_tool_executions
+from dgx_moa.review import (
+    has_review_evidence,
+    material_frontier_review,
+    review_observation,
+    review_tool_executions,
+)
 from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
 from dgx_moa.state import Phase, SessionState, StateStore
-from dgx_moa.validation import successful_validation_execution
+from dgx_moa.validation import has_validation_evidence, successful_validation_execution
 
 from .conftest import StubProvider
 
@@ -4390,11 +4395,9 @@ async def test_specialist_lease_uses_current_request_id(settings, stub_provider)
 
 
 def test_review_requires_external_evidence(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
-    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
-
-    assert controller.has_review_evidence(SessionState(session_id="chat"), {}) is False
+    assert has_review_evidence(SessionState(session_id="chat"), {}) is False
     assert (
-        controller.has_review_evidence(
+        has_review_evidence(
             SessionState(
                 session_id="goal-read",
                 tool_results=[{"tool_name": "exec_command", "stdout": "goal objective"}],
@@ -4412,26 +4415,26 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
         is False
     )
     assert (
-        controller.has_review_evidence(
+        has_review_evidence(
             SessionState(session_id="edit", tool_results=[{"changed_paths": ["a.py"]}]), {}
         )
         is False
     )
     assert (
-        controller.has_review_evidence(
+        has_review_evidence(
             SessionState(session_id="complete"),
             {"completion_evidence": {"tests": "exit 0"}},
         )
         is True
     )
     assert (
-        controller.has_review_evidence(
+        has_review_evidence(
             SessionState(session_id="claim"), {"completion_evidence": "claimed"}
         )
         is False
     )
     assert (
-        controller.has_review_evidence(
+        has_review_evidence(
             SessionState(
                 session_id="patch",
                 tool_executions=[
@@ -4448,7 +4451,7 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
         is False
     )
     assert (
-        controller.has_review_evidence(
+        has_review_evidence(
             SessionState(
                 session_id="unittest",
                 tool_executions=[
@@ -4467,7 +4470,7 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
         is True
     )
     assert (
-        controller.has_review_evidence(
+        has_review_evidence(
             SessionState(
                 session_id="failed-unittest",
                 tool_executions=[
@@ -4483,7 +4486,7 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
         is False
     )
     assert (
-        controller.has_review_evidence(
+        has_review_evidence(
             SessionState(
                 session_id="stale-unittest",
                 tool_executions=[
@@ -4514,8 +4517,8 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
             }
         ],
     )
-    assert controller.has_review_evidence(git_diff, {}) is True
-    assert controller.has_validation_evidence(git_diff, {}) is False
+    assert has_review_evidence(git_diff, {}) is True
+    assert has_validation_evidence(git_diff, {}) is False
     premature_review = git_diff.model_copy(
         update={
             "session_id": "premature-review",
@@ -4523,7 +4526,7 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
             "active_turn_targets_repository": True,
         }
     )
-    assert controller.has_review_evidence(premature_review, {}) is False
+    assert has_review_evidence(premature_review, {}) is False
     premature_review.tool_executions.insert(
         0,
         {
@@ -4534,12 +4537,12 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
             "exit_code": 0,
         },
     )
-    assert controller.has_review_evidence(premature_review, {}) is True
-    assert controller.has_validation_evidence(
+    assert has_review_evidence(premature_review, {}) is True
+    assert has_validation_evidence(
         SessionState(session_id="passed-validation"),
         {"validation_results": [{"name": "unit", "passed": True}, "lint: passed"]},
     )
-    assert not controller.has_validation_evidence(
+    assert not has_validation_evidence(
         SessionState(session_id="failed-validation"),
         {"validation_results": [{"name": "unit", "passed": False}]},
     )
@@ -4638,7 +4641,7 @@ def test_new_user_turn_does_not_reuse_prior_completion_latch(
 
     assert resumed.active_turn_after_tool_execution_id == "validation"
     assert resumed.review_status == "pending"
-    assert controller.has_review_evidence(resumed, {}) is False
+    assert has_review_evidence(resumed, {}) is False
     assert controller.implementation_completion_ready(resumed, {}) is False
     assert controller.requires_implementation_tool_action(resumed, {}) is False
     assert controller.executor_stalled(resumed) is False
@@ -4699,7 +4702,6 @@ def test_patch_tool_counts_as_a_file_change() -> None:
 def test_review_evidence_survives_non_file_tools_but_not_a_new_change(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
-    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
     state = SessionState(
         session_id="review-evidence-order",
         tool_executions=[
@@ -4713,9 +4715,9 @@ def test_review_evidence_survives_non_file_tools_but_not_a_new_change(
         ],
     )
 
-    assert controller.has_review_evidence(state, {}) is True
+    assert has_review_evidence(state, {}) is True
     state.tool_executions.append({"tool_name": "apply_patch", "exit_code": 0})
-    assert controller.has_review_evidence(state, {}) is False
+    assert has_review_evidence(state, {}) is False
 
 
 def test_review_tool_evidence_keeps_older_mutations() -> None:
@@ -5452,7 +5454,6 @@ def test_review_observation_retains_relative_write_evidence(
 def test_shell_wrapped_validation_allows_deferred_review(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
-    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
     state = SessionState(
         session_id="wrapped-validation",
         review_status="deferred",
@@ -5469,4 +5470,4 @@ def test_shell_wrapped_validation_allows_deferred_review(
         ],
     )
 
-    assert controller.has_review_evidence(state, {})
+    assert has_review_evidence(state, {})

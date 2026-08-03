@@ -22,6 +22,7 @@ from .inference import (
     tool_result_call_ids,
 )
 from .lifecycle import continuation_correlation
+from .review import has_review_evidence
 from .routing import COMPATIBILITY_MODEL_ALIASES
 from .schemas import ChatMessage, ChatRequest, ResponsesRequest, latest_user_content, text_content
 from .state import SessionState
@@ -173,9 +174,7 @@ def register_responses_routes(
                         and (
                             (
                                 state.resolved_objective
-                                and not request.app.state.controller.has_review_evidence(
-                                    state, current_body.metadata
-                                )
+                                and not has_review_evidence(state, current_body.metadata)
                             )
                             or (
                                 state.engineering_loop is not None

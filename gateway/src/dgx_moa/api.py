@@ -88,7 +88,7 @@ from .remote_judge import (
     selective_judge_reasons,
 )
 from .responses_routes import register_responses_routes
-from .review import review_observation
+from .review import has_review_evidence, review_observation
 from .routing import (
     COMPATIBILITY_MODEL_ALIASES,
     MODEL_MODES,
@@ -2625,7 +2625,7 @@ def create_app(
                 and state.review_status != "approved"
                 and (
                     bool(judge_reasons)
-                    or runtime.controller.has_review_evidence(state, body.metadata)
+                    or has_review_evidence(state, body.metadata)
                 )
             ):
                 reviewer_observation = review_observation(

@@ -72,6 +72,7 @@ from .remote_judge import (
 )
 from .review import (
     frontier_correction_questions,
+    has_review_evidence,
     review_contract_evidence,
     review_tool_executions,
     review_tool_results,
@@ -98,7 +99,8 @@ from .usage import UsageStore
 from .validation import (
     completion_ready,
     filtered_validation_execution,
-    successful_validation_execution,
+    has_validation_evidence,
+    required_validation_evidence,
     validation_execution,
     validation_verdict_present,
 )
@@ -2283,7 +2285,7 @@ class Controller:
         command = metadata.get("validation_command")
         if not isinstance(command, str) or not command.strip():
             return None
-        attempted, _ = self.required_validation_evidence(state, command)
+        attempted, _ = required_validation_evidence(state, command)
         return (
             command.strip()
             if state.repository.get("workspace_identifier") == "long-horizon"
@@ -3105,7 +3107,7 @@ class Controller:
         collaboration_context = ""
         progress_retry = bool(request.get("metadata", {}).get("responses_progress_retry"))
         metadata = dict(request.get("metadata", {}))
-        validation_evidence_available = self.has_validation_evidence(state, metadata)
+        validation_evidence_available = has_validation_evidence(state, metadata)
         reuse_trigger = (
             "responses_progress_retry"
             if progress_retry
@@ -3286,7 +3288,7 @@ class Controller:
         )
         review_evidence_available = local_correction_applied and (
             validation_evidence_available
-            or (not tool_continuation and self.has_review_evidence(state, metadata))
+            or (not tool_continuation and has_review_evidence(state, metadata))
         )
         if state.review_status == "rejected" and not local_correction_applied:
             self.store.event(
@@ -4114,108 +4116,6 @@ class Controller:
         body["messages"] = messages
         return body
 
-    def has_review_evidence(self, state: SessionState, metadata: dict[str, Any]) -> bool:
-        completion_evidence = metadata.get("completion_evidence")
-        if (
-            (isinstance(completion_evidence, dict) and completion_evidence)
-            or metadata.get("changed_paths")
-            or metadata.get("diff_summary")
-            or metadata.get("validation_results")
-        ):
-            return True
-        executions = current_turn_executions(state)
-        if (
-            state.active_turn_requires_change
-            and state.active_turn_targets_repository
-            and not any(
-                execution.get("exit_code") == 0 and tool_execution_changes_files(execution)
-                for execution in executions
-            )
-        ):
-            return False
-        for execution in reversed(executions):
-            arguments = execution.get("normalized_arguments")
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except ValueError:
-                    arguments = {}
-            command = (
-                arguments.get("cmd") or arguments.get("command")
-                if isinstance(arguments, dict)
-                else None
-            )
-            if successful_validation_execution(execution) or (
-                execution.get("exit_code") == 0
-                and isinstance(command, str)
-                and re.search(r"(?:^|&&|\|\||;|\n|[\"'])\s*git\s+diff\b", command)
-            ):
-                return True
-            if tool_execution_changes_files(execution):
-                break
-        return False
-
-    def has_validation_evidence(self, state: SessionState, metadata: dict[str, Any]) -> bool:
-        required = metadata.get("validation_command")
-        if (
-            state.repository.get("workspace_identifier") == "long-horizon"
-            and isinstance(required, str)
-            and required.strip()
-        ):
-            return self.required_validation_evidence(state, required)[1]
-        completion_evidence = metadata.get("completion_evidence")
-        if isinstance(completion_evidence, dict) and completion_evidence:
-            return True
-        validation_results = metadata.get("validation_results")
-        if isinstance(validation_results, list) and validation_results:
-            passed = [
-                item.get("passed") is True
-                or str(item.get("status", "")).lower() in {"ok", "pass", "passed", "success"}
-                if isinstance(item, dict)
-                else bool(re.search(r"\b(?:ok|pass(?:ed)?|success(?:ful)?)\b", str(item), re.I))
-                and not bool(re.search(r"\b(?:fail(?:ed|ure)?|error)\b", str(item), re.I))
-                for item in validation_results
-            ]
-            if all(passed):
-                return True
-        for execution in reversed(current_turn_executions(state)):
-            if successful_validation_execution(execution):
-                return True
-            if tool_execution_changes_files(execution):
-                break
-        return False
-
-    def required_validation_evidence(
-        self, state: SessionState, command: str
-    ) -> tuple[bool, bool]:
-        executions = current_turn_executions(state)
-        last_change = max(
-            (
-                index
-                for index, execution in enumerate(executions)
-                if execution.get("exit_code") == 0
-                and tool_execution_changes_files(execution)
-            ),
-            default=-1,
-        )
-        for execution in reversed(executions[last_change + 1 :]):
-            arguments = execution.get(
-                "validation_arguments", execution.get("normalized_arguments")
-            )
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except ValueError:
-                    arguments = {}
-            observed = (
-                arguments.get("cmd") or arguments.get("command")
-                if isinstance(arguments, dict)
-                else None
-            )
-            if isinstance(observed, str) and observed.strip() == command.strip():
-                return True, successful_validation_execution(execution)
-        return False, False
-
     def requires_implementation_tool_action(
         self, state: SessionState, metadata: dict[str, Any]
     ) -> bool:
@@ -4232,7 +4132,7 @@ class Controller:
             execution.get("exit_code") == 0 and tool_execution_changes_files(execution)
             for execution in current_turn_executions(state)
         )
-        validated = self.has_validation_evidence(state, metadata)
+        validated = has_validation_evidence(state, metadata)
         review_ready = (
             not state.frontier_correction_required
             and not state.frontier_correction_pending_verification

@@ -10588,3 +10588,16 @@ or duplicate policy was retained, and Controller shrank by a further 94 lines.
 Three focused Judge tests passed. Ruff passed, strict mypy reported no issues
 across 61 source files, `git diff --check` passed, and the complete suite passed
 `1,218/1,218` in 47.71 seconds with the existing Starlette deprecation warning.
+
+## 2026-08-03 Review and validation readiness boundary
+
+Review-evidence readiness now lives in `review.py`; required-command and general
+validation readiness now live in `validation.py`. Chat, Responses, and
+Controller orchestration call these pure predicates directly instead of routing
+through Controller methods. Current-turn mutation ordering, long-horizon exact
+command matching, successful validation semantics, and pre-mutation evidence
+rejection are unchanged. No compatibility methods remain, and Controller shrank
+by a further 100 lines. Eight focused readiness tests passed. Ruff passed,
+strict mypy reported no issues across 61 source files, `git diff --check` passed,
+and the complete suite passed `1,218/1,218` in 53.21 seconds with the existing
+Starlette deprecation warning.
