@@ -11104,3 +11104,23 @@ over 63 source files passed, followed by `1,228/1,228` tests in 47.21 seconds
 with the existing Starlette deprecation warning. Because the analysis commit
 changed, all v95 client panels remain diagnostic and protocol v96 requires a
 new plan hash and a fresh 200-attempt seal before its first result.
+
+## Gemma 4 26B-A4B specialist boundary revalidation (2026-08-03)
+
+The experiment branch and running isolated specialist agree on
+`nvidia/Gemma-4-26B-A4B-NVFP4` revision
+`a19cfe00be84568a6867111c9a68c9c44fdcffe6`. Planner and Reviewer share the
+single `dgx-moa-specialist-candidate` SGLang endpoint on loopback port `18102`;
+the model directory is mounted read-only, both weight shards pass the checked-in
+SHA-256 manifest, and no Gemma 31B model or Hugging Face cache directory remains.
+Older 31B references in this file are immutable historical evidence, not active
+code or configuration.
+
+The existing isolated physical validation passed every runtime, catalog,
+65,536-token capacity, readiness, streaming, tool-parser, reasoning, and
+Planner/Reviewer structured-output check in 80.002 seconds. The real specialist
+readiness probe completed in 0.201 seconds; Planner and Reviewer structured
+checks completed in 34.195 and 26.285 seconds. Neither container was OOM-killed,
+neither used swap, and host available memory increased from 34.443 GiB to
+34.506 GiB across the run. The focused model/topology/rollback contract suite
+passed `36/36`; both lifecycle shell scripts also passed `bash -n`.
