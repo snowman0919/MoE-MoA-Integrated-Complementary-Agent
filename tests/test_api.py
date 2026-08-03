@@ -4362,14 +4362,13 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             for model in models["models"]
         )
         assert all(
-            "Collection, sample, and selection counts may be zero" in model["base_instructions"]
-            and "Security or resource capacities and timeouts must be strictly positive"
-            in model["base_instructions"]
+            "trust-boundary input types and values" in model["base_instructions"]
+            and "edge boundaries" in model["base_instructions"]
             for model in models["models"]
         )
         assert all(
-            "bool is a subclass of int" in model["base_instructions"]
-            and "optional argv-style entry points" in model["base_instructions"]
+            "Preserve public signatures" in model["base_instructions"]
+            and "retention, caches, or hardening" in model["base_instructions"]
             for model in models["models"]
         )
         assert all(model["comp_hash"] == "dgx-moa-65536-v1" for model in models["models"])

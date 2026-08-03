@@ -74,10 +74,12 @@ from .review import (
     has_review_evidence,
     register_frontier_review_failure,
     register_local_review_failure,
+    rejected_without_findings,
     review_contract_evidence,
     review_tool_executions,
     review_tool_results,
     serialize_review_evidence,
+    unresolved_structured_rejection,
 )
 from .review import material_frontier_review as has_material_frontier_review
 from .review import material_review_issue as has_material_review_issue
@@ -159,31 +161,13 @@ GOAL_PREREQUISITE_DOCUMENTS = (
 IMPLEMENTATION_QUALITY_CONTRACT = (
     "Treat the written contract and surrounding code as authoritative; supplied tests are "
     "examples, not the complete specification. Before finalizing, derive and run at least one "
-    "independent requirement-based check when applicable. Review type and boundary inputs, "
-    "non-finite numeric values, invariants across every public operation, failure atomicity, "
-    "deterministic results, and synchronization of shared state. For numeric APIs, explicitly "
-    "test and reject booleans when they are not valid numbers, plus NaN and both infinities. "
-    "Remove unused auxiliary state and ensure long-lived structures are pruned or otherwise "
-    "bounded by the written contract; passing tests do not justify memory that grows with total "
-    "historical requests. Do not add input-ordering or monotonicity restrictions that the written "
-    "contract does not require. "
-    "In Python, bool is a subclass of int, so a comparison such as value < 0 is not a sufficient "
-    "type check; use an explicit boolean guard or an exact integer type check. Parameters named "
-    "version, expected_version, revision, sequence, count, or index require an explicit bool "
-    "rejection when their contract requires an integer. Preserve every "
-    "documented container type before calling methods such as items(), and reject invalid "
-    "containers without mutating durable state. For strict JSON storage, validate the fully "
-    "merged object and use allow_nan=False on the actual dump before any write; strict reads "
-    "must also reject NaN and infinities rather than accepting Python's permissive constants. "
-    "Preserve every "
-    "documented public function signature, including optional argv-style entry points. "
-    "For documented whole-string regular-expression formats, use fullmatch or an equivalent "
-    "strict end-of-string check; a `$` anchor may match before a final newline. "
-    "Classify numeric bounds by their contract semantics instead of applying one rule to every "
-    "limit. Security or resource capacities and timeouts must be strictly positive unless zero "
-    "explicitly disables them. Collection, sample, and selection counts may be zero when zero "
-    "naturally means none; reject negative values. Do not invent a stronger boundary than the "
-    "written contract. "
+    "independent requirement-based check when applicable. Audit trust-boundary input types and "
+    "values, edge boundaries, invariants across public operations, failure atomicity, "
+    "deterministic behavior, and synchronization of shared state as required by that contract. "
+    "Preserve public "
+    "signatures and existing compatibility. Use the simplest standard-library design that meets "
+    "the requirements; do not add restrictions, retention, caches, or hardening the contract does "
+    "not require. "
     "When a command is still running, resume only the returned tool session; do not launch a "
     "duplicate command. Run potentially blocking tests with a bounded timeout. If a test hangs, "
     "terminate that exact process before inspecting the cause or retrying, and never leave two "
@@ -192,27 +176,11 @@ IMPLEMENTATION_QUALITY_CONTRACT = (
 )
 
 REVIEWER_QUALITY_CONTRACT = (
-    "Review independently of the supplied tests. Check type and boundary inputs, non-finite "
-    "numeric values, invariants across every public operation, failure atomicity, deterministic "
-    "results, and synchronization of shared state. For numeric APIs, explicitly check booleans, "
-    "NaN, and both infinities. In Python, bool is a subclass of int, so a comparison such as "
-    "value < 0 does not reject booleans. Reject unused auxiliary state, long-lived structures "
-    "that grow with total historical requests without contract-required retention, and "
-    "input-ordering or monotonicity restrictions absent from the written contract. "
-    "Explicitly verify bool rejection for integer version, "
-    "expected_version, revision, sequence, count, and index parameters. Before approving, "
-    "inspect every documented public "
-    "function signature and every public numeric parameter in the bounded code evidence; reject "
-    "missing explicit type or boundary checks and changed optional argv-style entry points. "
-    "Check documented container types before methods such as items() are called. For strict JSON "
-    "storage, require validation of the fully merged object plus allow_nan=False on the actual "
-    "dump, and reject non-finite constants on read. "
-    "For documented whole-string regular-expression formats, require fullmatch or an equivalent "
-    "strict end-of-string check; a `$` anchor may match before a final newline. "
-    "Classify numeric bounds by their contract semantics. Security or resource capacities and "
-    "timeouts must be strictly positive unless zero explicitly disables them. Collection, "
-    "sample, and selection counts may be zero when zero naturally means none; reject negative "
-    "values and do not invent a stronger boundary than the written contract. Reject material "
+    "Review independently of supplied tests and inspect the bounded implementation evidence. "
+    "For every written requirement, check trust-boundary input types and values, edge boundaries, "
+    "invariants across public operations, failure atomicity, deterministic behavior, public API "
+    "compatibility, and synchronization of shared state when applicable. Do not invent stricter "
+    "requirements, speculative retention, or unrelated hardening. Reject material "
     "correctness, security, concurrency, or test gaps with a concrete required correction. "
     "Scan all bounded evidence before deciding. In one rejected response, report every material "
     "finding visible in that evidence, group related symptoms under one root-cause correction, "
@@ -4005,8 +3973,10 @@ class Controller:
                     ),
                     cost_usd=reviewer_routing.get("remote_cost_usd"),
                 )
+                raw_result = parse_json_content(response)
+                rejection_intent = rejected_without_findings(raw_result)
                 try:
-                    result = ReviewResult.model_validate(parse_json_content(response)).model_dump()
+                    result = ReviewResult.model_validate(raw_result).model_dump()
                 except ValueError:
                     self.store.event(
                         state.session_id,
@@ -4025,6 +3995,13 @@ class Controller:
                         ensure_ascii=False,
                         sort_keys=True,
                     )[: self.settings.limits.max_review_evidence_characters]
+                    retry_instruction = (
+                        "The previous response explicitly rejected the implementation but omitted "
+                        "its finding. Preserve status rejected and provide at least one concrete "
+                        "complete finding; do not replace that rejection with an empty approval. "
+                        if rejection_intent
+                        else 'An approval must use exactly {"status":"approved","findings":[]}. '
+                    )
                     retry_request["messages"] = [
                         {
                             "role": "system",
@@ -4033,8 +4010,9 @@ class Controller:
                                 "review JSON object only. The previous "
                                 "bounded response was invalid or truncated. Use exactly status "
                                 "approved or rejected and structured findings matching the "
-                                "required schema. Example: "
-                                '{"status":"approved","findings":[]}. '
+                                "required schema. "
+                                + retry_instruction
+                                +
                                 "Reject when the evidence shows implementation defects. This "
                                 "review runs before final synthesis, so do not reject for an "
                                 "absent "
@@ -4066,7 +4044,14 @@ class Controller:
                         ),
                         cost_usd=reviewer_routing.get("remote_cost_usd"),
                     )
-                    result = ReviewResult.model_validate(parse_json_content(response)).model_dump()
+                    retry_result = ReviewResult.model_validate(
+                        parse_json_content(response)
+                    ).model_dump()
+                    result = (
+                        unresolved_structured_rejection()
+                        if rejection_intent and retry_result["status"] == "approved"
+                        else retry_result
+                    )
             finally:
                 if owned_guard:
                     assert guard_transition_id is not None

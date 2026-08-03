@@ -10814,3 +10814,28 @@ close the observed quality gap without OpenRouter cost. The immutable sanitized
 subset is preserved at
 `/home/kotori9/code/.moa-preservation/diagnostics/20260803-codex-rate-limiter-frontier-diagnostic-a2`;
 raw client/provider logs were excluded.
+
+## Codex local correction diagnostic A3 and blind-contract repair (2026-08-03)
+
+Run `20260803-codex-rate-limiter-local-correction-a3` used only local providers
+and timed out with client exit `124` after 1,800.082 seconds. Telemetry remained
+complete and provider-pinned with zero variable remote cost: 67 Executor, one
+Planner, 14 Reasoner, and one Reviewer call. The Reviewer rejected with two
+findings, but correction introduced a lock re-entry defect and started a second
+validation before the first completed. A manual score attempt reproduced the
+public `unittest` lock wait and was stopped with exit `130`; no score was
+produced or inferred. The sanitized immutable subset is preserved at
+`/home/kotori9/code/.moa-preservation/diagnostics/20260803-codex-rate-limiter-local-correction-a3`.
+
+The A1 review evidence confirmed a separate orchestration defect: an initial
+structured `rejected` response with no finding could be retried as an empty
+approval. The retry now preserves rejection intent and synthesizes a bounded
+fail-closed finding if the retry attempts that transition. During diagnosis,
+the shared implementation/review contracts were also found to contain
+task-specific hidden-edge solutions and speculative retention guidance. Those
+hints are removed in favor of a task-agnostic written-contract audit. This is a
+protocol change, so A1–A3 remain diagnostics and protocol v91 restarts from a
+new seal and clean fixtures; no prior attempt counts toward confirmation.
+Focused rejection/contract verification passed `3/3`. The complete gate passed
+Ruff, strict mypy across 62 source files, and `1,224/1,224` tests in 43.26
+seconds with the existing Starlette deprecation warning.

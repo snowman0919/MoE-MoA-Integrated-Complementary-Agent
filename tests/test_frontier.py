@@ -301,14 +301,13 @@ def test_openrouter_tool_calls_drop_provider_metadata() -> None:
     ]
 
 
-def test_frontier_review_requires_finite_arithmetic_parameters() -> None:
+def test_frontier_review_uses_task_agnostic_contract_audit() -> None:
     prompt = COLLABORATION_MODE_INSTRUCTIONS["code_review"]
 
-    assert "even when supplied tests omit those cases" in prompt
-    assert "timestamp, duration, window, size, or capacity arithmetic" in prompt
-    assert "allow_nan=False" in prompt
-    assert "expected_version" in prompt
-    assert "fully merged object" in prompt
+    assert "trust-boundary inputs" in prompt
+    assert "edge behavior" in prompt
+    assert "failure atomicity" in prompt
+    assert "Do not invent stricter requirements" in prompt
     assert "when missing_tests is non-empty, use revise" in prompt
     assert "include every material finding" in prompt
     assert "never intentionally serialize known findings" in prompt
@@ -435,7 +434,7 @@ def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
     if mode == "code_review":
         assert "Do not turn optional hardening" in str(observed["task"])
         assert "Use approve when the stated contract is met" in str(observed["task"])
-        assert "NaN, and both infinities" in str(observed["task"])
+        assert "trust-boundary inputs" in str(observed["task"])
     assert COLLABORATION_SCHEMAS[mode].model_validate(result.output)
     assert result.total_tokens == 16
     assert result.cost_usd == 0.000021

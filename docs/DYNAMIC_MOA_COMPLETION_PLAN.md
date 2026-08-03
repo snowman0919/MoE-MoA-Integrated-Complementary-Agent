@@ -580,6 +580,14 @@ reconnect, plan/context 보존을 대체하지 않는다.
   기록으로 analysis commit이 바뀌었으므로, v89의 품질 margin, bootstrap seed,
   표본 수, prompt, model, fixture, scorer, telemetry 계약은 변경하지 않은 채 새
   seal, run ID, attempt order와 clean fixture에서 200회를 처음부터 다시 시작한다.
+- protocol v91은 A1에서 발견된 local Reviewer의 명시적 rejection이 malformed
+  retry의 빈 approval로 바뀌지 않도록 원래 rejection intent를 fail closed한다.
+  또한 Executor·Reviewer·Frontier 공통 계약에서 특정 hidden edge의 해답과
+  task에 없는 retention 요구를 제거하고, 작성된 계약·trust boundary·edge·
+  atomicity·concurrency를 독립 검토하는 task-agnostic 원칙만 유지한다. A1–A3는
+  진단으로 보존하며 v90의 quality margin, bootstrap seed, 표본 수, model,
+  fixture, scorer, telemetry 계약은 바꾸지 않는다. 새 plan hash, seal, run ID,
+  attempt order와 clean fixture에서 200회를 처음부터 다시 시작한다.
 
 ## 10. Release, rollback, 배포
 

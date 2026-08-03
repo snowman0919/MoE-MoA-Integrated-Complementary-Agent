@@ -271,3 +271,36 @@ def _register_review_failure(state: SessionState, fingerprint: str) -> bool:
         return False
     register_failure(loop, "DUPLICATE_FAILURE", finding_fingerprint=fingerprint)
     return loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
+
+
+def rejected_without_findings(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("status") == "rejected"
+        and not value.get("findings")
+    )
+
+
+def unresolved_structured_rejection() -> dict[str, Any]:
+    return {
+        "status": "rejected",
+        "findings": [
+            {
+                "finding_id": "review-structured-rejection",
+                "severity": "important",
+                "category": "review_integrity",
+                "evidence_references": [],
+                "affected_location": "bounded implementation evidence",
+                "impact": (
+                    "The Reviewer detected a defect but omitted its required structured finding; "
+                    "a later empty approval cannot establish correctness."
+                ),
+                "required_correction": (
+                    "Re-inspect every written requirement against the bounded implementation, "
+                    "identify the concrete defect, correct it, and rerun validation before "
+                    "approval."
+                ),
+                "optional_recommendation": None,
+            }
+        ],
+    }
