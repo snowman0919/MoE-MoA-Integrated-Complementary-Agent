@@ -10774,3 +10774,22 @@ missing evidence. The quality-matrix focused suite passed `25/25`; Ruff and
 strict mypy passed for the runner. The complete gate passed Ruff, strict mypy
 across 62 source files, and `1,223/1,223` tests in 46.66 seconds with the existing
 Starlette deprecation warning.
+
+## Codex rate-limiter diagnostic A1 (2026-08-03)
+
+Run `20260803-codex-rate-limiter-diagnostic-a1` used the isolated Docker Codex
+client against loopback candidate gateway `19300`, SGLang Executor `18101`, and
+unified Gemma Planner/Reviewer `18102`. It exited `0`, changed only
+`rate_limiter.py`, preserved tests, produced Korean final output and tool
+evidence, passed public tests, pinned every provider, recorded no provider error
+or retryable failure, reported complete token/cost telemetry, and incurred zero
+remote cost. The 342.466-second run recorded 24 Executor, one Planner, seven
+Reasoner, and one Reviewer calls; Planner and Reviewer remained local Gemma.
+
+The attempt is **FAILED**, not PASS: hidden validation exit was `1` because the
+implementation accepted an invalid constructor edge case. Reviewer returned an
+empty approved finding set, so this is direct evidence of a remaining
+implementation/review quality gap rather than a transport failure. The immutable
+sanitized evidence subset is preserved at
+`/home/kotori9/code/.moa-preservation/diagnostics/20260803-codex-rate-limiter-diagnostic-a1`;
+raw client/provider logs were excluded. Any retry requires a new run ID.
