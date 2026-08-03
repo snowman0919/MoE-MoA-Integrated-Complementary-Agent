@@ -634,6 +634,16 @@ reconnect, plan/context 보존을 대체하지 않는다.
   seed, 표본 수, prompt, model, fixture, scorer, telemetry 계약은 변경하지 않고
   새 analysis commit, plan hash, seal, run ID와 clean fixture에서 200회를 처음부터
   시작한다.
+- protocol v98은 v97 attempt 7에서 Hermes가 마지막 streaming response의
+  `finish_reason`을 받은 직후 연결을 닫아 `[DONE]`과 usage frame이 남고 local
+  Executor invocation이 cancelled로 기록된 hard reliability 실패를 수정한다.
+  downstream close 전에 finish reason을 이미 관찰한 경우에만 최대 2초 동안
+  terminal frame을 drain한다. `[DONE]`을 확인한 경우만 completed이며, finish
+  reason이 없거나 drain timeout이면 기존 cancellation 계약을 유지한다. v97의
+  7개 score(4 PASS, 3 FAIL)는 diagnostic으로 보존하고 재개하지 않는다. 동결
+  quality/speed margin, bootstrap seed, 표본 수, prompt, model, fixture, scorer,
+  telemetry 계약은 변경하지 않고 새 analysis commit, plan hash, seal, run ID와
+  clean fixture에서 200회를 처음부터 시작한다.
 
 ## 10. Release, rollback, 배포
 

@@ -11156,3 +11156,37 @@ repository gate passed Ruff, strict mypy across all 63 gateway source files,
 and `1,229/1,229` tests in 46.96 seconds with the existing Starlette deprecation
 warning. Protocol v97 therefore requires a new clean commit, plan hash, seal,
 run ID, and full 200-attempt restart; no v96 result is reused.
+
+## Protocol v97 termination and terminal stream drain (2026-08-04)
+
+The sealed v97 confirmation epoch was stopped after seven immutable scores:
+four passed and three failed. Attempts 2 and 4 were ordinary hidden-validation
+quality failures with complete telemetry. Attempt 7 was a hard reliability
+failure after 857.649 seconds: its final Hermes streaming request had already
+received a finish reason, but the client closed before consuming the terminal
+`[DONE]` and usage frame. The Gateway correctly recorded the request and one
+local Executor invocation as cancelled, making telemetry incomplete with one
+provider error. There was no cross-attempt overlap, orphan error, provider
+switch, stderr, traceback, timeout, or client process failure. v97 remains
+diagnostic and is not resumed.
+
+The minimal v98 fix adds an optional pre-close callback to the existing
+response-owned iterator. Only when a finish reason has already been observed
+does it drain the remaining upstream frames for at most two seconds. Completion
+still requires `[DONE]`; a true mid-stream disconnect or drain timeout retains
+the existing cancelled status. Four focused tests passed, covering mid-stream
+cancellation, consumer close, close after `[DONE]`, and close after finish
+reason before `[DONE]`.
+
+The first physical diagnostic d8 was invalid because its background isolated
+Gateway process was terminated with no Python or kernel OOM evidence; it saw no
+requests and failed closed with return code 124. The Gateway was then held in a
+dedicated foreground session. Fresh immutable diagnostic
+`20260803-hermes-terminal-drain-v98-d9` repeated the same 23-request Hermes
+webhook task and passed in 764.499 seconds. All requests were terminal, cancelled
+invocations were zero, telemetry was complete, and provider errors, orphan
+errors, switches, and active requests were all zero. Protocol v98 requires a
+new clean commit, plan hash, seal, run ID, and full 200-attempt restart; no v97
+score is reused. The final repository gate passed Ruff, strict mypy across all
+63 gateway source files, both checked-in document hashes, and `1,230/1,230`
+tests in 53.16 seconds with the existing Starlette deprecation warning.

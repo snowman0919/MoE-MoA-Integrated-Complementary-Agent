@@ -2347,8 +2347,11 @@ def create_app(
                                     ),
                                 )
 
+                terminal_drainer: Callable[[], Awaitable[None]] | None = None
+
                 async def stream_response() -> AsyncIterator[bytes]:
                     nonlocal first_byte_at, loop_admission_failed, stream_completed
+                    nonlocal terminal_drainer
                     admitted_tool_calls = 0
                     accounted_total_tokens = 0
                     forwarder = forward_sse(
@@ -2356,6 +2359,20 @@ def create_app(
                         observation,
                         max_event_bytes=configured.limits.max_sse_event_bytes,
                     )
+
+                    async def drain_terminal() -> None:
+                        nonlocal stream_completed
+                        if not observation.finish_reasons or observation.done_seen:
+                            return
+                        try:
+                            while not observation.done_seen:
+                                await anext(forwarder)
+                        except StopAsyncIteration:
+                            pass
+                        stream_completed = observation.done_seen
+
+                    terminal_drainer = drain_terminal
+
                     try:
                         deadline = (
                             executor_started + configured.limits.executor_total_timeout_seconds
@@ -2431,6 +2448,13 @@ def create_app(
                         stage_status["executor_total"] = "timed_out"
                         raise StageTimeout("executor_total") from error
                     except asyncio.CancelledError:
+                        drain_task = asyncio.create_task(drain_terminal())
+                        try:
+                            await asyncio.wait_for(asyncio.shield(drain_task), timeout=2)
+                        except (TimeoutError, asyncio.CancelledError):
+                            drain_task.cancel()
+                            with suppress(Exception, asyncio.CancelledError):
+                                await drain_task
                         stage_status["executor_total"] = "cancelled"
                         if not observation.done_seen:
                             state.final_status = "cancelled"
@@ -2441,8 +2465,15 @@ def create_app(
                     finally:
                         await finish_stream()
 
+                async def drain_before_close() -> None:
+                    if terminal_drainer is not None:
+                        with suppress(TimeoutError):
+                            await asyncio.wait_for(terminal_drainer(), timeout=2)
+
                 return ResponseOwnedStreamingResponse(
-                    ResponseOwnedIterator(stream_response(), finish_stream),
+                    ResponseOwnedIterator(
+                        stream_response(), finish_stream, drain_before_close
+                    ),
                     media_type="text/event-stream",
                     headers={"X-Session-ID": session_id},
                 )
