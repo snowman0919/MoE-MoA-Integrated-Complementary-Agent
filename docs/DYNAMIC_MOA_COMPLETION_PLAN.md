@@ -614,6 +614,15 @@ reconnect, plan/context 보존을 대체하지 않는다.
   Hermes H1-H4는 진단으로 보존하고 새 plan hash와 run ID에서 패널을 다시
   시작한다. 동결 quality margin, bootstrap seed, 표본 수, prompt, model,
   fixture, scorer, telemetry 계약은 변경하지 않는다.
+- protocol v96은 200개 attempt의 10시간 이상 순차 실행을 도구 세션 재접속
+  사이에서도 안전하게 재개하도록 기존 immutable `score.json`을 checkpoint로
+  사용하는 최소 stdlib driver를 추가한다. 기존 score는 다시 실행하거나
+  덮어쓰지 않고, `run.json`만 존재하면 score부터 재개하며, 둘 다 없을 때만
+  sealed order의 다음 attempt를 실행한다. 시작 전 기존 seal verifier를 반드시
+  통과한다. v95 Codex C1-C5, OpenCode O1-O6, Hermes H1-H9는 진단으로 보존하며
+  새 analysis commit, plan hash, seal, run ID에서 200회를 처음부터 시작한다.
+  동결 quality/speed margin, bootstrap seed, 표본 수, prompt, model, fixture,
+  scorer, telemetry 계약은 변경하지 않는다.
 
 ## 10. Release, rollback, 배포
 

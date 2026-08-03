@@ -11087,3 +11087,20 @@ not sufficient for confirmation. Every task also used bounded fixed-cost Codex
 OAuth secondary or Frontier collaboration, so the four passing rows are not
 local-path non-inferiority evidence. No selective retry is substituted for the
 failed epoch.
+
+## Resumable confirmation driver and protocol v96 (2026-08-03)
+
+The 200-attempt coding panel requires more than ten hours at the observed
+latencies. Manual per-attempt orchestration would not preserve deterministic
+order or reliable reconnect semantics. A minimal importable driver now verifies
+the frozen seal, follows its private opaque routing and sealed order, skips only
+existing immutable `score.json` checkpoints, scores an existing `run.json`, and
+runs a client only when neither result exists. It reuses the existing
+`quality_matrix` and `confirmation_seal` implementation without changing task
+prompts, fixtures, scorers, margins, seeds, or telemetry contracts.
+
+The focused resume/seal/quality-runner gate passed `30/30`; Ruff and strict mypy
+over 63 source files passed, followed by `1,228/1,228` tests in 47.21 seconds
+with the existing Starlette deprecation warning. Because the analysis commit
+changed, all v95 client panels remain diagnostic and protocol v96 requires a
+new plan hash and a fresh 200-attempt seal before its first result.
