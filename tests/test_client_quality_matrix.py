@@ -6,6 +6,7 @@ import subprocess
 from argparse import Namespace
 from pathlib import Path
 
+import pytest
 from dgx_moa import quality_matrix as MODULE
 
 SCRIPT = Path(MODULE.__file__)
@@ -56,6 +57,36 @@ def test_prepared_quality_workspace_starts_clean(tmp_path: Path) -> None:
 
     workspace = Path(result["workspace"])
     assert MODULE.git(workspace, "status", "--porcelain").stdout == ""
+
+
+def test_run_refuses_to_overwrite_existing_attempt(tmp_path: Path) -> None:
+    args = Namespace(
+        run_id="immutable",
+        workspace_root=tmp_path / "workspaces",
+        output_root=tmp_path / "evidence",
+    )
+    task = MODULE.TASKS[0]
+    MODULE.prepare_one(args, "codex", task)
+    _, evidence = MODULE.paths(args, "codex", task)
+    (evidence / "run.json").write_text("{}")
+
+    with pytest.raises(RuntimeError, match="attempt already ran"):
+        MODULE.run_one(args, "codex", task)
+
+
+def test_score_refuses_to_overwrite_existing_result(tmp_path: Path) -> None:
+    args = Namespace(
+        run_id="immutable",
+        workspace_root=tmp_path / "workspaces",
+        output_root=tmp_path / "evidence",
+    )
+    task = MODULE.TASKS[0]
+    _, evidence = MODULE.paths(args, "hermes", task)
+    evidence.mkdir(parents=True)
+    (evidence / "score.json").write_text("{}")
+
+    with pytest.raises(RuntimeError, match="attempt already scored"):
+        MODULE.score_one(args, "hermes", task)
 
 
 def test_codex_quality_command_uses_native_patch_catalog(tmp_path: Path) -> None:

@@ -10764,3 +10764,13 @@ plus existing orchestration retry/dependency tests passed `6/6`; Ruff and strict
 mypy passed for the affected modules. The final full gate passed Ruff, strict
 mypy across 62 source files, and `1,221/1,221` tests in 45.09 seconds with the
 existing Starlette deprecation warning.
+
+## Immutable quality attempts (2026-08-03)
+
+The quality-matrix runner now rejects an existing `run.json` before provider or
+client execution and rejects an existing `score.json` before validation. A retry
+must therefore use a new run/attempt ID instead of replacing prior failure or
+missing evidence. The quality-matrix focused suite passed `25/25`; Ruff and
+strict mypy passed for the runner. The complete gate passed Ruff, strict mypy
+across 62 source files, and `1,223/1,223` tests in 46.66 seconds with the existing
+Starlette deprecation warning.

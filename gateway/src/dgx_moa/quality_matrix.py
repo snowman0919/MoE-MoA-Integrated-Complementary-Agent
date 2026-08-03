@@ -1688,6 +1688,8 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
     workspace, evidence = paths(args, harness, task)
     if not (evidence / "manifest.json").exists():
         raise RuntimeError(f"prepare first: {harness}/{task.slug}")
+    if (evidence / "run.json").exists():
+        raise RuntimeError(f"attempt already ran: {harness}/{task.slug}")
     resources_before = resource_snapshot()
     started_at = time.time()
     started = time.monotonic()
@@ -2004,6 +2006,8 @@ def score_one(
     hidden_checks: dict[str, str] = HIDDEN_CHECKS,
 ) -> dict[str, Any]:
     workspace, evidence = paths(args, harness, task)
+    if (evidence / "score.json").exists():
+        raise RuntimeError(f"attempt already scored: {harness}/{task.slug}")
     manifest = json.loads((evidence / "manifest.json").read_text())
     run = json.loads((evidence / "run.json").read_text())
     validator_state = evidence / "validator-state"
