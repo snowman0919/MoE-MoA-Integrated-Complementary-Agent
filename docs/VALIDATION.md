@@ -11051,3 +11051,22 @@ collaboration, so this proves client/runtime functional stability but not
 local-path or overall quality non-inferiority. O4 consumed 401,256 total tokens
 and 473.421 seconds, so DAG efficiency remains a material confirmation risk.
 These diagnostics must not be counted as the frozen 200-attempt epoch.
+
+## Codex v95 rate-limiter diagnostic C1 (2026-08-03)
+
+Run `20260803-codex-rate-limiter-v95-c1` completed the client in 356.640
+seconds and passed public validation, terminal, tool-evidence, source-scope,
+test-integrity, Korean-output, and Docker-isolation gates. Telemetry was complete
+and provider-pinned with no provider error, switch, retryable failure, missing
+token row, or variable remote cost. Hidden validation exited 1, so C1 is
+**FAILED** and cannot contribute to a functional 5/5 panel or confirmation.
+
+Diagnosis used only the public contract and candidate source. The implementation
+accepted non-finite time-domain values and boolean numeric inputs that can break
+ordering invariants. The shared task-agnostic Executor and Reviewer contracts
+already require independent requirement checks, trust-boundary input types and
+values, edge boundaries, and invariants; both local and Frontier review still
+cleared the implementation. This is preserved as a model/review quality failure,
+not converted into a fixture-specific prompt hint. Hidden assertion details were
+not fed back into runtime code or prompts. Sanitized immutable evidence is at
+`/home/kotori9/code/.moa-preservation/diagnostics/20260803-codex-rate-limiter-v95-c1`.
