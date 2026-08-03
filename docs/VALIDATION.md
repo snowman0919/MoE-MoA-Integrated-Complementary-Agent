@@ -10989,3 +10989,13 @@ evidence is preserved at
 `/home/kotori9/code/.moa-preservation/diagnostics/20260803-hermes-webhook-verifier-v95-h5`.
 The remaining v95 Hermes tasks require fresh run IDs before any panel-level
 claim.
+
+Run `20260803-hermes-log-report-v95-h6` also passed every functional scorer
+gate in 136.537 seconds. Telemetry was complete and provider-pinned with no
+provider error, switch, retryable failure, missing token row, or variable
+remote cost. Local Planner, Reviewer, Reasoner, and Executor participated with
+bounded Codex OAuth secondary/Frontier collaboration, so H6 remains functional
+diagnostic evidence rather than local-path non-inferiority evidence. Its
+sanitized immutable archive is
+`/home/kotori9/code/.moa-preservation/diagnostics/20260803-hermes-log-report-v95-h6`.
+Rate-limiter, atomic-store, and dag-runner still require fresh v95 runs.
