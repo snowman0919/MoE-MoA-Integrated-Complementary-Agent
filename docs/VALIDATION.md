@@ -10886,3 +10886,20 @@ back into runtime code or prompts, and no score was inferred beyond the boolean
 gate. This establishes that v93 fixed the A4 transport/loop failure but did not
 establish local quality non-inferiority. The immutable sanitized evidence is at
 `/home/kotori9/code/.moa-preservation/diagnostics/20260803-codex-rate-limiter-v93-local-a5`.
+
+## Codex v93 Frontier diagnostic A6 (2026-08-03)
+
+Run `20260803-codex-rate-limiter-v93-frontier-a6` passed every public, hidden,
+source-scope, unchanged-test, terminal, tool-evidence, Korean-output, and Docker
+isolation gate in 640.023 seconds. Provider pinning and telemetry were complete;
+there was no provider error, retryable failure, switch, missing token row, or
+variable remote cost. Calls were 40 local Executor, seven Codex OAuth secondary
+Executor, two Codex OAuth Frontier, two local Planner, 12 Reasoner, and one local
+Reviewer.
+
+This is a functional diagnostic PASS only. The seven secondary Executor and two
+Frontier calls are a high external collaboration share, so A6 cannot establish
+local non-inferiority. It does complete the previously missing Codex functional
+rate-limiter item under the permitted fixed-cost OAuth correction path. The
+immutable sanitized evidence is preserved at
+`/home/kotori9/code/.moa-preservation/diagnostics/20260803-codex-rate-limiter-v93-frontier-a6`.
