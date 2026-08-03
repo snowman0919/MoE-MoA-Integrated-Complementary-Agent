@@ -10999,3 +10999,18 @@ diagnostic evidence rather than local-path non-inferiority evidence. Its
 sanitized immutable archive is
 `/home/kotori9/code/.moa-preservation/diagnostics/20260803-hermes-log-report-v95-h6`.
 Rate-limiter, atomic-store, and dag-runner still require fresh v95 runs.
+
+Fresh v95 `rate-limiter` H7, `atomic-store` H8, and `dag-runner` H9 then passed
+every functional scorer gate in 222.567, 352.646, and 190.145 seconds. All
+three runs had complete telemetry, provider pinning, unchanged tests, allowed
+source-only changes, public and hidden validation success, Korean terminal
+responses, and no provider error, switch, retryable failure, missing token row,
+or variable remote cost. Sanitized immutable evidence is preserved in the
+matching H7-H9 directories under
+`/home/kotori9/code/.moa-preservation/diagnostics/`.
+
+Together with H5 and H6, protocol v95 now has a fresh Hermes functional 5/5
+panel. Every task used bounded fixed-cost Codex OAuth secondary or Frontier
+collaboration, so the panel proves client/runtime functional stability but does
+not prove local-path or overall quality non-inferiority. It must not be counted
+as the frozen 200-attempt confirmation epoch.
