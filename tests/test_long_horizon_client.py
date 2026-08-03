@@ -93,16 +93,15 @@ def test_final_validation_rejects_zero_tests(
     args.timeout = 1
     state = tmp_path / "state"
     state.mkdir()
-    monkeypatch.setattr(
-        MODULE.QUALITY,
-        "run_process",
-        lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
+    backend = MODULE.LongHorizonBackend(
+        runtime_snapshot=lambda: {},
+        run_process=lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
             [], 0, "Ran 0 tests in 0.000s\n\nOK", ""
         ),
     )
     monkeypatch.setattr(MODULE, "container_exists", lambda _name: False)
 
-    exit_code, _output_sha256 = MODULE.run_validation(args, state)
+    exit_code, _output_sha256 = MODULE.run_validation(args, state, backend=backend)
 
     assert exit_code == 1
 
@@ -758,12 +757,10 @@ def test_checkpoint_interrupt_removes_only_its_named_container(
     existence = iter((False, True))
     removed: list[str] = []
     monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
-    monkeypatch.setattr(
-        MODULE.QUALITY,
-        "run_process",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    backend = MODULE.LongHorizonBackend(
+        runtime_snapshot=lambda: {},
+        run_process=lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
-    monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
     monkeypatch.setattr(
         MODULE,
         "client_command",
@@ -774,7 +771,7 @@ def test_checkpoint_interrupt_removes_only_its_named_container(
     monkeypatch.setattr(MODULE, "remove_client_container", removed.append)
 
     with pytest.raises(KeyboardInterrupt):
-        MODULE.run_checkpoint(args, state, control, 0)
+        MODULE.run_checkpoint(args, state, control, 0, backend=backend)
 
     assert removed == [MODULE.client_container_name(args, state, 0)]
 
@@ -869,14 +866,12 @@ def test_checkpoint_failures_are_distinguished(
         "client_session": None,
     }
     monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
-    monkeypatch.setattr(
-        MODULE.QUALITY,
-        "run_process",
-        lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
+    backend = MODULE.LongHorizonBackend(
+        runtime_snapshot=lambda: {},
+        run_process=lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
             [], returncode, "", "failure"
         ),
     )
-    monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
     monkeypatch.setattr(
         MODULE,
         "client_command",
@@ -900,7 +895,7 @@ def test_checkpoint_failures_are_distinguished(
     )
 
     with pytest.raises(RuntimeError, match=failure):
-        MODULE.run_checkpoint(args, state, control, 0)
+        MODULE.run_checkpoint(args, state, control, 0, backend=backend)
 
 
 @pytest.mark.parametrize(
@@ -947,8 +942,10 @@ def test_codex_disconnect_resumes_the_only_isolated_thread_once(
             __import__("subprocess").CompletedProcess([], 1, "", "stream disconnected"),
         )
     )
-    monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
-    monkeypatch.setattr(MODULE.QUALITY, "run_process", lambda *_args, **_kwargs: next(runs))
+    backend = MODULE.LongHorizonBackend(
+        runtime_snapshot=lambda: {},
+        run_process=lambda *_args, **_kwargs: next(runs),
+    )
     monkeypatch.setattr(
         MODULE,
         "client_command",
@@ -962,7 +959,7 @@ def test_codex_disconnect_resumes_the_only_isolated_thread_once(
     monkeypatch.setattr(MODULE, "container_exists", lambda _name: False)
 
     with pytest.raises(MODULE.ClientNonzeroExit):
-        MODULE.run_checkpoint(args, state, control, 0)
+        MODULE.run_checkpoint(args, state, control, 0, backend=backend)
 
     assert sessions == [None, "private-thread"]
     assert json.loads((state / "long-control.json").read_text())["client_session"] == (
@@ -994,12 +991,12 @@ def test_checkpoint_requires_committed_implementation(
         "client_session": None,
     }
     monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
-    monkeypatch.setattr(
-        MODULE.QUALITY,
-        "run_process",
-        lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess([], 0, "", ""),
+    backend = MODULE.LongHorizonBackend(
+        runtime_snapshot=lambda: {},
+        run_process=lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
+            [], 0, "", ""
+        ),
     )
-    monkeypatch.setattr(MODULE.RUNTIME, "runtime_snapshot", lambda: {})
     monkeypatch.setattr(
         MODULE,
         "client_command",
@@ -1045,4 +1042,4 @@ def test_checkpoint_requires_committed_implementation(
     monkeypatch.setattr(MODULE, "git", lambda *_args: "")
 
     with pytest.raises(RuntimeError, match="implementation_checkpoint_unchanged"):
-        MODULE.run_checkpoint(args, state, control, index)
+        MODULE.run_checkpoint(args, state, control, index, backend=backend)

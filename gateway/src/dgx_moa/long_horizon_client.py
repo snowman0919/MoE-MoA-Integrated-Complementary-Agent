@@ -12,6 +12,8 @@ import shutil
 import sqlite3
 import subprocess
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -76,6 +78,18 @@ FIXED_PLAN_PROVIDERS = {
     "remote",
     "secondary",
 }
+
+
+@dataclass(frozen=True)
+class LongHorizonBackend:
+    runtime_snapshot: Callable[[], dict[str, Any]]
+    run_process: Callable[..., subprocess.CompletedProcess[str]]
+
+
+DEFAULT_BACKEND = LongHorizonBackend(
+    runtime_snapshot=RUNTIME.runtime_snapshot,
+    run_process=QUALITY.run_process,
+)
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -928,13 +942,18 @@ def secure_client_state(state: Path) -> None:
             path.chmod(0o600)
 
 
-def run_validation(args: argparse.Namespace, state: Path) -> tuple[int, str]:
+def run_validation(
+    args: argparse.Namespace,
+    state: Path,
+    *,
+    backend: LongHorizonBackend = DEFAULT_BACKEND,
+) -> tuple[int, str]:
     command = shlex.split(args.validation_command)
     name = f"moa-long-validation-{sha256_text(str(state))[:12]}"
     if container_exists(name):
         raise RuntimeError("validation_container_already_exists")
     try:
-        run = QUALITY.run_process(
+        run = backend.run_process(
             with_container_name(
                 QUALITY.docker_command(
                     args.workspace,
@@ -1093,12 +1112,14 @@ def run_checkpoint(
     state: Path,
     control: dict[str, Any],
     index: int,
+    *,
+    backend: LongHorizonBackend = DEFAULT_BACKEND,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     profile = getattr(args, "profile", "journal")
     phases = AVATARFORGE_PHASES if profile == "avatarforge" else PHASES
     scheduled = float(control["started_at_epoch"]) + index * INTERVAL_SECONDS
     wait_until(scheduled)
-    before = RUNTIME.runtime_snapshot()
+    before = backend.runtime_snapshot()
     started = time.time()
     container_name = client_container_name(args, state, index)
     outputs: list[tuple[str, str]] = []
@@ -1114,7 +1135,7 @@ def run_checkpoint(
         if container_exists(container_name):
             raise RuntimeError("client_container_already_exists")
         try:
-            run = QUALITY.run_process(
+            run = backend.run_process(
                 with_container_name(command, container_name),
                 cwd=args.workspace,
                 environment=environment,
@@ -1150,7 +1171,7 @@ def run_checkpoint(
             raise ClientNonzeroExit(detail)
         break
     completed = time.time()
-    after = RUNTIME.runtime_snapshot()
+    after = backend.runtime_snapshot()
     metrics["retries"] += reconnects
     session = metrics.pop("session")
     if not metrics["terminal"]:

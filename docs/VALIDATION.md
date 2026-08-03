@@ -10627,3 +10627,15 @@ further 80 lines. Four focused completion tests and two long-horizon prompt
 intent tests passed. Ruff passed, strict mypy reported no issues across 61 source
 files, `git diff --check` passed, and the complete suite passed `1,218/1,218` in
 42.86 seconds with the existing Starlette deprecation warning.
+
+## 2026-08-03 Long-horizon evaluation side-effect boundary
+
+Long-horizon checkpoint and final-validation execution now receive one frozen
+`LongHorizonBackend` containing the runtime snapshot and subprocess runner.
+Production uses an immutable default bound to the existing implementations;
+tests inject explicit functions instead of mutating the imported RUNTIME or
+QUALITY modules. No runner interface hierarchy or framework was added. All 41
+long-horizon client tests passed, and that test module now contains zero
+RUNTIME/QUALITY monkeypatches. Ruff passed, strict mypy reported no issues
+across 61 source files, `git diff --check` passed, and the complete suite passed
+`1,218/1,218` in 51.04 seconds with the existing Starlette deprecation warning.
