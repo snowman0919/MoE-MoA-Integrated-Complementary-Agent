@@ -10316,3 +10316,36 @@ for Radix reuse. Focused prompt and quality-runner tests passed four cases; the
 full suite passed 1,216 tests in 45.86 seconds, with Ruff and strict mypy clean.
 The prompt change invalidates reuse of v90 quality results and requires a fresh
 sealed physical epoch after the Reasoner topology is restored.
+
+### 2026-08-03 — branch and deployment preservation refresh
+
+A read-only refresh found eight registered worktrees. Four were dirty: dev had
+47 status rows, observability had six, controller had four, and detached
+long-v35 had one. The active experiment and topology-integration worktrees were
+clean. Exact HEAD bundles, sanitized binary patches, and sanitized untracked
+archives were written outside every repository under
+`/home/kotori9/code/.moa-preservation/20260803-worktree-audit`. All ten bundles
+and nine tar archives passed recovery/path checks and are mode 0600. The
+sanitized manifest SHA-256 is
+`2f9e49cf66b9e7f668254336706a7415dddfd01856b0fec09a8e0c18d623a080`; the
+combined branch-ref bundle SHA-256 is
+`10263b0b835687ee88e3b59b2b57c85bbb27deed3d2aa23ae50ba8771c24c84a`.
+An initial broader patch/tar capture was immediately atomically replaced after
+path-only inspection found forbidden paths; the retained sanitized artifacts
+exclude `data/**`, `.env*`, `auth.json`, and credential-named paths.
+
+The running production gateway uses user unit `dgx-moa-gateway.service`, PID
+5306, cwd `/home/kotori9/dgx-moa-agent`, and deployed Git HEAD
+`396e0458f25977293281b953d2c804cf5b689970`, exactly matching `origin/main`.
+Its two untracked paths were captured only in the sanitized production archive;
+the production sanitized manifest SHA-256 is
+`60ba9b1ce46b75bbd0613249be163a98dafc6e0ba34a3fa20d7b7a35b50cdeb7`.
+Ports 18101, 18102, and the local gateway remain loopback-only; the authenticated
+gateway also listens on the tailnet address.
+
+Branch roles are still not normalized. `dev` equals `origin/dev`, but local
+`main` has one commit absent from `origin/main` and lacks 465 origin-main
+commits. Neither local main nor production origin-main is an ancestor of dev.
+The experiment is 231 commits ahead of dev. No ref, index, worktree, unit, or
+production process was changed; integration remains forbidden until the frozen
+quality and release gates pass.
