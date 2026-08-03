@@ -11124,3 +11124,35 @@ checks completed in 34.195 and 26.285 seconds. Neither container was OOM-killed,
 neither used swap, and host available memory increased from 34.443 GiB to
 34.506 GiB across the run. The focused model/topology/rollback contract suite
 passed `36/36`; both lifecycle shell scripts also passed `bash -n`.
+
+## Protocol v96 termination and Hermes quiescence fix (2026-08-03)
+
+The sealed v96 confirmation epoch was stopped after ten immutable scores rather
+than resumed. Seven attempts passed and three failed. Attempt 10 was a hard
+reliability failure: a Hermes request from the preceding attempt remained
+active across the next attempt boundary, then its local Executor invocation was
+cancelled 140 seconds into attempt 10. Telemetry therefore reported one orphan
+provider error. The existing v96 artifacts remain diagnostic evidence and are
+not counted toward confirmation.
+
+Diagnostics d1-d4 showed that Hermes one-shot requests did not use the expected
+quality session even when provider and model default headers were present. d5
+proved the new fail-closed behavior: zero correlated rows no longer counted as
+quiescent, so the run returned 124 after 495.956 seconds instead of passing.
+The final minimal fix falls back only on the isolated quality Gateway's
+attempt-start time window when the expected session has no rows. It requires at
+least one observed request and a two-second interval with no active request.
+
+Fresh immutable diagnostic
+`20260803-hermes-session-quiescence-v97-d6` observed six Gateway requests, all
+terminal, and passed the complete functional scorer in 213.424 seconds. Its
+telemetry was complete and provider-pinned with zero provider errors, orphan
+provider errors, provider switches, retryable failures, and active rows at
+handoff. The final Hermes command was restored unchanged and fresh d7 then
+observed five requests, all terminal, and passed in 231.846 seconds with the
+same zero-error, zero-orphan, zero-switch telemetry contract. Ruff, strict
+mypy, and the focused quality-matrix suite passed with `26/26` tests. The final
+repository gate passed Ruff, strict mypy across all 63 gateway source files,
+and `1,229/1,229` tests in 46.96 seconds with the existing Starlette deprecation
+warning. Protocol v97 therefore requires a new clean commit, plan hash, seal,
+run ID, and full 200-attempt restart; no v96 result is reused.

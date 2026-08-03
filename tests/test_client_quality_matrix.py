@@ -210,6 +210,45 @@ def test_hermes_profile_targets_selected_gateway(tmp_path: Path) -> None:
     assert not (target / ".env").exists()
 
 
+def test_session_quiescence_requires_stable_terminal_state(tmp_path: Path) -> None:
+    database = tmp_path / "state.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE request_usage "
+            "(session_id TEXT, accepted_at REAL, completed_at REAL)"
+        )
+        connection.execute("INSERT INTO request_usage VALUES ('active', 2, NULL)")
+        connection.execute("INSERT INTO request_usage VALUES ('done', 1, 1)")
+
+    assert MODULE.wait_for_session_quiescence(
+        database, "done", timeout=0.1, stable_seconds=0, poll_seconds=0
+    )
+    assert not MODULE.wait_for_session_quiescence(
+        database, "active", timeout=0, stable_seconds=0, poll_seconds=0
+    )
+    assert not MODULE.wait_for_session_quiescence(
+        database, "missing", timeout=0, stable_seconds=0, poll_seconds=0
+    )
+    assert MODULE.wait_for_session_quiescence(
+        database,
+        "missing",
+        accepted_after=0,
+        timeout=0.1,
+        stable_seconds=0,
+        poll_seconds=0,
+    ) is False
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE request_usage SET completed_at = 2 WHERE session_id = 'active'")
+    assert MODULE.wait_for_session_quiescence(
+        database,
+        "missing",
+        accepted_after=0,
+        timeout=0.1,
+        stable_seconds=0,
+        poll_seconds=0,
+    )
+
+
 def test_failed_hermes_usage_recovers_single_isolated_session(tmp_path: Path) -> None:
     args = Namespace(run_id="failed", output_root=tmp_path)
     task = MODULE.TASKS[0]

@@ -1214,6 +1214,48 @@ def prepare_hermes_profile(
     config_path.chmod(0o600)
 
 
+def wait_for_session_quiescence(
+    database: Path | None,
+    session_id: str | None,
+    *,
+    accepted_after: float | None = None,
+    timeout: float = 300,
+    stable_seconds: float = 2,
+    poll_seconds: float = 0.25,
+) -> bool:
+    """Wait until observed gateway requests are terminal and stay terminal."""
+    if database is None or session_id is None or not database.is_file():
+        return False
+    deadline = time.monotonic() + timeout
+    quiet_since: float | None = None
+    while time.monotonic() <= deadline:
+        try:
+            with sqlite3.connect(database) as connection:
+                total, active = connection.execute(
+                    "SELECT COUNT(*), SUM(CASE WHEN completed_at IS NULL THEN 1 ELSE 0 END) "
+                    "FROM request_usage WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                if not total and accepted_after is not None:
+                    total, active = connection.execute(
+                        "SELECT COUNT(*), "
+                        "SUM(CASE WHEN completed_at IS NULL THEN 1 ELSE 0 END) "
+                        "FROM request_usage WHERE accepted_at >= ?",
+                        (accepted_after,),
+                    ).fetchone()
+        except sqlite3.Error:
+            return False
+        now = time.monotonic()
+        if not total or active:
+            quiet_since = None
+        elif quiet_since is None:
+            quiet_since = now
+        elif now - quiet_since >= stable_seconds:
+            return True
+        time.sleep(poll_seconds)
+    return False
+
+
 def hermes_usage_succeeded(path: Path) -> bool:
     try:
         usage = json.loads(path.read_text())
@@ -1882,8 +1924,13 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             timeout=args.timeout,
         )
         return_code, stdout, stderr = run.returncode, run.stdout, run.stderr
-        if return_code == 0 and not hermes_usage_succeeded(hermes_home / "usage.json"):
+        host_usage_path = hermes_home / "usage.json"
+        if return_code == 0 and not hermes_usage_succeeded(host_usage_path):
             return_code = 1
+    if harness != "baseline" and not wait_for_session_quiescence(
+        getattr(args, "state_db", None), session_id, accepted_after=started_at
+    ):
+        return_code = 124
     duration = round(time.monotonic() - started, 3)
     ended_at = time.time()
     telemetry = (

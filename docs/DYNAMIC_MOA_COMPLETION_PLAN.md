@@ -623,6 +623,17 @@ reconnect, plan/context 보존을 대체하지 않는다.
   새 analysis commit, plan hash, seal, run ID에서 200회를 처음부터 시작한다.
   동결 quality/speed margin, bootstrap seed, 표본 수, prompt, model, fixture,
   scorer, telemetry 계약은 변경하지 않는다.
+- protocol v97은 Hermes one-shot이 종료된 뒤에도 같은 시도의 provider 요청이
+  남아 다음 attempt와 겹친 v96 reliability 실패를 차단한다. 각 비-baseline
+  실행은 기대 session의 request를 우선 추적하고, Hermes가 custom header를
+  전달하지 않은 경우에는 격리 quality Gateway에서 attempt 시작 이후 수락된
+  request를 최소 한 건 관찰한 뒤 모든 request가 2초 동안 terminal인 경우에만
+  완료한다. request를 한 건도 관찰하지 못하거나 300초 안에 quiescent가 되지
+  않으면 exit 124로 fail closed한다. v96의 첫 10개 score(7 PASS, 3 FAIL)는
+  diagnostic으로 보존하고 재개하지 않는다. quality/speed margin, bootstrap
+  seed, 표본 수, prompt, model, fixture, scorer, telemetry 계약은 변경하지 않고
+  새 analysis commit, plan hash, seal, run ID와 clean fixture에서 200회를 처음부터
+  시작한다.
 
 ## 10. Release, rollback, 배포
 
