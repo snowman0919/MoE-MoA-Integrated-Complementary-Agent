@@ -11035,3 +11035,19 @@ sanitized evidence is at
 `/home/kotori9/code/.moa-preservation/diagnostics/20260803-opencode-rate-limiter-v95-o2`.
 O2 used bounded Codex OAuth collaboration and is therefore functional evidence,
 not local-path non-inferiority evidence.
+
+Fresh v95 `atomic-store` O3, `dag-runner` O4, `webhook-verifier` O5, and
+`log-report` O6 then passed every functional scorer gate in 342.791, 473.421,
+126.120, and 135.481 seconds. All four runs had complete provider-pinned
+telemetry, unchanged tests, allowed source-only changes, public and hidden
+validation success, Korean terminal responses, and no provider error, switch,
+retryable failure, missing token row, or variable remote cost. Sanitized
+immutable evidence is preserved in the matching O3-O6 directories under
+`/home/kotori9/code/.moa-preservation/diagnostics/`.
+
+Together with O2, protocol v95 now has a fresh OpenCode functional 5/5 panel.
+Every task used bounded fixed-cost Codex OAuth secondary or Frontier
+collaboration, so this proves client/runtime functional stability but not
+local-path or overall quality non-inferiority. O4 consumed 401,256 total tokens
+and 473.421 seconds, so DAG efficiency remains a material confirmation risk.
+These diagnostics must not be counted as the frozen 200-attempt epoch.
