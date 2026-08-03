@@ -10416,3 +10416,45 @@ table columns, WAL/transaction behavior, migration compatibility, and queries
 are unchanged. Three focused schema/sample tests passed, followed by all 1,217
 tests in 47.71 seconds. Ruff, strict mypy across 60 source files, and
 `git diff --check` passed.
+## 2026-08-03 Gemma 4 26B-A4B boundary and restart-order revalidation
+
+The active Specialist container mounted only
+`gemma-4-26b-a4b-nvfp4-a19cfe00` read-only and served the pinned
+`nvidia/Gemma-4-26B-A4B-NVFP4` revision. Both weight shards passed the checked-in
+SHA-256 manifest, the model directory occupied 18 GiB, and no Gemma 31B model
+directory or non-historical 31B code/config reference remained.
+
+Immutable attempt
+`/var/tmp/sglang-gemma4-26b-revalidation-20260803-163242.json` (SHA-256
+`11bf5550049f3d694d0b3528e4e10a06811b55ece59d568299a637c21b11acbb`)
+preserved an Executor connection-reset failure while every Gemma readiness,
+reasoning, streaming, tool-parser, and Planner/Reviewer structured-output check
+passed. Logs showed Docker had started the Specialist before the Executor; the
+Executor then repeatedly rejected `mem-fraction-static=0.45` because its 47.4
+GiB weights left no KV allocation under that ordering.
+
+A diagnostic `0.55` Executor fraction made the reverse-order process READY but
+exposed only 5,963 KV tokens. Attempt
+`/var/tmp/sglang-gemma4-26b-revalidation-20260803-164028.json` (SHA-256
+`6406d7bcc0ea971836348f443c3a7e0414fd3156c55f2de99f95ac5c09b29814`)
+therefore failed the fixed 65,536-token capacity and Radix-cache gates. The
+diagnostic value was rejected and fully reverted rather than weakening the
+contract.
+
+The approved maintenance path stopped both candidates and used the checked-in
+ordered start: Executor catalog READY first, then Specialist catalog READY.
+Final immutable attempt
+`/var/tmp/sglang-gemma4-26b-revalidation-20260803-165015.json` (SHA-256
+`8e9d453b2543bfe9ecb0a141a2aecd6c29749e9412de94bbddfa92ab3ce5549b`)
+passed the complete physical validator with exit code 0. Both roles exposed
+65,536 KV tokens, restart count 0, OOM false, real inference readiness,
+streaming, native tool parsing, Gemma reasoning separation, structured Planner
+and Reviewer output, and Radix reuse (0 then 8,192 cached Executor tokens).
+The Docker daemon restart-order hazard remains an operational gate; no
+unverified memory expansion, automatic topology change, merge, or deployment
+was accepted.
+
+After rejecting the diagnostic setting, the focused topology/runtime suite
+passed `16/16`. Ruff passed, strict mypy reported no issues across 60 source
+files, `git diff --check` passed, and the complete suite passed `1,217/1,217`
+in 45.75 seconds with the existing Starlette deprecation warning.
