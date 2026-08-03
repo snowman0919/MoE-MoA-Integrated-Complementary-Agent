@@ -10359,3 +10359,12 @@ rollback, current-process, and pidfile-creator searches found no reference, and
 no `data/run/*.pid` existed. This is a net deletion of 16 source lines. The full
 suite passed 1,216 tests in 43.31 seconds; Ruff, strict mypy across 60 source
 files, and `git diff --check` passed.
+
+API-key quota comparison was duplicated between authentication precheck and
+atomic request admission. Both paths now reuse one pure `usage.quota_error`
+calculation. Authentication still rejects exhausted keys on read endpoints;
+`UsageStore.start()` still owns the race-safe `BEGIN IMMEDIATE` reservation and
+raises the typed admission error. Thirty-seven focused authentication/quota tests
+passed, including concurrent final-slot admission, followed by all 1,216 tests
+in 46.08 seconds. Ruff, strict mypy across 60 source files, and
+`git diff --check` passed.

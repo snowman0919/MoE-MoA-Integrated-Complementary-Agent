@@ -16,6 +16,7 @@ from starlette.requests import HTTPConnection
 
 from .config import Settings
 from .database import connect_sqlite
+from .usage import quota_error
 
 SECRET_PATTERNS = (
     re.compile(r"(?i)(authorization:\s*bearer\s+)[^\s]+"),
@@ -144,11 +145,7 @@ class ApiKeyStore:
             ).fetchone()
         if key is None:
             return "unknown API key"
-        if key["request_limit"] is not None and usage[0] >= key["request_limit"]:
-            return "API key request limit reached"
-        if key["token_limit"] is not None and usage[1] >= key["token_limit"]:
-            return "API key token limit reached"
-        return None
+        return quota_error(key["request_limit"], key["token_limit"], usage[0], usage[1])
 
     def is_admin(self, name: str) -> bool:
         with self._connect() as database:

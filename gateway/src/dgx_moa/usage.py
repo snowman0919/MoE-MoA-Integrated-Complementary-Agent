@@ -87,6 +87,19 @@ class UsageQuotaExceeded(RuntimeError):
     pass
 
 
+def quota_error(
+    request_limit: int | None,
+    token_limit: int | None,
+    used_requests: int,
+    used_tokens: int,
+) -> str | None:
+    if request_limit is not None and used_requests >= request_limit:
+        return "API key request limit reached"
+    if token_limit is not None and used_tokens >= token_limit:
+        return "API key token limit reached"
+    return None
+
+
 def classify_client(user_agent: str | None) -> SafeClientClass:
     normalized = (user_agent or "").lower()
     for marker, client_class in CLIENT_MARKERS:
@@ -550,10 +563,10 @@ class UsageStore:
                     "WHERE api_token_id = ?",
                     (record.api_token_id,),
                 ).fetchone()
-                if key["request_limit"] is not None and used[0] >= key["request_limit"]:
-                    raise UsageQuotaExceeded("API key request limit reached")
-                if key["token_limit"] is not None and used[1] >= key["token_limit"]:
-                    raise UsageQuotaExceeded("API key token limit reached")
+                if error := quota_error(
+                    key["request_limit"], key["token_limit"], used[0], used[1]
+                ):
+                    raise UsageQuotaExceeded(error)
             database.execute(
                 "INSERT INTO request_usage "
                 "(request_id, session_id, api_token_id, client_class, model_alias, runtime_mode, "

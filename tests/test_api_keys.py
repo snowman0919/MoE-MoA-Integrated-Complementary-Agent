@@ -15,10 +15,16 @@ from dgx_moa.security import (
     ApiKeyStore,
     ApiKeyUpdate,
 )
-from dgx_moa.usage import RequestUsageStart, UsageQuotaExceeded, UsageStore
+from dgx_moa.usage import RequestUsageStart, UsageQuotaExceeded, UsageStore, quota_error
 from fastapi.testclient import TestClient
 
 from .conftest import StubProvider
+
+
+def test_quota_error_covers_request_token_and_unlimited() -> None:
+    assert quota_error(1, None, 1, 0) == "API key request limit reached"
+    assert quota_error(None, 10, 0, 10) == "API key token limit reached"
+    assert quota_error(None, None, 1_000, 1_000_000) is None
 
 
 def test_key_store_enforces_expiry_limits_admin_cap_and_file_mode(tmp_path: Path) -> None:
