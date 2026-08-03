@@ -595,6 +595,12 @@ reconnect, plan/context 보존을 대체하지 않는다.
   A4는 timeout 진단으로 보존하며 v91의 quality margin, bootstrap seed, 표본 수,
   model, fixture, scorer, telemetry 계약은 바꾸지 않는다. 새 plan hash, seal,
   run ID, attempt order와 clean fixture에서 다시 시작한다.
+- protocol v93은 A4의 실패한 `apply_patch` 67개가 모두 native file marker를
+  포함하면서 `*** Begin Patch`와 `*** End Patch` sentinel을 누락한 도구 호환
+  문제를 수정한다. 기존 freeform 정규화 경계가 native patch의 누락된 시작
+  sentinel을 추가하고, 기존 끝 sentinel 보정이 완성한다. patch 내용이나
+  hidden fixture는 변경하지 않는다. A4는 진단으로 유지하며 새 plan hash와
+  run ID에서 재검증한다.
 
 ## 10. Release, rollback, 배포
 

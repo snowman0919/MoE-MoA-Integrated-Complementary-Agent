@@ -29,6 +29,14 @@ def test_apply_patch_missing_end_sentinel_is_completed() -> None:
     assert normalize_apply_patch_input("exec_command", partial) == partial
 
 
+def test_apply_patch_missing_begin_sentinel_is_completed() -> None:
+    partial = "*** Update File: app.py\n@@\n-old\n+new\n*** End Patch"
+
+    assert normalize_apply_patch_input("apply_patch", partial) == (
+        "*** Begin Patch\n" + partial
+    )
+
+
 def test_fenced_unified_diff_is_normalized_for_apply_patch() -> None:
     unified = (
         "```diff\n"

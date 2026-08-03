@@ -171,6 +171,11 @@ def normalize_apply_patch_input(name: str, value: str) -> str:
         elif in_add_file and not line.startswith("+"):
             lines[index] = f"+{line}"
     stripped = "\n".join(lines)
+    if not stripped.startswith("*** Begin Patch") and any(
+        line.startswith(("*** Update File: ", "*** Add File: ", "*** Delete File: "))
+        for line in stripped.splitlines()
+    ):
+        stripped = "*** Begin Patch\n" + stripped
     if (
         stripped.startswith("*** Begin Patch")
         and "*** End Patch" not in stripped

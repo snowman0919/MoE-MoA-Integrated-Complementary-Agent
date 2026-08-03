@@ -10861,3 +10861,13 @@ Protocol v92 therefore starts with a new hash and run ID; A4 remains diagnostic.
 The complete gate passed Ruff, strict mypy across 62 source files, and
 `1,225/1,225` tests in 43.83 seconds with the existing Starlette deprecation
 warning.
+
+Payload-free argument-shape inspection additionally showed that all 67 failed
+patch calls used an object with only the freeform `input` field and omitted both
+native begin/end sentinels. The existing normalizer already repaired missing end
+sentinels and unified diffs but did not add a missing begin sentinel to native
+file-marker patches. Protocol v93 extends that same boundary; focused sentinel,
+unified-diff, and variant tests passed `4/4`.
+The v93 complete gate passed Ruff, strict mypy across 62 source files, and
+`1,226/1,226` tests in 44.59 seconds with the existing Starlette deprecation
+warning.
