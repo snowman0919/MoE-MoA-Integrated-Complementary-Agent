@@ -9,6 +9,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,15 @@ SAFE_CHECK_FAILURES = frozenset(
         "transport_failure",
     }
 )
+
+
+@dataclass(frozen=True)
+class ValidationBackend:
+    post_json: Callable[[str, dict[str, Any], float], tuple[dict[str, Any], float]]
+    get_json: Callable[[str, float], tuple[dict[str, Any], float]]
+    stream_json: Callable[..., dict[str, Any]]
+    get_text: Callable[[str, float], str]
+    runtime_snapshot: Callable[[], dict[str, Any]]
 
 
 def local_endpoint(value: str) -> str:
@@ -118,6 +128,8 @@ def stream_json(
     payload: dict[str, Any],
     timeout: float,
     expected: str = "STREAM_OK",
+    *,
+    opener: Callable[..., Any] = urlopen,
 ) -> dict[str, Any]:
     request = Request(
         url,
@@ -131,7 +143,7 @@ def stream_json(
     chunks = 0
     usage: dict[str, Any] = {}
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with opener(request, timeout=timeout) as response:
             for raw_line in response:
                 line = raw_line.decode().strip()
                 if not line.startswith("data:"):
@@ -183,9 +195,10 @@ def completion(
     model: str,
     messages: list[dict[str, str]],
     timeout: float,
+    backend: ValidationBackend | None = None,
     **extra: Any,
 ) -> tuple[dict[str, Any], float]:
-    return post_json(
+    return (backend or validation_backend()).post_json(
         f"{endpoint}/v1/chat/completions",
         {
             "model": model,
@@ -214,12 +227,15 @@ def readiness(
     prompt: str,
     expected: str,
     timeout: float,
+    *,
+    backend: ValidationBackend | None = None,
 ) -> dict[str, Any]:
     response, latency = completion(
         endpoint,
         model,
         [{"role": "user", "content": prompt}],
         timeout,
+        backend=backend,
         max_tokens=32,
     )
     content = str(message(response).get("content") or "").strip()
@@ -238,6 +254,8 @@ def tool_call(
     model: str,
     parser_role: str,
     timeout: float,
+    *,
+    backend: ValidationBackend | None = None,
 ) -> dict[str, Any]:
     function_name = "inspect_file" if parser_role == "executor" else "report_risk"
     field = "path" if parser_role == "executor" else "risk"
@@ -252,6 +270,7 @@ def tool_call(
             }
         ],
         timeout,
+        backend=backend,
         max_tokens=2048,
         tools=[
             {
@@ -289,12 +308,19 @@ def tool_call(
     }
 
 
-def reasoning(endpoint: str, model: str, timeout: float) -> dict[str, Any]:
+def reasoning(
+    endpoint: str,
+    model: str,
+    timeout: float,
+    *,
+    backend: ValidationBackend | None = None,
+) -> dict[str, Any]:
     response, latency = completion(
         endpoint,
         model,
         [{"role": "user", "content": "Calculate 17 * 19. End the visible answer with 323."}],
         timeout,
+        backend=backend,
         max_tokens=512,
         separate_reasoning=True,
         chat_template_kwargs={"enable_thinking": True},
@@ -318,6 +344,8 @@ def structured(
     schema: type[PlannerPlan] | type[ReviewResult],
     prompt: str,
     timeout: float,
+    *,
+    backend: ValidationBackend | None = None,
 ) -> dict[str, Any]:
     messages = [
         {
@@ -331,6 +359,7 @@ def structured(
         model,
         messages,
         timeout,
+        backend=backend,
         max_tokens=768,
         separate_reasoning=True,
         chat_template_kwargs={"enable_thinking": True},
@@ -358,6 +387,7 @@ def structured(
         model,
         final_messages,
         timeout,
+        backend=backend,
         max_tokens=1536,
         separate_reasoning=True,
         chat_template_kwargs={
@@ -394,7 +424,13 @@ def structured(
     }
 
 
-def cache_reuse(endpoint: str, model: str, timeout: float) -> dict[str, Any]:
+def cache_reuse(
+    endpoint: str,
+    model: str,
+    timeout: float,
+    *,
+    backend: ValidationBackend | None = None,
+) -> dict[str, Any]:
     nonce = uuid.uuid4().hex
     prefix = (f"Radix validation {nonce}. Keep this context unchanged. " * 384).strip()
     cached: list[int] = []
@@ -413,6 +449,7 @@ def cache_reuse(endpoint: str, model: str, timeout: float) -> dict[str, Any]:
                 }
             ],
             timeout,
+            backend=backend,
             max_tokens=32,
         )
         if str(message(response).get("content") or "").strip() != "4":
@@ -429,25 +466,38 @@ def cache_reuse(endpoint: str, model: str, timeout: float) -> dict[str, Any]:
     }
 
 
-def model_catalog(endpoint: str, timeout: float) -> list[str]:
-    response, _ = get_json(f"{endpoint}/v1/models", timeout)
+def model_catalog(
+    endpoint: str, timeout: float, *, backend: ValidationBackend | None = None
+) -> list[str]:
+    response, _ = (backend or validation_backend()).get_json(f"{endpoint}/v1/models", timeout)
     models = response.get("data")
     if not isinstance(models, list):
         raise RuntimeError("invalid_model_catalog")
     return sorted(str(item["id"]) for item in models if isinstance(item, dict) and item.get("id"))
 
 
-def expected_catalog(endpoint: str, model: str, timeout: float) -> dict[str, list[str]]:
-    models = model_catalog(endpoint, timeout)
+def expected_catalog(
+    endpoint: str,
+    model: str,
+    timeout: float,
+    *,
+    backend: ValidationBackend | None = None,
+) -> dict[str, list[str]]:
+    models = model_catalog(endpoint, timeout, backend=backend)
     if models != [model]:
         raise RuntimeError("model_catalog_mismatch")
     return {"models": models}
 
 
 def served_token_capacity(
-    endpoint: str, model: str, timeout: float, expected: int = 65_536
+    endpoint: str,
+    model: str,
+    timeout: float,
+    expected: int = 65_536,
+    *,
+    backend: ValidationBackend | None = None,
 ) -> dict[str, int]:
-    metrics = get_text(f"{endpoint}/metrics", timeout)
+    metrics = (backend or validation_backend()).get_text(f"{endpoint}/metrics", timeout)
     prefix = "sglang:max_total_num_tokens{"
     values = []
     for line in metrics.splitlines():
@@ -481,6 +531,10 @@ def runtime_snapshot() -> dict[str, Any]:
         if key in {"MemTotal", "MemAvailable", "SwapTotal", "SwapFree"}:
             memory[f"{key.lower()}_kib"] = int(value.split()[0])
     return {"containers": containers, "gpu": gpu, "memory": memory}
+
+
+def validation_backend() -> ValidationBackend:
+    return ValidationBackend(post_json, get_json, stream_json, get_text, runtime_snapshot)
 
 
 def container_snapshot(name: str) -> dict[str, Any]:
@@ -683,9 +737,12 @@ def run_validation(
     executor_endpoint: str,
     specialist_endpoint: str,
     timeout: float,
+    *,
+    backend: ValidationBackend | None = None,
 ) -> dict[str, Any]:
+    backend = backend or validation_backend()
     started = datetime.now(UTC)
-    before = runtime_snapshot()
+    before = backend.runtime_snapshot()
     executor_model = "dgx-moa-executor-candidate"
     specialist_model = "dgx-moa-specialist-candidate"
     checks = {
@@ -698,6 +755,7 @@ def run_validation(
                 "What is 2+2? Reply with only the number.",
                 "4",
                 timeout,
+                backend=backend,
         ),
         "specialist_readiness": lambda: readiness(
                 specialist_endpoint,
@@ -705,12 +763,13 @@ def run_validation(
                 "Reply exactly: SPECIALIST_READY",
                 "SPECIALIST_READY",
                 timeout,
+                backend=backend,
         ),
         "executor_tool_parser": lambda: tool_call(
-            executor_endpoint, executor_model, "executor", timeout
+            executor_endpoint, executor_model, "executor", timeout, backend=backend
         ),
         "specialist_reasoning": lambda: reasoning(
-            specialist_endpoint, specialist_model, timeout
+            specialist_endpoint, specialist_model, timeout, backend=backend
         ),
         "planner_structured_output": lambda: structured(
                 specialist_endpoint,
@@ -721,6 +780,7 @@ def run_validation(
                     "rollback, risks, and acceptance evidence."
                 ),
                 timeout,
+                backend=backend,
         ),
         "reviewer_structured_output": lambda: structured(
                 specialist_endpoint,
@@ -731,11 +791,12 @@ def run_validation(
                     "without a lock. Return a concrete concurrency finding."
                 ),
                 timeout,
+                backend=backend,
         ),
         "specialist_tool_parser": lambda: tool_call(
-            specialist_endpoint, specialist_model, "specialist", timeout
+            specialist_endpoint, specialist_model, "specialist", timeout, backend=backend
         ),
-        "executor_streaming": lambda: stream_json(
+        "executor_streaming": lambda: backend.stream_json(
                 f"{executor_endpoint}/v1/chat/completions",
                 {
                     "model": executor_model,
@@ -753,7 +814,7 @@ def run_validation(
                 timeout,
                 "4",
         ),
-        "specialist_streaming": lambda: stream_json(
+        "specialist_streaming": lambda: backend.stream_json(
                 f"{specialist_endpoint}/v1/chat/completions",
                 {
                     "model": specialist_model,
@@ -768,7 +829,7 @@ def run_validation(
                 timeout,
         ),
         "executor_radix_cache": lambda: cache_reuse(
-            executor_endpoint, executor_model, timeout
+            executor_endpoint, executor_model, timeout, backend=backend
         ),
     }
     if checks["runtime_before_contract"]["status"] == "passed":
@@ -783,22 +844,34 @@ def run_validation(
             }
         )
     catalogs = {
-        "executor": checked(lambda: expected_catalog(executor_endpoint, executor_model, timeout)),
+        "executor": checked(
+            lambda: expected_catalog(
+                executor_endpoint, executor_model, timeout, backend=backend
+            )
+        ),
         "specialist": checked(
-            lambda: expected_catalog(specialist_endpoint, specialist_model, timeout)
+            lambda: expected_catalog(
+                specialist_endpoint, specialist_model, timeout, backend=backend
+            )
         ),
     }
     capacities = {
         "executor": checked(
-            lambda: served_token_capacity(executor_endpoint, executor_model, timeout)
+            lambda: served_token_capacity(
+                executor_endpoint, executor_model, timeout, backend=backend
+            )
         ),
         "specialist": checked(
             lambda: served_token_capacity(
-                specialist_endpoint, specialist_model, timeout, 65_536
+                specialist_endpoint,
+                specialist_model,
+                timeout,
+                65_536,
+                backend=backend,
             )
         ),
     }
-    after = runtime_snapshot()
+    after = backend.runtime_snapshot()
     checks["runtime_after_contract"] = checked(lambda: runtime_contract(after))
     passed = all(
         item["status"] == "passed"

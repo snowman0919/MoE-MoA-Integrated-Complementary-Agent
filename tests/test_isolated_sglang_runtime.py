@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -141,7 +142,7 @@ def valid_runtime_snapshot() -> dict[str, Any]:
     }
 
 
-def test_runtime_validator_covers_real_contract_without_retaining_payloads(monkeypatch) -> None:
+def test_runtime_validator_covers_real_contract_without_retaining_payloads() -> None:
     cache_calls = 0
     structured_payloads: list[dict[str, Any]] = []
 
@@ -180,11 +181,10 @@ def test_runtime_validator_covers_real_contract_without_retaining_payloads(monke
         marker = "EXECUTOR_READY" if "EXECUTOR_READY" in prompt else "SPECIALIST_READY"
         return response(marker), 0.1
 
-    monkeypatch.setattr(MODULE, "post_json", fake_post)
-    monkeypatch.setattr(
-        MODULE,
-        "get_json",
-        lambda url, _timeout: (
+    backend = replace(
+        MODULE.validation_backend(),
+        post_json=fake_post,
+        get_json=lambda url, _timeout: (
             {
                 "data": [
                     {
@@ -198,26 +198,14 @@ def test_runtime_validator_covers_real_contract_without_retaining_payloads(monke
             },
             0.01,
         ),
-    )
-    monkeypatch.setattr(
-        MODULE,
-        "stream_json",
-        lambda *_args: {
+        stream_json=lambda *_args: {
             "latency_seconds": 0.1,
             "chunks": 2,
             "done": True,
             "marker": True,
         },
-    )
-    monkeypatch.setattr(
-        MODULE,
-        "runtime_snapshot",
-        valid_runtime_snapshot,
-    )
-    monkeypatch.setattr(
-        MODULE,
-        "get_text",
-        lambda _url, _timeout: (
+        runtime_snapshot=valid_runtime_snapshot,
+        get_text=lambda _url, _timeout: (
             'sglang:max_total_num_tokens{model_name="dgx-moa-executor-candidate"} '
             "65536\n"
             'sglang:max_total_num_tokens{model_name="dgx-moa-specialist-candidate"} '
@@ -225,7 +213,9 @@ def test_runtime_validator_covers_real_contract_without_retaining_payloads(monke
         ),
     )
 
-    result = MODULE.run_validation("http://127.0.0.1:18101", "http://localhost:18102", 1)
+    result = MODULE.run_validation(
+        "http://127.0.0.1:18101", "http://localhost:18102", 1, backend=backend
+    )
 
     assert result["passed"] is True
     assert result["checks"]["executor_radix_cache"]["second_cached_tokens"] == 3000
@@ -254,19 +244,14 @@ def test_runtime_contract_rejects_low_headroom_and_oom() -> None:
         MODULE.runtime_contract(snapshot)
 
 
-def test_runtime_validator_skips_inference_when_contract_is_unsafe(monkeypatch) -> None:
+def test_runtime_validator_skips_inference_when_contract_is_unsafe() -> None:
     snapshot = valid_runtime_snapshot()
     snapshot["memory"]["memavailable_kib"] = 1
-    monkeypatch.setattr(MODULE, "runtime_snapshot", lambda: snapshot)
-    monkeypatch.setattr(
-        MODULE,
-        "post_json",
-        lambda *_args, **_kwargs: pytest.fail("unsafe inference dispatched"),
-    )
-    monkeypatch.setattr(
-        MODULE,
-        "get_json",
-        lambda url, _timeout: (
+    backend = replace(
+        MODULE.validation_backend(),
+        runtime_snapshot=lambda: snapshot,
+        post_json=lambda *_args, **_kwargs: pytest.fail("unsafe inference dispatched"),
+        get_json=lambda url, _timeout: (
             {
                 "data": [
                     {
@@ -280,11 +265,7 @@ def test_runtime_validator_skips_inference_when_contract_is_unsafe(monkeypatch) 
             },
             0.01,
         ),
-    )
-    monkeypatch.setattr(
-        MODULE,
-        "get_text",
-        lambda _url, _timeout: (
+        get_text=lambda _url, _timeout: (
             'sglang:max_total_num_tokens{model_name="dgx-moa-executor-candidate"} '
             "65536\n"
             'sglang:max_total_num_tokens{model_name="dgx-moa-specialist-candidate"} '
@@ -292,7 +273,9 @@ def test_runtime_validator_skips_inference_when_contract_is_unsafe(monkeypatch) 
         ),
     )
 
-    result = MODULE.run_validation("http://127.0.0.1:18101", "http://127.0.0.1:18102", 1)
+    result = MODULE.run_validation(
+        "http://127.0.0.1:18101", "http://127.0.0.1:18102", 1, backend=backend
+    )
 
     assert result["passed"] is False
     assert result["checks"]["executor_readiness"] == {
@@ -301,15 +284,16 @@ def test_runtime_validator_skips_inference_when_contract_is_unsafe(monkeypatch) 
     }
 
 
-def test_expected_catalog_rejects_wrong_served_model(monkeypatch) -> None:
-    monkeypatch.setattr(
-        MODULE,
-        "get_json",
-        lambda _url, _timeout: ({"data": [{"id": "wrong-model"}]}, 0.01),
+def test_expected_catalog_rejects_wrong_served_model() -> None:
+    backend = replace(
+        MODULE.validation_backend(),
+        get_json=lambda _url, _timeout: ({"data": [{"id": "wrong-model"}]}, 0.01),
     )
 
     with pytest.raises(RuntimeError, match="model_catalog_mismatch"):
-        MODULE.expected_catalog("http://127.0.0.1:18101", "expected-model", 1)
+        MODULE.expected_catalog(
+            "http://127.0.0.1:18101", "expected-model", 1, backend=backend
+        )
 
 
 @pytest.mark.parametrize(
@@ -327,14 +311,17 @@ def test_runtime_validator_rejects_non_candidate_endpoints(endpoint: str) -> Non
         MODULE.local_endpoint(endpoint)
 
 
-def test_runtime_validator_fails_closed_when_reasoning_or_cache_is_missing(monkeypatch) -> None:
-    monkeypatch.setattr(
-        MODULE,
-        "completion",
-        lambda *_args, **_kwargs: (response("323"), 0.1),
+def test_runtime_validator_fails_closed_when_reasoning_or_cache_is_missing() -> None:
+    backend = replace(
+        MODULE.validation_backend(),
+        post_json=lambda *_args, **_kwargs: (response("323"), 0.1),
     )
 
-    reasoning = MODULE.checked(lambda: MODULE.reasoning("http://127.0.0.1:18102", "candidate", 1))
+    reasoning = MODULE.checked(
+        lambda: MODULE.reasoning(
+            "http://127.0.0.1:18102", "candidate", 1, backend=backend
+        )
+    )
 
     assert reasoning == {
         "status": "failed",
@@ -343,16 +330,18 @@ def test_runtime_validator_fails_closed_when_reasoning_or_cache_is_missing(monke
     }
 
 
-def test_reasoning_probe_allows_visible_answer_after_private_reasoning(monkeypatch) -> None:
+def test_reasoning_probe_allows_visible_answer_after_private_reasoning() -> None:
     observed: dict[str, Any] = {}
 
-    def completion(*_args, **kwargs):  # type: ignore[no-untyped-def]
-        observed.update(kwargs)
+    def post_json(_url, payload, _timeout):  # type: ignore[no-untyped-def]
+        observed.update(payload)
         return response("323", reasoning="private analysis"), 0.1
 
-    monkeypatch.setattr(MODULE, "completion", completion)
+    backend = replace(MODULE.validation_backend(), post_json=post_json)
 
-    result = MODULE.reasoning("http://127.0.0.1:18102", "candidate", 1)
+    result = MODULE.reasoning(
+        "http://127.0.0.1:18102", "candidate", 1, backend=backend
+    )
 
     assert observed["max_tokens"] == 512
     assert result["visible_characters"] == 3
@@ -369,7 +358,7 @@ def test_runtime_validator_redacts_unknown_failure_text() -> None:
     }
 
 
-def test_stream_validator_accepts_marker_split_across_sse_chunks(monkeypatch) -> None:
+def test_stream_validator_accepts_marker_split_across_sse_chunks() -> None:
     class FakeResponse:
         def __enter__(self) -> FakeResponse:
             return self
@@ -393,9 +382,12 @@ def test_stream_validator_accepts_marker_split_across_sse_chunks(monkeypatch) ->
             lines = [f"data: {json.dumps(event)}\n\n".encode() for event in events]
             return iter([*lines, b"data: [DONE]\n\n"])
 
-    monkeypatch.setattr(MODULE, "urlopen", lambda *_args, **_kwargs: FakeResponse())
-
-    result = MODULE.stream_json("http://127.0.0.1:18101/v1/chat/completions", {}, 1)
+    result = MODULE.stream_json(
+        "http://127.0.0.1:18101/v1/chat/completions",
+        {},
+        1,
+        opener=lambda *_args, **_kwargs: FakeResponse(),
+    )
 
     assert result["marker"] is True
     assert result["done"] is True

@@ -10639,3 +10639,17 @@ long-horizon client tests passed, and that test module now contains zero
 RUNTIME/QUALITY monkeypatches. Ruff passed, strict mypy reported no issues
 across 61 source files, `git diff --check` passed, and the complete suite passed
 `1,218/1,218` in 51.04 seconds with the existing Starlette deprecation warning.
+
+## 2026-08-03 Isolated SGLang validation I/O boundary
+
+The dual-SGLang physical validator now receives one frozen `ValidationBackend`
+for JSON POST/GET, SSE streaming, metrics text, and runtime snapshots. Every
+readiness, parser, reasoning, structured-output, Radix-cache, catalog, capacity,
+and pre/post runtime check in one validation uses the same immutable backend.
+Production defaults remain the existing I/O functions; tests inject replacements
+without changing module globals. The isolated runtime test module now contains
+zero module monkeypatches and all 14 tests passed, including unsafe-runtime
+fail-closed behavior and split SSE markers. Ruff passed, strict mypy reported no
+issues across 61 source files, `git diff --check` passed, and the complete suite
+passed `1,218/1,218` in 42.12 seconds with the existing Starlette deprecation
+warning.
