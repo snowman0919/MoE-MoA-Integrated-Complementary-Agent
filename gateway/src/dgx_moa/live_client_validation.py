@@ -11,7 +11,9 @@ import socket
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -138,6 +140,10 @@ def start_gateway(
     specialist_endpoint: str | None = None,
     *,
     frontier_enabled: bool = False,
+    app_factory: Callable[[Any], Any] = create_app,
+    config_factory: Callable[..., Any] = uvicorn.Config,
+    server_factory: Callable[[Any], uvicorn.Server] = uvicorn.Server,
+    health_get: Callable[..., Any] = httpx.get,
 ) -> tuple[uvicorn.Server, threading.Thread]:
     original_auth = os.environ.get("DGX_MOA_AUTH_ENABLED")
     os.environ["DGX_MOA_AUTH_ENABLED"] = "false"
@@ -167,9 +173,9 @@ def start_gateway(
     if executor_endpoint is not None and specialist_endpoint is not None:
         update["models"] = candidate_models(base, executor_endpoint, specialist_endpoint)
     settings = base.model_copy(update=update)
-    server = uvicorn.Server(
-        uvicorn.Config(
-            create_app(settings),
+    server = server_factory(
+        config_factory(
+            app_factory(settings),
             host="127.0.0.1",
             port=port,
             log_level="warning",
@@ -181,7 +187,7 @@ def start_gateway(
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:
-            if httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=1).status_code == 200:
+            if health_get(f"http://127.0.0.1:{port}/healthz", timeout=1).status_code == 200:
                 return server, thread
         except httpx.HTTPError:
             pass

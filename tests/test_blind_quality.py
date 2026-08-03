@@ -158,7 +158,7 @@ def test_judge_prompt_does_not_add_provider_or_route_metadata() -> None:
     assert "hidden reasoning" in prompt
 
 
-def test_secondary_score_pins_bedrock_and_parses_accounting(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_secondary_score_pins_bedrock_and_parses_accounting() -> None:
     captured = {}
     response = {
         "provider": "Amazon Bedrock",
@@ -181,9 +181,8 @@ def test_secondary_score_pins_bedrock_and_parses_accounting(monkeypatch) -> None
         assert timeout == 30
         return FakeResponse()
 
-    monkeypatch.setattr(MODULE.urllib.request, "urlopen", urlopen)
     score, accounting = MODULE.secondary_score(
-        {"variant": "variant-a"}, key="synthetic", timeout=30
+        {"variant": "variant-a"}, key="synthetic", timeout=30, opener=urlopen
     )
 
     assert captured["provider"] == {

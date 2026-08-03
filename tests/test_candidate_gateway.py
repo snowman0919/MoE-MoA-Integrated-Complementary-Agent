@@ -74,7 +74,7 @@ def test_candidate_gateway_rejects_non_loopback_endpoint(endpoint: str) -> None:
 
 
 def test_candidate_gateway_frontier_is_explicit_opt_in(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     captured = []
 
@@ -88,17 +88,6 @@ def test_candidate_gateway_frontier_is_explicit_opt_in(
             while not self.should_exit:
                 time.sleep(0.001)
 
-    monkeypatch.setattr(
-        MODULE, "create_app", lambda settings: captured.append(settings) or object()
-    )
-    monkeypatch.setattr(MODULE.uvicorn, "Server", Server)
-    monkeypatch.setattr(MODULE.uvicorn, "Config", lambda *args, **kwargs: object())
-    monkeypatch.setattr(
-        MODULE.httpx,
-        "get",
-        lambda *args, **kwargs: SimpleNamespace(status_code=200),
-    )
-
     server, thread = MODULE.start_gateway(
         tmp_path,
         19300,
@@ -106,6 +95,10 @@ def test_candidate_gateway_frontier_is_explicit_opt_in(
         "http://127.0.0.1:18101",
         "http://127.0.0.1:18102",
         frontier_enabled=True,
+        app_factory=lambda settings: captured.append(settings) or object(),
+        config_factory=lambda *args, **kwargs: object(),
+        server_factory=Server,
+        health_get=lambda *args, **kwargs: SimpleNamespace(status_code=200),
     )
     server.should_exit = True
     thread.join(timeout=1)

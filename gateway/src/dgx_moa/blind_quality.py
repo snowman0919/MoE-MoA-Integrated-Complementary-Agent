@@ -427,7 +427,11 @@ def primary_score(
 
 
 def secondary_score(
-    package: dict[str, Any], *, key: str, timeout: int
+    package: dict[str, Any],
+    *,
+    key: str,
+    timeout: int,
+    opener: Any = urllib.request.urlopen,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     body = {
         "model": SECONDARY_MODEL,
@@ -451,7 +455,7 @@ def secondary_score(
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with opener(request, timeout=timeout) as response:
         payload = json.load(response)
     if payload.get("provider") != "Amazon Bedrock":
         raise RuntimeError("secondary judge provider pin was not honored")

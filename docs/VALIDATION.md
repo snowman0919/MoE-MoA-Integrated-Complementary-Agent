@@ -10704,3 +10704,22 @@ OpenCode cache mounts, sanitized Hermes profile generation, and CUDA memory
 measurement. Ruff passed, strict mypy reported no issues across 61 source files,
 `git diff --check` passed, and the complete suite passed `1,218/1,218` in 50.71
 seconds with the existing Starlette deprecation warning.
+## Gemma 4 MoE reconciliation and remaining global dependency boundaries (2026-08-03)
+
+- Commit `a3abfa5` already replaced the dense specialist candidate with pinned
+  `nvidia/Gemma-4-26B-A4B-NVFP4` revision
+  `a19cfe00be84568a6867111c9a68c9c44fdcffe6`; the checked-in candidate config,
+  topology script, compatibility manifest, validation harness, and dashboard all
+  name that same model.
+- The running isolated specialist container mounted
+  `/home/kotori9/models/experimental/gemma-4-26b-a4b-nvfp4-a19cfe00` read-only and
+  served the unified Planner/Reviewer endpoint on candidate port `18102` with
+  65,536 context, one running request, ModelOpt FP4, and Gemma 4 parsers.
+- A filesystem search under `/home/kotori9/models` found no `*31b*` directory.
+  No unrelated model directory was deleted to manufacture removal evidence.
+- Blind-quality HTTP opening and the live candidate gateway's app, Uvicorn, and
+  health dependencies now use explicit default callables. Tests inject fakes
+  directly rather than modifying imported module globals.
+- Focused verification: Ruff passed, strict mypy passed for both changed source
+  modules, and `tests/test_blind_quality.py tests/test_candidate_gateway.py`
+  passed `15/15`.
