@@ -159,6 +159,9 @@ def test_prompt_sandwich_keeps_dynamic_context_after_stable_prefix(
     assert "new dynamic plan" not in first_prefix
     assert '"acceptance_criteria": ["tests pass"]' in first_prefix
     assert '"workspace_identifier": "fixture"' in first_prefix
+    assert "natural language of the user's actual objective" in first.split(
+        "FINAL REQUIRED OUTPUT\n", 1
+    )[1]
 
     state.acceptance_criteria.append("lint passes")
     changed = controller.prompt_sandwich("executor", state, "evidence", "continue")

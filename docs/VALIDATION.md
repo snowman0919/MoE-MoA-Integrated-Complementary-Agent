@@ -10305,3 +10305,14 @@ success/failure outcome transitions. Focused recovery and 7/8 boundary tests
 passed; the full suite passed 1,216 tests in 46.12 seconds. Ruff and strict mypy
 over all 60 gateway source files passed. A new sealed epoch is required before
 claiming a measured latency or quality improvement.
+
+Four sampled OpenCode Korean-output failures (`a042`, `a061`, `a132`, and
+`a158`) each contained an English final text event and exactly one GPT-5.6 Sol
+Executor fallback with routing reason `local_no_progress`; this was a real
+language-preservation failure, not a scorer window artifact. The shared
+Executor prompt now repeats the objective-language contract in the terminal
+`FINAL REQUIRED OUTPUT` block while retaining the stable policy/schema prefix
+for Radix reuse. Focused prompt and quality-runner tests passed four cases; the
+full suite passed 1,216 tests in 45.86 seconds, with Ruff and strict mypy clean.
+The prompt change invalidates reuse of v90 quality results and requires a fresh
+sealed physical epoch after the Reasoner topology is restored.

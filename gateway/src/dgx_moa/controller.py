@@ -2360,7 +2360,8 @@ class Controller:
                 "Use native OpenAI tool calls when an action is required. Otherwise return normal "
                 "assistant content. Do not encode tool calls as JSON text or wrap native tool "
                 "calls in prose or Markdown fences. Be concise by default; expand only when the "
-                "objective explicitly requests detail."
+                "objective explicitly requests detail. For any prose or final answer, use the "
+                "natural language of the user's actual objective."
             )
         )
         bounded_nonmutation_turn = (
