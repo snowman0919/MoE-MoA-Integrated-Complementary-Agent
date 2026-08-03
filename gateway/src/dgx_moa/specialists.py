@@ -207,6 +207,7 @@ class SpecialistRouter:
         self._completed_warmups: dict[tuple[str, str, str], int] = {}
         self._used_warmups: set[tuple[str, str, str, int]] = set()
         self._unused_watchers: dict[tuple[str, str, str, int], asyncio.Task[None]] = {}
+        self._local_degraded_until: dict[SpecialistRole, float] = {}
 
     @staticmethod
     def public_state(state: str) -> str:
@@ -232,6 +233,23 @@ class SpecialistRouter:
 
     def _record_for_role(self, role: SpecialistRole) -> Any | None:
         return self.lifecycle_store.get(role) if self.lifecycle_store is not None else None
+
+    def mark_local_degraded(
+        self, role: SpecialistRole, request_id: str, failure_class: str
+    ) -> None:
+        self._local_degraded_until[role] = (
+            time.monotonic() + self.config.local_failure_cooldown_seconds
+        )
+        self._record(
+            request_id,
+            "specialist_local_degraded",
+            {
+                "role": role,
+                "residency_state": "DEGRADED",
+                "failure_class": failure_class,
+                "cooldown_seconds": self.config.local_failure_cooldown_seconds,
+            },
+        )
 
     def _schedule_warmup(
         self, role: SpecialistRole, revision: str, request_id: str, trigger: str
@@ -373,6 +391,9 @@ class SpecialistRouter:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         record = self._record_for_role(role)
         local_state = self.public_state(record.state if record is not None else "cold")
+        circuit_open = self._local_degraded_until.get(role, 0.0) > time.monotonic()
+        if circuit_open:
+            local_state = "DEGRADED"
         if local_state == "READY" and record is not None and int(record.active_request_count) > 0:
             local_state = "BUSY"
         local_queue = (
@@ -440,6 +461,8 @@ class SpecialistRouter:
             if use_local
             else "local_busy"
             if local_state == "BUSY"
+            else "local_circuit_open"
+            if circuit_open
             else "remote_predicted_faster"
             if local_state == "READY"
             else "local_not_ready"
@@ -468,6 +491,8 @@ class SpecialistRouter:
         try:
             response = await provider.complete(request, timeout_seconds=provider_timeout)
         except Exception as error:
+            if use_local:
+                self.mark_local_degraded(role, request_id, type(error).__name__)
             decision.update(
                 actual_completion_latency_seconds=time.monotonic() - started,
                 provider_error=type(error).__name__,

@@ -18,6 +18,7 @@ from dgx_moa.controller import (
     normalize_tool_result,
 )
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
+from dgx_moa.loop_engineering import LoopBudget, new_loop
 from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
 from dgx_moa.state import Phase, SessionState, StateStore
 
@@ -42,9 +43,7 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
         {
             "role": "tool",
             "name": "terminal",
-            "content": json.dumps(
-                {"output": "tests timed out", "exit_code": 124, "error": None}
-            ),
+            "content": json.dumps({"output": "tests timed out", "exit_code": 124, "error": None}),
         }
     )
 
@@ -88,9 +87,7 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
     )
     assert warned["exit_code"] == 1
     assert warned["stderr"] == ""
-    assert warned["stdout"] == (
-        "FAILED\n\n[Tool loop warning: inspect before retrying.]"
-    )
+    assert warned["stdout"] == ("FAILED\n\n[Tool loop warning: inspect before retrying.]")
     codex = normalize_tool_result(
         {
             "role": "tool",
@@ -521,7 +518,7 @@ async def test_optional_frontier_unavailable_keeps_derived_confidence_low(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("clean_approval", [False, True])
-async def test_local_review_escalates_to_frontier_code_review(
+async def test_local_review_uses_local_correction_before_frontier(
     settings, stub_provider: StubProvider, clean_approval: bool
 ) -> None:  # type: ignore[no-untyped-def]
     class ReviewFrontier:
@@ -617,41 +614,25 @@ async def test_local_review_escalates_to_frontier_code_review(
 
     prepared = await controller.prepare_executor(state, request, ("reasoner", "executor"))
 
-    assert [mode for mode, _ in frontier.calls] == ["code_review"]
-    assert frontier.calls[0][1]["_paid_fallback_required"] is True
-    assert frontier.calls[0][1]["local_reviewer_findings"]["status"] == (
-        "approved" if clean_approval else "rejected"
-    )
-    assert frontier.calls[0][1]["tool_executions"] == []
-    assert [item["stdout"] for item in frontier.calls[0][1]["tool_results"]] == [
-        "contract-0",
-        "contract-1",
-        "contract-2",
-        "contract-3",
-        "contract-6",
-        "contract-7",
-        "contract-8",
-        "contract-9",
-    ]
-    assert state.frontier_invocations == 1
-    assert state.derived_confidence == "conflicted"
-    assert state.review_status == "rejected_frontier"
-    assert state.review_deferred is True
-    assert state.frontier_correction_required is True
-    assert state.phase == Phase.CORRECTION
-    assert "Frontier contribution" in json.dumps(prepared["messages"])
-    assert any(
-        event["event_type"] == "frontier_collaboration_started"
-        and event["payload"].get("trigger")
-        == (
-            "insufficient_local_review_assurance" if clean_approval else "material_reviewer_finding"
+    if clean_approval:
+        assert frontier.calls == []
+        assert state.frontier_invocations == 0
+        assert state.review_status == "approved"
+        assert state.review_deferred is False
+        assert state.frontier_correction_required is False
+        assert "Frontier contribution" not in json.dumps(prepared["messages"])
+    else:
+        assert frontier.calls == []
+        assert state.frontier_invocations == 0
+        assert state.review_status == "rejected"
+        assert state.review_deferred is True
+        assert state.frontier_correction_required is False
+        assert state.phase == Phase.CORRECTION
+        assert "Frontier contribution" not in json.dumps(prepared["messages"])
+        assert not any(
+            event["event_type"].startswith("frontier_")
+            for event in store.events(state.session_id)
         )
-        for event in store.events(state.session_id)
-    )
-    assert any(
-        event["event_type"] == "frontier_review_rejected"
-        for event in store.events(state.session_id)
-    )
 
 
 @pytest.mark.asyncio
@@ -688,6 +669,9 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
     async def clean_review(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
         schema_name = request.get("response_format", {}).get("json_schema", {}).get("name")
         if role == "executor" and schema_name == "orchestration_decision":
+            required_agents = ["reviewer"]
+            if state.frontier_correction_pending_verification:
+                required_agents.append("frontier")
             return {
                 "choices": [
                     {
@@ -696,9 +680,12 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
                             "content": json.dumps(
                                 {
                                     "action": "invoke_agents",
-                                    "required_agents": ["reviewer"],
+                                    "required_agents": required_agents,
                                     "optional_agents": [],
-                                    "reason": {"reviewer": "verify the correction"},
+                                    "reason": {
+                                        "reviewer": "verify the correction",
+                                        "frontier": "independently verify the correction",
+                                    },
                                     "parallelizable": False,
                                     "continue_after": "synthesize",
                                     "confidence": 0.9,
@@ -742,6 +729,11 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
         review_status="deferred",
         review_deferred=True,
     )
+    state.engineering_loop = new_loop(
+        state.session_id,
+        state.objective,
+        budget=LoopBudget(frontier_calls=0),
+    )
     request = {
         "model": "dgx-moa-orchestrated",
         "messages": [{"role": "user", "content": state.objective}],
@@ -756,9 +748,7 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
 
     assert frontier.calls == 1
     assert state.frontier_invocations == 2
-    assert frontier.correlation_ids == [
-        "frontier-correction-verification:frontier:2"
-    ]
+    assert frontier.correlation_ids == ["frontier-correction-verification:frontier:2"]
     assert state.frontier_correction_pending_verification is False
     assert state.frontier_review_verified is True
     assert any(
@@ -767,7 +757,15 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
         for event in store.events(state.session_id)
     )
     assert any(
+        event["event_type"] == "frontier_architecture_deferred"
+        for event in store.events(state.session_id)
+    )
+    assert any(
         event["event_type"] == "frontier_correction_verified"
+        for event in store.events(state.session_id)
+    )
+    assert any(
+        event["event_type"] == "frontier_verification_reserve_used"
         for event in store.events(state.session_id)
     )
 
@@ -775,8 +773,7 @@ async def test_frontier_correction_is_reverified_past_invocation_limit(
 
     assert frontier.calls == 1
     assert not any(
-        event["event_type"] == "frontier_unavailable"
-        for event in store.events(state.session_id)
+        event["event_type"] == "frontier_unavailable" for event in store.events(state.session_id)
     )
 
 
@@ -1028,6 +1025,73 @@ async def test_duplicate_unavailable_mcp_replans_without_409_and_removes_read_to
     )
 
 
+@pytest.mark.asyncio
+async def test_client_reported_unavailable_tools_are_removed(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="client-tool-pruning",
+        objective="Continue from the available evidence.",
+        runtime_mode="orchestrated",
+        tool_executions=[
+            {"stdout_summary": "write_stdin failed: Unknown process id 2"},
+            {"stdout_summary": "request_user_input is unavailable in Default mode"},
+            {
+                "stdout_summary": (
+                    "Failed to create unified exec process: No such file or directory (os error 2)"
+                )
+            },
+        ],
+    )
+    request = {
+        "model": "dgx-moa-agent",
+        "messages": [{"role": "user", "content": state.objective}],
+        "tools": [
+            {"type": "function", "function": {"name": "write_stdin", "parameters": {}}},
+            {
+                "type": "function",
+                "function": {"name": "request_user_input", "parameters": {}},
+            },
+            {"type": "function", "function": {"name": "update_plan", "parameters": {}}},
+            {"type": "function", "function": {"name": "view_image", "parameters": {}}},
+            {
+                "type": "function",
+                "function": {
+                    "name": "exec_command",
+                    "parameters": {
+                        "properties": {
+                            "cmd": {"type": "string"},
+                            "shell": {"type": "string"},
+                        }
+                    },
+                },
+            },
+        ],
+    }
+
+    prepared = await controller.prepare_executor(state, request, ("executor",))
+
+    assert [tool["function"]["name"] for tool in prepared["tools"]] == ["exec_command"]
+    assert prepared["tools"][0]["function"]["parameters"]["properties"] == {
+        "cmd": {"type": "string"}
+    }
+    event = next(
+        event
+        for event in store.events(state.session_id)
+        if event["event_type"] == "tool_temporarily_unavailable"
+    )
+    assert event["payload"] == {
+        "tools": ["request_user_input", "update_plan", "view_image", "write_stdin"],
+        "reason": "request_context_unavailable",
+    }
+    assert any(
+        event["event_type"] == "tool_parameter_temporarily_unavailable"
+        for event in store.events(state.session_id)
+    )
+
+
 def test_goal_file_wrapper_gets_full_completion_constraints(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -1056,8 +1120,9 @@ def test_goal_file_wrapper_gets_full_completion_constraints(
     assert "total historical requests" in reviewer_prompt
 
 
-def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
-    settings, stub_provider: StubProvider
+@pytest.mark.parametrize("retryable_reason", ["CLIENT_CANCELLED", "PROVIDER_UNAVAILABLE"])
+def test_retryable_loop_resumes_but_operator_termination_does_not(
+    settings, stub_provider: StubProvider, retryable_reason: str
 ) -> None:  # type: ignore[no-untyped-def]
     settings.loop_engineering.enabled = True
     store = StateStore(settings.state_db)
@@ -1066,7 +1131,7 @@ def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
     controller.select_route(state, {})
     state.phase = Phase.BLOCKED
     state.final_status = "blocked"
-    controller.terminate_loop(state, "CLIENT_CANCELLED")
+    controller.terminate_loop(state, retryable_reason)  # type: ignore[arg-type]
     store.save(state)
 
     resumed = controller.session(
@@ -1084,13 +1149,13 @@ def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
     )
 
     resumed.control_state = "terminated"
-    controller.terminate_loop(resumed, "CLIENT_CANCELLED")
+    controller.terminate_loop(resumed, retryable_reason)  # type: ignore[arg-type]
     store.save(resumed)
     not_resumed = controller.session(
         state.session_id,
         [{"role": "user", "content": "retry after operator termination"}],
     )
-    assert not_resumed.engineering_loop.termination_reason == "CLIENT_CANCELLED"
+    assert not_resumed.engineering_loop.termination_reason == retryable_reason
 
 
 def test_loop_duplicate_failure_policy_persists_across_retries(
@@ -1251,7 +1316,7 @@ def test_successful_write_invalidates_approved_review(
     assert opencode_write.review_status == "deferred"
 
 
-def test_frontier_correction_latch_requires_a_new_file_change(
+def test_frontier_correction_latch_accepts_new_change_or_validation_evidence(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
     store = StateStore(settings.state_db)
@@ -1348,6 +1413,43 @@ def test_frontier_correction_latch_requires_a_new_file_change(
         for event in store.events(python_state.session_id)
     )
 
+    validation_state = SessionState(
+        session_id="frontier-validation-correction",
+        review_status="rejected_frontier",
+        review_deferred=True,
+        frontier_correction_required=True,
+    )
+    validation_messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "frontier-validation",
+                    "type": "function",
+                    "function": {
+                        "name": "exec_command",
+                        "arguments": json.dumps({"cmd": "python -m unittest discover -s tests -v"}),
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "frontier-validation",
+            "content": '{"exit_code":0,"stdout":"Ran 4 tests\\nOK"}',
+        },
+    ]
+    controller._observe(validation_state, validation_messages)
+
+    assert validation_state.frontier_correction_required is False
+    assert validation_state.frontier_correction_pending_verification is True
+    events = store.events(validation_state.session_id)
+    assert any(
+        event["event_type"] == "frontier_correction_applied"
+        and event["payload"]["reason"] == "validation_evidence_added_after_frontier_rejection"
+        for event in events
+    )
+
 
 def test_successful_output_can_describe_failures(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     state = SessionState(session_id="failure-doc")
@@ -1366,6 +1468,53 @@ def test_stdout_missing_file_is_a_failure(settings, stub_provider: StubProvider)
 
     assert state.failures[0]["failure_class"] == "NONEXISTENT_PATH"
     assert state.tool_executions[0]["failure_class"] == "NONEXISTENT_PATH"
+
+
+def test_opencode_edit_miss_with_zero_exit_is_a_failure(
+    settings, stub_provider: StubProvider
+) -> None:
+    state = SessionState(session_id="opencode-edit-miss")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "edit-miss",
+                    "type": "function",
+                    "function": {
+                        "name": "edit",
+                        "arguments": json.dumps(
+                            {
+                                "filePath": "/workspace/app.py",
+                                "oldString": "old",
+                                "newString": "new",
+                            }
+                        ),
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "edit-miss",
+            "content": json.dumps(
+                {
+                    "exit_code": 0,
+                    "stdout": (
+                        "Could not find oldString in the file. It must match exactly, "
+                        "including whitespace, indentation, and line endings."
+                    ),
+                }
+            ),
+        },
+    ]
+
+    controller._observe(state, messages)
+
+    assert state.failures[0]["failure_class"] == "NONEXISTENT_PATH"
+    assert state.tool_executions[0]["failure_class"] == "NONEXISTENT_PATH"
+    assert state.failure_families
 
 
 @pytest.mark.parametrize(
@@ -1547,11 +1696,13 @@ def test_enabled_loop_uses_configured_no_progress_limit(
     assert state.engineering_loop.termination_reason == "NO_PROGRESS"
 
 
-@pytest.mark.parametrize(("used_tokens", "recovered"), [(250_000, True), (1_000_000, False)])
+@pytest.mark.parametrize("recovered", [True, False])
 def test_expanded_token_budget_recovers_only_eligible_blocked_sessions(
-    settings, stub_provider: StubProvider, used_tokens: int, recovered: bool
+    settings, stub_provider: StubProvider, recovered: bool
 ) -> None:  # type: ignore[no-untyped-def]
     settings.loop_engineering.enabled = True
+    token_budget = int(settings.loop_engineering.defaults["tokens"])
+    used_tokens = token_budget // 4 if recovered else token_budget
     store = StateStore(settings.state_db)
     controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
     state = controller.session("token-recovery", [{"role": "user", "content": "implement"}])
@@ -1567,7 +1718,7 @@ def test_expanded_token_budget_recovers_only_eligible_blocked_sessions(
     controller.select_route(state, {})
 
     if recovered:
-        assert state.engineering_loop.remaining_budget.tokens == 750_000
+        assert state.engineering_loop.remaining_budget.tokens == token_budget - used_tokens
         assert state.engineering_loop.termination_reason is None
         assert state.phase == Phase.REPLANNING
         assert state.final_status is None
@@ -1714,9 +1865,7 @@ async def test_reasoner_fallback_failure_records_safe_code(
     stub_provider.complete = fail_local_reasoner  # type: ignore[method-assign]
     store = StateStore(settings.state_db)
     controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
-    state = controller.session(
-        "reasoner-fallback-failed", [{"role": "user", "content": "work"}]
-    )
+    state = controller.session("reasoner-fallback-failed", [{"role": "user", "content": "work"}])
     controller.select_route(state, {})
 
     with pytest.raises(ReasonerUnavailable):
@@ -1948,6 +2097,13 @@ async def test_tool_continuation_promotes_reviewer_for_implementation_evidence(
         objective="Implement and test the limiter",
         runtime_mode="orchestrated",
         roles_required=["reasoner", "executor"],
+        implementation_evidence=[
+            {
+                "tool_name": "apply_patch",
+                "target_paths": ["rate_limiter.py"],
+                "change_arguments": {},
+            }
+        ],
         tool_executions=[
             {
                 "tool_name": "exec_command",
@@ -1978,9 +2134,83 @@ async def test_tool_continuation_promotes_reviewer_for_implementation_evidence(
     assert "reviewer" in stub_provider.calls
     assert state.review_status == "approved"
     assert "Local Reviewer contribution" in prepared["messages"][0]["content"]
+    reviewer_request = stub_provider.requests[stub_provider.calls.index("reviewer")]
+    reviewer_prompt = reviewer_request["messages"][0]["content"]
+    assert reviewer_prompt.count("BOUNDED EVIDENCE") == 1
+    assert "Stay below 400 output tokens" in reviewer_prompt
+    assert "synchronization of shared state" in reviewer_prompt
     assert any(
         event["event_type"] == "reviewer_required" for event in store.events(state.session_id)
     )
+
+
+@pytest.mark.asyncio
+async def test_tool_continuation_reuses_approved_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="approved-review",
+        objective="Implement and test the limiter",
+        roles_required=["reasoner", "executor", "reviewer"],
+        review_status="approved",
+        implementation_evidence=[{"tool_name": "write", "target_paths": ["limiter.py"]}],
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m unittest"},
+                "exit_code": 0,
+            }
+        ],
+    )
+
+    await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-agent",
+            "messages": [{"role": "user", "content": state.objective}],
+            "metadata": {},
+        },
+        ("reasoner", "executor", "reviewer"),
+        tool_continuation=True,
+    )
+
+    assert "reviewer" not in stub_provider.calls
+    assert state.review_status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_validation_without_change_does_not_promote_reviewer(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="validation-only",
+        objective="Implement and test the limiter",
+        runtime_mode="orchestrated",
+        roles_required=["reasoner", "executor"],
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "python -m unittest discover -s tests -v"},
+                "exit_code": 0,
+            }
+        ],
+    )
+
+    await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-orchestrated",
+            "messages": [{"role": "user", "content": state.objective}],
+            "metadata": {},
+        },
+        ("reasoner", "executor"),
+        tool_continuation=True,
+    )
+
+    assert "reviewer" not in state.roles_required
+    assert "reviewer" not in stub_provider.calls
 
 
 @pytest.mark.asyncio
@@ -2850,6 +3080,24 @@ def test_review_requires_external_evidence(settings, stub_provider: StubProvider
     assert (
         controller.has_review_evidence(
             SessionState(
+                session_id="bounded-unittest",
+                tool_executions=[
+                    {
+                        "tool_name": "terminal",
+                        "normalized_arguments": {
+                            "command": "timeout 120s python -m unittest discover -s tests -v"
+                        },
+                        "exit_code": 0,
+                    }
+                ],
+            ),
+            {},
+        )
+        is True
+    )
+    assert (
+        controller.has_review_evidence(
+            SessionState(
                 session_id="failed-unittest",
                 tool_executions=[
                     {
@@ -2943,9 +3191,7 @@ def test_implementation_completion_requires_change_validation_and_review(
     assert controller.requires_implementation_tool_action(question, {}) is False
 
 
-def test_frontier_missing_tests_block_approval(
-    settings, stub_provider: StubProvider
-) -> None:  # type: ignore[no-untyped-def]
+def test_frontier_missing_tests_block_approval(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
 
     assert controller.material_frontier_review(
@@ -2958,9 +3204,73 @@ def test_frontier_missing_tests_block_approval(
     )
 
 
-def test_patch_tool_counts_as_a_file_change(
-    settings, stub_provider: StubProvider
-) -> None:  # type: ignore[no-untyped-def]
+def test_deterministic_numeric_review_rejects_nonfinite_and_bool_hole() -> None:
+    state = SessionState(
+        session_id="numeric-review-hole",
+        implementation_evidence=[
+            {
+                "change_arguments": {
+                    "content": (
+                        "if not isinstance(window, (int, float)) or window <= 0:\n"
+                        "    raise ValueError('invalid window')\n"
+                    )
+                }
+            }
+        ],
+    )
+
+    findings = Controller.deterministic_numeric_findings(state)
+
+    assert len(findings) == 1
+    assert findings[0]["finding_id"] == "numeric-boundary-window"
+    assert findings[0]["severity"] == "important"
+    assert "NaN" in findings[0]["impact"]
+
+
+def test_deterministic_numeric_review_accepts_complete_guards() -> None:
+    state = SessionState(
+        session_id="numeric-review-safe",
+        implementation_evidence=[
+            {
+                "change_arguments": {
+                    "content": (
+                        "if (isinstance(window, bool) or "
+                        "not isinstance(window, (float, int)) or "
+                        "not math.isfinite(window) or window <= 0):\n"
+                        "    raise ValueError('invalid window')\n"
+                    )
+                }
+            }
+        ],
+    )
+
+    assert Controller.deterministic_numeric_findings(state) == []
+
+
+def test_repeated_review_finding_escalates_on_second_occurrence() -> None:
+    finding = {
+        "finding_id": "numeric-boundary-window",
+        "category": "numeric-boundary",
+        "severity": "important",
+    }
+    result = {"status": "rejected", "findings": [finding]}
+    first = SessionState(
+        session_id="first-finding",
+        agent_artifacts=[{"role": "reviewer", "output": result}],
+    )
+    repeated = SessionState(
+        session_id="repeated-finding",
+        agent_artifacts=[
+            {"role": "reviewer", "output": result},
+            {"role": "reviewer", "output": result},
+        ],
+    )
+
+    assert Controller.repeated_review_finding(first, result) is False
+    assert Controller.repeated_review_finding(repeated, result) is True
+
+
+def test_patch_tool_counts_as_a_file_change(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
 
     assert controller.tool_execution_changes_files(

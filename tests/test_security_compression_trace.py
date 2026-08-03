@@ -37,6 +37,12 @@ def test_redaction_covers_http_credential_keys() -> None:
     ) == {"authorization": "[REDACTED]", "Cookie": "[REDACTED]"}
 
 
+def test_redaction_does_not_corrupt_secret_named_source_variables() -> None:
+    source = "self._secret = secret\nexpected = hmac.new(self._secret, body)"
+
+    assert redact(source) == source
+
+
 def test_redaction_preserves_token_and_cost_measurements() -> None:
     assert redact(
         {
@@ -74,6 +80,40 @@ def test_tool_outputs_share_the_compression_budget() -> None:
     messages = [{"role": "tool", "content": character * 100} for character in ("a", "b", "c", "d")]
     compressed = compress_messages(messages, limits)
     assert sum(len(message["content"]) for message in compressed) <= 80
+
+
+def test_compression_keeps_redacted_tool_arguments_parseable() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "edit-secret",
+                    "type": "function",
+                    "function": {
+                        "name": "edit",
+                        "arguments": json.dumps(
+                            {
+                                "filePath": "webhook.py",
+                                "oldString": "self._secret = bytes(secret)",
+                                "newString": "self._secret = secret",
+                            }
+                        ),
+                    },
+                }
+            ],
+        }
+    ]
+
+    compressed = compress_messages(messages, Limits())
+    arguments = compressed[0]["tool_calls"][0]["function"]["arguments"]
+
+    assert isinstance(arguments, str)
+    parsed = json.loads(arguments)
+    assert parsed["filePath"] == "webhook.py"
+    assert parsed["oldString"] == "self._secret = bytes(secret)"
+    assert parsed["newString"] == "self._secret = secret"
 
 
 def test_default_tool_output_budget_preserves_small_source_files() -> None:

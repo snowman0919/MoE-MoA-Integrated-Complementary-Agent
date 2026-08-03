@@ -324,7 +324,8 @@ readiness.
 The only authenticated tailnet listener is the gateway at
 `100.125.239.72:9000`; the configured Executor remains loopback-only at `8101`.
 The configured external Reasoner remains `Qwythos-v2-9B:Q4` at
-`192.168.0.197:11434`. Frontier remains Codex OAuth `gpt-5.6-sol`/high with
+`192.168.0.197:11434` (the same host now uses tailnet address
+`100.90.167.128:11434`). Frontier remains Codex OAuth `gpt-5.6-sol`/high with
 authenticated primary and secondary profiles and bounded failover. Loop
 Engineering, runtime Skills, declarative policy, live observation and controls,
 training collection, and weekly jobs remain production-disabled pending their
@@ -5055,3 +5056,348 @@ one-sequence, memory, tool-calling, quality, and rollback gates. Until then,
 bounded specialist evidence, compressed tool history, context-aware remote
 routing, and concurrent independent-role work are the approved throughput
 controls; no speculative SGLang migration is deployed.
+
+### SGLang 0.5.13 physical candidate and rollback — 2026-07-25
+
+An isolated SGLang 0.5.13.post1 Executor loaded the selected Qwen3-Next
+checkpoint with context 65,536 and one running request after Planner and
+Reviewer were stopped. Weight loading used about 46 GB. The automatically sized
+Mamba state cache used about 9.8 GB and the KV pool about 10.9 GB, explaining
+the approximately 70 GB process footprint. Warm native-tool requests took
+0.825-0.828 seconds. A repeated 36,013-token prefix took 1.113 and 1.038
+seconds with 32,768 cached tokens, versus 8.477 and 8.489 seconds on the
+restored vLLM baseline. A 63,013-token request completed in 16.886 seconds.
+
+The bounded candidate retains Radix cache but caps total tokens at 65,536 and
+Mamba state slots at 16. With the existing Planner and Reviewer resident,
+`mem-fraction-static=0.50` and `0.53` both loaded weights but failed the memory
+pool gate. A calculated `0.68` retry failed at CUDA device initialization.
+Therefore the existing three local models cannot coexist reliably with this
+SGLang Executor. No backend switch is approved.
+
+`scripts/restore-vllm-executor.sh` was updated to preserve the invoking user's
+systemd bus when run through sudo. Exact full stop/start restored the selected
+vLLM Executor and both specialists; all three later passed real inference
+readiness probes. Immediate Reviewer starts after failed SGLang loads
+occasionally received CUDA OOM despite apparent free memory. A full stop of all
+three model services followed by sequential Executor, Planner, Reviewer starts
+recovered without reboot or cache reset.
+
+The official Apache-2.0
+`mistralai/Devstral-Small-2-24B-Instruct-2512` revision
+`55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128` was downloaded only to an isolated
+model directory as a combined Planner/Reviewer candidate. It was rejected by
+the current backends before inference: vLLM 0.22.1 requires unavailable
+`flash_attn.ops` for its YaRN rotary path, SGLang 0.5.13 passes a string instead
+of a quantization object for this Mistral3 FP8 checkpoint, and isolated SGLang
+0.5.16 requires FlashInfer 0.6.14 while a matching aarch64 cubin package was not
+published. Version checks were not bypassed and host packages were not
+mutated.
+
+### Unified Nemotron 3 specialist on SGLang — 2026-07-25
+
+The official NVIDIA Nemotron Open Model License checkpoint
+[`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4`](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4)
+at revision `ce1b118ae66ec705d02c241525192832eb045fd3` was evaluated as one
+physical model for the logical Planner and Reviewer roles. The five NVFP4
+weight shards total 19,342,796,520 bytes. The upstream card reports the
+quantized model separately from BF16, including LiveCodeBench 65.4, IFBench
+70.7, and TauBench v2 average 45.6, so the selection did not infer quantized
+quality from the unquantized model.
+
+The host SGLang 0.5.13.post1 path was rejected. A default graph warm-up at
+`mem-fraction-static=0.42` caused the protected vLLM Executor to be killed by
+the OOM killer. Bounding CUDA graph batch size still consumed 117/119 GiB RAM
+and all 15 GiB swap without becoming ready. `--disable-cuda-graph` alone was
+insufficient because piecewise CUDA graph remained enabled. Every failed
+generation was stopped, and the exact vLLM Executor plus both original
+specialists later passed real inference readiness probes.
+
+The NVIDIA-documented arm64 CUDA 13 container
+`lmsysorg/sglang:dev-cu13-nemotronh-nano-omni-reasoning-v3`, manifest digest
+`sha256:6fb82d4fa57425bc0df5b35fba328b08bda950ecf78ce60ea63d8830fc271eb5`,
+was then isolated with a 50 GiB hard memory limit, no additional swap,
+loopback-only port `8112`, read-only model mount, and OOM score 1000. It
+required all of:
+
+- `mem-fraction-static=0.50`;
+- context and maximum total tokens `65536`;
+- one running request and Mamba cache size `16`;
+- `--disable-cuda-graph`;
+- `--disable-piecewise-cuda-graph`.
+
+That configuration physically became ready beside the resident Executor.
+SGLang reported 27.61 GB model memory, 0.76 GB Mamba state, about 0.18 GB KV
+for 65,536 tokens, and 34.41 GB available after initialization. A direct
+non-thinking Reviewer request returned valid JSON in 0.857 seconds. Reusing a
+roughly 39,640-token common prefix reduced measured completion latency from
+8.500 seconds to 1.532 seconds, a 5.55x improvement. The Executor remained
+active during these calls.
+
+The model did **not** pass the role-quality promotion gate. An initial two
+Planner/three Reviewer matrix produced valid JSON in only three of five calls.
+Increasing the limit to 640 tokens did not fix Planner verbosity, and the
+privacy Reviewer incorrectly passed a sanitizer that masked only the top-level
+`api_key` while leaving nested and differently named secrets untouched. With
+the configured `nemotron_3` parser, `enable_thinking=false` also placed the
+otherwise valid public response in `reasoning_content`; direct `/generate`
+showed that the underlying empty-think template output was valid, making this
+an OpenAI-parser integration defect rather than permission to expose reasoning.
+
+Conclusion: SGLang prefix reuse is physically valuable on this machine, and a
+single NVFP4 specialist can coexist with the protected Executor when both graph
+paths are disabled and the container is hard-limited. This particular model
+and parser combination is not approved to replace the independent Planner and
+Reviewer. The evaluation container was removed and all three selected vLLM
+roles were restored. A stronger candidate must pass structured-output,
+recursive-secret, concurrency, migration-ordering, and independent high-risk
+review gates before any checked-in unit or routing change.
+
+## GPT-5.6 Sol usability comparison and concurrent-client recovery — 2026-07-25
+
+The comparison uses a hard quality gate before latency or cost. Each of five
+fresh implementation tasks must pass ten checks: isolated Docker execution,
+client exit, public tests, independent hidden tests, unchanged tests,
+source-only changes, actual terminal use, recorded tool evidence, requested
+Korean final language, and no failed terminal. A system that fails any task
+does not receive an aggregate usability PASS. Median end-to-end wall time is
+reported separately and is never allowed to hide a quality failure.
+
+The direct `gpt-5.6-sol` Codex baseline run
+`20260725-sol-equivalence-a1` passed four of five tasks. Its atomic-store
+implementation failed the independent hidden contract. Median time over all
+five attempts was 59.702 seconds. The exact current Dynamic MoA code produced
+the following final results:
+
+| Client | Final evidence | Strict passes | Median seconds | Sol time ratio |
+| --- | --- | ---: | ---: | ---: |
+| OpenCode | `20260725-sol-opencode-localfirst1` plus `20260725-sol-opencode-current1` | 5/5 | 237.158 | 3.972x |
+| Codex | `20260725-sol-codex-current1` plus `20260725-sol-codex-webhookretry1` | 5/5 | 325.514 | 5.452x |
+| installed Hermes | `20260725-sol-hermes-current1` | 5/5 | 227.435 | 3.810x |
+
+All fifteen selected rows passed all ten checks. The four OpenCode tasks in
+`current1` completed concurrently in 238.787 seconds. The five Hermes tasks
+completed concurrently in 317.022 seconds. The initial five-way Codex run
+passed four tasks, but webhook-verifier reproduced the reported disconnect:
+local Reasoner structured retries and Frontier fallback pushed an Executor
+orchestration turn to 191.952 seconds, the reused 120-second Planner timeout
+terminated the engineering loop as `PROVIDER_UNAVAILABLE`, and five client
+retries then received terminal 502 errors. The fix gives Executor
+orchestration its own 300-second limit and permits a running client retry to
+resume a loop terminated by transient provider unavailability. Fresh isolated
+run `20260725-sol-codex-webhookretry1` then passed all ten checks in 171.598
+seconds.
+
+Provider provenance across the final isolated databases recorded 26 local and
+29 remote specialist selections. Remote routing included three
+`local_busy`, seventeen `local_circuit_open`, three
+`local_context_exceeded`, and six `local_not_ready` decisions. Current calls
+remained pinned; no result was switched after dispatch. Straightforward first
+Reviewer rejections now return to the Executor once. A repeated finding or a
+high-risk rejection may use Frontier. A deterministic implementation-evidence
+check catches Python numeric unions that omit explicit bool rejection or a
+finite-value guard; it found the previously missed NaN constructor defect.
+
+The public reference points are not transferred into the five-task score.
+[OpenAI reports](https://openai.com/index/gpt-5-6/) GPT-5.6 Sol at 80 on the
+Artificial Analysis Coding Agent Index, 88.8% on Terminal-Bench 2.1, 72.7% on
+DeepSWE v1.1, and 64.6% on SWE-Bench Pro.
+[Artificial Analysis reports](https://artificialanalysis.ai/articles/gpt-5-6-has-landed)
+an estimated $1.04 per Intelligence Index task for Sol max and explicitly
+evaluates Sol in the Codex harness. The newly released
+[Claude Opus 5 result](https://artificialanalysis.ai/articles/opus-5) is 61 on
+the Intelligence Index, 1861 GDPval-AA v2 Elo, joint first on the Coding Agent
+Index, and 89% on Terminal-Bench 2.1.
+[OpenRouter lists](https://openrouter.ai/anthropic/claude-opus-5) a one-million
+token context and $5/$25 per million input/output tokens. These are broader,
+different-harness results and therefore remain external reference points, not
+evidence that this runtime matches those scores.
+
+The corrected cost model is one combined fixed $30 monthly expense for Codex
+OAuth and OpenCode Go, not $30 each. Their marginal provider charge within the
+plans is treated as zero; amortized fixed cost is `$30 / monthly completed
+tasks`. OpenRouter has $120 prepaid and remains a rare paid fallback. Opus 5
+was not used in the final fifteen-task matrix.
+
+Verdict: the current runtime exceeded the direct Sol sample on this small
+hidden-contract quality gate (15/15 client tasks versus the baseline's 4/5)
+and handled real concurrent busy/cold/context fallback, but it did not match
+Sol latency. The requested general “equal or better than GPT-5.6 Sol”
+usability claim is therefore **not established**. No production merge,
+deployment, or Goal completion is authorized by this evidence.
+
+## Artificial Analysis v4.1-aligned promotion gate — 2026-07-25
+
+The requested comparison now uses the published
+[Artificial Analysis Intelligence Benchmarking v4.1 methodology](https://artificialanalysis.ai/methodology/intelligence-benchmarking)
+as its top-level scoring frame. The aggregate weights are Agents 34%, Coding
+24%, Scientific Reasoning 24%, and General 18%. Quality is measured before
+latency or cost. Runtime speed, provider cost, cache hit rate, recovery time,
+and VRAM are reported as separate operational dimensions and cannot compensate
+for a failed quality category.
+
+Internal tests may be smaller than the public suite, but must preserve its
+principles:
+
+- agent and coding work is pass@1, test- or state-verified, and repeated;
+- independent hidden checks and pinned sandboxes are required;
+- every category reports sample size, repeat count, point estimate, and a 95%
+  confidence interval;
+- an aggregate score is emitted only after all four categories have evidence;
+- the five-task client matrix is Coding/Agents evidence only and cannot by
+  itself establish general frontier equivalence;
+- a promotion requires no category to be statistically below its pinned
+  frontier reference, plus successful 10-hour recovery and context-preservation
+  evidence.
+
+Artificial Analysis reports its v4.1 index as text-only and English-only and
+estimates the overall 95% confidence interval below ±1%, while noting that
+individual evaluations may be wider. Korean response-language preservation is
+therefore retained as a separate runtime usability gate rather than folded into
+the English intelligence score.
+
+### Preregistered GPT-5.6 Sol client comparison
+
+The first preregistered comparison uses immutable run IDs
+`20260725-sol-preregistered-r1`, `20260725-sol-preregistered-r2`, and
+`20260725-sol-preregistered-r3`. Every run contains the same five tasks and all
+four harnesses: direct Codex with `gpt-5.6-sol` at `max` reasoning, then
+OpenCode, Codex, and the installed Hermes client through the authenticated
+production gateway. Each attempt receives a fresh Docker workspace. Public
+tests and prompts are identical by SHA-256; independent hidden checks remain
+outside the workspace. The harness source SHA-256 is recorded at preparation
+time.
+
+Failures, timeouts, disconnects, and incomplete terminal states remain zeroes.
+A retry may be part of a later improvement epoch but cannot replace a
+preregistered row. The initial repeat count is three, matching the current
+Artificial Analysis Coding Agent Index attempt count. Binary pass@1 is primary.
+Each harness reports the point estimate and Wilson 95% interval. Pairwise
+quality uses a conservative difference interval constructed from the candidate
+lower and baseline upper Wilson bounds, with a preregistered absolute
+noninferiority margin of five percentage points. `inconclusive` is not a pass;
+additional complete repeats may narrow the interval but cannot be selected by
+outcome.
+
+Median and p90 end-to-end time, plus the median ratio to direct Sol, are
+reported separately and never compensate for a quality failure. This matrix
+measures Coding/Agents behavior only. Scientific Reasoning, General, and a real
+10-hour recovery run remain mandatory independent gates before a broad
+frontier-equivalence claim.
+
+### Unified specialist candidates on current SGLang CUDA 13 — 2026-07-25
+
+The current official arm64 image
+`lmsysorg/sglang:dev-cu13@sha256:26f620b13e49900cc6ab59ed693f9ce8f9ea4f3531074c1e39a3bf9db06ab8f0`
+was tested without changing the production units. Its local image ID was
+`sha256:bf6de51e8bbf995f580c91cc2995304127b255465ccf0bcfe63683cd49196175`;
+the image reported SGLang `0.0.0.dev1+ga690e5e0b`, Torch
+`2.11.0+cu130`, and compressed-tensors `0.17.1`. Every trial bound the
+candidate endpoint to `127.0.0.1:8112`, protected the resident Executor,
+disabled decode and prefill CUDA graphs, limited the candidate to one running
+request, and used a no-extra-swap container. Planner and Reviewer were stopped
+only while a candidate was loaded and were restored with real `/v1/models`
+probes after each trial.
+
+Two GLM-4.7-Flash community quantizations were rejected before inference:
+
+- `unsloth/GLM-4.7-Flash-NVFP4` at
+  `98b0362133bda9ee3b1b875636636c07861f5947` failed because the checkpoint
+  compressed-tensors targets do not cover SGLang's fused
+  `fused_qkv_a_proj_with_mqa` layer. Adding the semantically equivalent target
+  for an isolated diagnostic advanced selection but produced the unsupported
+  `CompressedTensorsW4A16Sparse24` scheme.
+- `cyankiwi/GLM-4.7-Flash-AWQ-4bit` at
+  `25624b53414e585bcf7dcb9584667c3106c6089b` reached the compressed WNA16
+  Marlin MoE loader after isolated eligibility guards, then failed the actual
+  shard load with a packed `weight_shape` mismatch (`[4]` checkpoint versus
+  `[2]` runtime). The upstream model-card PR wheel was no longer available
+  from its documented package index.
+
+Both failed GLM model directories and all diagnostic derived-image tags were
+removed. No patch was retained or proposed for production.
+
+`mistralai/Devstral-Small-2-24B-Instruct-2512` at
+`55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128` was then downloaded without its
+duplicate `consolidated-*` shards (25 GB on disk). The unmodified official
+SGLang image loaded all six FP8 shards and became HTTP-ready at 65,536 context
+and 65,536 total tokens. Physical measurements were:
+
+- weight load: 153.44 seconds and 45.91 GB;
+- KV allocation: 7.35 GB available after the 65K pool;
+- memory controls: `--mem-fraction-static=0.90`, one request, 70 GB container
+  hard limit, no additional swap;
+- first real Planner probe: HTTP 200, `finish_reason=stop`, 53 prompt and 141
+  completion tokens in 16.464 seconds;
+- the protected vLLM Executor remained active and passed `/v1/models`.
+
+The candidate did not pass the role-quality promotion gate. Five strict probes
+produced useful results for cold-routing invariants, the async cache race, and
+recursive secret masking. The migration plan omitted dual-write consistency
+and proposed a destructive rollback; the traversal review proposed lexical
+sanitization instead of proving canonical base containment. Latencies were
+50.903, 25.330, 20.297, 19.182, and 22.781 seconds. Stronger adversarial role
+prompts did not repair the result: the migration response again omitted
+dual-write, truncated at 640 tokens after 74.518 seconds, and the traversal
+retry returned empty public content.
+
+Conclusion: current SGLang physically supports this machine, real 65K
+Devstral inference, and coexistence with the protected Executor. It does not
+yet justify unifying Planner and Reviewer or changing the production backend.
+Devstral remains an isolated candidate for reproducibility; the production
+Planner, Reviewer, and Executor were restored and passed real endpoint probes.
+
+### SGLang Planner promotion with NVIDIA Qwen3.6-27B-NVFP4 — 2026-07-25
+
+The official Apache-2.0 `nvidia/Qwen3.6-27B-NVFP4` checkpoint at revision
+`0893e1606ff3d5f97a441f405d5fc541a6bdf404` was downloaded with all three
+indexed shards present. Indexed weights total 21,921,697,184 bytes. The
+isolated runtime used
+`lmsysorg/sglang:dev-cu13@sha256:26f620b13e49900cc6ab59ed693f9ce8f9ea4f3531074c1e39a3bf9db06ab8f0`,
+loopback-only port `8112`, a 45 GiB hard limit with no extra swap, one running
+request, context and total tokens `65536`, Mamba cache size `5`,
+`mem-fraction-static=0.45`, ModelOpt quantization, and disabled decode/prefill
+CUDA graphs.
+
+Initialization completed without OOM beside the protected Executor. SGLang
+measured 113.01 seconds to load 23.02 GB of model memory, 0.86 GB of Mamba
+state, and 2.00 GB of FP8 KV for exactly 65,536 tokens.
+
+The dense 27B candidate passed all three Planner promotion probes with valid
+`PlannerPlan` JSON and no public reasoning content:
+
+- mixed-version migration included late-writer final backfill, old-binary exit
+  gate, delayed cleanup, and pre-cleanup rollback; 132.87 seconds;
+- async cache repair included per-key singleflight, generation fencing,
+  cancellation safety, bounded eviction, and concurrency tests; 94.11 seconds;
+- cold routing included immediate remote dispatch, role+revision+runtime
+  singleflight, provider pinning, real inference readiness, and high-risk
+  fail-closed behavior; 94.96 seconds.
+
+A 35,993-token repeated request measured 31.493 seconds uncached and 1.118
+seconds with 35,968 cached prompt tokens, a 28.17x improvement. An independent
+62,999-prompt-token request returned public content in 61.111 seconds. With the
+vLLM Executor and North Reviewer simultaneously resident, real inference
+probes completed in 1.08, 0.78, and 1.06 seconds for Executor, SGLang Planner,
+and Reviewer; measured GPU allocations were 47,616, 25,659, and 21,235 MiB.
+
+The model was not promoted as Reviewer: recursive-secret review passed, but
+strict symlink review omitted a dirfd/openat component walk and did not fully
+close the TOCTOU race. Production keeps the independent North Reviewer. The
+Planner unit pins the tested image digest, model revision, loopback mapping,
+memory cap, and one-request/65K settings. Rollback is an exact Planner service
+stop, restoration of the previous unit and model entry, daemon reload, and
+start followed by the existing inference readiness probe.
+
+The installed unit uses `mem-fraction-static=0.68`, rather than the isolated
+`0.45`, because a cold start with the Reviewer already resident exposed only
+40.49 GB to SGLang. The higher fraction reserves about 27.5 GB of that visible
+memory and must pass the same 65K allocation and inference probe before the
+service is considered ready.
+
+The installed cold start then physically passed with Executor and Reviewer
+already resident: weight load took 102.80 seconds and 19.80 GB, Mamba state
+used 0.86 GB, and FP8 KV allocated all 65,536 tokens. `/healthz` returned
+`status=ok`, `/readyz` reported Executor, Planner, Reviewer, and Reasoner
+`ready`, and a post-deployment structured Planner inference returned one valid
+step with `finish_reason=stop` and no public reasoning in 31.86 seconds.

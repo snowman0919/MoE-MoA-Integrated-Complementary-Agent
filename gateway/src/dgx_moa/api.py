@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import math
 import os
@@ -68,6 +70,7 @@ from .observation import (
 from .policy import PolicyEngine
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
+from .remote_executor import OpenCodeExecutorProvider
 from .remote_judge import JudgeProviderError, OpenCodeGoJudgeProvider
 from .replay import ReplayEngine, ReplayRequest
 from .routing import (
@@ -447,6 +450,40 @@ def tool_result_call_ids(messages: list[dict[str, Any]]) -> set[str]:
     }
 
 
+def normalize_completed_tool_call_arguments(messages: list[dict[str, Any]]) -> int:
+    """Keep malformed client-supplied history from breaking an upstream tokenizer."""
+    normalized = 0
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        for call in message.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function")
+            if not isinstance(function, dict):
+                continue
+            arguments = function.get("arguments")
+            if isinstance(arguments, dict):
+                function["arguments"] = json.dumps(
+                    arguments, ensure_ascii=False, separators=(",", ":")
+                )
+                continue
+            if not isinstance(arguments, str):
+                function["arguments"] = "{}"
+                normalized += 1
+                continue
+            try:
+                parsed = json.loads(arguments)
+            except ValueError:
+                function["arguments"] = "{}"
+                normalized += 1
+            else:
+                if not isinstance(parsed, dict):
+                    function["arguments"] = "{}"
+                    normalized += 1
+    return normalized
+
+
 class ResponseOwnedIterator:
     def __init__(
         self,
@@ -522,7 +559,7 @@ def create_app(
                                 }
                             ],
                             "temperature": 0,
-                            "max_tokens": 256,
+                            "max_tokens": 512,
                             "stream": False,
                         },
                     )
@@ -610,6 +647,8 @@ def create_app(
         model_catalog = {role: model.served_name for role, model in configured.models.items()}
         if frontier_config is not None:
             model_catalog["frontier"] = frontier_config.model
+        if configured.remote_executor.enabled:
+            model_catalog["remote_executor"] = configured.remote_executor.model
         app.state.usage = UsageStore(
             configured.state_db,
             sample_window=configured.limits.usage_sample_window,
@@ -631,6 +670,12 @@ def create_app(
                 project_root,
             )
         app.state.frontier = frontier
+        remote_executor = None
+        if configured.remote_executor.enabled:
+            if configured.remote_executor.provider != "opencode_go":
+                raise ValueError("only OpenCode Go is supported for the remote Executor")
+            remote_executor = OpenCodeExecutorProvider(configured.remote_executor)
+        app.state.remote_executor = remote_executor
         app.state.skills = (
             SkillRegistry(configured.runtime_skills.root)
             if configured.runtime_skills.enabled
@@ -1920,6 +1965,13 @@ def create_app(
                     tool_owner.pending_tool_call_ids = []
                     request.app.state.store.save(tool_owner)
                     recovered_tool_owner = True
+        normalized_tool_calls = normalize_completed_tool_call_arguments(raw["messages"])
+        if normalized_tool_calls:
+            request.app.state.store.event(
+                session_id,
+                "completed_tool_arguments_normalized",
+                {"count": normalized_tool_calls, "reason": "malformed_history_json"},
+            )
         try:
             raw["max_tokens"] = request.app.state.controller.executor_tokens(raw)
         except ValueError as error:
@@ -1951,6 +2003,24 @@ def create_app(
             state_session_id = session_id
         executor_remote = False
         executor_routing_reason = "local_ready"
+        remote_executor_available = (
+            request.app.state.remote_executor is not None
+            or request.app.state.frontier is not None
+        )
+        remote_executor_actual_provider = (
+            request.app.state.remote_executor.name
+            if request.app.state.remote_executor is not None
+            else "frontier"
+        )
+        remote_executor_actual_model = (
+            request.app.state.remote_executor.config.model
+            if request.app.state.remote_executor is not None
+            else (
+                request.app.state.frontier.config.model
+                if request.app.state.frontier is not None
+                else "unavailable"
+            )
+        )
         task_id = str(raw["metadata"].get("task_id") or "")
         request_class = classify_request(mode, raw["messages"], raw.get("tools"), raw["metadata"])
         reasoner_mode = cast(ReasonerMode | None, raw["metadata"].get("reasoner_mode"))
@@ -2205,7 +2275,7 @@ def create_app(
             async with request.app.state.executor_admission_lock:
                 executor_remote = (
                     request.app.state.lifecycle_store.get("executor").active_request_count > 0
-                    and request.app.state.frontier is not None
+                    and remote_executor_available
                 )
                 if executor_remote:
                     executor_routing_reason = "local_busy"
@@ -2360,7 +2430,7 @@ def create_app(
                     and recovered.engineering_loop.termination_reason is not None
                 )
                 if (
-                    request.app.state.frontier is None
+                    not remote_executor_available
                     or recovered is None
                     or repeated_actions != 1
                     or terminated
@@ -2371,7 +2441,7 @@ def create_app(
                 request.app.state.store.event(
                     state_session_id,
                     "executor_duplicate_failure_recovery",
-                    {"provider": "frontier"},
+                    {"provider": remote_executor_actual_provider},
                 )
             new_failure_observed = (
                 len(state.failures) > previous_failure_count or duplicate_failure_recovery
@@ -2445,23 +2515,51 @@ def create_app(
             async def remote_executor_complete(
                 executor_request: dict[str, Any], stage: str
             ) -> dict[str, Any]:
-                frontier_provider = request.app.state.frontier
-                if frontier_provider is None:
-                    raise FrontierRequiredUnavailable("remote Frontier fallback is unavailable")
+                nonlocal remote_executor_actual_model, remote_executor_actual_provider
                 scoped_request = {
                     **executor_request,
                     "_client_workspace_path": state.repository.get("workspace_path"),
                 }
-                response = await frontier_provider.execute(
-                    scoped_request,
-                    f"{usage_request_id}:{stage}",
+                remote_provider = request.app.state.remote_executor
+                response: dict[str, Any] | None = None
+                if remote_provider is not None:
+                    try:
+                        response = await remote_provider.execute(
+                            scoped_request,
+                            f"{usage_request_id}:{stage}",
+                        )
+                    except Exception as error:
+                        request.app.state.store.event(
+                            state_session_id,
+                            "executor_remote_provider_failed",
+                            {
+                                "stage": stage,
+                                "provider": remote_provider.name,
+                                "failure_class": type(error).__name__,
+                                "frontier_fallback": request.app.state.frontier is not None,
+                            },
+                        )
+                if response is None:
+                    frontier_provider = request.app.state.frontier
+                    if frontier_provider is None:
+                        raise FrontierRequiredUnavailable(
+                            "remote Executor fallback is unavailable"
+                        )
+                    response = await frontier_provider.execute(
+                        scoped_request,
+                        f"{usage_request_id}:{stage}",
+                    )
+                provenance = response.get("provider_provenance", {})
+                remote_executor_actual_provider = str(
+                    provenance.get("provider") or "remote_executor"
                 )
+                remote_executor_actual_model = str(response.get("model") or "unknown")
                 request.app.state.store.event(
                     state_session_id,
                     "executor_remote_completed",
                     {
                         "stage": stage,
-                        "provider": response.get("provider_provenance", {}).get("provider"),
+                        "provider": remote_executor_actual_provider,
                         "model": response.get("model"),
                     },
                 )
@@ -2565,7 +2663,7 @@ def create_app(
 
             if (
                 not executor_remote
-                and request.app.state.frontier is not None
+                and remote_executor_available
                 and (state.frontier_correction_required or duplicate_failure_recovery)
             ):
                 executor_remote = True
@@ -2586,7 +2684,7 @@ def create_app(
                     "executor_remote_selected",
                     {
                         "routing_reason": executor_routing_reason,
-                        "provider": "frontier",
+                        "provider": remote_executor_actual_provider,
                     },
                 )
 
@@ -2610,7 +2708,7 @@ def create_app(
             context_fits = getattr(request.app.state.provider, "context_fits", None)
             context_exceeded = (
                 not executor_remote
-                and request.app.state.frontier is not None
+                and remote_executor_available
                 and callable(context_fits)
                 and await context_fits(
                     configured.models["executor"],
@@ -2621,12 +2719,12 @@ def create_app(
             )
             stalled = (
                 not executor_remote
-                and request.app.state.frontier is not None
+                and remote_executor_available
                 and request.app.state.controller.executor_stalled(state)
             )
             completion_stalled = (
                 not executor_remote
-                and request.app.state.frontier is not None
+                and remote_executor_available
                 and bool(raw["metadata"].get("responses_progress_retry"))
                 and request.app.state.controller.implementation_completion_ready(
                     state, raw["metadata"]
@@ -2634,12 +2732,12 @@ def create_app(
             )
             frontier_correction = (
                 not executor_remote
-                and request.app.state.frontier is not None
+                and remote_executor_available
                 and state.frontier_correction_required
             )
             repeated_failure = (
                 not executor_remote
-                and request.app.state.frontier is not None
+                and remote_executor_available
                 and any(count >= 2 for count in state.failure_families.values())
             )
             if (
@@ -2673,7 +2771,7 @@ def create_app(
                     "executor_remote_selected",
                     {
                         "routing_reason": executor_routing_reason,
-                        "provider": "frontier",
+                        "provider": remote_executor_actual_provider,
                     },
                 )
             if executor_remote and executor_routing_reason == "local_no_progress":
@@ -2716,13 +2814,14 @@ def create_app(
                 {
                     "role": "executor",
                     "phase": state.phase,
-                    "provider": "frontier" if executor_remote else "local",
+                    "provider": remote_executor_actual_provider if executor_remote else "local",
                     "model": (
-                        request.app.state.frontier.config.model
+                        remote_executor_actual_model
                         if executor_remote
                         else configured.models["executor"].served_name
                     ),
                     "routing_reason": executor_routing_reason,
+                    "max_tokens": prepared.get("max_tokens"),
                 },
             )
             if body.stream:
@@ -2743,7 +2842,7 @@ def create_app(
                                 state_session_id,
                                 "executor_remote_failed",
                                 {
-                                    "provider": "frontier",
+                                    "provider": remote_executor_actual_provider,
                                     "failure_class": type(error).__name__,
                                     "failure_code": str(error)[:128],
                                     "routing_reason": executor_routing_reason,
@@ -2839,9 +2938,13 @@ def create_app(
                                 state,
                                 {
                                     "role": "executor",
-                                    "provider": "frontier" if executor_remote else "local",
+                                    "provider": (
+                                        remote_executor_actual_provider
+                                        if executor_remote
+                                        else "local"
+                                    ),
                                     "model": (
-                                        request.app.state.frontier.config.model
+                                        remote_executor_actual_model
                                         if executor_remote
                                         else configured.models["executor"].served_name
                                     ),
@@ -2924,9 +3027,74 @@ def create_app(
                                 )
 
                 async def stream_response() -> AsyncIterator[bytes]:
-                    nonlocal first_byte_at, loop_admission_failed, stream_completed
+                    nonlocal executor_remote, executor_routing_reason, first_byte_at
+                    nonlocal loop_admission_failed, observation, stream_completed
+                    nonlocal stream_lease_ids, upstream
                     admitted_tool_calls = 0
                     accounted_total_tokens = 0
+                    if not executor_remote and prepared.get("tools"):
+                        local_observation = StreamObservation(
+                            configured.limits.max_stream_capture_bytes
+                        )
+                        buffered: list[bytes] = []
+                        async with aclosing(
+                            forward_sse(
+                                upstream,
+                                local_observation,
+                                max_event_bytes=configured.limits.max_sse_event_bytes,
+                            )
+                        ) as local_forwarder:
+                            async for chunk in local_forwarder:
+                                buffered.append(chunk)
+                        local_limited = (
+                            "length" in local_observation.finish_reasons
+                            and not local_observation.tool_call_ids
+                        )
+                        if local_limited and remote_executor_available:
+                            request.app.state.controller.record_observed_invocation(
+                                state,
+                                {
+                                    "role": "executor",
+                                    "provider": "local",
+                                    "model": configured.models["executor"].served_name,
+                                    "mode": "tool_turn",
+                                    "latency_ms": round(
+                                        (time.monotonic() - executor_started) * 1000, 3
+                                    ),
+                                    "prompt_tokens": local_observation.usage.get("prompt_tokens"),
+                                    "completion_tokens": local_observation.usage.get(
+                                        "completion_tokens"
+                                    ),
+                                    "total_tokens": local_observation.usage.get("total_tokens"),
+                                    "status": "failed",
+                                    "fallback_reason": "local_output_limit",
+                                },
+                                account_loop_usage=False,
+                            )
+                            request.app.state.lifecycle_store.release_leases(stream_lease_ids)
+                            stream_lease_ids = ()
+                            executor_remote = True
+                            executor_routing_reason = "local_output_limit"
+                            request.app.state.store.event(
+                                state_session_id,
+                                "executor_remote_selected",
+                                {
+                                    "routing_reason": executor_routing_reason,
+                                    "provider": remote_executor_actual_provider,
+                                },
+                            )
+                            remote_response = await remote_executor_correction(
+                                prepared, "executor_length_fallback"
+                            )
+                            upstream = completed_chat_sse(remote_response)
+                        else:
+
+                            async def replay_local() -> AsyncIterator[bytes]:
+                                for chunk in buffered:
+                                    yield chunk
+
+                            upstream = replay_local()
+                        observation = StreamObservation(configured.limits.max_stream_capture_bytes)
                     forwarder = forward_sse(
                         upstream,
                         observation,
@@ -4085,12 +4253,18 @@ def create_app(
         return await admin_drain_status(request)
 
     def admin_html(content: str) -> HTMLResponse:
+        script_sources = " ".join(
+            f"'sha256-{base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()}'"
+            for script in re.findall(r"<script>(.*?)</script>", content, re.DOTALL)
+        )
+        script_policy = script_sources or "'none'"
         return HTMLResponse(
             content,
             headers={
                 "Cache-Control": "no-store",
                 "Content-Security-Policy": (
-                    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                    f"default-src 'none'; script-src {script_policy}; "
+                    "style-src 'unsafe-inline'; "
                     "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; "
                     "form-action 'self'"
                 ),
@@ -4123,6 +4297,15 @@ def create_app(
 
     @app.post("/v1/admin/session", dependencies=[Depends(admin_auth)])
     async def api_key_session(request: Request) -> Response:
+        scheme, _, bearer = request.headers.get("authorization", "").partition(" ")
+        if (
+            scheme.lower() != "bearer"
+            or request.app.state.api_keys.verify(bearer) != request.state.api_token_id
+        ):
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                "operator bearer token required",
+            )
         token = request.app.state.api_keys.create_admin_session(request.state.api_token_id)
         response = Response(status_code=status.HTTP_204_NO_CONTENT)
         response.set_cookie(
@@ -4147,6 +4330,18 @@ def create_app(
     async def admin_codex_workspaces(request: Request) -> JSONResponse:
         runner = cast(AdminCodexRunner, request.app.state.admin_codex)
         return key_response({"root": "~/code", "workspaces": runner.workspaces()})
+
+    @app.post("/v1/admin/codex/uploads", dependencies=[Depends(admin_auth)])
+    async def admin_codex_upload(filename: str, request: Request) -> JSONResponse:
+        runner = cast(AdminCodexRunner, request.app.state.admin_codex)
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > runner.MAX_UPLOAD_BYTES:
+                raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file exceeds 10 MB")
+            chunks.append(chunk)
+        return key_response(runner.upload(filename, b"".join(chunks)))
 
     @app.post("/v1/admin/codex", dependencies=[Depends(admin_auth)])
     async def admin_codex(body: AdminCodexRequest, request: Request) -> StreamingResponse:
@@ -4294,13 +4489,38 @@ def create_app(
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
-    @app.get("/v1/admin/api-keys/{name}/reveal", dependencies=[Depends(admin_auth)])
+    @app.post("/v1/admin/api-keys/{name}/reveal", dependencies=[Depends(admin_auth)])
     async def api_key_reveal(name: str, request: Request) -> JSONResponse:
         try:
             record = request.app.state.api_keys.get(name)
         except KeyError as error:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found") from error
+        key_event(request, "reveal", name)
         return key_response({"api_key": record["api_key"]})
+
+    def usage_window(start: date | None, end: date | None) -> tuple[float | None, float | None]:
+        if start and end and end < start:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "end date must not precede start date")
+        start_at = (
+            datetime.combine(start, datetime.min.time(), tzinfo=UTC).timestamp() if start else None
+        )
+        end_at = (
+            datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=UTC).timestamp()
+            if end
+            else None
+        )
+        return start_at, end_at
+
+    @app.get("/v1/admin/api-keys/usage", dependencies=[Depends(admin_auth)])
+    async def api_key_usage_all(
+        request: Request,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> JSONResponse:
+        start_at, end_at = usage_window(start, end)
+        return key_response(
+            request.app.state.usage.api_token_dashboard(start_at=start_at, end_at=end_at)
+        )
 
     @app.get("/v1/admin/api-keys/{name}/usage", dependencies=[Depends(admin_auth)])
     async def api_key_usage(
@@ -4313,16 +4533,7 @@ def create_app(
             request.app.state.api_keys.get(name)
         except KeyError as error:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found") from error
-        if start and end and end < start:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "end date must not precede start date")
-        start_at = (
-            datetime.combine(start, datetime.min.time(), tzinfo=UTC).timestamp() if start else None
-        )
-        end_at = (
-            datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=UTC).timestamp()
-            if end
-            else None
-        )
+        start_at, end_at = usage_window(start, end)
         return key_response(
             request.app.state.usage.api_token_dashboard(
                 name=name,

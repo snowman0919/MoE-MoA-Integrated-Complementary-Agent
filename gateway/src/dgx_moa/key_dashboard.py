@@ -114,6 +114,9 @@ box-shadow:0 12px 34px #000b;white-space:pre-line;pointer-events:none;transform:
         <label class="field"><span>키</span><select id="graph-key"></select></label>
         <label class="field"><span>시작</span><input id="graph-start" type="date" required></label>
         <label class="field"><span>종료</span><input id="graph-end" type="date" required></label>
+        <label class="field"><span>일일 분류</span><select id="daily-group">
+          <option value="model">모델</option><option value="provider">Provider</option>
+        </select></label>
         <button class="primary">조회</button>
       </form>
       <div class="kpis">
@@ -129,6 +132,7 @@ box-shadow:0 12px 34px #000b;white-space:pre-line;pointer-events:none;transform:
     <div class="grid">
       <section class="card"><h2>작업 · 요청 모델</h2><div id="tasks" class="chart"></div></section>
       <section class="card"><h2>실제 역할 · 모델 호출</h2><div id="models" class="chart"></div></section>
+      <section class="card"><h2>LLM Provider</h2><div id="providers" class="chart"></div></section>
       <section class="card"><h2>Fallback 경로</h2><div id="fallbacks" class="chart"></div></section>
       <section class="card"><h2>일별 요청량</h2><div id="daily" class="chart"></div></section>
     </div>
@@ -150,6 +154,9 @@ let modelCatalog=new Map();
 const modelNames=new Map([["dgx-moa-executor","Qwen3-Next"],
   ["dgx-moa-planner","Nemotron-30B"],["dgx-moa-reviewer","North-Mini-30B"]]);
 const modelLabel=model=>modelNames.get(model)||model;
+const providerNames=new Map([["local","Local"],["openrouter","OpenRouter"],
+  ["opencode","OpenCode"],["codex","Codex"]]);
+const providerLabel=provider=>providerNames.get(provider)||provider;
 const reasonNames=new Map([["local_busy","로컬 Busy"],["local_context_exceeded","컨텍스트 초과"],
   ["executor_remote","Executor 원격"],["remote_faster","원격 우선"],
   ["local_readiness_race","준비 상태 변경"],["provider_failed","Provider 실패"]]);
@@ -184,8 +191,8 @@ const keyCell=(row,key)=>{
   const cell=document.createElement("td");const wrap=document.createElement("div");
   wrap.className="key-value";const value=document.createElement("code");value.textContent=key.masked_key;
   const reveal=document.createElement("button");reveal.textContent="👁";reveal.ariaLabel="키 원문 보기";
-  let visible=false,raw="";const getRaw=async()=>raw||(raw=(await api(
-    "/v1/admin/api-keys/"+key.name+"/reveal")).api_key);
+  let visible=false;const getRaw=async()=>(await api(
+    "/v1/admin/api-keys/"+key.name+"/reveal",{method:"POST"})).api_key;
   reveal.onclick=async()=>{visible=!visible;value.textContent=visible?await getRaw():key.masked_key;
     reveal.ariaLabel=visible?"키 숨기기":"키 원문 보기"};
   const copier=document.createElement("button");copier.textContent="복사";copier.onclick=async()=>{
@@ -202,31 +209,33 @@ const bars=(id,rows,label,value,details)=>{
     line.append(title,track,count);tip(line,details(item));root.append(line)});
 };
 const palette=["#7f8c3a","#70508e","#9a5e4d","#397c8f","#a37a2c","#4f75a8","#8d456f","#4f8b62"];
-const stacked=(rows,start,end)=>{
+const stacked=(rows,start,end,group)=>{
   const root=$("daily-models"),legend=$("model-legend");root.replaceChildren();legend.replaceChildren();
-  const models=[...new Set(rows.map(item=>item.model))];
-  const modelTotals=new Map(models.map(model=>[model,rows.filter(item=>item.model===model)
+  const groups=[...new Set(rows.map(item=>item[group]))];
+  const groupTotals=new Map(groups.map(value=>[value,rows.filter(item=>item[group]===value)
     .reduce((sum,item)=>sum+item.total_tokens,0)]));
-  const total=[...modelTotals.values()].reduce((sum,value)=>sum+value,0);
+  const total=[...groupTotals.values()].reduce((sum,value)=>sum+value,0);
   $("token-summary").textContent="선택 기간 합계 "+total.toLocaleString()+" tokens";
-  models.forEach((model,index)=>{const item=document.createElement("span");item.className="legend-item";
+  groups.forEach((value,index)=>{const item=document.createElement("span");item.className="legend-item";
     const swatch=document.createElement("span");swatch.className="swatch";
     swatch.style.backgroundColor=palette[index%palette.length];
-    item.append(swatch,modelLabel(model)+" · "+modelTotals.get(model).toLocaleString()+" tokens");
+    const label=group==="provider"?providerLabel(value):modelLabel(value);
+    item.append(swatch,label+" · "+groupTotals.get(value).toLocaleString()+" tokens");
     legend.append(item)});
-  const values=new Map(rows.map(item=>[item.day+"\\0"+item.model,item]));
+  const values=new Map(rows.map(item=>[item.day+"\\0"+item[group],item]));
   const days=[];for(let day=new Date(start+"T00:00:00Z"),last=new Date(end+"T00:00:00Z");
     day<=last;day.setUTCDate(day.getUTCDate()+1))days.push(day.toISOString().slice(0,10));
-  const totals=days.map(day=>models.reduce((sum,model)=>
-    sum+(values.get(day+"\\0"+model)?.total_tokens||0),0));const max=Math.max(1,...totals);
+  const totals=days.map(day=>groups.reduce((sum,value)=>
+    sum+(values.get(day+"\\0"+value)?.total_tokens||0),0));const max=Math.max(1,...totals);
   days.forEach((day,dayIndex)=>{const column=document.createElement("div");column.className="stacked-column";
     const stack=document.createElement("div");stack.className="stack";
     stack.style.height=(totals[dayIndex]/max*260)+"px";
-    models.forEach((model,index)=>{const data=values.get(day+"\\0"+model);if(!data)return;
+    groups.forEach((value,index)=>{const data=values.get(day+"\\0"+value);if(!data)return;
       const segment=document.createElement("div");segment.className="segment";
       segment.style.height=(data.total_tokens/Math.max(1,totals[dayIndex])*100)+"%";
       segment.style.backgroundColor=palette[index%palette.length];
-      tip(segment,day+"\\n"+modelLabel(model)+"\\n입력 "+data.prompt_tokens.toLocaleString()+
+      const label=group==="provider"?providerLabel(value):modelLabel(value);
+      tip(segment,day+"\\n"+label+"\\n입력 "+data.prompt_tokens.toLocaleString()+
         " · 출력 "+data.completion_tokens.toLocaleString()+"\\n정확한 토큰 "+
         data.total_tokens.toLocaleString()+" · 호출 "+data.invocations.toLocaleString()+"회");
       stack.append(segment)});
@@ -242,6 +251,8 @@ async function load(){
     tip(line,item.served_name+"\\n"+item.repository);$("model-catalog").append(line)});
   const usage=new Map(data.usage.summary.map(item=>[item.name,item]));$("keys").replaceChildren();
   const selected=$("graph-key").value;$("graph-key").replaceChildren();
+  const allOption=document.createElement("option");allOption.value="*";allOption.textContent="전체 API";
+  $("graph-key").append(allOption);
   data.keys.forEach(key=>{const row=document.createElement("tr");const stats=usage.get(key.name)||{};
     cell(row,key.name);cell(row,key.kind);keyCell(row,key);cell(row,key.status,"status-"+key.status);
     cell(row,fmtTime(key.expires_at));cell(row,(stats.requests||0)+"/"+(key.request_limit||"∞"));
@@ -257,13 +268,44 @@ async function load(){
       actions.append(button)}row.append(actions);$("keys").append(row);
     const option=document.createElement("option");option.value=key.name;option.textContent=key.name;
     $("graph-key").append(option)});
-  $("graph-key").value=selected&&data.keys.some(key=>key.name===selected)?selected:data.keys[0]?.name||"";
+  $("graph-key").value=selected==="*"||data.keys.some(key=>key.name===selected)?selected:"*";
   await loadFrontierAuth();
   await loadCharts();
 }
+const merged=(rows,keys,sums)=>{
+  const groups=new Map();
+  rows.forEach(item=>{const id=keys.map(key=>item[key]).join("\\0");
+    if(!groups.has(id)){const row={};keys.forEach(key=>row[key]=item[key]);
+      sums.forEach(key=>row[key]=0);groups.set(id,row)}
+    const row=groups.get(id);sums.forEach(key=>row[key]+=item[key]||0)});
+  return [...groups.values()];
+};
+const aggregate=data=>{
+  const summary=merged(data.summary,[],["requests","total_tokens","completed","failed"]);
+  if(summary[0])summary[0].last_used_at=Math.max(
+    0,...data.summary.map(item=>item.last_used_at||0));
+  const fallback=merged(data.fallback_summary,[],["requests","fallbacks"]);
+  if(fallback[0])fallback[0].rate=fallback[0].requests
+    ?fallback[0].fallbacks/fallback[0].requests*100:0;
+  return {...data,summary,fallback_summary:fallback,
+    tasks:merged(data.tasks,["request_class","model_alias"],["requests","total_tokens"]),
+    models:merged(data.models,["role","model","provider"],["invocations","total_tokens"]),
+    providers:merged(data.providers,["provider"],
+      ["invocations","prompt_tokens","completion_tokens","total_tokens"]),
+    daily:merged(data.daily,["day"],["requests"]),
+    daily_models:merged(data.daily_models,["day","model"],
+      ["invocations","prompt_tokens","completion_tokens","total_tokens"]),
+    daily_providers:merged(data.daily_providers,["day","provider"],
+      ["invocations","prompt_tokens","completion_tokens","total_tokens"]),
+    fallbacks:merged(data.fallbacks,["role","model","provider","reason"],
+      ["invocations","total_tokens"])};
+};
 async function loadCharts(){
   const query=new URLSearchParams({start:$("graph-start").value,end:$("graph-end").value});
-  const data=await api("/v1/admin/api-keys/"+$("graph-key").value+"/usage?"+query);
+  const name=$("graph-key").value;
+  let data=await api(name==="*"?"/v1/admin/api-keys/usage?"+query:
+    "/v1/admin/api-keys/"+encodeURIComponent(name)+"/usage?"+query);
+  if(name==="*")data=aggregate(data);
   const summary=data.summary[0]||{},fallback=data.fallback_summary[0]||{};
   $("kpi-requests").textContent=(summary.requests||0).toLocaleString();
   $("kpi-tokens").textContent=(summary.total_tokens||0).toLocaleString();
@@ -274,13 +316,19 @@ async function loadCharts(){
   bars("models",data.models,item=>item.role+" · "+modelLabel(item.model),item=>item.invocations,
     item=>modelLabel(item.model)+"\\n"+item.provider+" · "+item.invocations.toLocaleString()+
       "회\\n토큰 "+item.total_tokens.toLocaleString());
+  bars("providers",data.providers,item=>providerLabel(item.provider),item=>item.invocations,
+    item=>providerLabel(item.provider)+"\\n입력 "+item.prompt_tokens.toLocaleString()+
+      " · 출력 "+item.completion_tokens.toLocaleString()+"\\n토큰 "+
+      item.total_tokens.toLocaleString()+" · 호출 "+item.invocations.toLocaleString()+"회");
   bars("fallbacks",data.fallbacks,item=>item.role+" · "+reasonLabel(item.reason),
     item=>item.invocations,item=>modelLabel(item.model)+"\\n"+reasonLabel(item.reason)+" · "+
       item.provider+"\\n"+item.invocations.toLocaleString()+"회 · 토큰 "+
       item.total_tokens.toLocaleString());
   bars("daily",data.daily,item=>item.day,item=>item.requests,
     item=>item.day+"\\n요청 "+item.requests.toLocaleString()+"회");
-  stacked(data.daily_models,$("graph-start").value,$("graph-end").value);
+  const group=$("daily-group").value;
+  stacked(group==="provider"?data.daily_providers:data.daily_models,
+    $("graph-start").value,$("graph-end").value,group);
 }
 async function loadFrontierAuth(){
   const data=await api("/v1/admin/frontier-auth");
@@ -342,11 +390,12 @@ $("create-form").onsubmit=async event=>{event.preventDefault();try{
 $("name").oninput=event=>event.target.value=event.target.value.toLowerCase();
 $("graph-filter").onsubmit=async event=>{event.preventDefault();try{await loadCharts()}
   catch(error){alert(error.message)}};
+$("daily-group").onchange=loadCharts;
 $("logout").onclick=async()=>{await api("/v1/admin/session",{method:"DELETE"});
   $("content").hidden=true;$("login").hidden=false};
 const localDate=date=>new Date(date-date.getTimezoneOffset()*60000)
   .toISOString().slice(0,10);
-const today=new Date();const start=new Date(today);start.setDate(start.getDate()-29);
+const today=new Date();const start=new Date(today);start.setDate(start.getDate()-6);
 $("graph-start").value=localDate(start);$("graph-end").value=localDate(today);
 load().catch(()=>$("login").hidden=false);
 </script>

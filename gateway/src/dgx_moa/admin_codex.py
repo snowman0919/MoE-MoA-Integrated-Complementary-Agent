@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -22,9 +23,12 @@ class AdminCodexRequest(BaseModel):
     mode: Literal["chat", "agent"] = "chat"
     workspace: str = Field(default="", max_length=256)
     session_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
+    attachments: list[str] = Field(default_factory=list, max_length=10)
 
 
 class AdminCodexRunner:
+    MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
     def __init__(self, settings: Settings, api_keys: ApiKeyStore, store: StateStore):
         self.settings = settings
         self.api_keys = api_keys
@@ -32,6 +36,17 @@ class AdminCodexRunner:
         # ponytail: one global turn lock; add per-workspace locks only if concurrent jobs matter.
         self.lock = asyncio.Lock()
         self.sessions: dict[str, tuple[str, str]] = {}
+        for event in store.events("admin-codex-sessions"):
+            payload = event["payload"]
+            thread_id = payload.get("thread_id")
+            mode = payload.get("mode")
+            workspace = payload.get("workspace")
+            if (
+                re.fullmatch(r"[A-Za-z0-9_-]{1,128}", str(thread_id))
+                and mode in {"chat", "agent"}
+                and isinstance(workspace, str)
+            ):
+                self.sessions[str(thread_id)] = (str(mode), workspace)
 
     @staticmethod
     def code_root() -> Path:
@@ -86,6 +101,49 @@ class AdminCodexRunner:
                 "admin-codex-cli key must be an active general key",
             )
         return str(record["api_key"])
+
+    def upload(self, filename: str, content: bytes) -> dict[str, Any]:
+        if not filename or len(filename) > 255 or filename in {".", ".."}:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid filename")
+        if (
+            "/" in filename
+            or "\\" in filename
+            or "\0" in filename
+            or any(ord(character) < 32 for character in filename)
+        ):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid filename")
+        if len(content) > self.MAX_UPLOAD_BYTES:
+            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file exceeds 10 MB")
+        upload_id = uuid.uuid4().hex
+        directory = self.settings.run_dir.resolve() / "admin-codex-uploads" / upload_id
+        directory.mkdir(parents=True, mode=0o700)
+        path = directory / filename
+        path.write_bytes(content)
+        path.chmod(0o600)
+        self.store.event(
+            "admin-codex",
+            "admin_codex_file_uploaded",
+            {"name": filename, "bytes": len(content)},
+        )
+        return {"id": upload_id, "name": filename, "bytes": len(content)}
+
+    def attachment_paths(self, attachment_ids: list[str]) -> list[Path]:
+        root = (self.settings.run_dir.resolve() / "admin-codex-uploads").resolve()
+        paths: list[Path] = []
+        for upload_id in dict.fromkeys(attachment_ids):
+            if not re.fullmatch(r"[0-9a-f]{32}", upload_id):
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid attachment")
+            directory = (root / upload_id).resolve()
+            if not directory.is_relative_to(root) or not directory.is_dir():
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "attachment not found")
+            files = list(directory.iterdir())
+            if len(files) != 1 or not files[0].is_file():
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "attachment not found")
+            path = files[0].resolve()
+            if not path.is_relative_to(directory):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "attachment not found")
+            paths.append(path)
+        return paths
 
     def command(self, body: AdminCodexRequest, workspace: Path) -> list[str]:
         sandbox = "workspace-write" if body.mode == "agent" else "read-only"
@@ -192,6 +250,12 @@ class AdminCodexRunner:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Codex session not found")
         if self.lock.locked():
             raise HTTPException(status.HTTP_409_CONFLICT, "another Codex turn is active")
+        attachment_paths = self.attachment_paths(body.attachments)
+        prompt = body.prompt
+        if attachment_paths:
+            prompt += "\n\nOperator-uploaded files (read these paths as needed):\n" + "\n".join(
+                f"- {path}" for path in attachment_paths
+            )
         await self.lock.acquire()
         try:
             token = self.provider_key()
@@ -208,11 +272,12 @@ class AdminCodexRunner:
             if key in {"HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "TERM", "USER"}
         }
         environment.update({"CODEX_HOME": str(codex_home), "DGX_MOA_ADMIN_CODEX_KEY": token})
-        return self._stream(body, workspace_name, workspace, command, environment)
+        return self._stream(body, prompt, workspace_name, workspace, command, environment)
 
     async def _stream(
         self,
         body: AdminCodexRequest,
+        prompt: str,
         workspace_name: str,
         workspace: Path,
         command: list[str],
@@ -236,7 +301,7 @@ class AdminCodexRunner:
                 limit=1_000_000,
             )
             assert process.stdin is not None and process.stdout is not None
-            process.stdin.write(body.prompt.encode())
+            process.stdin.write(prompt.encode())
             await process.stdin.drain()
             process.stdin.close()
             deadline = time.monotonic() + 30 * 60
@@ -261,7 +326,18 @@ class AdminCodexRunner:
                 if public is None:
                     continue
                 if public.get("type") == "thread.started":
-                    self.sessions[str(public["thread_id"])] = (body.mode, workspace_name)
+                    thread_id = str(public["thread_id"])
+                    if self.sessions.get(thread_id) != (body.mode, workspace_name):
+                        self.sessions[thread_id] = (body.mode, workspace_name)
+                        self.store.event(
+                            "admin-codex-sessions",
+                            "admin_codex_session_saved",
+                            {
+                                "thread_id": thread_id,
+                                "mode": body.mode,
+                                "workspace": workspace_name,
+                            },
+                        )
                 if public.get("type") == "turn.completed":
                     completed = True
                 yield (

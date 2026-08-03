@@ -117,6 +117,12 @@ and the reviewed adaptive Executor/Planner/Reviewer unit map.
   ineligible, and retention apply/export remain disabled. The first eligible
   production probe created one candidate after the storage reserve was restored.
 
+## Unvalidated two-model target — 2026-07-26
+
+This is a Goal constraint, not a deployed or approved topology:
+
+> 추가 목표: `Qwen3-Coder-Next-NVFP4`를 65K·1 sequence·Radix cache·Mamba cache 5슬롯(목표 점유 63~65GB)의 SGLang Executor로, `nvidia/Gemma-4-31B-IT-NVFP4`를 reasoning 활성화된 단일 vLLM Planner·Reviewer로 구성하되, 격리 환경에서 동시 상주·실제 inference·구조화 출력·계획/보안검토 품질·부하·장시간 안정성·OOM 없는 복구를 모두 검증하고 기존 loopback·인증·Executor 권한·고위험 Frontier/Judge 독립검증·정확한 vLLM/North rollback을 보존하며, 모든 물리 증거가 통과하기 전에는 프로덕션 전환·기존 모델 제거·완료 선언을 금지하라.
+
 ## Runtime
 
 - Gateway: authenticated direct tailnet TCP at `100.125.239.72:9000`, with

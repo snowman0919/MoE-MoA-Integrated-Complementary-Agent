@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import stat
 from pathlib import Path
 from typing import Any
 
 import pytest
+from dgx_moa.admin_codex import AdminCodexRunner
 from dgx_moa.api import create_app
 from dgx_moa.config import Settings
 from fastapi.testclient import TestClient
@@ -112,6 +114,10 @@ def test_admin_dashboard_runs_bounded_custom_provider_codex(
         assert dashboard.status_code == 200
         assert "/admin/api-keys" in dashboard.text
         assert "DGX MoA custom provider" in dashboard.text
+        assert 'type="file"' in dashboard.text
+        assert "localStorage.setItem" in dashboard.text
+        assert 'event.key==="Enter"' in dashboard.text
+        assert "scrollHeight,280" in dashboard.text
         assert client.get("/v1/admin/codex/workspaces", headers=general).status_code == 403
         assert client.get("/v1/admin/codex/workspaces", headers=operator).json() == {
             "root": "~/code",
@@ -125,11 +131,64 @@ def test_admin_dashboard_runs_bounded_custom_provider_codex(
             ).status_code
             == 400
         )
+        assert (
+            client.post(
+                "/v1/admin/codex/uploads",
+                params={"filename": "evidence.txt"},
+                headers=general,
+                content=b"private evidence",
+            ).status_code
+            == 403
+        )
+        assert (
+            client.post(
+                "/v1/admin/codex/uploads",
+                params={"filename": "../outside.txt"},
+                headers=operator,
+                content=b"blocked",
+            ).status_code
+            == 422
+        )
+        uploaded = client.post(
+            "/v1/admin/codex/uploads",
+            params={"filename": "evidence.txt"},
+            headers=operator,
+            content=b"private evidence",
+        )
+        assert uploaded.status_code == 200
+        upload = uploaded.json()
+        upload_path = (
+            tmp_path
+            / configured.run_dir
+            / "admin-codex-uploads"
+            / upload["id"]
+            / "evidence.txt"
+        )
+        assert upload_path.read_bytes() == b"private evidence"
+        assert stat.S_IMODE(upload_path.stat().st_mode) == 0o600
+        assert (
+            client.post(
+                "/v1/admin/codex",
+                headers=operator,
+                json={
+                    "mode": "agent",
+                    "workspace": "project",
+                    "prompt": "파일을 수정해",
+                    "attachments": ["invalid"],
+                },
+            ).status_code
+            == 422
+        )
 
         response = client.post(
             "/v1/admin/codex",
             headers=operator,
-            json={"mode": "agent", "workspace": "project", "prompt": "파일을 수정해"},
+            json={
+                "mode": "agent",
+                "workspace": "project",
+                "prompt": "파일을 수정해",
+                "attachments": [upload["id"]],
+            },
         )
         assert response.status_code == 200
         events = [json.loads(line) for line in response.text.splitlines()]
@@ -142,6 +201,12 @@ def test_admin_dashboard_runs_bounded_custom_provider_codex(
         assert "hidden reasoning" not in response.text
         assert "secret-value" not in response.text
         assert any(event.get("text") == "작업 완료" for event in events)
+        reloaded = AdminCodexRunner(
+            configured,
+            client.app.state.api_keys,
+            client.app.state.store,
+        )
+        assert reloaded.sessions["thread-123"] == ("agent", "project")
         internal = next(
             key
             for key in client.get("/v1/admin/api-keys", headers=operator).json()["keys"]
@@ -196,7 +261,8 @@ def test_admin_dashboard_runs_bounded_custom_provider_codex(
     assert first_kwargs["env"]["CODEX_HOME"] == str(
         tmp_path / configured.run_dir / "admin-codex-home"
     )
-    assert first_input == "파일을 수정해".encode()
+    assert first_input.startswith("파일을 수정해".encode())
+    assert str(upload_path).encode() in first_input
     assert calls[1][0][:3] == ("codex", "exec", "resume")
     chat_args, chat_kwargs, chat_input = calls[2]
     assert 'sandbox_mode="read-only"' in chat_args

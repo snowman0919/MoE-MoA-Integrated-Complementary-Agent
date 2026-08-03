@@ -21,7 +21,9 @@ circuit_cooldown_seconds: 300
 max_evidence_characters: 24000
 max_executor_evidence_characters: 800000
 openrouter_fallback_enabled: true
-openrouter_model: anthropic/claude-sonnet-4.6
+openrouter_model: anthropic/claude-opus-5
 openrouter_api_key_file: openrouter_api
 openrouter_timeout_seconds: 300
 openrouter_max_evidence_characters: 800000
+openrouter_input_cost_per_million: 5
+openrouter_output_cost_per_million: 25

@@ -7,7 +7,7 @@ Production reference commit: `c2a9af0`
 
 ## Goal
 
-Enable a 실동 실행 전용 MoA reasoner on the already-open remote Ollama endpoint `http://192.168.0.197:11434` (model `Qwythos-v2-9B:Q5`) while keeping lifecycle-managed local models for `executor`, `planner`, and `reviewer`.
+Enable a 실동 실행 전용 MoA reasoner on the already-open remote Ollama endpoint `http://100.90.167.128:11434` (model `Qwythos-v2-9B:Q5`) while keeping lifecycle-managed local models for `executor`, `planner`, and `reviewer`.
 
 This must keep the existing `adaptive/fixed/observe` behavior for on-demand memory control:
 
@@ -48,7 +48,7 @@ Out of scope:
 
 - `gateway` starts with `lifecycle_mode: adaptive` for production validation and `lifecycle_unit_map` containing `executor`, `planner`, `reviewer` only.
 - `reasoner` is already defined in `config/models.yaml` and must remain optional for safety (or required only when orchestration asks for it).
-- `192.168.0.197:11434/api/tags` currently returns `Qwythos-v2-9B:Q5`.
+- `100.90.167.128:11434/api/tags` currently returns `Qwythos-v2-9B:Q5`.
 
 ## Design
 
@@ -114,7 +114,7 @@ In `SystemdLifecycleDriver` and lifecycle load loop:
 Update `config/models.yaml`:
 
 - `reasoner`:
-  - `base_url: http://192.168.0.197:11434`
+  - `base_url: http://100.90.167.128:11434`
   - `served_name: Qwythos-v2-9B:Q5`
   - `classification: external`
   - `revision: Q5`

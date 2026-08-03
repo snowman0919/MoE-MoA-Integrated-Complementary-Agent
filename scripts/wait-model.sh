@@ -22,6 +22,28 @@ until curl -fsS "http://127.0.0.1:$port/v1/models" >/dev/null; do
   fi
   sleep 5
 done
+probe_tokens=64
+[[ "$role" != planner ]] || probe_tokens=512
+probe_body="$(
+  printf '{"model":"dgx-moa-%s","messages":[{"role":"user","content":"Reply exactly READY."}],"temperature":0,"max_tokens":%s,"stream":false}' \
+    "$role" "$probe_tokens"
+)"
+until response="$(
+  curl -fsS -H 'Content-Type: application/json' \
+    --data "$probe_body" "http://127.0.0.1:$port/v1/chat/completions" 2>/dev/null
+)" && RESPONSE="$response" python3 - <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["RESPONSE"])
+message = payload.get("choices", [{}])[0].get("message", {})
+content = message.get("content")
+raise SystemExit(0 if isinstance(content, str) and content.strip() else 1)
+PY
+do
+  (( SECONDS < deadline )) || { echo "role=$role inference readiness timeout=$timeout" >&2; exit 1; }
+  sleep 5
+done
 available=$(awk '/MemAvailable:/ {print $2 * 1024}' /proc/meminfo)
 (( available >= minimum )) || {
   echo "role=$role memory safety available_bytes=$available minimum_bytes=$minimum" >&2

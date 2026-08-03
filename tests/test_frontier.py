@@ -317,7 +317,7 @@ def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
 
     def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
         observed["command"] = command
-        observed["task"] = command[-1]
+        observed["task"] = kwargs["input"]
         result_path = Path(command[command.index("--output-last-message") + 1])
         result_path.write_text(json.dumps(output))
         return subprocess.CompletedProcess(
@@ -340,14 +340,21 @@ def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
         tmp_path / "run",
         tmp_path,
     )
-    result = runner._run(  # type: ignore[arg-type]
-        mode,
-        {"objective": "review", "api_key": "sk-secret-value"},
-        "correlation",
+    evidence = (
+        {
+            "executor_request": {
+                "messages": [{"role": "user", "content": "x" * 150_000}],
+                "api_key": "sk-secret-value",
+            }
+        }
+        if mode == "executor"
+        else {"objective": "review", "api_key": "sk-secret-value"}
     )
+    result = runner._run(mode, evidence, "correlation")  # type: ignore[arg-type]
 
     command = observed["command"]
     assert isinstance(command, list)
+    assert command[-1] == "-"
     assert command[command.index("--sandbox") + 1] == "read-only"
     assert "sk-secret-value" not in str(observed["task"])
     if mode == "executor":
@@ -388,6 +395,56 @@ def test_codex_oauth_timeout_opens_circuit(tmp_path, monkeypatch: pytest.MonkeyP
     with pytest.raises(RuntimeError, match="FRONTIER_CIRCUIT_OPEN"):
         runner._run("architecture", {"objective": "x"}, "two")
     assert profiles == ["primary"]
+
+
+def test_codex_oauth_retries_malformed_executor_tool_arguments(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempts = 0
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal attempts
+        attempts += 1
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        arguments = (
+            '{"cmd":"python -m unittest"' if attempts == 1 else '{"cmd":"python -m unittest"}'
+        )
+        result_path.write_text(
+            json.dumps(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": f"call-{attempts}",
+                            "type": "function",
+                            "function": {
+                                "name": "exec_command",
+                                "arguments": arguments,
+                            },
+                        }
+                    ],
+                    "finish_reason": "tool_calls",
+                }
+            )
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(enabled=True, collaboration_retries=1),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    result = runner._run(
+        "executor",
+        {"executor_request": {"messages": [{"role": "user", "content": "fix"}]}},
+        "malformed-tool-call",
+    )
+
+    assert attempts == 2
+    assert result.output["tool_calls"][0]["function"]["arguments"].endswith("}")
 
 
 @pytest.mark.parametrize("primary_failure", ["not logged in", "usage limit", "rate limit"])
@@ -582,11 +639,11 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
     assert profiles == ["primary", "secondary"]
     assert result["choices"][0]["message"]["content"] == "완료했습니다."
     assert result["provider_provenance"]["provider"].startswith("openrouter:")
-    assert result["provider_provenance"]["cost_usd"] == pytest.approx(0.0006)
+    assert result["provider_provenance"]["cost_usd"] == pytest.approx(0.001)
     assert len(requests) == 1
     sent = requests[0]
     assert sent["headers"]["Authorization"] == "Bearer synthetic-openrouter-key"
-    assert sent["json"]["model"] == "anthropic/claude-sonnet-4.6"
+    assert sent["json"]["model"] == "anthropic/claude-opus-5"
     assert sent["json"]["reasoning"] == {"effort": "high", "exclude": True}
     assert "parallel_tool_calls" not in sent["json"]
     assert "minimum" not in json.dumps(sent["json"]["response_format"])
@@ -610,25 +667,25 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
         def json(self) -> dict[str, object]:
             return {
                 "choices": [
-                        {
-                            "message": {
-                                "content": (
-                                    json.dumps(
-                                        {
-                                            "verdict": "approve",
-                                            "critical": [],
-                                            "important": [],
-                                            "suggestions": [],
-                                            "missing_tests": [],
-                                            "confidence": 0.9,
-                                        }
-                                    )
-                                    if self.valid
-                                    else "{}"
+                    {
+                        "message": {
+                            "content": (
+                                json.dumps(
+                                    {
+                                        "verdict": "approve",
+                                        "critical": [],
+                                        "important": [],
+                                        "suggestions": [],
+                                        "missing_tests": [],
+                                        "confidence": 0.9,
+                                    }
                                 )
-                            },
-                            "finish_reason": "stop",
-                        }
+                                if self.valid
+                                else "{}"
+                            )
+                        },
+                        "finish_reason": "stop",
+                    }
                 ],
                 "usage": {"prompt_tokens": 10, "completion_tokens": 10},
             }
@@ -669,7 +726,7 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
         "required-review",
     )
 
-    assert result.profile == "openrouter:anthropic/claude-sonnet-4.6"
+    assert result.profile == "openrouter:anthropic/claude-opus-5"
     assert result.output["verdict"] == "approve"
     assert requests == 2
 

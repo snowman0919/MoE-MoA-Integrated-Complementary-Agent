@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 
-from .config import load_settings, parse_bool
+from .config import ModelConfig, load_settings, parse_bool
 
 PORTS = {"executor": 8101, "planner": 8102, "reviewer": 8103, "reasoner": 8104, "judge": 8110}
 KV_CACHE = {
@@ -35,9 +36,7 @@ def role_context_length(role: str, configured: int) -> str:
     return role_environment(role, "MAX_MODEL_LEN", configured)
 
 
-def command(role: str) -> list[str]:
-    settings = load_settings()
-    model = settings.models[role]
+def vllm_command(role: str, model: ModelConfig, run_dir: Path) -> list[str]:
     arguments = [
         os.path.expanduser(os.getenv("VLLM_BIN", "~/.pyenv/shims/vllm")),
         "serve",
@@ -61,13 +60,16 @@ def command(role: str) -> list[str]:
         arguments.append("--trust-remote-code")
     if role_bool_environment(role, "ENFORCE_EAGER"):
         arguments.append("--enforce-eager")
-    if moe_backend := os.getenv(f"DGX_MOA_{role.upper()}_MOE_BACKEND"):
+    if moe_backend := os.getenv(
+        f"DGX_MOA_{role.upper()}_MOE_BACKEND",
+        "MARLIN" if role == "executor" else "",
+    ):
         arguments += ["--moe-backend", moe_backend]
     if role == "reviewer":
         source = model.destination / "config.json"
         patched = json.loads(source.read_text())
         patched["model_type"] = "cohere2"
-        destination = settings.run_dir / "reviewer-hf-config"
+        destination = run_dir / "reviewer-hf-config"
         destination.mkdir(parents=True, exist_ok=True)
         (destination / "config.json").write_text(json.dumps(patched))
         arguments += ["--hf-config-path", str(destination)]
@@ -80,6 +82,53 @@ def command(role: str) -> list[str]:
     if role == "executor" and model.lora_adapter:
         arguments += ["--enable-lora", "--lora-modules", f"executor={model.lora_adapter}"]
     return arguments
+
+
+def sglang_executor_command(model: ModelConfig) -> list[str]:
+    arguments = [
+        os.path.expanduser(os.getenv("SGLANG_BIN", "~/.pyenv/shims/sglang")),
+        "serve",
+        "--model-path",
+        str(model.destination),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(PORTS["executor"]),
+        "--served-model-name",
+        model.served_name,
+        "--context-length",
+        role_context_length("executor", model.context_length),
+        "--mem-fraction-static",
+        role_environment("executor", "SGLANG_MEM_FRACTION_STATIC", 0.60),
+        "--max-running-requests",
+        role_environment("executor", "SGLANG_MAX_RUNNING_REQUESTS", model.max_num_seqs),
+        "--max-total-tokens",
+        role_environment("executor", "SGLANG_MAX_TOTAL_TOKENS", model.context_length),
+        "--max-mamba-cache-size",
+        role_environment("executor", "SGLANG_MAX_MAMBA_CACHE_SIZE", 16),
+        "--quantization",
+        model.quantization or "compressed-tensors",
+        "--enable-metrics",
+        "--enable-cache-report",
+    ]
+    if model.trust_remote_code:
+        arguments.append("--trust-remote-code")
+    if model.tool_call_parser:
+        arguments += ["--tool-call-parser", model.tool_call_parser]
+    return arguments
+
+
+def command(role: str) -> list[str]:
+    settings = load_settings()
+    model = settings.models[role]
+    if role != "executor":
+        return vllm_command(role, model, settings.run_dir)
+    backend = os.getenv("DGX_MOA_EXECUTOR_BACKEND", "vllm").strip().lower()
+    if backend == "vllm":
+        return vllm_command(role, model, settings.run_dir)
+    if backend == "sglang":
+        return sglang_executor_command(model)
+    raise ValueError(f"unsupported executor backend: {backend}")
 
 
 def main() -> None:

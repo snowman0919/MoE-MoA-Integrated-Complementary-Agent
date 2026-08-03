@@ -79,6 +79,14 @@ ROLE_REQUEST_COLUMNS = (
     "load_triggered, cold_or_warm, ready_at, first_byte_at, completed_at, success, "
     "failure_class, active_duration_ms"
 )
+PROVIDER_GROUP_SQL = """
+CASE
+    WHEN m.provider LIKE 'openrouter%' THEN 'openrouter'
+    WHEN m.provider IN ('remote', 'opencode_go') THEN 'opencode'
+    WHEN m.provider IN ('codex_oauth', 'frontier') OR m.role = 'frontier' THEN 'codex'
+    ELSE m.provider
+END
+""".strip()
 
 
 def classify_client(user_agent: str | None) -> SafeClientClass:
@@ -933,6 +941,16 @@ class UsageStore:
                 "ORDER BY r.api_token_id, COUNT(*) DESC",
                 model_parameters,
             ).fetchall()
+            providers = database.execute(
+                f"SELECT r.api_token_id, {PROVIDER_GROUP_SQL}, COUNT(*), "
+                "COALESCE(SUM(m.prompt_tokens), 0), "
+                "COALESCE(SUM(m.completion_tokens), 0), COALESCE(SUM(m.total_tokens), 0) "
+                "FROM model_invocation_usage m "
+                f"JOIN request_usage r ON r.request_id = m.request_id{model_where} "
+                f"GROUP BY r.api_token_id, {PROVIDER_GROUP_SQL} "
+                "ORDER BY r.api_token_id, COUNT(*) DESC",
+                model_parameters,
+            ).fetchall()
             daily = database.execute(
                 "SELECT api_token_id, date(accepted_at, 'unixepoch'), COUNT(*) "
                 f"FROM request_usage{request_where} "
@@ -949,14 +967,27 @@ class UsageStore:
                 "ORDER BY 2, 3",
                 model_parameters,
             ).fetchall()
+            daily_providers = database.execute(
+                f"SELECT r.api_token_id, date(r.accepted_at, 'unixepoch'), {PROVIDER_GROUP_SQL}, "
+                "COUNT(*), COALESCE(SUM(m.prompt_tokens), 0), "
+                "COALESCE(SUM(m.completion_tokens), 0), COALESCE(SUM(m.total_tokens), 0) "
+                "FROM model_invocation_usage m "
+                f"JOIN request_usage r ON r.request_id = m.request_id{model_where} "
+                f"GROUP BY r.api_token_id, date(r.accepted_at, 'unixepoch'), {PROVIDER_GROUP_SQL} "
+                "ORDER BY 2, 3",
+                model_parameters,
+            ).fetchall()
+            fallback_match = (
+                "(m.fallback_reason IS NOT NULL OR "
+                "(m.role IN ('planner', 'reviewer', 'executor', 'reasoner') "
+                "AND m.provider <> 'local'))"
+            )
             fallback_where = (
-                f"{model_where} AND m.fallback_reason IS NOT NULL"
-                if model_where
-                else " WHERE m.fallback_reason IS NOT NULL"
+                f"{model_where} AND {fallback_match}" if model_where else f" WHERE {fallback_match}"
             )
             fallback_summary = database.execute(
                 "SELECT r.api_token_id, COUNT(DISTINCT r.request_id), "
-                "COUNT(DISTINCT CASE WHEN m.fallback_reason IS NOT NULL "
+                f"COUNT(DISTINCT CASE WHEN {fallback_match} "
                 "THEN r.request_id END) FROM request_usage r "
                 "LEFT JOIN model_invocation_usage m ON r.request_id = m.request_id"
                 f"{model_where} "
@@ -964,10 +995,12 @@ class UsageStore:
                 model_parameters,
             ).fetchall()
             fallbacks = database.execute(
-                "SELECT r.api_token_id, m.role, m.model, m.provider, m.fallback_reason, "
+                "SELECT r.api_token_id, m.role, m.model, m.provider, "
+                "COALESCE(m.fallback_reason, 'remote_provider'), "
                 "COUNT(*), COALESCE(SUM(m.total_tokens), 0) FROM model_invocation_usage m "
                 f"JOIN request_usage r ON r.request_id = m.request_id{fallback_where} "
-                "GROUP BY r.api_token_id, m.role, m.model, m.provider, m.fallback_reason "
+                "GROUP BY r.api_token_id, m.role, m.model, m.provider, "
+                "COALESCE(m.fallback_reason, 'remote_provider') "
                 "ORDER BY r.api_token_id, COUNT(*) DESC",
                 model_parameters,
             ).fetchall()
@@ -1004,6 +1037,17 @@ class UsageStore:
                 }
                 for row in models
             ],
+            "providers": [
+                {
+                    "name": row[0],
+                    "provider": row[1],
+                    "invocations": int(row[2]),
+                    "prompt_tokens": int(row[3]),
+                    "completion_tokens": int(row[4]),
+                    "total_tokens": int(row[5]),
+                }
+                for row in providers
+            ],
             "daily": [{"name": row[0], "day": row[1], "requests": int(row[2])} for row in daily],
             "daily_models": [
                 {
@@ -1016,6 +1060,18 @@ class UsageStore:
                     "total_tokens": int(row[6]),
                 }
                 for row in daily_models
+            ],
+            "daily_providers": [
+                {
+                    "name": row[0],
+                    "day": row[1],
+                    "provider": row[2],
+                    "invocations": int(row[3]),
+                    "prompt_tokens": int(row[4]),
+                    "completion_tokens": int(row[5]),
+                    "total_tokens": int(row[6]),
+                }
+                for row in daily_providers
             ],
             "fallback_summary": [
                 {

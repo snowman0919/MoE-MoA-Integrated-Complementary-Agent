@@ -266,6 +266,70 @@ async def test_provider_is_pinned_after_remote_dispatch_failure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_local_failure_opens_circuit_for_next_call() -> None:
+    local = MockPlannerProvider(httpx.ConnectError("local failed"))
+    remote = MockPlannerProvider({"provider": "remote"})
+    router = SpecialistRouter(
+        config(),
+        local={"planner": local, "reviewer": MockReviewerProvider({})},
+        remote={"planner": remote, "reviewer": MockReviewerProvider({})},
+        lifecycle_store=Records(planner=record("ready")),
+    )
+
+    with pytest.raises(httpx.ConnectError, match="local failed"):
+        await router.complete(
+            "planner",
+            {},
+            request_id="first",
+            revision="rev",
+            timeout_seconds=5,
+        )
+
+    response, decision = await router.complete(
+        "planner",
+        {},
+        request_id="retry",
+        revision="rev",
+        timeout_seconds=5,
+    )
+
+    assert response == {"provider": "remote"}
+    assert decision["residency_state"] == "DEGRADED"
+    assert decision["routing_reason"] == "local_circuit_open"
+    assert decision["selected_provider"] == "remote"
+    assert len(local.requests) == 1
+    assert len(remote.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_explicit_local_degradation_routes_next_call_remote() -> None:
+    local = MockPlannerProvider({"provider": "local"})
+    remote = MockPlannerProvider({"provider": "remote"})
+    events: list[tuple[str, dict[str, Any]]] = []
+    router = SpecialistRouter(
+        config(),
+        local={"planner": local, "reviewer": MockReviewerProvider({})},
+        remote={"planner": remote, "reviewer": MockReviewerProvider({})},
+        lifecycle_store=Records(planner=record("ready")),
+        event=lambda _request, event_type, payload: events.append((event_type, payload)),
+    )
+
+    router.mark_local_degraded("planner", "invalid", "invalid_structured_output")
+    response, decision = await router.complete(
+        "planner",
+        {},
+        request_id="retry",
+        revision="rev",
+        timeout_seconds=5,
+    )
+
+    assert response == {"provider": "remote"}
+    assert decision["routing_reason"] == "local_circuit_open"
+    assert not local.requests
+    assert any(event == "specialist_local_degraded" for event, _ in events)
+
+
+@pytest.mark.asyncio
 async def test_local_only_cold_policy_fails_closed_without_remote_dispatch() -> None:
     remote = MockPlannerProvider({"provider": "remote"})
     router = SpecialistRouter(

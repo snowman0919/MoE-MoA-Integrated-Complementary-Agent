@@ -46,6 +46,7 @@ class Limits(BaseModel):
     planner_tokens: int = 4_096
     reasoner_tokens: int = 1_500
     executor_tokens: int = 4_096
+    executor_tool_tokens: int = 4_096
     executor_max_tokens: int = Field(default=32_768, ge=1, le=65_536)
     reviewer_tokens: int = 1_500
     judge_tokens: int = 2_500
@@ -53,6 +54,7 @@ class Limits(BaseModel):
     max_sse_event_bytes: int = 1_000_000
     max_review_evidence_characters: int = 10_000
     planner_timeout_seconds: float = 120
+    executor_orchestration_timeout_seconds: float = 300
     reasoner_timeout_seconds: float = 120
     executor_first_byte_timeout_seconds: float = 120
     executor_total_timeout_seconds: float = 900
@@ -71,7 +73,7 @@ class Limits(BaseModel):
     optional_idle_minimum_seconds: float = Field(default=300, gt=0, allow_inf_nan=False)
     optional_idle_maximum_seconds: float = Field(default=2_700, gt=0, allow_inf_nan=False)
     optional_minimum_ready_residency_seconds: float = Field(default=300, gt=0, allow_inf_nan=False)
-    max_steps: int = 100
+    max_steps: int = 1_000
 
     @model_validator(mode="after")
     def validate_idle_threshold_order(self) -> Limits:
@@ -184,16 +186,16 @@ class LifecyclePolicy(BaseModel):
 
 def default_loop_budgets() -> dict[str, int | float]:
     return {
-        "iterations": 8,
-        "tool_calls": 100,
-        "reasoner_reentries": 8,
-        "planner_calls": 2,
-        "reviewer_calls": 8,
-        "frontier_calls": 4,
-        "judge_calls": 2,
-        "tokens": 1_000_000,
+        "iterations": 32,
+        "tool_calls": 500,
+        "reasoner_reentries": 32,
+        "planner_calls": 8,
+        "reviewer_calls": 32,
+        "frontier_calls": 16,
+        "judge_calls": 4,
+        "tokens": 5_000_000,
         "external_cost_usd": 10,
-        "wall_clock_seconds": 1_800,
+        "wall_clock_seconds": 43_200,
     }
 
 
@@ -330,6 +332,7 @@ class SpecialistRoutingConfig(BaseModel):
     local_preference_margin_seconds: float = Field(default=60.0, ge=0, allow_inf_nan=False)
     cost_seconds_per_usd: float = Field(default=60.0, ge=0, allow_inf_nan=False)
     remote_cost_per_million_tokens_usd: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    local_failure_cooldown_seconds: float = Field(default=60.0, gt=0, le=3_600)
     warmup_watch_seconds: float = Field(default=1_200, gt=0, le=7_200)
     race_mode_enabled: bool = False
 
@@ -355,6 +358,29 @@ class SpecialistRoutingConfig(BaseModel):
             for value in self.remote_min_completion_tokens.values()
         ):
             raise ValueError("remote token floors must define positive planner and reviewer values")
+        return self
+
+
+class RemoteExecutorConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    provider: Literal["disabled", "opencode_go", "mock"] = "disabled"
+    endpoint: str = "https://opencode.ai/zen/go"
+    api_key_env: str = "OPENCODE_GO_API_KEY"
+    api_key_file: Path | None = None
+    model: str = "kimi-k3"
+    timeout_seconds: float = Field(default=300, gt=0, le=900)
+    failure_cooldown_seconds: float = Field(default=60, ge=0, le=3_600)
+
+    @model_validator(mode="after")
+    def validate_remote_executor(self) -> RemoteExecutorConfig:
+        if self.enabled and self.provider == "disabled":
+            raise ValueError("enabled remote executor requires a provider")
+        if self.enabled and not self.endpoint:
+            raise ValueError("enabled remote executor requires an endpoint")
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", self.api_key_env):
+            raise ValueError("remote executor credential must be an environment variable name")
         return self
 
 
@@ -513,6 +539,7 @@ class Settings(BaseModel):
     runtime_evolution: RuntimeEvolutionConfig = Field(default_factory=RuntimeEvolutionConfig)
     remote_judge: RemoteJudgeConfig = Field(default_factory=RemoteJudgeConfig)
     specialist_routing: SpecialistRoutingConfig = Field(default_factory=SpecialistRoutingConfig)
+    remote_executor: RemoteExecutorConfig = Field(default_factory=RemoteExecutorConfig)
     declarative_policy: DeclarativePolicyConfig = Field(default_factory=DeclarativePolicyConfig)
     live_observation: LiveObservationConfig = Field(default_factory=LiveObservationConfig)
     training_data: TrainingDataConfig = Field(default_factory=TrainingDataConfig)
@@ -700,6 +727,13 @@ def load_settings(path: str | Path | None = None) -> Settings:
         with suppress(json.JSONDecodeError):
             specialist_routing = json.loads(specialist_routing)
     gateway["specialist_routing"] = specialist_routing
+    remote_executor: Any = os.getenv(
+        "DGX_MOA_REMOTE_EXECUTOR", gateway.get("remote_executor", {})
+    )
+    if isinstance(remote_executor, str):
+        with suppress(json.JSONDecodeError):
+            remote_executor = json.loads(remote_executor)
+    gateway["remote_executor"] = remote_executor
     declarative_policy: Any = os.getenv(
         "DGX_MOA_DECLARATIVE_POLICY", gateway.get("declarative_policy", {})
     )

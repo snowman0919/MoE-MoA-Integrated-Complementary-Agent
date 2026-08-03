@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -860,6 +859,9 @@ def prepare_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str,
         "initial_commit": git(workspace, "rev-parse", "HEAD").stdout.strip(),
         "tests_sha256": sha256(tests / "test_task.py"),
         "starter_test_exit": starter_test.returncode,
+        "gateway": args.gateway,
+        "harness_sha256": sha256(Path(__file__)),
+        "prompt_sha256": hashlib.sha256(prompt(task).encode()).hexdigest(),
     }
     (evidence / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     if harness == "opencode":
@@ -909,8 +911,9 @@ def prompt(task: Task) -> str:
     return (
         "이 저장소의 신규 실사용급 작업을 완료하라. AGENTS.md, README.md, tests/를 확인하고 "
         f"{task.source_name}만 구현하라. 테스트나 요구사항 파일은 수정하지 마라. "
-        "`python -m unittest discover -s tests -v`를 실제 실행하고, 실패하면 수정 후 "
-        "재실행하라. 도구 실행 없이 완료를 선언하지 말고 진행 문장만 남긴 채 종료하지 마라. "
+        "`timeout 120s python -m unittest discover -s tests -v`를 실제 실행하고, "
+        "실패하거나 timeout이면 원인을 수정 후 재실행하라. 도구 실행 없이 완료를 선언하지 "
+        "말고 진행 문장만 남긴 채 종료하지 마라. "
         "최종 응답은 한국어 6줄 이내로 변경 파일, 테스트 명령/결과, 남은 위험을 적어라."
     )
 
@@ -919,6 +922,51 @@ def filtered_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     environment = {name: os.environ[name] for name in CORE_ENV if name in os.environ}
     environment.update(extra or {})
     return environment
+
+
+def isolated_hermes_config(
+    source: str,
+    *,
+    gateway: str,
+    workspace: Path,
+    run_id: str,
+    task: Task,
+) -> str:
+    lines = source.splitlines()
+    start = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.strip() == "- name: dgx-moa-agent"
+        ),
+        None,
+    )
+    if start is None:
+        raise RuntimeError("Hermes dgx-moa-agent custom provider is missing")
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line and not line[0].isspace():
+            end = index
+            break
+        if line.startswith("  - "):
+            end = index
+            break
+    session = f"quality-{run_id}-hermes-{task.slug}"
+    provider = [
+        "  - name: dgx-moa-agent",
+        f"    base_url: {gateway.rstrip('/')}/v1",
+        "    key_env: DGX_MOA_API_KEY",
+        "    model: dgx-moa-agent",
+        "    extra_headers:",
+        f"      X-Session-ID: {session}",
+        "      X-Runtime-Channel: main",
+        "      X-Trace-Origin: validation",
+        f"      X-Task-ID: {run_id}-{task.slug}",
+        f"      X-Workspace-Path: {workspace}",
+        f"      X-Workspace-ID: quality-{run_id}",
+    ]
+    return "\n".join([*lines[:start], *provider, *lines[end:]]) + "\n"
 
 
 def run_process(
@@ -949,6 +997,15 @@ def run_process(
             if isinstance(error.stderr, bytes)
             else error.stderr
         )
+        if command[:2] == ["docker", "run"] and "--name" in command:
+            container = command[command.index("--name") + 1]
+            subprocess.run(
+                ["docker", "rm", "-f", container],
+                text=True,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
         return subprocess.CompletedProcess(
             command, 124, stdout or "", (stderr or "") + "\ntimeout\n"
         )
@@ -966,10 +1023,13 @@ def docker_command(
     workspace_mode: str = "rw",
 ) -> list[str]:
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
+    container = "moa-qm-" + hashlib.sha256(f"{workspace}\0{state}".encode()).hexdigest()[:20]
     command = [
         "docker",
         "run",
         "--rm",
+        "--name",
+        container,
         "--init",
         "--network",
         network,
@@ -1077,6 +1137,11 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
     workspace, evidence = paths(args, harness, task)
     if not (evidence / "manifest.json").exists():
         raise RuntimeError(f"prepare first: {harness}/{task.slug}")
+    manifest = json.loads((evidence / "manifest.json").read_text())
+    if manifest.get("gateway") != args.gateway:
+        raise RuntimeError(
+            f"gateway differs from prepared fixture: {manifest.get('gateway')} != {args.gateway}"
+        )
     started_at = time.time()
     started = time.monotonic()
     if harness == "opencode":
@@ -1166,6 +1231,12 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             str(workspace),
             "-m",
             "gpt-5.6-sol",
+            "--strict-config",
+            "--ignore-user-config",
+            "-c",
+            'model_reasoning_effort="max"',
+            "-c",
+            'model_verbosity="low"',
             prompt(task),
         ]
         if args.runtime == "docker":
@@ -1190,10 +1261,22 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
         )
         return_code, stdout, stderr = run.returncode, run.stdout, run.stderr
     else:
+        key = os.getenv("DGX_MOA_HERMES_KEY") or os.getenv("DGX_MOA_OPENCODE_KEY")
+        if not key:
+            raise RuntimeError("DGX_MOA_HERMES_KEY is required")
         hermes_home = args.output_root / args.run_id / "profiles" / f"hermes-{task.slug}"
         hermes_home.mkdir(parents=True, exist_ok=True)
-        shutil.copy2("/home/kotori9/.hermes/config.yaml", hermes_home / "config.yaml")
-        shutil.copy2("/home/kotori9/.hermes/.env", hermes_home / ".env")
+        source_config = Path("/home/kotori9/.hermes/config.yaml").read_text()
+        (hermes_home / "config.yaml").write_text(
+            isolated_hermes_config(
+                source_config,
+                gateway=args.gateway,
+                workspace=workspace,
+                run_id=args.run_id,
+                task=task,
+            )
+        )
+        (hermes_home / ".env").write_text("")
         (hermes_home / "config.yaml").chmod(0o600)
         (hermes_home / ".env").chmod(0o600)
         usage_path = (
@@ -1218,6 +1301,7 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
                 workspace,
                 hermes_home,
                 inner,
+                environment_names=("DGX_MOA_API_KEY",),
                 extra_environment=("HERMES_HOME=/state",),
                 read_only_mounts=(
                     (HERMES_ROOT, str(HERMES_ROOT)),
@@ -1230,7 +1314,9 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
         run = run_process(
             command,
             cwd=workspace,
-            environment=filtered_env({"HERMES_HOME": str(hermes_home)}),
+            environment=filtered_env(
+                {"HERMES_HOME": str(hermes_home), "DGX_MOA_API_KEY": key}
+            ),
             timeout=args.timeout,
         )
         return_code, stdout, stderr = run.returncode, run.stdout, run.stderr
@@ -1432,17 +1518,21 @@ def summary(args: argparse.Namespace) -> dict[str, Any]:
     }
     baseline_passed = counts["baseline"]["passed"]
     usability_not_below_baseline = {
-        harness: counts[harness]["passed"] >= baseline_passed
+        harness: (
+            counts["baseline"]["total"] == len(TASKS)
+            and counts[harness]["total"] == len(TASKS)
+            and counts[harness]["passed"] >= baseline_passed
+        )
         for harness in ("opencode", "codex", "hermes")
     }
+    matrix_complete = all(counts[harness]["total"] == len(TASKS) for harness in HARNESSES)
     result = {
         "run_id": args.run_id,
         "counts": counts,
         "usability_not_below_baseline": usability_not_below_baseline,
-        "complete": (
-            baseline_passed == len(TASKS)
-            and all(counts[harness]["passed"] == len(TASKS) for harness in HARNESSES[1:])
-        ),
+        "matrix_complete": matrix_complete,
+        "complete": matrix_complete
+        and all(counts[harness]["passed"] == len(TASKS) for harness in HARNESSES[1:]),
         "rows": rows,
     }
     output = args.output_root / args.run_id / "summary.json"

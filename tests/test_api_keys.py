@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import re
 import stat
 from pathlib import Path
 
@@ -106,10 +109,17 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         operator = {"Authorization": "Bearer operator-secret-value"}
 
         assert client.get("/v1/admin/api-keys", headers=general).status_code == 403
+        assert client.get("/v1/admin/api-keys/usage", headers=general).status_code == 403
         dashboard = client.get("/admin/api-keys")
         assert dashboard.status_code == 200
         assert dashboard.headers["cache-control"] == "no-store"
-        assert "frame-ancestors 'none'" in dashboard.headers["content-security-policy"]
+        csp = dashboard.headers["content-security-policy"]
+        script = re.search(r"<script>(.*?)</script>", dashboard.text, re.DOTALL)
+        assert script is not None
+        digest = base64.b64encode(hashlib.sha256(script.group(1).encode()).digest()).decode()
+        assert "frame-ancestors 'none'" in csp
+        assert f"script-src 'sha256-{digest}'" in csp
+        assert "script-src 'unsafe-inline'" not in csp
         assert 'type="date"' in dashboard.text
         assert "navigator.clipboard" in dashboard.text
         assert "payload.error?.message" in dashboard.text
@@ -119,7 +129,11 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert "정확한 토큰" in dashboard.text
         assert "선택 기간 합계" in dashboard.text
         assert "Fallback 경로" in dashboard.text
+        assert "LLM Provider" in dashboard.text
+        assert 'option value="provider"' in dashboard.text
         assert "kpi-fallback" in dashboard.text
+        assert 'allOption.textContent="전체 API"' in dashboard.text
+        assert "start.setDate(start.getDate()-6)" in dashboard.text
         assert 'class="tooltip"' in dashboard.text
         assert all(
             name in dashboard.text for name in ("Qwen3-Next", "Nemotron-30B", "North-Mini-30B")
@@ -141,7 +155,11 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
             "enabled": False,
             "profiles": [],
         }
-        revealed = client.get("/v1/admin/api-keys/general/reveal", headers=operator)
+        assert client.get("/v1/admin/api-keys/general/reveal", headers=operator).status_code == 405
+        assert (
+            client.post("/v1/admin/api-keys/general/reveal", headers=general).status_code == 403
+        )
+        revealed = client.post("/v1/admin/api-keys/general/reveal", headers=operator)
         assert revealed.json()["api_key"] == "general-secret-value"
         session = client.post("/v1/admin/session", headers=operator)
         assert session.status_code == 204
@@ -152,6 +170,7 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert "Secure" in cookie
         assert "operator-secret-value" not in cookie
         assert client.get("/v1/admin/api-keys").status_code == 200
+        assert client.post("/v1/admin/session").status_code == 401
 
         created = client.post(
             "/v1/admin/api-keys",
@@ -204,6 +223,19 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert {(item["name"], item["model"]) for item in usage.json()["daily_models"]} == {
             ("new-client", "executor")
         }
+        all_usage = client.get(
+            "/v1/admin/api-keys/usage?start=1970-01-01&end=2999-12-31",
+            headers=operator,
+        )
+        assert all_usage.status_code == 200
+        assert "new-client" in {item["name"] for item in all_usage.json()["summary"]}
+        assert (
+            client.get(
+                "/v1/admin/api-keys/usage?start=2026-07-24&end=2026-07-23",
+                headers=operator,
+            ).status_code
+            == 400
+        )
         assert (
             client.get(
                 "/v1/admin/api-keys/new-client/usage?start=2026-07-24&end=2026-07-23",
@@ -241,6 +273,7 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         audit = client.app.state.store.events("api-key-admin")
 
     assert [event["payload"]["action"] for event in audit] == [
+        "reveal",
         "create",
         "update",
         "revoke",

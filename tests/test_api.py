@@ -9,12 +9,18 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from dgx_moa import providers
-from dgx_moa.api import create_app, has_matching_tool_result, ollama_model_ready
-from dgx_moa.config import Settings
+from dgx_moa.api import (
+    create_app,
+    has_matching_tool_result,
+    normalize_completed_tool_call_arguments,
+    ollama_model_ready,
+)
+from dgx_moa.config import RemoteExecutorConfig, Settings
 from dgx_moa.controller import fingerprint
 from dgx_moa.lifecycle import (
     FakeLifecycleDriver,
@@ -44,6 +50,31 @@ def test_runtime_version_is_2_0(settings: Settings) -> None:
 
     assert __version__ == "2.0.0"
     assert app.version == "2.0.0"
+
+
+def test_completed_malformed_tool_arguments_are_normalized() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "completed",
+                    "type": "function",
+                    "function": {"name": "edit", "arguments": '{"oldString":"unterminated"'},
+                },
+                {
+                    "id": "pending",
+                    "type": "function",
+                    "function": {"name": "edit", "arguments": "{"},
+                },
+            ],
+        },
+        {"role": "tool", "tool_call_id": "completed", "content": "edit failed"},
+    ]
+
+    assert normalize_completed_tool_call_arguments(messages) == 2
+    assert messages[0]["tool_calls"][0]["function"]["arguments"] == "{}"
+    assert messages[0]["tool_calls"][1]["function"]["arguments"] == "{}"
 
 
 def test_busy_executor_routes_new_session_to_frontier(
@@ -104,6 +135,148 @@ def test_busy_executor_routes_new_session_to_frontier(
     assert started["payload"]["routing_reason"] == "local_busy"
 
 
+def test_busy_executor_prefers_opencode_kimi(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    controlled = settings.model_copy(
+        update={
+            "remote_executor": RemoteExecutorConfig(
+                enabled=True,
+                provider="opencode_go",
+            )
+        }
+    )
+    app = create_app(controlled)
+    frontier_called = False
+
+    async def kimi_execute(
+        _request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        return {
+            "id": "chatcmpl-kimi",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "Kimi 처리 완료"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 5},
+            "model": "kimi-k3",
+            "provider_provenance": {"provider": "opencode_go", "cost_usd": 0.0},
+        }
+
+    async def frontier_execute(
+        _request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        nonlocal frontier_called
+        frontier_called = True
+        raise AssertionError("Frontier must not run after Kimi succeeds")
+
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.remote_executor.execute = kimi_execute
+        app.state.frontier = SimpleNamespace(execute=frontier_execute)
+        held = app.state.lifecycle_store.acquire_request_leases(
+            str(uuid.uuid4()), ("executor",), kind="active_request"
+        )
+        try:
+            response = client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer test-secret", "X-Session-ID": "kimi-session"},
+                json={
+                    "model": "dgx-moa-fast",
+                    "messages": [{"role": "user", "content": "간단히 답해"}],
+                },
+            )
+            events = app.state.store.events("kimi-session")
+        finally:
+            app.state.lifecycle_store.release_leases(lease.lease_id for lease in held)
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Kimi 처리 완료"
+    assert frontier_called is False
+    completed = next(
+        event for event in events if event["event_type"] == "executor_remote_completed"
+    )
+    assert completed["payload"]["provider"] == "opencode_go"
+    assert completed["payload"]["model"] == "kimi-k3"
+
+
+def test_failed_kimi_executor_falls_back_to_frontier(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "kimi-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    controlled = settings.model_copy(
+        update={
+            "frontier_enabled": True,
+            "frontier_config": frontier_config,
+            "remote_executor": RemoteExecutorConfig(
+                enabled=True,
+                provider="opencode_go",
+            ),
+        }
+    )
+    app = create_app(controlled)
+
+    async def kimi_execute(
+        _request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        raise RuntimeError("KIMI_UNAVAILABLE")
+
+    async def frontier_execute(
+        _request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        return {
+            "id": "chatcmpl-frontier",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "Frontier 복구 완료"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 7},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "codex_oauth:primary", "cost_usd": None},
+        }
+
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.remote_executor.execute = kimi_execute
+        app.state.frontier.execute = frontier_execute
+        held = app.state.lifecycle_store.acquire_request_leases(
+            str(uuid.uuid4()), ("executor",), kind="active_request"
+        )
+        try:
+            response = client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer test-secret", "X-Session-ID": "kimi-fallback"},
+                json={
+                    "model": "dgx-moa-fast",
+                    "messages": [{"role": "user", "content": "간단히 답해"}],
+                },
+            )
+            events = app.state.store.events("kimi-fallback")
+        finally:
+            app.state.lifecycle_store.release_leases(lease.lease_id for lease in held)
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Frontier 복구 완료"
+    failed = next(
+        event for event in events if event["event_type"] == "executor_remote_provider_failed"
+    )
+    assert failed["payload"]["provider"] == "opencode_go"
+    assert failed["payload"]["frontier_fallback"] is True
+    completed = next(
+        event for event in events if event["event_type"] == "executor_remote_completed"
+    )
+    assert completed["payload"]["provider"] == "codex_oauth:primary"
+
+
 def test_busy_executor_remote_stream_failure_is_observable(
     settings: Settings, stub_provider: StubProvider
 ) -> None:
@@ -153,6 +326,80 @@ def test_busy_executor_remote_stream_failure_is_observable(
         "failure_class": "RuntimeError",
         "failure_code": "FRONTIER_OPENROUTER_FAILURE",
         "routing_reason": "local_busy",
+    }
+
+
+def test_streaming_tool_turn_length_falls_back_to_frontier(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "length-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    controlled = settings.model_copy(
+        update={"frontier_enabled": True, "frontier_config": frontier_config}
+    )
+    app = create_app(controlled)
+
+    async def length_stream(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        async def chunks():  # type: ignore[no-untyped-def]
+            yield b'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}\n\n'
+            yield (
+                b'data: {"choices":[{"delta":{},"finish_reason":"length"}],'
+                b'"usage":{"prompt_tokens":10,"completion_tokens":4096,"total_tokens":4106}}\n\n'
+            )
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    async def remote_execute(
+        _remote_request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        return {
+            "id": "chatcmpl-frontier-length",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "원격 길이 복구"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 7},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "primary", "cost_usd": None},
+        }
+
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.provider.stream = length_stream
+        app.state.frontier.execute = remote_execute
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "length-fallback"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "파일을 수정해"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "write_file",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+                "stream": True,
+            },
+        )
+        events = app.state.store.events("length-fallback")
+
+    assert response.status_code == 200
+    assert "원격 길이 복구" in response.text
+    assert "partial" not in response.text
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
+    assert selected["payload"] == {
+        "routing_reason": "local_output_limit",
+        "provider": "frontier",
     }
 
 
@@ -265,9 +512,7 @@ def test_repeated_failure_routes_executor_to_frontier(
     assert response.status_code == 200, response.text
     assert response.json()["choices"][0]["message"]["content"] == "원격 반복 실패 복구"
     assert "executor" not in stub_provider.calls
-    selected = next(
-        event for event in events if event["event_type"] == "executor_remote_selected"
-    )
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
     assert selected["payload"]["routing_reason"] == "local_repeated_failure"
 
 
@@ -357,9 +602,7 @@ def test_duplicate_failed_call_routes_once_to_frontier(
     assert blocked.status_code == 409
     assert remote_calls == 1
     assert "executor" not in stub_provider.calls
-    selected = next(
-        event for event in events if event["event_type"] == "executor_remote_selected"
-    )
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
     assert selected["payload"]["routing_reason"] == "local_duplicate_failure"
 
 
@@ -4181,6 +4424,32 @@ def test_executor_accepts_compatible_harness_output_budget(
     assert stub_provider.requests[-1]["max_tokens"] == 32_768
 
 
+def test_executor_bounds_tool_turn_output_budget(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "work"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "description": "Read a file",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+                "max_tokens": 32_768,
+            },
+        )
+
+    assert response.status_code == 200
+    assert stub_provider.requests[-1]["max_tokens"] == 4096
+
+
 def test_excessive_budget_preserves_reused_completed_session(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -4456,7 +4725,7 @@ def test_role_calls_receive_exact_stage_timeouts(settings, stub_provider: StubPr
     assert stub_provider.calls == ["reasoner", "executor", "reviewer", "executor"]
     assert stub_provider.call_options == [
         {"timeout_seconds": 120, "stage": "reasoner"},
-        {"timeout_seconds": 120, "stage": "orchestration"},
+        {"timeout_seconds": 300, "stage": "orchestration"},
         {"timeout_seconds": 120, "stage": "reviewer"},
         {"timeout_seconds": 900, "stage": "executor_total"},
     ]

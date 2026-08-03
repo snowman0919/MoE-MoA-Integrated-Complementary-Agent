@@ -19,16 +19,16 @@ gateway:
   loop_engineering:
     enabled: false
     defaults:
-      iterations: 8
-      tool_calls: 100
-      reasoner_reentries: 8
-      planner_calls: 2
-      reviewer_calls: 8
-      frontier_calls: 4
-      judge_calls: 2
-      tokens: 1000000
+      iterations: 32
+      tool_calls: 500
+      reasoner_reentries: 32
+      planner_calls: 8
+      reviewer_calls: 32
+      frontier_calls: 16
+      judge_calls: 4
+      tokens: 5000000
       external_cost_usd: 10
-      wall_clock_seconds: 1800
+      wall_clock_seconds: 43200
     duplicate_fingerprint_limit: 2
     no_progress_iteration_limit: 2
     local_failures_before_frontier: 2
@@ -79,8 +79,18 @@ gateway:
     local_preference_margin_seconds: 60
     cost_seconds_per_usd: 60
     remote_cost_per_million_tokens_usd: 0
+    local_failure_cooldown_seconds: 60
     warmup_watch_seconds: 1200
     race_mode_enabled: false
+  remote_executor:
+    enabled: false
+    provider: disabled
+    endpoint: https://opencode.ai/zen/go
+    api_key_env: OPENCODE_GO_API_KEY
+    api_key_file: null
+    model: kimi-k3
+    timeout_seconds: 300
+    failure_cooldown_seconds: 60
   declarative_policy:
     enabled: false
     version: development-disabled
@@ -180,6 +190,7 @@ gateway:
     planner_tokens: 4096
     reasoner_tokens: 1500
     executor_tokens: 4096
+    executor_tool_tokens: 4096
     executor_max_tokens: 32768
     reviewer_tokens: 1500
     judge_tokens: 2500
@@ -187,6 +198,7 @@ gateway:
     max_sse_event_bytes: 1000000
     max_review_evidence_characters: 10000
     planner_timeout_seconds: 120
+    executor_orchestration_timeout_seconds: 300
     reasoner_timeout_seconds: 120
     executor_first_byte_timeout_seconds: 120
     executor_total_timeout_seconds: 900
@@ -205,7 +217,7 @@ gateway:
     optional_idle_minimum_seconds: 300
     optional_idle_maximum_seconds: 2700
     optional_minimum_ready_residency_seconds: 300
-    max_steps: 100
+    max_steps: 1000
 
 models:
   executor:
@@ -222,17 +234,17 @@ models:
     trust_remote_code: false
     required: true
   planner:
-    repository: cyankiwi/Nemotron-Cascade-2-30B-A3B-AWQ-4bit
-    revision: 49cee6bbed2edd4e2d305d948ac443714a2ab242
-    classification: community-maintained
+    repository: nvidia/Qwen3.6-27B-NVFP4
+    revision: 0893e1606ff3d5f97a441f405d5fc541a6bdf404
+    classification: vendor-provided
     base_url: http://127.0.0.1:8102
     served_name: dgx-moa-planner
-    destination: /home/kotori9/models/dgx-moa/planner
+    destination: /home/kotori9/models/specialist-unified-qwen36-27b-nvfp4
     context_length: 65536
     max_num_seqs: 1
-    quantization: compressed-tensors
-    reasoning_parser: nemotron_v3
-    trust_remote_code: true
+    quantization: modelopt
+    reasoning_parser: qwen3
+    trust_remote_code: false
     required: false
   reviewer:
     repository: CohereLabs/North-Mini-Code-1.0-w4a16
@@ -264,7 +276,7 @@ models:
     repository: ollama/Qwythos-v2-9B
     revision: Q4
     classification: external
-    base_url: http://192.168.0.197:11434
+    base_url: http://100.90.167.128:11434
     served_name: Qwythos-v2-9B:Q4
     destination: /home/kotori9/models/dgx-moa/reasoner
     provider: ollama

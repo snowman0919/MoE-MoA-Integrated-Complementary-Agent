@@ -137,7 +137,7 @@ def test_trace_captures_bounded_engineering_loop_snapshot() -> None:
     loop = trace_record(state)["engineering_loop"]
 
     assert loop["loop_id"] == state.engineering_loop.loop_id
-    assert loop["remaining_budget"]["iterations"] == 4
+    assert loop["remaining_budget"] == state.engineering_loop.remaining_budget.model_dump()
     assert loop["input_fingerprints"]
 
     legacy_v3 = trace_record(state)

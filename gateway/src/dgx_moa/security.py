@@ -17,7 +17,10 @@ from .config import Settings
 
 SECRET_PATTERNS = (
     re.compile(r"(?i)(authorization:\s*bearer\s+)[^\s]+"),
-    re.compile(r"(?i)((?:api[_-]?key|token|password|secret)\s*[=:]\s*)[^\s,;]+"),
+    re.compile(
+        r"(?i)((?<![A-Za-z0-9_.])(?:api[_-]?key|token|password|secret)\s*[=:]\s*)"
+        r"[^\s,;]+"
+    ),
     re.compile(r"\b(?:hf|sk)-[A-Za-z0-9_-]{12,}\b"),
     re.compile(r"\bmoa_[A-Za-z0-9_-]{32,}\b"),
 )

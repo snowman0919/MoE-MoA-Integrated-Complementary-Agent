@@ -114,16 +114,16 @@ PROGRESS_EVIDENCE_KINDS = frozenset(
 class LoopBudget(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    iterations: int = Field(default=4, ge=0)
-    tool_calls: int = Field(default=100, ge=0)
-    reasoner_reentries: int = Field(default=4, ge=0)
-    planner_calls: int = Field(default=2, ge=0)
-    reviewer_calls: int = Field(default=6, ge=0)
-    frontier_calls: int = Field(default=4, ge=0)
-    judge_calls: int = Field(default=2, ge=0)
-    tokens: int = Field(default=1_000_000, ge=0)
+    iterations: int = Field(default=32, ge=0)
+    tool_calls: int = Field(default=500, ge=0)
+    reasoner_reentries: int = Field(default=32, ge=0)
+    planner_calls: int = Field(default=8, ge=0)
+    reviewer_calls: int = Field(default=32, ge=0)
+    frontier_calls: int = Field(default=16, ge=0)
+    judge_calls: int = Field(default=4, ge=0)
+    tokens: int = Field(default=5_000_000, ge=0)
     external_cost_usd: float = Field(default=10, ge=0, allow_inf_nan=False)
-    wall_clock_seconds: float = Field(default=1_800, ge=0, allow_inf_nan=False)
+    wall_clock_seconds: float = Field(default=43_200, ge=0, allow_inf_nan=False)
 
 
 class AcceptanceCriterion(BaseModel):

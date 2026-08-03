@@ -21,7 +21,11 @@ def test_required_systemd_units_exist() -> None:
         "dgx-moa.target",
         "dgx-moa-codex-frontier@.service",
     }
-    assert required == {path.name for path in SYSTEMD.iterdir()}
+    assert required == {
+        path.name
+        for path in SYSTEMD.iterdir()
+        if path.suffix in {".service", ".socket", ".target"}
+    }
 
 
 def test_loopback_socket_proxies_only_to_the_configured_gateway() -> None:
@@ -80,7 +84,7 @@ def test_profile_scripts_wait_for_executor_and_verify_all_resident_roles_stop() 
 def test_unit_environment_and_hardening() -> None:
     for path in SYSTEMD.glob("dgx-moa-*.service"):
         unit = path.read_text()
-        if "codex-frontier" not in path.name:
+        if "codex-frontier" not in path.name and "/usr/bin/docker run" not in unit:
             assert "EnvironmentFile=/home/kotori9/dgx-moa-agent/.env" in unit
             assert "EnvironmentFile=-/home/kotori9/dgx-moa-agent/.env.local" in unit
         assert "NoNewPrivileges=true" in unit

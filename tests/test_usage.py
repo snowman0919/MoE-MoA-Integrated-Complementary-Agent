@@ -656,6 +656,72 @@ def test_api_token_dashboard_tracks_fallback_provenance(tmp_path: Path) -> None:
         "completion_tokens": 11,
         "total_tokens": 18,
     }
+    assert dashboard["providers"] == [
+        {
+            "name": "client",
+            "provider": "local",
+            "invocations": 1,
+            "prompt_tokens": 2,
+            "completion_tokens": 3,
+            "total_tokens": 5,
+        },
+        {
+            "name": "client",
+            "provider": "codex",
+            "invocations": 1,
+            "prompt_tokens": 7,
+            "completion_tokens": 11,
+            "total_tokens": 18,
+        },
+    ]
+    assert {row["provider"] for row in dashboard["daily_providers"]} == {"local", "codex"}
+
+
+def test_api_token_dashboard_infers_fallback_from_remote_provider(tmp_path: Path) -> None:
+    module = usage_module()
+    store = module.UsageStore(
+        tmp_path / "usage.db",
+        model_catalog={"reasoner": "local-model"},
+    )
+    for request_id in ("local", "remote"):
+        record = start_record(module, request_id, 100.0)
+        record.api_token_id = "client"
+        store.start(record)
+    store.record_model_invocation(
+        "local",
+        role="reasoner",
+        model="local-model",
+        provider="local",
+        mode="reasoning",
+        status="completed",
+        latency_ms=1,
+    )
+    store.record_model_invocation(
+        "remote",
+        role="reasoner",
+        model="future-model",
+        provider="new-provider",
+        mode="reasoning",
+        status="completed",
+        latency_ms=1,
+    )
+
+    dashboard = store.api_token_dashboard(name="client")
+
+    assert dashboard["fallback_summary"] == [
+        {"name": "client", "requests": 2, "fallbacks": 1, "rate": 50.0}
+    ]
+    assert dashboard["fallbacks"] == [
+        {
+            "name": "client",
+            "role": "reasoner",
+            "model": "future-model",
+            "provider": "new-provider",
+            "reason": "remote_provider",
+            "invocations": 1,
+            "total_tokens": 0,
+        }
+    ]
 
 
 def test_zero_inter_arrival_gaps_are_preserved_in_statistics(tmp_path: Path) -> None:
