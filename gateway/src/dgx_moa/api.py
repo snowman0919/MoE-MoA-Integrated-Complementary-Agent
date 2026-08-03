@@ -52,6 +52,7 @@ from .inference import (
     elapsed_ms,
     error_response,
     has_matching_tool_result,
+    register_inference_routes,
     remap_reused_tool_call_ids,
     title_request_index,
     tool_result_call_ids,
@@ -715,6 +716,12 @@ def create_app(
     app = FastAPI(title="DGX MoA Agent", version="2.0.0", lifespan=lifespan)
     app.include_router(build_admin_router(admin_auth))
     app.include_router(build_training_router(admin_auth))
+    register_inference_routes(
+        app,
+        auth,
+        tuple(MODEL_MODES),
+        IMPLEMENTATION_QUALITY_CONTRACT,
+    )
 
     @app.middleware("http")
     async def reject_new_work_while_draining(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -998,19 +1005,6 @@ def create_app(
             },
         )
 
-    @app.get("/healthz")
-    async def healthz(request: Request) -> dict[str, Any]:
-        return {
-            "status": "ok",
-            "remote_judge": (
-                "disabled"
-                if request.app.state.remote_judge is None
-                else "available"
-                if request.app.state.remote_judge_available
-                else "unavailable"
-            ),
-        }
-
     @app.get("/readyz")
     async def readyz(request: Request) -> JSONResponse:
         profile_state = request.app.state.profiles.current()
@@ -1174,73 +1168,6 @@ def create_app(
             request.app.state.runtime_metrics.prometheus(overlays),
             media_type="text/plain; version=0.0.4",
         )
-
-    @app.get("/v1/models", dependencies=[Depends(auth)])
-    async def models() -> dict[str, Any]:
-        aliases = list(MODEL_MODES)
-        return {
-            "object": "list",
-            "data": [
-                {
-                    "id": alias,
-                    "object": "model",
-                    "created": 0,
-                    "owned_by": "local",
-                    "context_length": 65_536,
-                }
-                for alias in aliases
-            ],
-            "models": [
-                {
-                    "slug": alias,
-                    "display_name": alias,
-                    "description": "Local Executor-directed Dynamic MoA model.",
-                    "default_reasoning_level": None,
-                    "supported_reasoning_levels": [],
-                    "shell_type": "shell_command",
-                    "visibility": "list",
-                    "supported_in_api": True,
-                    "priority": index,
-                    "additional_speed_tiers": [],
-                    "service_tiers": [],
-                    "availability_nux": None,
-                    "upgrade": None,
-                    "base_instructions": (
-                        "You are a coding agent. Follow the user's instructions and use the "
-                        "provided tools to inspect, edit, and verify the workspace. Use "
-                        "exec_command for local paths and file:// URIs; read_file is not a "
-                        "supported Codex tool. Do not discover MCP resources for local paths. "
-                        "Batch independent reads and checks. Use only an integer session_id "
-                        "returned by exec_command with write_stdin; never invent one. Call "
-                        "read_mcp_resource only with an exact server and URI returned by MCP "
-                        "resource discovery; integration display names are not MCP server IDs."
-                        f" {IMPLEMENTATION_QUALITY_CONTRACT}"
-                    ),
-                    "model_messages": None,
-                    "include_skills_usage_instructions": False,
-                    "supports_reasoning_summaries": False,
-                    "default_reasoning_summary": "none",
-                    "support_verbosity": False,
-                    "default_verbosity": None,
-                    "apply_patch_tool_type": "freeform",
-                    "web_search_tool_type": "text",
-                    "truncation_policy": {"mode": "tokens", "limit": 10_000},
-                    "supports_parallel_tool_calls": True,
-                    "supports_image_detail_original": False,
-                    "context_window": 65_536,
-                    "max_context_window": 65_536,
-                    "comp_hash": "dgx-moa-65536-v1",
-                    "effective_context_window_percent": 95,
-                    "experimental_supported_tools": [],
-                    "input_modalities": ["text"],
-                    "supports_search_tool": False,
-                    "use_responses_lite": False,
-                    "tool_mode": "direct",
-                    "multi_agent_version": None,
-                }
-                for index, alias in enumerate(aliases)
-            ],
-        }
 
     @app.get("/v1/model-status", dependencies=[Depends(auth)])
     async def model_status(request: Request) -> dict[str, Any]:

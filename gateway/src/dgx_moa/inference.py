@@ -7,7 +7,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any, cast
 
-from fastapi import Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .schemas import text_content
@@ -27,6 +27,92 @@ def error_response(
         status_code=status_code,
         headers=headers,
     )
+
+
+def register_inference_routes(
+    app: FastAPI,
+    auth: Callable[..., Any],
+    model_aliases: tuple[str, ...],
+    implementation_quality_contract: str,
+) -> None:
+    @app.get("/healthz")
+    async def healthz(request: Request) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "remote_judge": (
+                "disabled"
+                if request.app.state.remote_judge is None
+                else "available"
+                if request.app.state.remote_judge_available
+                else "unavailable"
+            ),
+        }
+
+    @app.get("/v1/models", dependencies=[Depends(auth)])
+    async def models() -> dict[str, Any]:
+        return {
+            "object": "list",
+            "data": [
+                {
+                    "id": alias,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": "local",
+                    "context_length": 65_536,
+                }
+                for alias in model_aliases
+            ],
+            "models": [
+                {
+                    "slug": alias,
+                    "display_name": alias,
+                    "description": "Local Executor-directed Dynamic MoA model.",
+                    "default_reasoning_level": None,
+                    "supported_reasoning_levels": [],
+                    "shell_type": "shell_command",
+                    "visibility": "list",
+                    "supported_in_api": True,
+                    "priority": index,
+                    "additional_speed_tiers": [],
+                    "service_tiers": [],
+                    "availability_nux": None,
+                    "upgrade": None,
+                    "base_instructions": (
+                        "You are a coding agent. Follow the user's instructions and use the "
+                        "provided tools to inspect, edit, and verify the workspace. Use "
+                        "exec_command for local paths and file:// URIs; read_file is not a "
+                        "supported Codex tool. Do not discover MCP resources for local paths. "
+                        "Batch independent reads and checks. Use only an integer session_id "
+                        "returned by exec_command with write_stdin; never invent one. Call "
+                        "read_mcp_resource only with an exact server and URI returned by MCP "
+                        "resource discovery; integration display names are not MCP server IDs. "
+                        + implementation_quality_contract
+                    ),
+                    "model_messages": None,
+                    "include_skills_usage_instructions": False,
+                    "supports_reasoning_summaries": False,
+                    "default_reasoning_summary": "none",
+                    "support_verbosity": False,
+                    "default_verbosity": None,
+                    "apply_patch_tool_type": "freeform",
+                    "web_search_tool_type": "text",
+                    "truncation_policy": {"mode": "tokens", "limit": 10_000},
+                    "supports_parallel_tool_calls": True,
+                    "supports_image_detail_original": False,
+                    "context_window": 65_536,
+                    "max_context_window": 65_536,
+                    "comp_hash": "dgx-moa-65536-v1",
+                    "effective_context_window_percent": 95,
+                    "experimental_supported_tools": [],
+                    "input_modalities": ["text"],
+                    "supports_search_tool": False,
+                    "use_responses_lite": False,
+                    "tool_mode": "direct",
+                    "multi_agent_version": None,
+                }
+                for index, alias in enumerate(model_aliases)
+            ],
+        }
 
 
 def title_request_index(messages: list[dict[str, Any]]) -> int | None:

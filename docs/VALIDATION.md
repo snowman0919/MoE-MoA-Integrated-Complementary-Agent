@@ -10369,6 +10369,15 @@ passed, including concurrent final-slot admission, followed by all 1,216 tests
 in 46.08 seconds. Ruff, strict mypy across 60 source files, and
 `git diff --check` passed.
 
+The first inference-router extraction moved stateless `/healthz` and authenticated
+`/v1/models` ownership from `api.py` into the existing `inference.py` module.
+The registration function receives the existing auth dependency, aliases, and
+quality contract explicitly; it adds no framework or container abstraction.
+The golden auth/model/tool-preservation contract passed, followed by all 1,217
+tests in 44.35 seconds. Ruff, strict mypy across 60 source files, and
+`git diff --check` passed. Readiness, model-status, Chat, image, and Judge routes
+remain in `api.py` for separate behavior-preserving commits.
+
 `lifecycle_samples` had identical DDL independently owned by `UsageStore` and
 `LifecycleStore`, allowing future initialization-order drift. The schema now
 has one `database.ensure_lifecycle_samples_schema` owner reused by both stores;
