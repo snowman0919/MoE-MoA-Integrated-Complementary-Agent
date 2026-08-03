@@ -10942,3 +10942,32 @@ non-inferiority evidence: every item allowed fixed-cost OAuth collaboration and
 the panel includes the immutable A8 reliability failure before v94. The sealed
 200-attempt epoch must therefore start separately after all client harnesses are
 stable.
+
+## Hermes v94 diagnostics H1-H4 (2026-08-03)
+
+Fresh `rate-limiter` H1, `atomic-store` H2, and `dag-runner` H3 passed every
+functional scorer gate in 219.280, 221.484, and 181.033 seconds respectively.
+Telemetry was complete and provider-pinned without provider errors or switches.
+Each used bounded Codex OAuth collaboration, so these are functional diagnostics
+and not local-path non-inferiority evidence. Sanitized immutable evidence is
+preserved under the matching H1-H3 directories in
+`/home/kotori9/code/.moa-preservation/diagnostics/`.
+
+Fresh `webhook-verifier` H4 changed only the allowed source and passed both
+public and hidden validation, but is **FAILED** overall. Hermes emitted a short
+English blocked/failed terminal response and its usage report recorded
+`completed=false, failed=true`, so the harness-exit and Korean-final gates
+failed. Payload-free event inspection found that its final validation command
+was `python -m unittest discover -s tests -v 2>&1`: all four tests passed and
+the command exited 0, but the common validation boundary classified the benign
+`2>&1` FD merge as `rejected_filtered_output`. The gateway therefore kept the
+session executing instead of accepting the validation evidence.
+
+Protocol v95 excludes descriptor-to-descriptor merges from filtered-output
+detection while retaining rejection for pipelines and file redirection.
+Focused regression tests passed `3/3`; Ruff and strict mypy across 62 source
+files passed, followed by `1,227/1,227` tests in 43.33 seconds with the existing
+Starlette deprecation warning. H4 remains an immutable failure at
+`/home/kotori9/code/.moa-preservation/diagnostics/20260803-hermes-webhook-verifier-v94-h4`;
+all v94 Hermes attempts remain diagnostics and the panel restarts with new v95
+run IDs.

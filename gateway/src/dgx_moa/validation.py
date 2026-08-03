@@ -198,10 +198,11 @@ def filtered_validation_execution(execution: dict[str, Any]) -> bool:
         if isinstance(arguments, dict)
         else None
     )
+    inspected = re.sub(r"(?<!\S)\d*>&\d+\b", "", command) if isinstance(command, str) else command
     return (
         validation_execution(execution)
-        and isinstance(command, str)
-        and bool(re.search(r"(?<!\|)\|(?!\|)|(?:^|\s)(?:\d*>>?|&>)", command))
+        and isinstance(inspected, str)
+        and bool(re.search(r"(?<!\|)\|(?!\|)|(?:^|\s)(?:\d*>>?|&>)", inspected))
     )
 
 

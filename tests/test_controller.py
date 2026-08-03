@@ -2807,6 +2807,44 @@ def test_filtered_validation_is_not_success_evidence(
     assert not successful_validation_execution(execution)
 
 
+def test_stderr_merge_does_not_filter_validation(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    state = SessionState(session_id="merged-validation")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    controller._observe(
+        state,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "validation",
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "arguments": json.dumps(
+                                {"cmd": "python -m unittest discover -s tests -v 2>&1"}
+                            ),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "validation",
+                "content": json.dumps(
+                    {"exit_code": 0, "stdout": "Ran 4 tests in 0.005s\n\nOK"}
+                ),
+            },
+        ],
+    )
+
+    execution = state.tool_executions[-1]
+    assert execution.get("validation_evidence_status") is None
+    assert successful_validation_execution(execution)
+
+
 def test_validation_without_terminal_verdict_is_not_success_evidence(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

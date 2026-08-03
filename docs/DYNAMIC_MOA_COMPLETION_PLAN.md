@@ -607,6 +607,13 @@ reconnect, plan/context 보존을 대체하지 않는다.
   admin, isolated validation provider에서 600,000ms로 고정한다. 이는 기존
   tool continuation 600초와 같고 Executor total 900초보다 낮다. A8은 reliability
   실패로 보존하며 새 plan hash와 run ID에서 동일 작업을 재검증한다.
+- protocol v95는 Hermes H4에서 `python -m unittest ... 2>&1`가 4개 테스트를
+  모두 통과하고 exit 0을 반환했음에도 단순 stderr-to-stdout FD 병합을 출력
+  필터로 오인한 결함을 수정한다. FD 병합은 검증 출력을 제거하지 않으므로
+  허용하되, 파이프와 파일 redirection은 계속 성공 증거로 거부한다. v94
+  Hermes H1-H4는 진단으로 보존하고 새 plan hash와 run ID에서 패널을 다시
+  시작한다. 동결 quality margin, bootstrap seed, 표본 수, prompt, model,
+  fixture, scorer, telemetry 계약은 변경하지 않는다.
 
 ## 10. Release, rollback, 배포
 
