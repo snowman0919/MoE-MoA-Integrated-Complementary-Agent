@@ -10665,3 +10665,16 @@ requests, sanitized evidence, duration fail-closed behavior, and interruption
 classification. Ruff passed, strict mypy reported no issues across 61 source
 files, `git diff --check` passed, and the complete suite passed `1,218/1,218` in
 45.27 seconds with the existing Starlette deprecation warning.
+
+## 2026-08-03 Confirmatory seal dependency boundary
+
+Confirmatory seal creation now receives one frozen `SealBackend` for panel
+configuration, repository revision, attempt planning, client metadata, provider
+fingerprints, and container digest capture. Production defaults remain the
+existing functions; the seal test injects explicit values without modifying
+module globals. The deterministic 200-attempt coding plan, separate 160-attempt
+breadth plan, opaque routing, and exclusive mode-0600 private routing file are
+unchanged. All four seal tests passed. Ruff passed, strict mypy reported no
+issues across 61 source files, `git diff --check` passed, and the complete suite
+passed `1,218/1,218` in 46.18 seconds with the existing Starlette deprecation
+warning.

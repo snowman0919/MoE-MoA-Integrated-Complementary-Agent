@@ -55,7 +55,7 @@ def test_exclusive_json_refuses_overwrite_and_protects_routing(tmp_path: Path) -
         MODULE.exclusive_json(path, {"secret": "replacement"}, mode=0o600)
 
 
-def test_created_seal_records_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_created_seal_records_panel(tmp_path: Path) -> None:
     runner = SimpleNamespace(DOCKER_IMAGE="test-image", prompt=lambda _task: "")
     config = MODULE.PanelConfig(
         "breadth",
@@ -66,12 +66,14 @@ def test_created_seal_records_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         Path(MODULE.__file__),
         Path(MODULE.__file__),
     )
-    monkeypatch.setattr(MODULE, "configure_panel", lambda _panel: config)
-    monkeypatch.setattr(MODULE, "repository_revision", lambda: "revision")
-    monkeypatch.setattr(MODULE, "attempt_plan", lambda _protocol, _config: ([], {}))
-    monkeypatch.setattr(MODULE, "client_metadata", lambda _config: {})
-    monkeypatch.setattr(MODULE, "provider_fingerprints", lambda _config: {})
-    monkeypatch.setattr(MODULE, "container_image_digest", lambda _config: "image-digest")
+    backend = MODULE.SealBackend(
+        configure_panel=lambda _panel: config,
+        repository_revision=lambda: "revision",
+        attempt_plan=lambda _protocol, _config: ([], {}),
+        client_metadata=lambda _config: {},
+        provider_fingerprints=lambda _config: {},
+        container_image_digest=lambda _config: "image-digest",
+    )
     args = Namespace(
         panel="breadth",
         protocol_id="panel-metadata",
@@ -80,7 +82,7 @@ def test_created_seal_records_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         gateway="http://127.0.0.1:9000",
     )
 
-    seal = MODULE.create_seal(args)
+    seal = MODULE.create_seal(args, backend=backend)
     routing = json.loads((tmp_path / "panel-metadata/confirmation-routing.json").read_text())
 
     assert seal["panel"] == "breadth"

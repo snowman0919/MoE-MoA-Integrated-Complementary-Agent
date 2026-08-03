@@ -10,7 +10,7 @@ import os
 import random
 import subprocess
 from argparse import Namespace
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -44,6 +44,18 @@ class PanelConfig:
     task_by_slug: Mapping[str, quality_matrix.Task]
     runner_path: Path
     analyzer_path: Path
+
+
+@dataclass(frozen=True)
+class SealBackend:
+    configure_panel: Callable[[str], PanelConfig]
+    repository_revision: Callable[[], str]
+    attempt_plan: Callable[
+        [str, PanelConfig | None], tuple[list[dict[str, Any]], dict[str, str]]
+    ]
+    client_metadata: Callable[[PanelConfig], dict[str, dict[str, str]]]
+    provider_fingerprints: Callable[[PanelConfig], dict[str, str]]
+    container_image_digest: Callable[[PanelConfig], str]
 
 
 def configure_panel(panel: str) -> PanelConfig:
@@ -180,13 +192,27 @@ def exclusive_json(path: Path, value: Any, *, mode: int = 0o644) -> None:
         handle.write("\n")
 
 
-def create_seal(args: argparse.Namespace) -> dict[str, Any]:
-    config = configure_panel(getattr(args, "panel", "coding"))
-    revision = repository_revision()
-    attempts, routing = attempt_plan(args.protocol_id, config)
-    clients = client_metadata(config)
-    providers = provider_fingerprints(config)
-    image_digest = container_image_digest(config)
+def seal_backend() -> SealBackend:
+    return SealBackend(
+        configure_panel,
+        repository_revision,
+        attempt_plan,
+        client_metadata,
+        provider_fingerprints,
+        container_image_digest,
+    )
+
+
+def create_seal(
+    args: argparse.Namespace, *, backend: SealBackend | None = None
+) -> dict[str, Any]:
+    backend = backend or seal_backend()
+    config = backend.configure_panel(getattr(args, "panel", "coding"))
+    revision = backend.repository_revision()
+    attempts, routing = backend.attempt_plan(args.protocol_id, config)
+    clients = backend.client_metadata(config)
+    providers = backend.provider_fingerprints(config)
+    image_digest = backend.container_image_digest(config)
     seal_dir = args.output_root / args.protocol_id
     seal_path = seal_dir / "confirmation-seal.json"
     routing_path = seal_dir / "confirmation-routing.json"
