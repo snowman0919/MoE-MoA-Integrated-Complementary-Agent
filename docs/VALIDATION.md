@@ -10349,3 +10349,13 @@ commits. Neither local main nor production origin-main is an ancestor of dev.
 The experiment is 231 commits ahead of dev. No ref, index, worktree, unit, or
 production process was changed; integration remains forbidden until the frozen
 quality and release gates pass.
+
+The cleanup audit also confirmed that production Python contains no `runpy` or
+dynamic script import. `fake_model` and Discord runtime artifacts are already
+absent. Two remaining legacy shell files were then removed: the one-line
+`evaluate-frontier-candidate.sh` placeholder and the obsolete
+`stop-legacy-models.sh` pidfile killer. Repository, systemd, operations,
+rollback, current-process, and pidfile-creator searches found no reference, and
+no `data/run/*.pid` existed. This is a net deletion of 16 source lines. The full
+suite passed 1,216 tests in 43.31 seconds; Ruff, strict mypy across 60 source
+files, and `git diff --check` passed.
