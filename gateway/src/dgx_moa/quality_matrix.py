@@ -17,6 +17,7 @@ import textwrap
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -1005,9 +1006,10 @@ def run_process(
     cwd: Path,
     environment: dict[str, str],
     timeout: int,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(
+        return runner(
             command,
             cwd=cwd,
             env=environment,
@@ -1020,7 +1022,7 @@ def run_process(
         if command[:2] == ["docker", "run"] and "--name" in command:
             name_index = command.index("--name") + 1
             if name_index < len(command):
-                subprocess.run(
+                runner(
                     ["docker", "container", "rm", "--force", command[name_index]],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -1115,14 +1117,21 @@ def docker_command(
     ]
 
 
-def opencode_runtime_mounts(state: Path) -> tuple[tuple[Path, str], ...]:
+def opencode_runtime_mounts(
+    state: Path,
+    *,
+    node_modules: Path = OPENCODE_NODE_MODULES,
+    package_json: Path = OPENCODE_PACKAGE_JSON,
+    package_lock: Path = OPENCODE_PACKAGE_LOCK,
+    ripgrep: Path = OPENCODE_RIPGREP,
+) -> tuple[tuple[Path, str], ...]:
     missing = [
         path
         for path in (
-            OPENCODE_NODE_MODULES,
-            OPENCODE_PACKAGE_JSON,
-            OPENCODE_PACKAGE_LOCK,
-            OPENCODE_RIPGREP,
+            node_modules,
+            package_json,
+            package_lock,
+            ripgrep,
         )
         if not path.exists()
     ]
@@ -1130,12 +1139,12 @@ def opencode_runtime_mounts(state: Path) -> tuple[tuple[Path, str], ...]:
         raise RuntimeError(f"OpenCode runtime cache missing: {missing[0]}")
     config = state / ".config/opencode"
     config.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(OPENCODE_PACKAGE_JSON, config / "package.json")
-    shutil.copy2(OPENCODE_PACKAGE_LOCK, config / "package-lock.json")
+    shutil.copy2(package_json, config / "package.json")
+    shutil.copy2(package_lock, config / "package-lock.json")
     (state / ".cache/opencode/bin").mkdir(parents=True, exist_ok=True)
     return (
-        (OPENCODE_NODE_MODULES, "/state/.config/opencode/node_modules"),
-        (OPENCODE_RIPGREP, "/state/.cache/opencode/bin/rg"),
+        (node_modules, "/state/.config/opencode/node_modules"),
+        (ripgrep, "/state/.cache/opencode/bin/rg"),
     )
 
 
@@ -1146,10 +1155,12 @@ def prepare_hermes_profile(
     workspace_id: str | None = None,
     session_id: str | None = None,
     task_id: str | None = None,
+    *,
+    source: Path = Path("/home/kotori9/.hermes/config.yaml"),
 ) -> None:
     home.mkdir(parents=True, exist_ok=True)
     config_path = home / "config.yaml"
-    shutil.copy2("/home/kotori9/.hermes/config.yaml", config_path)
+    shutil.copy2(source, config_path)
     lines = config_path.read_text().splitlines()
     in_provider = False
     base_url_replaced = False
@@ -1280,9 +1291,9 @@ def run_codex_admin(args: argparse.Namespace, workspace: Path, task: Task) -> tu
         return 124, "", type(error).__name__
 
 
-def cuda_memory_used() -> int | None:
+def cuda_memory_used(*, loader: Any = ctypes.CDLL) -> int | None:
     try:
-        runtime = ctypes.CDLL("libcudart.so")
+        runtime = loader("libcudart.so")
         free = ctypes.c_size_t()
         total = ctypes.c_size_t()
         if runtime.cudaMemGetInfo(ctypes.byref(free), ctypes.byref(total)) != 0:

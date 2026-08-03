@@ -95,7 +95,7 @@ def test_opencode_fixture_bounds_output_tokens(tmp_path: Path) -> None:
     assert config["agent"]["build"]["maxSteps"] == 40
 
 
-def test_opencode_runtime_cache_is_mounted_read_only(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_opencode_runtime_cache_is_mounted_read_only(tmp_path: Path) -> None:
     node_modules = tmp_path / "node_modules"
     package_json = tmp_path / "package.json"
     package_lock = tmp_path / "package-lock.json"
@@ -104,12 +104,13 @@ def test_opencode_runtime_cache_is_mounted_read_only(tmp_path: Path, monkeypatch
     package_json.write_text("{}")
     package_lock.write_text("{}")
     ripgrep.touch()
-    monkeypatch.setattr(MODULE, "OPENCODE_NODE_MODULES", node_modules)
-    monkeypatch.setattr(MODULE, "OPENCODE_PACKAGE_JSON", package_json)
-    monkeypatch.setattr(MODULE, "OPENCODE_PACKAGE_LOCK", package_lock)
-    monkeypatch.setattr(MODULE, "OPENCODE_RIPGREP", ripgrep)
-
-    mounts = MODULE.opencode_runtime_mounts(tmp_path / "state")
+    mounts = MODULE.opencode_runtime_mounts(
+        tmp_path / "state",
+        node_modules=node_modules,
+        package_json=package_json,
+        package_lock=package_lock,
+        ripgrep=ripgrep,
+    )
 
     assert mounts == (
         (node_modules, "/state/.config/opencode/node_modules"),
@@ -119,7 +120,7 @@ def test_opencode_runtime_cache_is_mounted_read_only(tmp_path: Path, monkeypatch
     assert (tmp_path / "state/.config/opencode/package-lock.json").read_text() == "{}"
 
 
-def test_named_docker_timeout_removes_only_its_container(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_named_docker_timeout_removes_only_its_container(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
     def run(command, **kwargs):  # type: ignore[no-untyped-def]
@@ -128,19 +129,19 @@ def test_named_docker_timeout_removes_only_its_container(tmp_path: Path, monkeyp
             raise subprocess.TimeoutExpired(command, 1)
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    monkeypatch.setattr(MODULE.subprocess, "run", run)
     result = MODULE.run_process(
         ["docker", "run", "--name", "quality-timeout", "image"],
         cwd=tmp_path,
         environment={},
         timeout=1,
+        runner=run,
     )
 
     assert result.returncode == 124
     assert ["docker", "container", "rm", "--force", "quality-timeout"] in calls
 
 
-def test_hermes_profile_targets_selected_gateway(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_hermes_profile_targets_selected_gateway(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     (source / "config.yaml").write_text(
@@ -154,13 +155,6 @@ def test_hermes_profile_targets_selected_gateway(tmp_path: Path, monkeypatch) ->
         "    base_url: http://other/v1\n"
     )
     (source / ".env").write_text("KEEP=me\n")
-    real_copy = MODULE.shutil.copy2
-
-    def copy_fixture(source_path: str, destination: Path) -> None:
-        name = Path(source_path).name
-        real_copy(source / name, destination)
-
-    monkeypatch.setattr(MODULE.shutil, "copy2", copy_fixture)
     target = tmp_path / "profile"
 
     workspace = tmp_path / "workspace"
@@ -171,6 +165,7 @@ def test_hermes_profile_targets_selected_gateway(tmp_path: Path, monkeypatch) ->
         "quality-test",
         "quality-test-hermes",
         "quality-test-task",
+        source=source / "config.yaml",
     )
 
     config = (target / "config.yaml").read_text()
@@ -717,7 +712,7 @@ def test_invocation_telemetry_uses_call_identity_and_requires_paid_cost(
     assert result["remote_cost_usd"] is None
 
 
-def test_cuda_memory_used_reads_runtime_without_torch(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_cuda_memory_used_reads_runtime_without_torch() -> None:
     class Runtime:
         @staticmethod
         def cudaMemGetInfo(free, total):  # type: ignore[no-untyped-def]
@@ -725,6 +720,4 @@ def test_cuda_memory_used_reads_runtime_without_torch(monkeypatch) -> None:  # t
             total._obj.value = 100  # noqa: SLF001
             return 0
 
-    monkeypatch.setattr(MODULE.ctypes, "CDLL", lambda _name: Runtime())
-
-    assert MODULE.cuda_memory_used() == 70
+    assert MODULE.cuda_memory_used(loader=lambda _name: Runtime()) == 70

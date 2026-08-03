@@ -10678,3 +10678,16 @@ unchanged. All four seal tests passed. Ruff passed, strict mypy reported no
 issues across 61 source files, `git diff --check` passed, and the complete suite
 passed `1,218/1,218` in 46.18 seconds with the existing Starlette deprecation
 warning.
+
+## 2026-08-03 Quality-matrix dependency boundary
+
+Quality-matrix helpers now accept only the concrete dependencies their tests
+replace: OpenCode cache paths, Hermes source config, subprocess runner, and CUDA
+runtime loader. Production defaults remain the pinned paths and stdlib/runtime
+functions; no shared backend class was added where simple keyword parameters
+suffice. The quality-matrix test module now contains zero module monkeypatches.
+All 23 tests passed, including named-container timeout cleanup, read-only
+OpenCode cache mounts, sanitized Hermes profile generation, and CUDA memory
+measurement. Ruff passed, strict mypy reported no issues across 61 source files,
+`git diff --check` passed, and the complete suite passed `1,218/1,218` in 50.71
+seconds with the existing Starlette deprecation warning.
