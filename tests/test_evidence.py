@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from dgx_moa.evidence import (
     EvidenceEdge,
     EvidenceNode,
+    append_decision,
     classify_evidence,
     contradiction_resolutions,
     stronger_evidence,
     validate_evidence_graph,
 )
+from dgx_moa.state import SessionState
 
 
 def node(node_id: str, kind: str, source: str) -> EvidenceNode:
@@ -75,3 +79,33 @@ def test_graph_consistency_and_contradiction_resolution_use_trust_order() -> Non
         validate_evidence_graph(
             nodes, [{"from": "model", "to": "missing", "relationship": "supports"}]
         )
+
+
+def test_append_decision_preserves_provenance_redaction_and_bounds() -> None:
+    state = SessionState(session_id="session", objective="Implement safely")
+    state.verified_facts = ["fact"]
+    model = SimpleNamespace(
+        repository="repository",
+        revision="revision",
+        lora_adapter=None,
+        context_length=65_536,
+    )
+
+    decision_id = append_decision(
+        state,
+        "planner",
+        {"secret": "raw"},
+        "observation",
+        model=model,
+        max_steps=1,
+        redactor=lambda value: {**value, "secret": "[REDACTED]"},
+    )
+
+    assert state.last_decision_id == decision_id
+    assert len(state.decisions) == 1
+    assert state.decisions[0]["model_repository"] == "repository"
+    assert state.decisions[0]["model_revision"] == "revision"
+    assert state.decisions[0]["structured_decision"] == {"secret": "[REDACTED]"}
+    assert state.decisions[0]["context_manifest"]["configured_context_limit"] == 65_536
+    assert state.evidence_nodes[0]["payload"] == {"secret": "[REDACTED]"}
+    assert state.evidence_nodes[0]["node_type"] == "planner_plan"

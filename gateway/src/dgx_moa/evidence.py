@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
@@ -383,6 +384,95 @@ def append_evidence(
         state.evidence_edges.append(edge.model_dump(mode="json", by_alias=True))
         state.evidence_edges = state.evidence_edges[-max_steps:]
     return node_id
+
+
+def append_decision(
+    state: SessionState,
+    role: str,
+    structured_decision: dict[str, Any],
+    observation: str,
+    *,
+    model: Any,
+    max_steps: int,
+    redactor: Callable[[Any], Any],
+) -> str:
+    decision_id = str(uuid.uuid4())
+    facts = state.verified_facts[-8:]
+    timestamp = now()
+    safe_decision = redactor(structured_decision)
+    decision = {
+        "decision_id": decision_id,
+        "session_id": state.session_id,
+        "task_id": state.task_id,
+        "role": role,
+        "model_repository": model.repository if model else "unknown",
+        "model_revision": model.revision if model else "unknown",
+        "adapter_id": str(model.lora_adapter) if model and model.lora_adapter else None,
+        "controller_commit": state.controller_commit,
+        "timestamp": timestamp,
+        "state_before": {
+            "phase": state.phase,
+            "objective_reference": hashlib.sha256(state.objective.encode()).hexdigest(),
+            "current_plan_step": state.step_count,
+            "acceptance_criterion_ids": [
+                hashlib.sha256(item.encode()).hexdigest()[:16]
+                for item in state.acceptance_criteria
+            ],
+            "verified_fact_ids": [
+                hashlib.sha256(item.encode()).hexdigest()[:16] for item in facts
+            ],
+            "working_set": state.approved_scope,
+            "active_failure_fingerprints": state.failed_call_fingerprints[-8:],
+            "scope_state": state.repository,
+            "previous_decision_ids": [item["decision_id"] for item in state.decisions[-4:]],
+        },
+        "context_manifest": {
+            "context_builder_name": "controller.role_context",
+            "context_builder_version": "2",
+            "configured_context_limit": model.context_length if model else None,
+            "input_tokens": None,
+            "included_fact_ids": [
+                hashlib.sha256(item.encode()).hexdigest()[:16] for item in facts
+            ],
+            "included_observation_ids": [
+                hashlib.sha256(observation.encode()).hexdigest()[:16]
+            ],
+            "included_plan_ids": [str(index) for index, _ in enumerate(state.plan)],
+            "included_file_references": state.approved_scope,
+            "included_diff_references": [],
+            "included_failure_fingerprints": state.failed_call_fingerprints[-8:],
+            "truncated": False,
+            "evicted_item_count": 0,
+            "evicted_item_categories": [],
+            "compression_status": "bounded",
+        },
+        "structured_decision": safe_decision,
+        "outcome": {
+            "status": "pending",
+            "progress_made": False,
+            "state_changed": False,
+            "scope_changed": False,
+            "validation_triggered": False,
+            "next_phase": state.phase,
+        },
+    }
+    state.decisions.append(decision)
+    state.decisions = state.decisions[-max_steps:]
+    decision_type, trust_class = classify_evidence("agent_decision", role)
+    state.evidence_nodes.append(
+        EvidenceNode(
+            node_id=decision_id,
+            node_type=decision_type,
+            kind="agent_decision",
+            trust_class=trust_class,
+            source=role,
+            payload=safe_decision,
+            created_at=timestamp,
+        ).model_dump(mode="json")
+    )
+    state.evidence_nodes = state.evidence_nodes[-max_steps:]
+    state.last_decision_id = decision_id
+    return decision_id
 
 
 def stronger_evidence(left: EvidenceNode, right: EvidenceNode) -> EvidenceNode:

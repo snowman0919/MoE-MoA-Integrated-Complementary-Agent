@@ -10742,3 +10742,14 @@ redactor, so persistence still applies both credential and policy redaction.
 Focused policy and Controller evidence verification passed `17/17`; Ruff and
 strict mypy passed across all 61 source files. The complete suite then passed
 `1,218/1,218` in 49.92 seconds with the existing Starlette deprecation warning.
+
+## Decision artifact boundary (2026-08-03)
+
+Decision artifact assembly, provenance, bounded context manifest hashes, and the
+matching evidence node now live beside the evidence schema in `evidence.py`.
+Controller retains event publication and its existing `_record_decision` call
+sites. A direct contract test verifies model revision, 65,536 context, role node
+type, redaction, and bounded persistence; the focused evidence/policy/Controller
+selection passed `23/23` with Ruff and strict mypy clean. The complete suite
+passed `1,219/1,219` in 50.33 seconds with the existing Starlette deprecation
+warning.

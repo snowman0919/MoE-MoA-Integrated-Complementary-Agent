@@ -17,11 +17,10 @@ from .compression import compress_messages, compress_text, summarize_text
 from .config import Settings
 from .evidence import (
     REPOSITORY_MUTATION_TOOLS,
-    EvidenceNode,
     active_failures,
+    append_decision,
     append_evidence,
     argument_paths,
-    classify_evidence,
     current_turn_executions,
     effective_objective,
     executor_stalled,
@@ -874,77 +873,15 @@ class Controller:
         observation: str,
     ) -> str:
         model = self.settings.models.get(role)
-        decision_id = str(uuid.uuid4())
-        facts = state.verified_facts[-8:]
-        decision = {
-            "decision_id": decision_id,
-            "session_id": state.session_id,
-            "task_id": state.task_id,
-            "role": role,
-            "model_repository": model.repository if model else "unknown",
-            "model_revision": model.revision if model else "unknown",
-            "adapter_id": str(model.lora_adapter) if model and model.lora_adapter else None,
-            "controller_commit": state.controller_commit,
-            "timestamp": now(),
-            "state_before": {
-                "phase": state.phase,
-                "objective_reference": hashlib.sha256(state.objective.encode()).hexdigest(),
-                "current_plan_step": state.step_count,
-                "acceptance_criterion_ids": [
-                    hashlib.sha256(item.encode()).hexdigest()[:16]
-                    for item in state.acceptance_criteria
-                ],
-                "verified_fact_ids": [
-                    hashlib.sha256(item.encode()).hexdigest()[:16] for item in facts
-                ],
-                "working_set": state.approved_scope,
-                "active_failure_fingerprints": state.failed_call_fingerprints[-8:],
-                "scope_state": state.repository,
-                "previous_decision_ids": [item["decision_id"] for item in state.decisions[-4:]],
-            },
-            "context_manifest": {
-                "context_builder_name": "controller.role_context",
-                "context_builder_version": "2",
-                "configured_context_limit": model.context_length if model else None,
-                "input_tokens": None,
-                "included_fact_ids": [
-                    hashlib.sha256(item.encode()).hexdigest()[:16] for item in facts
-                ],
-                "included_observation_ids": [hashlib.sha256(observation.encode()).hexdigest()[:16]],
-                "included_plan_ids": [str(index) for index, _ in enumerate(state.plan)],
-                "included_file_references": state.approved_scope,
-                "included_diff_references": [],
-                "included_failure_fingerprints": state.failed_call_fingerprints[-8:],
-                "truncated": False,
-                "evicted_item_count": 0,
-                "evicted_item_categories": [],
-                "compression_status": "bounded",
-            },
-            "structured_decision": self.safe_payload(state, structured_decision),
-            "outcome": {
-                "status": "pending",
-                "progress_made": False,
-                "state_changed": False,
-                "scope_changed": False,
-                "validation_triggered": False,
-                "next_phase": state.phase,
-            },
-        }
-        state.decisions.append(decision)
-        state.decisions = state.decisions[-self.settings.limits.max_steps :]
-        decision_type, trust_class = classify_evidence("agent_decision", role)
-        decision_node = EvidenceNode(
-            node_id=decision_id,
-            node_type=decision_type,
-            kind="agent_decision",
-            trust_class=trust_class,
-            source=role,
-            payload=self.safe_payload(state, structured_decision),
-            created_at=decision["timestamp"],
+        decision_id = append_decision(
+            state,
+            role,
+            structured_decision,
+            observation,
+            model=model,
+            max_steps=self.settings.limits.max_steps,
+            redactor=lambda value: self.safe_payload(state, value),
         )
-        state.evidence_nodes.append(decision_node.model_dump(mode="json"))
-        state.evidence_nodes = state.evidence_nodes[-self.settings.limits.max_steps :]
-        state.last_decision_id = decision_id
         self.store.event(
             state.session_id, "agent_decision_recorded", {"decision_id": decision_id, "role": role}
         )
