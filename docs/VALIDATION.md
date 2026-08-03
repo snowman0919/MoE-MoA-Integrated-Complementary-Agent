@@ -10793,3 +10793,24 @@ implementation/review quality gap rather than a transport failure. The immutable
 sanitized evidence subset is preserved at
 `/home/kotori9/code/.moa-preservation/diagnostics/20260803-codex-rate-limiter-diagnostic-a1`;
 raw client/provider logs were excluded. Any retry requires a new run ID.
+
+## Codex rate-limiter Frontier diagnostic A2 (2026-08-03)
+
+Run `20260803-codex-rate-limiter-frontier-diagnostic-a2` repeated the isolated
+Codex/Docker task with Frontier enabled on a fresh loopback gateway and immutable
+fixture. It passed every public, hidden, source-scope, unchanged-test, terminal,
+tool-evidence, Korean-output, and isolation check in 245.217 seconds. Telemetry
+was complete: no provider error, retryable failure, orphan error, provider switch,
+missing token row, or variable remote cost was recorded. Local Gemma served one
+Planner and one Reviewer call; the external Reasoner served three calls.
+
+This is a functional diagnostic PASS but **not** non-inferiority evidence. The
+run used four local Executor calls, five Codex OAuth secondary Executor calls,
+and one Codex OAuth Frontier call. Provider pinning held per dispatch and the
+independent Frontier review completed, but the high Frontier/secondary share
+means the result cannot establish the local MoA's quality. Compared with A1, it
+does establish that the configured fixed-cost Codex OAuth correction path can
+close the observed quality gap without OpenRouter cost. The immutable sanitized
+subset is preserved at
+`/home/kotori9/code/.moa-preservation/diagnostics/20260803-codex-rate-limiter-frontier-diagnostic-a2`;
+raw client/provider logs were excluded.
