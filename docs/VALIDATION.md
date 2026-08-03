@@ -11228,3 +11228,32 @@ run ID, and 200-attempt restart; no v98 score is reused. The final repository
 gate passed Ruff, strict mypy across all 63 gateway source files, both document
 hashes, and `1,231/1,231` tests in 53.70 seconds with the existing Starlette
 deprecation warning.
+
+## Protocol v99 termination and proven terminal-frame drain (2026-08-04)
+
+The sealed v99 epoch was stopped immediately after attempt 16. Fourteen attempts
+passed functional and hidden validation and two failed hidden validation. All
+attempts through 15 had complete provider-pinned telemetry with zero provider
+errors, orphan errors, switches, missing token rows, retryable failures, and
+incomplete remote cost rows. Attempts 7 and 9 repeated the former Hermes
+webhook failure positions and passed with complete telemetry, confirming that
+the title isolation fixed the v98 auxiliary-request contamination.
+
+Attempt 16 was a functional and hidden-validation pass but a hard reliability
+failure. Its final main orchestrated request delivered a first byte, ran for
+10.169 seconds, and was cancelled; the subsequent independent agent/title
+request completed. The cancelled request produced one cancelled local Executor
+invocation, so telemetry was incomplete with one provider error and zero orphan
+errors or provider switches. This separates the main-response terminal-frame
+defect from the already-fixed automatic-title classification defect. The v99
+runner was stopped rather than allowing later rows to hide the failure.
+
+Protocol v100 restores the bounded terminal drain: only a stream that has
+already exposed a finish reason may consume remaining frames for up to two
+seconds during downstream close, and only observed `[DONE]` changes the request
+to completed. True mid-stream disconnects and drain timeouts remain cancelled.
+The focused close-after-finish regression passed. The repository gate passed
+Ruff, strict mypy across all 63 gateway source files, and `1,232/1,232` tests in
+50.17 seconds with the existing Starlette deprecation warning. Protocol v100
+requires a new commit, plan hash, seal, run ID, clean runtime restart, and full
+200-attempt restart; no v99 score is reused.

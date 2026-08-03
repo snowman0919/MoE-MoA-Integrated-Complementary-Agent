@@ -821,9 +821,11 @@ class ResponseOwnedIterator:
         self,
         stream: AsyncIterator[bytes],
         cleanup: Callable[[], Awaitable[None]],
+        before_close: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._stream = stream
         self._cleanup = cleanup
+        self._before_close = before_close
 
     def __aiter__(self) -> ResponseOwnedIterator:
         return self
@@ -837,6 +839,8 @@ class ResponseOwnedIterator:
 
     async def aclose(self) -> None:
         try:
+            if self._before_close is not None:
+                await self._before_close()
             close = getattr(self._stream, "aclose", None)
             if close is not None:
                 await close()

@@ -655,6 +655,18 @@ reconnect, plan/context 보존을 대체하지 않는다.
   margin, bootstrap seed, 표본 수, prompt, model, fixture, scorer 계약은 유지하며,
   telemetry correlation 계약 변경 때문에 새 analysis commit, plan hash, seal,
   run ID와 clean fixture에서 200회를 처음부터 시작한다.
+- protocol v100은 title 격리 이후에도 v99 attempt 16의 마지막 main orchestrated
+  response에서 별도의 terminal-frame 경계 실패가 물리 재현된 것을 수정한다.
+  해당 요청은 첫 바이트와 finish reason을 전달했지만 Hermes가 `[DONE]`을 소비하기
+  전에 연결을 닫아 local Executor invocation 하나가 cancelled로 기록됐다. 자동
+  title 요청은 그 뒤 별도 agent request로 정상 완료됐으므로 v98의 title 오분류와
+  다른 결함이다. finish reason을 이미 관찰한 경우에만 최대 2초 동안 `[DONE]`을
+  drain하고, `[DONE]` 확인 시에만 completed로 기록한다. finish reason이 없거나
+  drain timeout이면 기존 true cancellation 계약을 유지한다. v99의 16개 score
+  (기능 14 PASS, 2 FAIL, hard reliability 1 FAIL)는 diagnostic으로 보존하고
+  재개하지 않는다. 동결 quality/speed margin, bootstrap seed, 표본 수, prompt,
+  model, fixture, scorer, telemetry 계약은 변경하지 않고 새 analysis commit,
+  plan hash, seal, run ID와 clean fixture에서 200회를 처음부터 시작한다.
 
 ## 10. Release, rollback, 배포
 
