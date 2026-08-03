@@ -11257,3 +11257,14 @@ Ruff, strict mypy across all 63 gateway source files, and `1,232/1,232` tests in
 50.17 seconds with the existing Starlette deprecation warning. Protocol v100
 requires a new commit, plan hash, seal, run ID, clean runtime restart, and full
 200-attempt restart; no v99 score is reused.
+
+Fresh immutable physical diagnostic
+`20260804-v100-hermes-rate-limiter-d1` repeated the same Hermes rate-limiter
+boundary against the restarted v100 isolated Gateway. It passed public and
+hidden validation in 208.901 seconds. Telemetry was complete and provider-pinned
+with zero provider errors, orphan errors, provider switches, missing token rows,
+retryable failures, or incomplete remote cost rows. All four local Executor
+calls completed, as did the local Reasoner, shared Gemma Planner and Reviewer,
+Codex Frontier, and permitted remote Executor corrections. This diagnostic is
+root-cause evidence only and is not counted toward the sealed confirmation
+sample.
