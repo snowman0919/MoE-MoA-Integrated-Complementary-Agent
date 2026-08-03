@@ -10577,3 +10577,14 @@ or new abstraction was added, and Controller shrank by 50 lines. Four focused
 review/evidence tests passed. Ruff passed, strict mypy reported no issues across
 61 source files, `git diff --check` passed, and the complete suite passed
 `1,218/1,218` in 44.79 seconds with the existing Starlette deprecation warning.
+
+## 2026-08-03 Remote Judge evidence-package boundary
+
+Remote Judge request packaging and repository-policy withholding now live with
+`JudgeEvidencePackage` in `remote_judge.py`. Controller still computes risk,
+dispatches the provider, records decisions, and mutates session state; it no
+longer owns evidence selection or content-withholding serialization. No wrapper
+or duplicate policy was retained, and Controller shrank by a further 94 lines.
+Three focused Judge tests passed. Ruff passed, strict mypy reported no issues
+across 61 source files, `git diff --check` passed, and the complete suite passed
+`1,218/1,218` in 47.71 seconds with the existing Starlette deprecation warning.

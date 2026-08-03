@@ -21,6 +21,7 @@ from dgx_moa.controller import (
 )
 from dgx_moa.evidence import tool_execution_changes_files
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
+from dgx_moa.remote_judge import judge_evidence_package
 from dgx_moa.review import material_frontier_review, review_observation, review_tool_executions
 from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
 from dgx_moa.state import Phase, SessionState, StateStore
@@ -4147,9 +4148,7 @@ async def test_remote_judge_receives_bounded_evidence_and_owns_no_tools(
     assert stub_provider.calls == []
 
 
-def test_remote_judge_withholds_repository_content_when_training_is_denied(
-    settings, stub_provider: StubProvider
-) -> None:
+def test_remote_judge_withholds_repository_content_when_training_is_denied() -> None:
     state = SessionState(
         session_id="judge-repository-policy",
         objective="private repository objective",
@@ -4177,9 +4176,7 @@ def test_remote_judge_withholds_repository_content_when_training_is_denied(
             }
         ],
     )
-    controller = Controller(settings, StateStore(settings.state_db), stub_provider)
-
-    package = controller.judge_evidence_package(state, "private executor draft")
+    package = judge_evidence_package(state, "private executor draft", "low")
     serialized = package.model_dump_json()
 
     assert package.objective == "[WITHHELD_BY_REPOSITORY_POLICY]"

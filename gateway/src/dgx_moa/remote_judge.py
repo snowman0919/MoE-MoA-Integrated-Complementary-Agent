@@ -9,6 +9,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from .evidence import active_failures, effective_objective
 from .security import redact
 from .state import SessionState
 from .training import sanitize
@@ -80,6 +81,106 @@ class JudgeEvidencePackage(BaseModel):
     def sanitized(self) -> JudgeEvidencePackage:
         cleaned = sanitize(redact(self.model_dump(mode="json"))).value
         return JudgeEvidencePackage.model_validate(cleaned)
+
+
+def judge_evidence_package(
+    state: SessionState,
+    observation: str,
+    risk_class: Literal["low", "medium", "high", "critical"],
+) -> JudgeEvidencePackage:
+    metadata = {
+        key: item
+        for decision in state.decisions[-8:]
+        for key, item in decision.items()
+        if key in {"changed_paths", "diff_summary", "validation_results", "build_results"}
+    }
+    package = JudgeEvidencePackage(
+        request_id=state.current_request_id or state.session_id,
+        objective=effective_objective(state),
+        request_constraints=list(state.acceptance_criteria),
+        risk_class=risk_class,
+        acceptance_criteria=(
+            [item.model_dump(mode="json") for item in state.engineering_loop.acceptance_criteria]
+            if state.engineering_loop is not None
+            else list(state.acceptance_criteria)
+        ),
+        executor_draft=observation,
+        changed_diff_summary=list(metadata.get("diff_summary", []))
+        if isinstance(metadata.get("diff_summary"), list)
+        else [metadata["diff_summary"]]
+        if metadata.get("diff_summary")
+        else [],
+        tool_evidence=state.tool_results[-8:],
+        test_evidence=list(metadata.get("validation_results", []))
+        if isinstance(metadata.get("validation_results"), list)
+        else [],
+        build_evidence=list(metadata.get("build_results", []))
+        if isinstance(metadata.get("build_results"), list)
+        else [],
+        reviewer_findings=[
+            item for item in state.agent_artifacts[-8:] if item.get("role") == "reviewer"
+        ],
+        frontier_findings=[
+            item for item in state.agent_artifacts[-8:] if item.get("role") == "frontier"
+        ],
+        open_failures=active_failures(state)[-8:],
+        resolved_failures=[
+            item for item in state.failures[-8:] if item.get("resolution_status") == "resolved"
+        ],
+        policy_decisions=state.policy_decisions[-8:],
+        selected_skills=state.skill_selections[-8:],
+        retrieved_knowledge=state.knowledge_selections[-8:],
+    )
+    if state.repository_training_policy not in {"internal_only", "training_denied"}:
+        return package
+    criteria = [
+        {
+            key: item[key]
+            for key in ("criterion_id", "required", "state", "evidence_ids")
+            if key in item
+        }
+        for item in package.acceptance_criteria
+        if isinstance(item, dict)
+    ]
+    evidence_fields = {
+        "id",
+        "status",
+        "exit_code",
+        "failure_class",
+        "tool_name",
+        "evidence_ids",
+    }
+    return package.model_copy(
+        update={
+            "objective": "[WITHHELD_BY_REPOSITORY_POLICY]",
+            "request_constraints": [],
+            "acceptance_criteria": criteria,
+            "executor_draft": "[WITHHELD_BY_REPOSITORY_POLICY]",
+            "changed_diff_summary": [],
+            "tool_evidence": [
+                {key: value for key, value in item.items() if key in evidence_fields}
+                for item in package.tool_evidence
+                if isinstance(item, dict)
+            ],
+            "test_evidence": [
+                {key: value for key, value in item.items() if key in evidence_fields}
+                for item in package.test_evidence
+                if isinstance(item, dict)
+            ],
+            "build_evidence": [
+                {key: value for key, value in item.items() if key in evidence_fields}
+                for item in package.build_evidence
+                if isinstance(item, dict)
+            ],
+            "reviewer_findings": [],
+            "frontier_findings": [],
+            "open_failures": [],
+            "resolved_failures": [],
+            "policy_decisions": [],
+            "selected_skills": [],
+            "retrieved_knowledge": [],
+        }
+    )
 
 
 class JudgeFinding(BaseModel):
