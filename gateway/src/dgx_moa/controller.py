@@ -289,7 +289,7 @@ def reasoner_evidence_generation(state: SessionState) -> int:
     transitions = sum(
         left != right for left, right in zip(outcomes, outcomes[1:], strict=False)
     )
-    return len(state.tool_results) // 8 + transitions
+    return len(state.tool_results) // 16 + transitions
 
 
 def pending_goal_prerequisites(state: SessionState) -> tuple[str, ...]:

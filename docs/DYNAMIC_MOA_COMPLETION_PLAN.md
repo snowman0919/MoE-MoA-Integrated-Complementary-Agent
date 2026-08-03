@@ -680,6 +680,20 @@ reconnect, plan/context 보존을 대체하지 않는다.
   새 analysis commit, plan hash, seal, run ID와 clean fixture에서 200회를 처음부터
   시작한다.
 
+- protocol v102는 v101 Hermes diagnostic이 반증한 title 가설과 실제 장기-turn
+  병목을 분리한다. 설치된 Hermes title 함수를 같은 profile/provider로 단독 호출한
+  결과 title은 0.788초 fast 경로로 정상 완료됐다. 실패한 11번째 요청은 title이
+  아니라 `streaming=1`, `native_agent_turn`인 주 작업 continuation이었고, 52.068초
+  Reasoner와 39.438초 Planner 뒤 첫 downstream byte가 98.287초에 나와 Hermes의
+  daemon streaming worker가 process 종료와 함께 취소됐다. Gemma specialist 생성은
+  Reviewer 25.72 tok/s, Planner 27.84 tok/s로 정상이며 Planner 지연은 1,098 output
+  token에 비례했다. 장기 맥락 재평가는 유지하되 성공 tool evidence 버킷을 8개에서
+  16개로 늘려 일반 5--12 tool 작업의 Executor 연속성을 보장한다. 사용자 context
+  변경, no-progress, 성공/실패 전환은 기존처럼 즉시 Reasoner 재진입을 유발한다.
+  v101 d1은 기능 PASS이지만 provider error 1인 hard reliability FAIL diagnostic으로
+  보존하며 confirmation에 포함하지 않는다. 새 analysis commit, plan hash, seal,
+  run ID와 clean fixture에서 200회를 처음부터 시작한다.
+
 ## 10. Release, rollback, 배포
 
 1. 정리된 기능 branch들을 `dev`에 reviewed integration

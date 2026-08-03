@@ -11294,3 +11294,39 @@ user/assistant exchange shape. The focused system/developer title and terminal
 drain suite passed `4/4`. Protocol v101 requires a new full repository gate,
 commit, plan hash, seal, run ID, clean Gateway restart, and 200-attempt restart;
 no v100 result is reused.
+
+## Protocol v101 termination and continuation latency fix (2026-08-04)
+
+Fresh immutable diagnostic `20260804-v101-hermes-dag-runner-d1` passed public
+and hidden validation in 565.066 seconds but failed the hard telemetry gate.
+It recorded one cancelled local Executor invocation, one provider error, zero
+orphan errors, and zero provider switches. The score SHA-256 is
+`1447a4ce1ba17c22a2ecedef6aff93a2c0e6f34fb3608b8f992747bdec9a1ffd`;
+the diagnostic remains excluded from confirmation.
+
+Request-level evidence disproved the v101 title hypothesis. Ten streaming main
+requests completed and an eleventh streaming `native_agent_turn` started
+immediately afterward. The final request spent 52.068 seconds in local
+Reasoner and 39.438 seconds in shared Planner before its first downstream byte
+at 98.287 seconds, then was cancelled 30 milliseconds later as the Hermes
+process exited. The installed Hermes title function, run separately through the
+same profile, provider, model, and loopback Gateway, completed through the fast
+route in 0.788 seconds. No prompt, title, credential, raw output, or identifier
+was retained in this evidence.
+
+Token telemetry showed that the Gemma specialist was generating normally:
+Reviewer produced 780 tokens at 25.72 tok/s and Planner produced 1,098 tokens
+at 27.84 tok/s. The slowest local component was the remote-host Reasoner at
+292 tokens and 5.61 tok/s. Protocol v102 therefore preserves Reasoner reentry
+for user-context changes, no-progress, and success/failure transitions while
+changing the periodic successful-tool-evidence generation from eight to
+sixteen results. This retains bounded long-horizon re-evaluation without
+forcing a roughly 90-second pre-Executor path in ordinary five-to-twelve-tool
+tasks. The focused continuation and API regression selection passed 27 tests.
+
+The active isolated specialist container remains loopback-only on port 18102
+and mounts only `gemma-4-26b-a4b-nvfp4-a19cfe00`; no Gemma 31B model directory
+was found. The existing Qwen3-Coder-Next NVFP4 mount remains the Executor and
+is not part of the retired specialist model. Protocol v102 requires a full
+repository gate, new commit and bundle, new plan hash and seal, clean Gateway
+restart, targeted physical diagnostic, and then a fresh 200-attempt run.
