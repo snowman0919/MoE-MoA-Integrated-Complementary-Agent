@@ -34,6 +34,14 @@ class ChatExecutionHeaders:
     validation_command: str | None = None
 
 
+@dataclass(frozen=True)
+class ChatExecutionContext:
+    runtime: Any
+    api_token_id: str
+    tool_owner_recovered: bool = False
+    user_agent: str | None = None
+
+
 def error_response(
     status_code: int,
     message: str,
@@ -56,7 +64,7 @@ def register_inference_routes(
     model_aliases: tuple[str, ...],
     implementation_quality_contract: str,
     status_lifecycle_record: Callable[[str], dict[str, Any]],
-    record_trace_safely: Callable[[Request, Any, str], None],
+    record_trace_safely: Callable[[Any, Any, str], None],
 ) -> None:
     @app.get("/healthz")
     async def healthz(request: Request) -> dict[str, Any]:
@@ -417,7 +425,7 @@ def register_inference_routes(
                 state, state.pending_judge_evidence
             )
             request.app.state.store.save(state)
-            record_trace_safely(request, state, state.task_id or session_id)
+            record_trace_safely(request.app.state, state, state.task_id or session_id)
         except StageTimeout as error:
             return error_response(
                 status.HTTP_504_GATEWAY_TIMEOUT,

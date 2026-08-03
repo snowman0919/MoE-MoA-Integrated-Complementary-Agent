@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .controller import pending_goal_prerequisites
 from .inference import (
+    ChatExecutionContext,
     ChatExecutionHeaders,
     chat_response_payload,
     coerce_responses_input_messages,
@@ -33,7 +34,7 @@ from .streaming import (
 )
 
 ChatHandler = Callable[
-    [ChatRequest, Request, ChatExecutionHeaders], Coroutine[Any, Any, Response]
+    [ChatRequest, ChatExecutionContext, ChatExecutionHeaders], Coroutine[Any, Any, Response]
 ]
 
 
@@ -122,6 +123,18 @@ def register_responses_routes(
                 validation_command=x_validation_command,
             )
 
+        def execution_context() -> ChatExecutionContext:
+            return ChatExecutionContext(
+                runtime=request.app.state,
+                api_token_id=getattr(request.state, "api_token_id", "legacy"),
+                tool_owner_recovered=bool(
+                    getattr(request.state, "responses_tool_owner_recovered", False)
+                ),
+                user_agent=(
+                    request.headers.get("user-agent") if "headers" in request.scope else None
+                ),
+            )
+
         if body.stream:
             response_session_id = x_session_id or str(body.metadata.get("session_id") or "")
             if not response_session_id:
@@ -182,7 +195,7 @@ def register_responses_routes(
                         chat_task = asyncio.create_task(
                             chat_handler(
                                 current_body,
-                                request,
+                                execution_context(),
                                 execution_headers(response_session_id),
                             )
                         )
@@ -403,7 +416,7 @@ def register_responses_routes(
                 )
             chat_response = await chat_handler(
                 chat_body,
-                request,
+                execution_context(),
                 execution_headers(chat_session_id),
             )
         except HTTPException as error:

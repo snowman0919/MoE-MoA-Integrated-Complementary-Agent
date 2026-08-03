@@ -10530,3 +10530,16 @@ Responses trace/validation-header assertion then passed independently. Ruff
 passed, strict mypy reported no issues across 61 source files,
 `git diff --check` passed, and the complete suite passed `1,218/1,218` in 46.25
 seconds with the existing Starlette deprecation warning.
+
+## 2026-08-03 Chat execution runtime-context boundary
+
+The shared `execute_chat` function no longer accepts or references FastAPI
+`Request`. Chat and Responses now provide an immutable `ChatExecutionContext`
+containing the lifespan runtime state, authenticated token identity,
+tool-owner recovery flag, and bounded User-Agent telemetry. The 147 former
+`request.app.state` lookups now use that runtime context. Trace recording was
+also narrowed from Request to runtime state, so Judge and Chat share the same
+lower-level contract. All 241 API tests passed. Ruff passed, strict mypy
+reported no issues across 61 source files, `git diff --check` passed, and the
+complete suite passed `1,218/1,218` in 46.45 seconds with the existing
+Starlette deprecation warning.

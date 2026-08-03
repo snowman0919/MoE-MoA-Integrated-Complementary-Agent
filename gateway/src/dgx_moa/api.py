@@ -46,6 +46,7 @@ from .image_generation import (
     capability_status as image_generation_status,
 )
 from .inference import (
+    ChatExecutionContext,
     ChatExecutionHeaders,
     ResponseOwnedIterator,
     ResponseOwnedStreamingResponse,
@@ -754,7 +755,7 @@ def create_app(
             param,
         )
 
-    def record_trace_safely(request: Request, state: Any, task_id: str) -> None:
+    def record_trace_safely(runtime: Any, state: Any, task_id: str) -> None:
         for decision in getattr(state, "specialist_routing", []):
             if isinstance(decision, dict):
                 decision["quality_outcome"] = (
@@ -769,10 +770,10 @@ def create_app(
         for role in ("planner", "reviewer"):
             if role not in configured.models:
                 continue
-            idle = request.app.state.lifecycle_store.latest_decision(role)
+            idle = runtime.lifecycle_store.latest_decision(role)
             if idle is None:
                 continue
-            local = request.app.state.lifecycle_store.get(role)
+            local = runtime.lifecycle_store.get(role)
             state.specialist_eviction_decisions.append(
                 idle.model_dump(mode="json")
                 | {
@@ -789,16 +790,16 @@ def create_app(
                 }
             )
         try:
-            request.app.state.traces.record(state, task_id=task_id)
+            runtime.traces.record(state, task_id=task_id)
         except OSError as error:
             state.observability_degraded = True
             state.observability_status = "degraded"
-            request.app.state.store.event(
+            runtime.store.event(
                 state.session_id,
                 "observability_degraded",
                 {"component": "trace_archive", "error": type(error).__name__},
             )
-            request.app.state.store.save(state)
+            runtime.store.save(state)
 
     def public_lifecycle_record(record: LifecycleRecord) -> dict[str, Any]:
         decision = app.state.lifecycle_store.latest_decision(record.role)
@@ -997,9 +998,10 @@ def create_app(
 
     async def execute_chat(
         body: ChatRequest,
-        request: Request,
+        context: ChatExecutionContext,
         headers: ChatExecutionHeaders,
     ) -> Response:
+        runtime = context.runtime
         x_session_id = headers.session_id
         x_runtime_channel = headers.runtime_channel
         x_trace_origin = headers.trace_origin
@@ -1030,7 +1032,7 @@ def create_app(
             if timing_recorded:
                 return
             state.timings_ms["completed"] = elapsed_ms(accepted)
-            request.app.state.store.event(
+            runtime.store.event(
                 state.session_id,
                 "request_timing",
                 {
@@ -1040,7 +1042,7 @@ def create_app(
             )
             timing_recorded = True
 
-        profile_state = request.app.state.profiles.current()
+        profile_state = runtime.profiles.current()
         current_profile = profile_state["active_profile"]
         if current_profile == "judge" or profile_state["status"] in {
             "transitioning",
@@ -1063,10 +1065,10 @@ def create_app(
         raw["model"] = model_alias
         provided_session_id = x_session_id or str(body.metadata.get("session_id") or "")
         session_id = provided_session_id or str(uuid.uuid4())
-        api_token_id = getattr(request.state, "api_token_id", "legacy")
+        api_token_id = context.api_token_id
         recovered_tool_owner = False
         if not provided_session_id:
-            tool_owner, recovered_tool_owner = request.app.state.store.recover_tool_owner(
+            tool_owner, recovered_tool_owner = runtime.store.recover_tool_owner(
                 tool_result_call_ids(raw["messages"]),
                 api_token_id,
                 latest_user_content(raw["messages"]),
@@ -1074,7 +1076,7 @@ def create_app(
             if tool_owner is not None:
                 session_id = tool_owner.session_id
         try:
-            raw["max_tokens"] = request.app.state.controller.executor_tokens(raw)
+            raw["max_tokens"] = runtime.controller.executor_tokens(raw)
         except ValueError as error:
             return error_response(
                 status.HTTP_400_BAD_REQUEST,
@@ -1143,10 +1145,10 @@ def create_app(
                 is_optional = role in optional
                 model = configured.models.get(role)
                 if configured.specialist_routing.enabled and role in {"planner", "reviewer"}:
-                    record = request.app.state.lifecycle_store.get(role)
+                    record = runtime.lifecycle_store.get(role)
                     role_load = False
                     if role in configured.lifecycle_unit_map and record.state != "ready":
-                        check = await request.app.state.lifecycle.ensure_ready(role)
+                        check = await runtime.lifecycle.ensure_ready(role)
                         record = check.record
                         role_load = check.load_triggered
                     role_states[role] = "warm" if record.state == "ready" else record.state
@@ -1170,7 +1172,7 @@ def create_app(
                         )
                     except Exception:
                         healthy = False
-                    external_record = request.app.state.lifecycle_store.recover_state(
+                    external_record = runtime.lifecycle_store.recover_state(
                         role,
                         "ready" if healthy else "failed",
                         failure_class=None if healthy else "external_unavailable",
@@ -1178,7 +1180,7 @@ def create_app(
                     role_states[role] = "warm" if healthy else "cold"
                     role_ready_at[role] = external_record.ready_at
                     if not healthy:
-                        if role == "reasoner" and request.app.state.frontier is not None:
+                        if role == "reasoner" and runtime.frontier is not None:
                             degraded_roles[role] = "local_not_ready_remote_fallback"
                         elif is_optional:
                             degraded_roles[role] = f"{role}_unavailable"
@@ -1197,7 +1199,7 @@ def create_app(
                     ):
                         unmanaged_role = role
                     continue
-                check = await request.app.state.lifecycle.ensure_ready(role)
+                check = await runtime.lifecycle.ensure_ready(role)
                 role_states[role] = check.record.state
                 role_load_triggered[role] = check.load_triggered
                 role_ready_at[role] = check.record.ready_at
@@ -1214,25 +1216,25 @@ def create_app(
                     and check.record.state != "ready"
                 ):
                     if (
-                        request.app.state.lifecycle_store.automation_status().automation_disabled
+                        runtime.lifecycle_store.automation_status().automation_disabled
                         or check.record.state == "failed"
                     ):
                         unavailable_record = check.record
                     else:
                         loading_record = check.record
         try:
-            request.app.state.usage.start(
+            runtime.usage.start(
                 RequestUsageStart(
                     request_id=usage_request_id,
                     session_id=str(
                         uuid.uuid5(
-                            request.app.state.usage_session_namespace,
+                            runtime.usage_session_namespace,
                             state_session_id,
                         )
                     ),
                     api_token_id=api_token_id,
                     client_class=classify_client(
-                        request.headers.get("user-agent") if "headers" in request.scope else None
+                        context.user_agent
                     ),
                     model_alias=cast(
                         ModelAlias,
@@ -1260,7 +1262,7 @@ def create_app(
                 "rate_limit_error",
                 "api_key_quota_exceeded",
             )
-        request.app.state.usage.start_roles(
+        runtime.usage.start_roles(
             usage_request_id,
             candidate_roles,
             session_id=state_session_id,
@@ -1287,7 +1289,7 @@ def create_app(
                 return
             terminal_finalized = True
             try:
-                current = current_state or state or request.app.state.store.get(state_session_id)
+                current = current_state or state or runtime.store.get(state_session_id)
                 if stage is not None:
                     stage_status[stage] = status_value
                 if downstream_started:
@@ -1298,7 +1300,7 @@ def create_app(
                         state = current
                     if status_value == "cancelled":
                         current.final_status = "cancelled"
-                        request.app.state.controller.terminate_loop(current, "CLIENT_CANCELLED")
+                        runtime.controller.terminate_loop(current, "CLIENT_CANCELLED")
                     elif (
                         status_value in {"failed", "timed_out"}
                         and current.final_status != "blocked"
@@ -1311,18 +1313,18 @@ def create_app(
                         )
                     if downstream_started:
                         current.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
-                    request.app.state.controller.complete_loop_iteration(current, status_value)
+                    runtime.controller.complete_loop_iteration(current, status_value)
                     record_request_timing(current)
-                    request.app.state.store.event(
+                    runtime.store.event(
                         current.session_id,
                         "session_ended",
                         {"request_id": state_session_id, "status": status_value},
                     )
-                    request.app.state.store.save(current)
-                    record_trace_safely(request, current, task_id)
+                    runtime.store.save(current)
+                    record_trace_safely(runtime, current, task_id)
                 if usage_started:
                     completed_at = time.time()
-                    request.app.state.usage.finalize(
+                    runtime.usage.finalize(
                         usage_request_id,
                         RequestUsageFinalization(
                             first_byte_at=first_byte_at,
@@ -1335,7 +1337,7 @@ def create_app(
                             total_tokens=token_usage.get("total_tokens"),
                         ),
                     )
-                    request.app.state.usage.finalize_roles(
+                    runtime.usage.finalize_roles(
                         usage_request_id,
                         completed_at=completed_at,
                         first_byte_at=first_byte_at,
@@ -1343,7 +1345,7 @@ def create_app(
                         failure_class=retryable_failure_class or stage,
                         ready_at={
                             role: (
-                                request.app.state.lifecycle_store.get(role).ready_at
+                                runtime.lifecycle_store.get(role).ready_at
                                 if role in configured.models
                                 else None
                             )
@@ -1352,7 +1354,7 @@ def create_app(
                         role_failures=degraded_roles,
                     )
             finally:
-                request.app.state.lifecycle_store.release_leases(
+                runtime.lifecycle_store.release_leases(
                     (*stream_lease_ids, *active_lease_ids)
                 )
                 active_lease_ids = ()
@@ -1381,21 +1383,21 @@ def create_app(
 
         ensured_roles = list(roles)
         try:
-            async with request.app.state.executor_admission_lock:
+            async with runtime.executor_admission_lock:
                 backend_busy_probe = getattr(
-                    request.app.state.provider,
+                    runtime.provider,
                     "backend_busy",
                     None,
                 )
                 backend_busy = (
                     await backend_busy_probe(configured.models["executor"]) is True
-                    if request.app.state.frontier is not None and callable(backend_busy_probe)
+                    if runtime.frontier is not None and callable(backend_busy_probe)
                     else False
                 )
                 executor_remote = (
-                    request.app.state.lifecycle_store.get("executor").active_request_count > 0
+                    runtime.lifecycle_store.get("executor").active_request_count > 0
                     or backend_busy
-                ) and request.app.state.frontier is not None
+                ) and runtime.frontier is not None
                 if executor_remote:
                     executor_routing_reason = "local_busy"
                 initial_lease_roles = tuple(
@@ -1409,7 +1411,7 @@ def create_app(
                 )
                 active_lease_ids = tuple(
                     lease.lease_id
-                    for lease in await request.app.state.lifecycle.acquire_request_leases(
+                    for lease in await runtime.lifecycle.acquire_request_leases(
                         usage_request_id,
                         initial_lease_roles,
                         kind="active_request",
@@ -1442,10 +1444,10 @@ def create_app(
             for role in new_roles:
                 model = configured.models.get(role)
                 if configured.specialist_routing.enabled and role in {"planner", "reviewer"}:
-                    record = request.app.state.lifecycle_store.get(role)
+                    record = runtime.lifecycle_store.get(role)
                     role_load = False
                     if role in configured.lifecycle_unit_map and record.state != "ready":
-                        check = await request.app.state.lifecycle.ensure_ready(role)
+                        check = await runtime.lifecycle.ensure_ready(role)
                         record = check.record
                         role_load = check.load_triggered
                         load_triggered = load_triggered or role_load
@@ -1460,7 +1462,7 @@ def create_app(
                     new_ready_at[role] = None
                     continue
                 role_load = False
-                record = request.app.state.lifecycle_store.get(role)
+                record = runtime.lifecycle_store.get(role)
                 if configured.lifecycle_mode in {"fixed", "adaptive"}:
                     if model.lifecycle_control == "external":
                         try:
@@ -1469,7 +1471,7 @@ def create_app(
                             )(role)
                         except Exception:
                             healthy = False
-                        record = request.app.state.lifecycle_store.recover_state(
+                        record = runtime.lifecycle_store.recover_state(
                             role,
                             "ready" if healthy else "failed",
                             failure_class=None if healthy else "external_unavailable",
@@ -1478,7 +1480,7 @@ def create_app(
                         unmanaged = unmanaged or role
                         not_ready = not_ready or record
                     else:
-                        check = await request.app.state.lifecycle.ensure_ready(role)
+                        check = await runtime.lifecycle.ensure_ready(role)
                         record = check.record
                         role_load = check.load_triggered
                         load_triggered = load_triggered or role_load
@@ -1494,8 +1496,8 @@ def create_app(
                 lease_roles.append(role)
             tracked_roles.extend(role for role in new_roles if role not in tracked_roles)
             ensured_roles.extend(new_roles)
-            request.app.state.usage.add_required_roles(usage_request_id, new_roles)
-            request.app.state.usage.start_roles(
+            runtime.usage.add_required_roles(usage_request_id, new_roles)
+            runtime.usage.start_roles(
                 usage_request_id,
                 new_roles,
                 session_id=state_session_id,
@@ -1507,14 +1509,14 @@ def create_app(
                 ready_at=new_ready_at,
             )
             if unmanaged is not None:
-                request.app.state.usage.update_model_state(usage_request_id, "cold")
+                runtime.usage.update_model_state(usage_request_id, "cold")
                 raise DynamicRoleUnmanagedError(unmanaged)
             if not_ready is not None:
-                request.app.state.usage.update_model_state(
+                runtime.usage.update_model_state(
                     usage_request_id, "loading" if any(new_loads.values()) else "cold"
                 )
                 raise LifecycleNotReadyError(not_ready)
-            leases = await request.app.state.lifecycle.acquire_request_leases(
+            leases = await runtime.lifecycle.acquire_request_leases(
                 usage_request_id,
                 lease_roles,
                 kind="active_request",
@@ -1525,16 +1527,16 @@ def create_app(
         try:
             continuation_owner = continuation_correlation(state_session_id)
             if recovered_tool_owner or has_matching_tool_result(raw["messages"]):
-                request.app.state.lifecycle_store.release_continuation(
+                runtime.lifecycle_store.release_continuation(
                     "executor", continuation_owner
                 )
-            previous_state = request.app.state.store.get(state_session_id)
+            previous_state = runtime.store.get(state_session_id)
             previous_failure_count = len(previous_state.failures) if previous_state else 0
             duplicate_failure_recovery = False
             try:
-                state = request.app.state.controller.session(state_session_id, raw["messages"])
+                state = runtime.controller.session(state_session_id, raw["messages"])
             except DuplicateFailedCall:
-                recovered = request.app.state.store.get(state_session_id)
+                recovered = runtime.store.get(state_session_id)
                 repeated_actions = (
                     sum(
                         failure.get("failure_class") == "REPEATED_ACTION"
@@ -1549,7 +1551,7 @@ def create_app(
                     and recovered.engineering_loop.termination_reason is not None
                 )
                 if (
-                    request.app.state.frontier is None
+                    runtime.frontier is None
                     or recovered is None
                     or repeated_actions != 1
                     or terminated
@@ -1557,7 +1559,7 @@ def create_app(
                     raise
                 state = recovered
                 duplicate_failure_recovery = True
-                request.app.state.store.event(
+                runtime.store.event(
                     state_session_id,
                     "executor_duplicate_failure_recovery",
                     {"provider": "frontier"},
@@ -1572,12 +1574,12 @@ def create_app(
             state.timings_ms = {"accepted": 0.0}
             for role, reason in degraded_roles.items():
                 stage_status[role] = "unavailable"
-                request.app.state.store.event(
+                runtime.store.event(
                     state_session_id,
                     "role_degraded",
                     {"role": role, "reason": reason},
                 )
-            request.app.state.store.event(
+            runtime.store.event(
                 state_session_id,
                 "request_received",
                 {
@@ -1598,14 +1600,14 @@ def create_app(
             state.request_class = request_class
             state.roles_required = list(roles)
             state.review_fail_closed = review_fails_closed(request_class)
-            request.app.state.controller.select_route(state, raw["metadata"])
+            runtime.controller.select_route(state, raw["metadata"])
             stream_judge_reasons = (
-                request.app.state.controller.remote_judge_invocation_reasons(state, raw["metadata"])
+                runtime.controller.remote_judge_invocation_reasons(state, raw["metadata"])
                 if body.stream
                 else []
             )
             if stream_judge_reasons == ["repeated_failure_fingerprint"]:
-                request.app.state.store.event(
+                runtime.store.event(
                     state_session_id,
                     "remote_judge_stream_deferred",
                     {
@@ -1615,7 +1617,7 @@ def create_app(
                 )
                 stream_judge_reasons = []
             if stream_judge_reasons:
-                request.app.state.store.event(
+                runtime.store.event(
                     state_session_id,
                     "remote_judge_non_stream_required",
                     {"reasons": stream_judge_reasons},
@@ -1629,12 +1631,12 @@ def create_app(
                     headers={"X-Session-ID": state_session_id},
                 )
             if body.metadata.get("no_progress"):
-                request.app.state.controller.note_no_progress(state)
+                runtime.controller.note_no_progress(state)
 
             async def remote_executor_complete(
                 executor_request: dict[str, Any], stage: str
             ) -> dict[str, Any]:
-                frontier_provider = request.app.state.frontier
+                frontier_provider = runtime.frontier
                 if frontier_provider is None:
                     raise FrontierRequiredUnavailable("remote Frontier fallback is unavailable")
                 scoped_request = {
@@ -1656,12 +1658,12 @@ def create_app(
                     f"{usage_request_id}:{stage}",
                 )
                 if remapped_ids:
-                    request.app.state.store.event(
+                    runtime.store.event(
                         state_session_id,
                         "provider_tool_call_ids_remapped",
                         {"provider": "frontier", "count": remapped_ids},
                     )
-                request.app.state.store.event(
+                runtime.store.event(
                     state_session_id,
                     "executor_remote_completed",
                     {
@@ -1693,7 +1695,7 @@ def create_app(
                     ]
                 completed_retries: list[int] = []
                 if state.frontier_correction_required:
-                    correction_events = request.app.state.store.events(state_session_id)
+                    correction_events = runtime.store.events(state_session_id)
                     last_rejection = max(
                         (
                             index
@@ -1714,7 +1716,7 @@ def create_app(
                         for index, event in enumerate(correction_events)
                     )
                     if completed_retries and not tool_executed_after_retry:
-                        request.app.state.store.event(
+                        runtime.store.event(
                             state_session_id,
                             "frontier_correction_tool_retry_exhausted",
                             {"provider": "frontier"},
@@ -1730,14 +1732,14 @@ def create_app(
                 if message.get("tool_calls") and not unsafe_tool_call:
                     return response
                 if unsafe_tool_call:
-                    request.app.state.store.event(
+                    runtime.store.event(
                         state_session_id,
                         "frontier_correction_tool_rejected",
                         {"reason": "unsafe_low_specificity_edit"},
                     )
                 tools = executor_request.get("tools")
                 if not isinstance(tools, list) or not tools:
-                    request.app.state.store.event(
+                    runtime.store.event(
                         state_session_id,
                         "frontier_correction_tool_unavailable",
                         {"reason": "client_tools_unavailable"},
@@ -1758,7 +1760,7 @@ def create_app(
                     in allowed_tools
                 ]
                 if not tools:
-                    request.app.state.store.event(
+                    runtime.store.event(
                         state_session_id,
                         "frontier_correction_tool_unavailable",
                         {"reason": "mutation_tools_unavailable"},
@@ -1810,7 +1812,7 @@ def create_app(
                         "content": retry_instruction + ", ".join(tool_names),
                     },
                 ]
-                request.app.state.store.event(
+                runtime.store.event(
                     state_session_id,
                     "frontier_correction_tool_retry_requested",
                     {
@@ -1825,7 +1827,7 @@ def create_app(
                 retry_message = (response.get("choices") or [{}])[0].get("message", {})
                 unsafe_retry = unsafe_frontier_correction_tool_call(response)
                 if not retry_message.get("tool_calls") or unsafe_retry:
-                    request.app.state.store.event(
+                    runtime.store.event(
                         state_session_id,
                         "frontier_correction_tool_retry_failed",
                         {
@@ -1840,7 +1842,7 @@ def create_app(
                     raise FrontierRequiredUnavailable(
                         "required Frontier correction did not produce a safe client tool call"
                     )
-                request.app.state.store.event(
+                runtime.store.event(
                     state_session_id,
                     "frontier_correction_tool_retry_completed",
                     {"provider": "frontier"},
@@ -1850,7 +1852,7 @@ def create_app(
             async def remote_reasoner_complete(
                 reasoner_request: dict[str, Any], stage: str
             ) -> dict[str, Any]:
-                frontier_provider = request.app.state.frontier
+                frontier_provider = runtime.frontier
                 if frontier_provider is None:
                     raise FrontierRequiredUnavailable("remote Reasoner fallback is unavailable")
                 remote_request = dict(reasoner_request)
@@ -1862,7 +1864,7 @@ def create_app(
                     remote_request,
                     f"{usage_request_id}:{stage}",
                 )
-                request.app.state.store.event(
+                runtime.store.event(
                     state_session_id,
                     "reasoner_remote_completed",
                     {
@@ -1877,13 +1879,13 @@ def create_app(
                 and bool(state.plan)
                 and not state.implementation_evidence
             )
-            preparation_stalled = request.app.state.controller.executor_stalled(
+            preparation_stalled = runtime.controller.executor_stalled(
                 state,
                 inspection_limit=3 if planned_change else 6,
             )
             planned_change_needs_frontier = (
                 not executor_remote
-                and request.app.state.frontier is not None
+                and runtime.frontier is not None
                 and planned_change
                 and not preparation_stalled
                 and not duplicate_failure_recovery
@@ -1891,7 +1893,7 @@ def create_app(
             )
             if (
                 not executor_remote
-                and request.app.state.frontier is not None
+                and runtime.frontier is not None
                 and (
                     state.frontier_correction_required
                     or duplicate_failure_recovery
@@ -1912,11 +1914,11 @@ def create_app(
                 executor_lease_id = str(
                     uuid.uuid5(uuid.UUID(usage_request_id), "active_request:executor")
                 )
-                request.app.state.lifecycle_store.release_leases((executor_lease_id,))
+                runtime.lifecycle_store.release_leases((executor_lease_id,))
                 active_lease_ids = tuple(
                     lease_id for lease_id in active_lease_ids if lease_id != executor_lease_id
                 )
-                request.app.state.store.event(
+                runtime.store.event(
                     state_session_id,
                     "executor_remote_selected",
                     {
@@ -1929,7 +1931,7 @@ def create_app(
             tool_continuation = (
                 recovered_tool_owner
                 or has_matching_tool_result(raw["messages"])
-                or bool(getattr(request.state, "responses_tool_owner_recovered", False))
+                or context.tool_owner_recovered
             ) and not new_failure_observed
             executor_provider_pin = "frontier" if executor_remote else "local"
             executor_provider_dispatched = False
@@ -1943,7 +1945,7 @@ def create_app(
                     return await remote_executor_complete(executor_request, stage)
                 return cast(
                     dict[str, Any],
-                    await request.app.state.provider.complete(
+                    await runtime.provider.complete(
                         "executor",
                         configured.models["executor"],
                         executor_request,
@@ -1952,7 +1954,7 @@ def create_app(
                     ),
                 )
 
-            prepared = await request.app.state.controller.prepare_executor(
+            prepared = await runtime.controller.prepare_executor(
                 state,
                 raw,
                 roles,
@@ -1960,13 +1962,13 @@ def create_app(
                 tool_continuation=tool_continuation,
                 executor_complete=pinned_executor_complete,
                 reasoner_complete=(
-                    remote_reasoner_complete if request.app.state.frontier is not None else None
+                    remote_reasoner_complete if runtime.frontier is not None else None
                 ),
             )
-            context_fits = getattr(request.app.state.provider, "context_fits", None)
+            context_fits = getattr(runtime.provider, "context_fits", None)
             context_exceeded = (
                 not executor_remote
-                and request.app.state.frontier is not None
+                and runtime.frontier is not None
                 and callable(context_fits)
                 and await context_fits(
                     configured.models["executor"],
@@ -1977,25 +1979,25 @@ def create_app(
             )
             stalled = (
                 not executor_remote
-                and request.app.state.frontier is not None
-                and request.app.state.controller.executor_stalled(state)
+                and runtime.frontier is not None
+                and runtime.controller.executor_stalled(state)
             )
             completion_stalled = (
                 not executor_remote
-                and request.app.state.frontier is not None
+                and runtime.frontier is not None
                 and bool(raw["metadata"].get("responses_progress_retry"))
-                and request.app.state.controller.implementation_completion_ready(
+                and runtime.controller.implementation_completion_ready(
                     state, raw["metadata"]
                 )
             )
             frontier_correction = (
                 not executor_remote
-                and request.app.state.frontier is not None
+                and runtime.frontier is not None
                 and state.frontier_correction_required
             )
             repeated_failure = (
                 not executor_remote
-                and request.app.state.frontier is not None
+                and runtime.frontier is not None
                 and any(count >= 2 for count in state.failure_families.values())
             )
             if (
@@ -2017,7 +2019,7 @@ def create_app(
                     else "local_no_progress"
                 )
                 if executor_provider_dispatched:
-                    request.app.state.store.event(
+                    runtime.store.event(
                         state_session_id,
                         "executor_provider_switch_prevented",
                         {
@@ -2032,11 +2034,11 @@ def create_app(
                     executor_lease_id = str(
                         uuid.uuid5(uuid.UUID(usage_request_id), "active_request:executor")
                     )
-                    request.app.state.lifecycle_store.release_leases((executor_lease_id,))
+                    runtime.lifecycle_store.release_leases((executor_lease_id,))
                     active_lease_ids = tuple(
                         lease_id for lease_id in active_lease_ids if lease_id != executor_lease_id
                     )
-                    request.app.state.store.event(
+                    runtime.store.event(
                         state_session_id,
                         "executor_remote_selected",
                         {
@@ -2044,7 +2046,7 @@ def create_app(
                             "provider": "frontier",
                         },
                     )
-            image_generator = request.app.state.image_generator
+            image_generator = runtime.image_generator
             if image_generator is not None and not body.stream and not executor_remote:
                 image_tool = image_generator.tool_definition()
                 if image_tool is not None:
@@ -2083,7 +2085,7 @@ def create_app(
             if state.engineering_loop is not None and prepared.get("tools"):
                 if state.frontier_correction_pending_verification:
                     prepared["parallel_tool_calls"] = False
-                    request.app.state.store.event(
+                    runtime.store.event(
                         state_session_id,
                         "frontier_correction_verification_serialized",
                         {"reason": "bounded_validation"},
@@ -2092,7 +2094,7 @@ def create_app(
                     prepared["parallel_tool_calls"] = True
                 if state.engineering_loop.remaining_budget.tool_calls == 0:
                     prepared["tool_choice"] = "none"
-                    request.app.state.store.event(
+                    runtime.store.event(
                         state_session_id,
                         "engineering_loop_tool_budget_closed",
                         {"loop_id": state.engineering_loop.loop_id},
@@ -2106,7 +2108,7 @@ def create_app(
             active_stage = "executor_first_byte" if body.stream else "executor_total"
             executor_started = time.monotonic()
             state.timings_ms["upstream_start"] = elapsed_ms(accepted)
-            request.app.state.store.event(
+            runtime.store.event(
                 state_session_id,
                 "executor_started",
                 {
@@ -2114,7 +2116,7 @@ def create_app(
                     "phase": state.phase,
                     "provider": "frontier" if executor_remote else "local",
                     "model": (
-                        request.app.state.frontier.config.model
+                        runtime.frontier.config.model
                         if executor_remote
                         else configured.models["executor"].served_name
                     ),
@@ -2133,10 +2135,10 @@ def create_app(
                             )
                         except Exception as error:
                             remote_failure.append(type(error).__name__)
-                            request.app.state.controller.record_provider_failure(
+                            runtime.controller.record_provider_failure(
                                 state, "executor", error
                             )
-                            request.app.state.store.event(
+                            runtime.store.event(
                                 state_session_id,
                                 "executor_remote_failed",
                                 {
@@ -2172,14 +2174,14 @@ def create_app(
                 else:
                     stream_lease_ids = tuple(
                         lease.lease_id
-                        for lease in await request.app.state.lifecycle.acquire_request_leases(
+                        for lease in await runtime.lifecycle.acquire_request_leases(
                             usage_request_id,
                             ("executor",),
                             kind="open_stream",
                             require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
                         )
                     )
-                    upstream = await request.app.state.provider.stream(
+                    upstream = await runtime.provider.stream(
                         "executor",
                         configured.models["executor"],
                         prepared,
@@ -2240,7 +2242,7 @@ def create_app(
                                     "next_phase": state.phase,
                                 }
                             token_usage.update(observation.usage)
-                            request.app.state.controller.record_observed_invocation(
+                            runtime.controller.record_observed_invocation(
                                 state,
                                 {
                                     "role": "executor",
@@ -2251,7 +2253,7 @@ def create_app(
                                     ),
                                     "model": (
                                         remote_invocation_provenance.get(
-                                            "model", request.app.state.frontier.config.model
+                                            "model", runtime.frontier.config.model
                                         )
                                         if executor_remote
                                         else configured.models["executor"].served_name
@@ -2281,7 +2283,7 @@ def create_app(
                                 "tool_calls" in observation.finish_reasons
                                 or observation.tool_call_ids
                             ):
-                                request.app.state.controller.remember_tool_calls(
+                                runtime.controller.remember_tool_calls(
                                     state,
                                     [
                                         {
@@ -2297,7 +2299,7 @@ def create_app(
                                         for index in sorted(observation.tool_call_ids_by_index)
                                     ],
                                 )
-                                request.app.state.lifecycle_store.refresh_continuation(
+                                runtime.lifecycle_store.refresh_continuation(
                                     usage_request_id,
                                     "executor",
                                     continuation_owner,
@@ -2306,12 +2308,12 @@ def create_app(
                                         + configured.lifecycle.continuation_lease_ttl_seconds
                                     ),
                                 )
-                            request.app.state.store.event(
+                            runtime.store.event(
                                 state_session_id,
                                 "assistant_stream_finished",
                                 {"finish_reasons": observation.finish_reasons},
                             )
-                            request.app.state.store.event(
+                            runtime.store.event(
                                 state_session_id,
                                 "stream_completed" if terminal else "stream_aborted",
                                 {},
@@ -2366,14 +2368,14 @@ def create_app(
                                     1 if observation.tool_delta_seen else 0,
                                 )
                                 while admitted_tool_calls < required_admissions:
-                                    request.app.state.controller.admit_tool_call(
+                                    runtime.controller.admit_tool_call(
                                         state,
                                         observation.tool_call_names.get(admitted_tool_calls),
                                     )
                                     admitted_tool_calls += 1
                                 observed_total_tokens = observation.usage.get("total_tokens", 0)
                                 if observed_total_tokens > accounted_total_tokens:
-                                    request.app.state.controller.record_loop_usage(
+                                    runtime.controller.record_loop_usage(
                                         state,
                                         total_tokens=(
                                             observed_total_tokens - accounted_total_tokens
@@ -2398,7 +2400,7 @@ def create_app(
                             if termination == "BUDGET_EXHAUSTED"
                             else "loop_new_evidence_required"
                         )
-                        request.app.state.store.event(
+                        runtime.store.event(
                             state_session_id,
                             "stream_loop_admission_failed",
                             {"code": code},
@@ -2439,7 +2441,7 @@ def create_app(
             response = (
                 await remote_executor_correction(prepared, "executor_total")
                 if executor_remote
-                else await request.app.state.provider.complete(
+                else await runtime.provider.complete(
                     "executor",
                     configured.models["executor"],
                     prepared,
@@ -2453,7 +2455,7 @@ def create_app(
             )
             stage_status["executor_total"] = "completed"
             token_usage.update(reported_usage(response.get("usage")))
-            request.app.state.controller.record_invocation(
+            runtime.controller.record_invocation(
                 state,
                 "executor",
                 response,
@@ -2469,7 +2471,7 @@ def create_app(
                 if image_generator is None or executor_remote or body.stream:
                     raise RuntimeError("IMAGE_GENERATION_PROVIDER_BOUNDARY_VIOLATION")
                 image_call_id, image_prompt = image_request
-                request.app.state.controller.admit_tool_call(state, "generate_image")
+                runtime.controller.admit_tool_call(state, "generate_image")
                 stage_status["image_generation"] = "started"
                 image_generation_id = uuid.uuid4().hex
                 image_task = asyncio.create_task(
@@ -2489,7 +2491,7 @@ def create_app(
                     raise
                 except Exception as error:
                     stage_status["image_generation"] = "failed"
-                    request.app.state.store.event(
+                    runtime.store.event(
                         state_session_id,
                         "image_generation_failed",
                         {
@@ -2500,7 +2502,7 @@ def create_app(
                     )
                     raise
                 stage_status["image_generation"] = "completed"
-                request.app.state.store.event(
+                runtime.store.event(
                     state_session_id,
                     "image_generation_completed",
                     {
@@ -2548,7 +2550,7 @@ def create_app(
                     )
                 ]
                 image_continuation_started = time.monotonic()
-                response = await request.app.state.provider.complete(
+                response = await runtime.provider.complete(
                     "executor",
                     configured.models["executor"],
                     continuation,
@@ -2557,7 +2559,7 @@ def create_app(
                 )
                 for key, value in reported_usage(response.get("usage")).items():
                     token_usage[key] = token_usage.get(key, 0) + value
-                request.app.state.controller.record_invocation(
+                runtime.controller.record_invocation(
                     state,
                     "executor",
                     response,
@@ -2570,7 +2572,7 @@ def create_app(
                 if image_prompt_from_tool_calls(assistant_tool_calls) is not None:
                     raise RuntimeError("IMAGE_GENERATION_REPEAT_BLOCKED")
             for call in assistant_tool_calls:
-                request.app.state.controller.admit_tool_call(
+                runtime.controller.admit_tool_call(
                     state,
                     str(call.get("function", {}).get("name", "")) or None,
                 )
@@ -2580,8 +2582,8 @@ def create_app(
                 if isinstance(call, dict) and call.get("id")
             ]
             if assistant_tool_call_ids:
-                request.app.state.controller.remember_tool_calls(state, assistant_tool_calls)
-            request.app.state.controller.record_evidence(
+                runtime.controller.remember_tool_calls(state, assistant_tool_calls)
+            runtime.controller.record_evidence(
                 state,
                 "final_synthesis",
                 "executor",
@@ -2605,7 +2607,7 @@ def create_app(
             finish_reason = response.get("choices", [{}])[0].get("finish_reason")
             state.finish_reasons = [str(finish_reason)] if finish_reason else []
             state.truncated = finish_reason == "length"
-            judge_reasons = request.app.state.controller.remote_judge_invocation_reasons(
+            judge_reasons = runtime.controller.remote_judge_invocation_reasons(
                 state, body.metadata, response
             )
             if judge_reasons and "reviewer" not in state.roles_required:
@@ -2616,36 +2618,36 @@ def create_app(
                 and state.review_status != "approved"
                 and (
                     bool(judge_reasons)
-                    or request.app.state.controller.has_review_evidence(state, body.metadata)
+                    or runtime.controller.has_review_evidence(state, body.metadata)
                 )
             ):
-                review_observation = request.app.state.controller.review_observation(
+                review_observation = runtime.controller.review_observation(
                     state, response, body.metadata
                 )
                 active_stage = "reviewer"
                 try:
-                    async with request.app.state.reviewer_evaluation_lock:
+                    async with runtime.reviewer_evaluation_lock:
                         guard_transition_id = None
-                        if request.app.state.specialists is None:
-                            reviewer = request.app.state.lifecycle_store.get("reviewer")
+                        if runtime.specialists is None:
+                            reviewer = runtime.lifecycle_store.get("reviewer")
                             if reviewer.evaluation_guard:
                                 raise ValueError("reviewer evaluation guard is already active")
                             guard_transition_id = reviewer.transition_id
-                            request.app.state.lifecycle_store.set_guard(
+                            runtime.lifecycle_store.set_guard(
                                 "reviewer",
                                 "evaluation_guard",
                                 True,
                                 expected_transition_id=guard_transition_id,
                             )
                         try:
-                            await request.app.state.controller.review(
+                            await runtime.controller.review(
                                 state,
                                 review_observation,
                                 guard_already_owned=guard_transition_id is not None,
                             )
                         finally:
                             if guard_transition_id is not None:
-                                request.app.state.lifecycle_store.set_guard(
+                                runtime.lifecycle_store.set_guard(
                                     "reviewer",
                                     "evaluation_guard",
                                     False,
@@ -2656,7 +2658,7 @@ def create_app(
                     stage_status["reviewer"] = (
                         "timed_out" if isinstance(error, StageTimeout) else "failed"
                     )
-                    request.app.state.store.event(
+                    runtime.store.event(
                         state_session_id,
                         "review_failed",
                         {"error_type": type(error).__name__},
@@ -2664,7 +2666,7 @@ def create_app(
                     if not state.review_fail_closed:
                         state.observability_degraded = True
                         state.observability_status = "degraded"
-                    request.app.state.store.save(state)
+                    runtime.store.save(state)
                     if state.review_fail_closed:
                         if isinstance(error, StageTimeout):
                             raise
@@ -2672,28 +2674,28 @@ def create_app(
                 else:
                     stage_status["reviewer"] = "completed"
             if not state.truncated:
-                request.app.state.controller.apply_metadata(state, body.metadata)
+                runtime.controller.apply_metadata(state, body.metadata)
             judge_reasons = list(
                 dict.fromkeys(
                     [
                         *judge_reasons,
-                        *request.app.state.controller.remote_judge_invocation_reasons(
+                        *runtime.controller.remote_judge_invocation_reasons(
                             state, body.metadata, response
                         ),
                     ]
                 )
             )
             if judge_reasons and not state.truncated:
-                request.app.state.store.event(
+                runtime.store.event(
                     state_session_id,
                     "remote_judge_selected",
                     {"reasons": judge_reasons},
                 )
                 active_stage = "judge"
-                observation = request.app.state.controller.review_observation(
+                observation = runtime.controller.review_observation(
                     state, response, body.metadata
                 )
-                verdict = await request.app.state.controller.judge(state, observation)
+                verdict = await runtime.controller.judge(state, observation)
                 stage_status["judge"] = "completed"
                 if verdict.get("verdict") != "approve":
                     correction_verdict = str(verdict.get("verdict", "revise"))
@@ -2724,7 +2726,7 @@ def create_app(
                                 ),
                             },
                         ]
-                        request.app.state.store.event(
+                        runtime.store.event(
                             state_session_id,
                             "judge_correction_started",
                             {"verdict": correction_verdict},
@@ -2734,7 +2736,7 @@ def create_app(
                         response = (
                             await remote_executor_complete(correction_request, "judge_correction")
                             if executor_remote
-                            else await request.app.state.provider.complete(
+                            else await runtime.provider.complete(
                                 "executor",
                                 configured.models["executor"],
                                 correction_request,
@@ -2743,7 +2745,7 @@ def create_app(
                             )
                         )
                         token_usage.update(reported_usage(response.get("usage")))
-                        request.app.state.controller.record_invocation(
+                        runtime.controller.record_invocation(
                             state,
                             "executor",
                             response,
@@ -2758,7 +2760,7 @@ def create_app(
                         state.truncated = finish_reason == "length"
                         if finish_reason == "length" or assistant_message.get("tool_calls"):
                             raise JudgeCorrectionRequired(correction_verdict)
-                        request.app.state.controller.record_evidence(
+                        runtime.controller.record_evidence(
                             state,
                             "final_synthesis",
                             "executor",
@@ -2770,10 +2772,10 @@ def create_app(
                             generated_from=state.last_decision_id,
                         )
                         active_stage = "reviewer"
-                        corrected_observation = request.app.state.controller.review_observation(
+                        corrected_observation = runtime.controller.review_observation(
                             state, response, body.metadata
                         )
-                        targeted_review = await request.app.state.controller.review(
+                        targeted_review = await runtime.controller.review(
                             state, corrected_observation
                         )
                         stage_status["reviewer"] = "completed"
@@ -2789,7 +2791,7 @@ def create_app(
                         )
                         if recheck_needed:
                             active_stage = "judge"
-                            verdict = await request.app.state.controller.judge(
+                            verdict = await runtime.controller.judge(
                                 state, corrected_observation
                             )
                             stage_status["judge"] = "completed"
@@ -2797,7 +2799,7 @@ def create_app(
                                 raise JudgeCorrectionRequired(
                                     str(verdict.get("verdict", correction_verdict))
                                 )
-                        request.app.state.store.event(
+                        runtime.store.event(
                             state_session_id,
                             "judge_correction_completed",
                             {
@@ -2809,13 +2811,13 @@ def create_app(
                         raise JudgeCorrectionRequired(correction_verdict)
             state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
             first_byte_at = time.time()
-            request.app.state.store.event(
+            runtime.store.event(
                 state_session_id,
                 "assistant_stream_finished",
                 {"finish_reasons": [finish_reason] if finish_reason else []},
             )
             if finish_reason == "tool_calls" or assistant_message.get("tool_calls"):
-                request.app.state.lifecycle_store.refresh_continuation(
+                runtime.lifecycle_store.refresh_continuation(
                     usage_request_id,
                     "executor",
                     continuation_owner,
@@ -2826,11 +2828,11 @@ def create_app(
             finalize_request(None, "completed", current_state=state)
             return JSONResponse(response, headers={"X-Session-ID": session_id})
         except asyncio.CancelledError:
-            current = state or request.app.state.store.get(state_session_id)
+            current = state or runtime.store.get(state_session_id)
             if current is not None:
                 current.final_status = "cancelled"
                 if body.stream:
-                    request.app.state.store.event(state_session_id, "stream_aborted", {})
+                    runtime.store.event(state_session_id, "stream_aborted", {})
             finalize_request(
                 active_stage,
                 "cancelled",
@@ -2867,7 +2869,7 @@ def create_app(
             )
         except FrontierRequiredUnavailable as error:
             if state is not None:
-                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
+                runtime.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
             finalize_request(
                 "frontier",
                 "failed",
@@ -2905,7 +2907,7 @@ def create_app(
             )
         except JudgeProviderError as error:
             if state is not None:
-                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
+                runtime.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
             finalize_request(
                 "judge",
                 "failed",
@@ -2921,7 +2923,7 @@ def create_app(
             )
         except ReasonerUnavailable as error:
             if state is not None:
-                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
+                runtime.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
             finalize_request(
                 "reasoner",
                 "failed",
@@ -2952,7 +2954,7 @@ def create_app(
             )
         except StageTimeout as error:
             if state is not None:
-                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
+                runtime.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
             finalize_request(
                 error.stage,
                 "timed_out",
@@ -2967,7 +2969,7 @@ def create_app(
             )
         except httpx.TimeoutException as error:
             if state is not None:
-                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
+                runtime.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
             phase = state.phase.value if state is not None else ""
             stage = {
                 "planning": "planner",
@@ -2988,7 +2990,7 @@ def create_app(
             )
         except httpx.HTTPStatusError as error:
             if state is not None and error.response.status_code >= 500:
-                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
+                runtime.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
             finalize_request(
                 active_stage,
                 "failed",
@@ -3027,7 +3029,7 @@ def create_app(
             )
         except httpx.HTTPError as error:
             if state is not None:
-                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
+                runtime.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
             finalize_request(
                 active_stage,
                 "failed",
@@ -3063,7 +3065,7 @@ def create_app(
             )
         except Exception as error:
             if state is not None:
-                request.app.state.controller.terminate_loop(state, "INTERNAL_FAILURE")
+                runtime.controller.terminate_loop(state, "INTERNAL_FAILURE")
             finalize_request(
                 active_stage,
                 "failed",
@@ -3094,7 +3096,13 @@ def create_app(
     ) -> Response:
         return await execute_chat(
             body,
-            request,
+            ChatExecutionContext(
+                runtime=request.app.state,
+                api_token_id=getattr(request.state, "api_token_id", "legacy"),
+                user_agent=(
+                    request.headers.get("user-agent") if "headers" in request.scope else None
+                ),
+            ),
             ChatExecutionHeaders(
                 session_id=x_session_id,
                 runtime_channel=x_runtime_channel,
