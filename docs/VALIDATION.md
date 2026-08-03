@@ -10402,6 +10402,13 @@ followed by all 1,217 tests in 42.44 seconds. Ruff, strict mypy across 60 source
 files, and `git diff --check` passed. `api.py` now directly owns only metrics
 and Chat routes; Responses remains in its dedicated adapter module.
 
+The authenticated metrics endpoint and its skill, knowledge, observation,
+training, and weekly overlays now live in the inference registration boundary.
+Five focused authentication, fixed-label, and overlay contracts passed,
+followed by all 1,217 tests in 46.48 seconds. Ruff, strict mypy across 60 source
+files, and `git diff --check` passed. `api.py` now directly registers only the
+Chat endpoint; Responses remains a protocol adapter over that callable.
+
 `lifecycle_samples` had identical DDL independently owned by `UsageStore` and
 `LifecycleStore`, allowing future initialization-order drift. The schema now
 has one `database.ensure_lifecycle_samples_schema` owner reused by both stores;
