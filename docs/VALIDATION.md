@@ -10601,3 +10601,16 @@ by a further 100 lines. Eight focused readiness tests passed. Ruff passed,
 strict mypy reported no issues across 61 source files, `git diff --check` passed,
 and the complete suite passed `1,218/1,218` in 53.21 seconds with the existing
 Starlette deprecation warning.
+
+## 2026-08-03 Long-horizon progress evidence boundary
+
+Path extraction and repeated-inspection stall detection now live in
+`evidence.py`; long-horizon workspace-finalization evidence now lives in
+`validation.py`. API and Controller orchestration call those pure functions
+directly. Existing six-inspection, three-repeat, post-mutation ordering,
+invalid-session, `git status --porcelain`, and clean-output rules are unchanged.
+No compatibility methods remain, and Controller shrank by a further 125 lines.
+The focused stall/finalization test bundle passed. Ruff passed, strict mypy
+reported no issues across 61 source files, `git diff --check` passed, and the
+complete suite passed `1,218/1,218` in 44.95 seconds with the existing Starlette
+deprecation warning.

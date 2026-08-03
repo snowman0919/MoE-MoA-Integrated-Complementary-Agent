@@ -19,7 +19,7 @@ from dgx_moa.controller import (
     normalize_tool_result,
     structured_response_diagnostics,
 )
-from dgx_moa.evidence import tool_execution_changes_files
+from dgx_moa.evidence import executor_stalled, tool_execution_changes_files
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
 from dgx_moa.remote_judge import judge_evidence_package
 from dgx_moa.review import (
@@ -30,7 +30,11 @@ from dgx_moa.review import (
 )
 from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
 from dgx_moa.state import Phase, SessionState, StateStore
-from dgx_moa.validation import has_validation_evidence, successful_validation_execution
+from dgx_moa.validation import (
+    has_validation_evidence,
+    long_horizon_workspace_finalized,
+    successful_validation_execution,
+)
 
 from .conftest import StubProvider
 
@@ -4644,7 +4648,7 @@ def test_new_user_turn_does_not_reuse_prior_completion_latch(
     assert has_review_evidence(resumed, {}) is False
     assert controller.implementation_completion_ready(resumed, {}) is False
     assert controller.requires_implementation_tool_action(resumed, {}) is False
-    assert controller.executor_stalled(resumed) is False
+    assert executor_stalled(resumed) is False
     assert "CURRENT USER INSTRUCTION\nReview concurrency and run the tests." in (
         controller.prompt_sandwich("executor", resumed, "context", "continue")
     )
@@ -4751,7 +4755,6 @@ def test_review_tool_evidence_keeps_older_mutations() -> None:
 def test_repeated_successful_inspection_marks_executor_stalled(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
-    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
     state = SessionState(
         session_id="repeated-inspection",
         tool_executions=[
@@ -4764,7 +4767,7 @@ def test_repeated_successful_inspection_marks_executor_stalled(
         ],
     )
 
-    assert controller.executor_stalled(state) is True
+    assert executor_stalled(state) is True
     state.tool_executions.insert(
         2,
         {
@@ -4773,9 +4776,9 @@ def test_repeated_successful_inspection_marks_executor_stalled(
             "exit_code": 0,
         },
     )
-    assert controller.executor_stalled(state) is True
+    assert executor_stalled(state) is True
     state.tool_executions.insert(2, {"tool_name": "apply_patch", "exit_code": 0})
-    assert controller.executor_stalled(state) is False
+    assert executor_stalled(state) is False
 
     structured = SessionState(
         session_id="structured-inspection",
@@ -4788,7 +4791,7 @@ def test_repeated_successful_inspection_marks_executor_stalled(
             for _ in range(3)
         ],
     )
-    assert controller.executor_stalled(structured) is True
+    assert executor_stalled(structured) is True
 
     hermes = SessionState(
         session_id="hermes-inspection",
@@ -4801,7 +4804,7 @@ def test_repeated_successful_inspection_marks_executor_stalled(
             for index in range(4)
         ],
     )
-    assert controller.executor_stalled(hermes) is True
+    assert executor_stalled(hermes) is True
 
     codex = SessionState(
         session_id="codex-image-inspection",
@@ -4814,7 +4817,7 @@ def test_repeated_successful_inspection_marks_executor_stalled(
             for _ in range(3)
         ],
     )
-    assert controller.executor_stalled(codex) is True
+    assert executor_stalled(codex) is True
 
     distinct = SessionState(
         session_id="distinct-inspection",
@@ -4827,9 +4830,9 @@ def test_repeated_successful_inspection_marks_executor_stalled(
             for index in range(6)
         ],
     )
-    assert controller.executor_stalled(distinct) is True
+    assert executor_stalled(distinct) is True
     assert (
-        controller.executor_stalled(
+        executor_stalled(
             distinct.model_copy(update={"tool_executions": distinct.tool_executions[:3]})
         )
         is False
@@ -4847,8 +4850,8 @@ def test_repeated_successful_inspection_marks_executor_stalled(
             ],
         }
     )
-    assert controller.executor_stalled(git_inspection) is False
-    assert controller.executor_stalled(git_inspection, inspection_limit=3) is True
+    assert executor_stalled(git_inspection) is False
+    assert executor_stalled(git_inspection, inspection_limit=3) is True
 
     polling = SessionState(
         session_id="valid-polling",
@@ -4862,7 +4865,7 @@ def test_repeated_successful_inspection_marks_executor_stalled(
             for _ in range(8)
         ],
     )
-    assert controller.executor_stalled(polling) is False
+    assert executor_stalled(polling) is False
 
     planning = SessionState(
         session_id="planning-churn",
@@ -4875,7 +4878,7 @@ def test_repeated_successful_inspection_marks_executor_stalled(
             for index in range(6)
         ],
     )
-    assert controller.executor_stalled(planning) is True
+    assert executor_stalled(planning) is True
 
     invalid_process = SessionState(
         session_id="invalid-process-inspection",
@@ -4889,7 +4892,7 @@ def test_repeated_successful_inspection_marks_executor_stalled(
             for _ in range(3)
         ],
     )
-    assert controller.executor_stalled(invalid_process) is True
+    assert executor_stalled(invalid_process) is True
 
 
 @pytest.mark.asyncio
@@ -4960,7 +4963,7 @@ async def test_long_horizon_requires_clean_status_after_last_change(
         "tool_choice": "auto",
     }
 
-    assert controller.long_horizon_workspace_finalized(state) is False
+    assert long_horizon_workspace_finalized(state) is False
     assert controller.requires_implementation_tool_action(state, {}) is True
     prepared = await controller.prepare_executor(
         state, request, ("executor", "reviewer"), tool_continuation=True

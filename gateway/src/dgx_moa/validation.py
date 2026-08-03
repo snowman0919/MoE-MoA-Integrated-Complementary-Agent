@@ -97,6 +97,46 @@ def has_validation_evidence(state: SessionState, metadata: dict[str, Any]) -> bo
     return False
 
 
+def long_horizon_workspace_finalized(state: SessionState) -> bool:
+    if state.repository.get("workspace_identifier") != "long-horizon":
+        return True
+    executions = current_turn_executions(state)
+    last_change = max(
+        (
+            index
+            for index, execution in enumerate(executions)
+            if execution.get("exit_code") == 0 and tool_execution_changes_files(execution)
+        ),
+        default=-1,
+    )
+    for execution in executions[last_change + 1 :]:
+        arguments = execution.get("normalized_arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                arguments = {}
+        command = (
+            arguments.get("cmd") or arguments.get("command")
+            if isinstance(arguments, dict)
+            else None
+        )
+        output = str(execution.get("stdout_summary") or "")
+        if (
+            execution.get("exit_code") == 0
+            and isinstance(command, str)
+            and re.search(r"\bgit\s+status\b", command)
+            and (
+                re.search(r"\bgit\s+status\s+--porcelain\b", command)
+                and not output.strip()
+                or "working tree clean" in output
+                or "nothing to commit" in output
+            )
+        ):
+            return True
+    return False
+
+
 def filtered_validation_execution(execution: dict[str, Any]) -> bool:
     arguments = execution.get("validation_arguments", execution.get("normalized_arguments"))
     if isinstance(arguments, str):

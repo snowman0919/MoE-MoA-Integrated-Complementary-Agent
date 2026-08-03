@@ -20,9 +20,11 @@ from .evidence import (
     EvidenceEdge,
     EvidenceNode,
     active_failures,
+    argument_paths,
     classify_evidence,
     current_turn_executions,
     effective_objective,
+    executor_stalled,
     tool_execution_changes_files,
 )
 from .evolution import PromptRegistry
@@ -100,6 +102,7 @@ from .validation import (
     completion_ready,
     filtered_validation_execution,
     has_validation_evidence,
+    long_horizon_workspace_finalized,
     required_validation_evidence,
     validation_execution,
     validation_verdict_present,
@@ -367,32 +370,6 @@ def pending_goal_prerequisites(state: SessionState) -> tuple[str, ...]:
         text = arguments if isinstance(arguments, str) else json.dumps(arguments, sort_keys=True)
         completed.update(path for path in required if path in text)
     return tuple(path for path in GOAL_PREREQUISITE_DOCUMENTS if path in required - completed)
-
-
-def argument_paths(arguments: Any) -> set[str]:
-    text = arguments if isinstance(arguments, str) else json.dumps(arguments, sort_keys=True)
-    paths = {
-        match.removeprefix("file://").rstrip(",.);]")
-        for match in re.findall(r"(?:file://)?/[^\s\"'\\]+", text)
-    }
-    if isinstance(arguments, dict):
-        for key, value in arguments.items():
-            normalized = key.lower().replace("_", "")
-            if (
-                normalized in {"path", "file", "filepath", "filename", "target", "targetpath"}
-                and isinstance(value, str)
-                and value
-                and "\n" not in value
-            ):
-                paths.add(value.removeprefix("file://"))
-    paths.update(
-        match.strip()
-        for match in re.findall(
-            r"(?<![\w./-])(?:[\w.-]+/)*[\w.-]+\.(?:py|js|ts|json|toml|yaml|yml|md)\b",
-            text,
-        )
-    )
-    return paths
 
 
 def clean_tool_output(value: object) -> str:
@@ -3924,14 +3901,14 @@ class Controller:
         )
         workspace_finalization_pending = (
             state.repository.get("workspace_identifier") == "long-horizon"
-            and not self.long_horizon_workspace_finalized(state)
+            and not long_horizon_workspace_finalized(state)
         )
         requests_change = (
             state.active_turn_requires_change
             if state.active_user_turn_sha256
             else user_turn_intent(effective_objective(state))[0]
         )
-        inspection_stalled = requests_change and self.executor_stalled(state)
+        inspection_stalled = requests_change and executor_stalled(state)
         if inspection_stalled and body.get("tools"):
             named_tools = {
                 str(tool.get("name") or tool.get("function", {}).get("name")): tool
@@ -4150,7 +4127,7 @@ class Controller:
             changed
             and validated
             and review_ready
-            and self.long_horizon_workspace_finalized(state)
+            and long_horizon_workspace_finalized(state)
         )
 
     def implementation_completion_ready(
@@ -4160,108 +4137,6 @@ class Controller:
             execution.get("exit_code") == 0 and tool_execution_changes_files(execution)
             for execution in current_turn_executions(state)
         ) and not self.requires_implementation_tool_action(state, metadata)
-
-    def long_horizon_workspace_finalized(self, state: SessionState) -> bool:
-        if state.repository.get("workspace_identifier") != "long-horizon":
-            return True
-        executions = current_turn_executions(state)
-        last_change = max(
-            (
-                index
-                for index, execution in enumerate(executions)
-                if execution.get("exit_code") == 0
-                and tool_execution_changes_files(execution)
-            ),
-            default=-1,
-        )
-        for execution in executions[last_change + 1 :]:
-            arguments = execution.get("normalized_arguments")
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except ValueError:
-                    arguments = {}
-            command = (
-                arguments.get("cmd") or arguments.get("command")
-                if isinstance(arguments, dict)
-                else None
-            )
-            output = str(execution.get("stdout_summary") or "")
-            if (
-                execution.get("exit_code") == 0
-                and isinstance(command, str)
-                and re.search(r"\bgit\s+status\b", command)
-                and (
-                    re.search(r"\bgit\s+status\s+--porcelain\b", command)
-                    and not output.strip()
-                    or "working tree clean" in output
-                    or "nothing to commit" in output
-                )
-            ):
-                return True
-        return False
-
-    def executor_stalled(self, state: SessionState, *, inspection_limit: int = 6) -> bool:
-        """Detect repeated successful inspection since the latest file change."""
-        counts: dict[str, int] = {}
-        inspections = 0
-        for execution in reversed(current_turn_executions(state)):
-            if execution.get("exit_code") != 0:
-                continue
-            if tool_execution_changes_files(execution):
-                break
-            arguments = execution.get("normalized_arguments")
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except ValueError:
-                    arguments = {}
-            tool_name = str(execution.get("tool_name", ""))
-            command = (
-                arguments.get("cmd") or arguments.get("command")
-                if isinstance(arguments, dict)
-                else None
-            )
-            command_inspection = isinstance(command, str) and bool(
-                re.search(
-                    r"(?:^|&&|\|\||;|\n)\s*(?:"
-                    r"cat|head|tail|ls|find|rg|sed\s+-n|pwd|wc|"
-                    r"git\s+(?:status|diff|log|show|branch|rev-parse)"
-                    r")\b",
-                    command,
-                )
-            )
-            no_progress_tool = tool_name in {
-                "read",
-                "read_file",
-                "view_image",
-                "list",
-                "glob",
-                "grep",
-                "search_files",
-                "create_goal",
-                "get_goal",
-                "request_user_input",
-                "update_goal",
-                "update_plan",
-            }
-            if command_inspection or no_progress_tool:
-                inspections += 1
-                if inspections >= inspection_limit:
-                    return True
-            if not command_inspection and not no_progress_tool and tool_name != "write_stdin":
-                continue
-            targets = argument_paths(arguments)
-            if not targets and any(
-                marker in str(execution.get("stdout_summary", ""))
-                for marker in ("No active process session", "Unknown process id")
-            ):
-                targets = {"invalid-process-session"}
-            for target in targets:
-                counts[target] = counts.get(target, 0) + 1
-                if counts[target] >= 3:
-                    return True
-        return False
 
     @staticmethod
     def register_frontier_review_failure(state: SessionState, result: dict[str, Any]) -> bool:

@@ -31,7 +31,7 @@ from .controller import (
     PolicyBlocked,
     ReasonerUnavailable,
 )
-from .evidence import REPOSITORY_MUTATION_TOOLS
+from .evidence import REPOSITORY_MUTATION_TOOLS, executor_stalled
 from .evolution import PromptRegistry
 from .frontier import (
     CodexOAuthCollaboration,
@@ -1886,7 +1886,7 @@ def create_app(
                 and bool(state.plan)
                 and not state.implementation_evidence
             )
-            preparation_stalled = runtime.controller.executor_stalled(
+            preparation_stalled = executor_stalled(
                 state,
                 inspection_limit=3 if planned_change else 6,
             )
@@ -1987,7 +1987,7 @@ def create_app(
             stalled = (
                 not executor_remote
                 and runtime.frontier is not None
-                and runtime.controller.executor_stalled(state)
+                and executor_stalled(state)
             )
             completion_stalled = (
                 not executor_remote

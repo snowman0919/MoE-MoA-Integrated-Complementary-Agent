@@ -81,6 +81,32 @@ REPOSITORY_MUTATION_TOOLS = frozenset(
 )
 
 
+def argument_paths(arguments: Any) -> set[str]:
+    text = arguments if isinstance(arguments, str) else json.dumps(arguments, sort_keys=True)
+    paths = {
+        match.removeprefix("file://").rstrip(",.);]")
+        for match in re.findall(r"(?:file://)?/[^\s\"'\\]+", text)
+    }
+    if isinstance(arguments, dict):
+        for key, value in arguments.items():
+            normalized = key.lower().replace("_", "")
+            if (
+                normalized in {"path", "file", "filepath", "filename", "target", "targetpath"}
+                and isinstance(value, str)
+                and value
+                and "\n" not in value
+            ):
+                paths.add(value.removeprefix("file://"))
+    paths.update(
+        match.strip()
+        for match in re.findall(
+            r"(?<![\w./-])(?:[\w.-]+/)*[\w.-]+\.(?:py|js|ts|json|toml|yaml|yml|md)\b",
+            text,
+        )
+    )
+    return paths
+
+
 def active_failures(state: SessionState) -> list[dict[str, Any]]:
     return [item for item in state.failures if item.get("resolution_status", "active") == "active"]
 
@@ -100,6 +126,69 @@ def current_turn_executions(state: SessionState) -> list[dict[str, Any]]:
         if execution.get("tool_execution_id") == marker:
             return state.tool_executions[index + 1 :]
     return state.tool_executions
+
+
+def executor_stalled(state: SessionState, *, inspection_limit: int = 6) -> bool:
+    """Detect repeated successful inspection since the latest file change."""
+    counts: dict[str, int] = {}
+    inspections = 0
+    for execution in reversed(current_turn_executions(state)):
+        if execution.get("exit_code") != 0:
+            continue
+        if tool_execution_changes_files(execution):
+            break
+        arguments = execution.get("normalized_arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                arguments = {}
+        tool_name = str(execution.get("tool_name", ""))
+        command = (
+            arguments.get("cmd") or arguments.get("command")
+            if isinstance(arguments, dict)
+            else None
+        )
+        command_inspection = isinstance(command, str) and bool(
+            re.search(
+                r"(?:^|&&|\|\||;|\n)\s*(?:"
+                r"cat|head|tail|ls|find|rg|sed\s+-n|pwd|wc|"
+                r"git\s+(?:status|diff|log|show|branch|rev-parse)"
+                r")\b",
+                command,
+            )
+        )
+        no_progress_tool = tool_name in {
+            "read",
+            "read_file",
+            "view_image",
+            "list",
+            "glob",
+            "grep",
+            "search_files",
+            "create_goal",
+            "get_goal",
+            "request_user_input",
+            "update_goal",
+            "update_plan",
+        }
+        if command_inspection or no_progress_tool:
+            inspections += 1
+            if inspections >= inspection_limit:
+                return True
+        if not command_inspection and not no_progress_tool and tool_name != "write_stdin":
+            continue
+        targets = argument_paths(arguments)
+        if not targets and any(
+            marker in str(execution.get("stdout_summary", ""))
+            for marker in ("No active process session", "Unknown process id")
+        ):
+            targets = {"invalid-process-session"}
+        for target in targets:
+            counts[target] = counts.get(target, 0) + 1
+            if counts[target] >= 3:
+                return True
+    return False
 
 
 def tool_execution_changes_files(execution: dict[str, Any]) -> bool:
