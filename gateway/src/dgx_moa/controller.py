@@ -17,9 +17,9 @@ from .compression import compress_messages, compress_text, summarize_text
 from .config import Settings
 from .evidence import (
     REPOSITORY_MUTATION_TOOLS,
-    EvidenceEdge,
     EvidenceNode,
     active_failures,
+    append_evidence,
     argument_paths,
     classify_evidence,
     current_turn_executions,
@@ -43,7 +43,6 @@ from .frontier import (
 from .knowledge import KnowledgeQuery, KnowledgeRegistry
 from .loop_engineering import (
     LOOP_TYPES,
-    PROGRESS_EVIDENCE_KINDS,
     BudgetName,
     LoopBudget,
     LoopType,
@@ -53,9 +52,7 @@ from .loop_engineering import (
     consume_usage,
     new_loop,
     normalized_failure_class,
-    progress_evidence_fingerprint,
     record_no_progress,
-    record_progress,
     register_failure,
     register_user_input,
     resolve_failures,
@@ -713,35 +710,15 @@ class Controller:
         *,
         generated_from: str | None = None,
     ) -> str:
-        node_id = str(uuid.uuid4())
-        node_type, trust_class = classify_evidence(kind, source)
-        safe_payload = self.safe_payload(state, payload)
-        node = EvidenceNode(
-            node_id=node_id,
-            node_type=node_type,
-            kind=kind,
-            trust_class=trust_class,
-            source=source,
-            payload=safe_payload,
-            created_at=now(),
+        return append_evidence(
+            state,
+            kind,
+            source,
+            payload,
+            max_steps=self.settings.limits.max_steps,
+            redactor=lambda value: self.safe_payload(state, value),
+            generated_from=generated_from,
         )
-        state.evidence_nodes.append(node.model_dump(mode="json"))
-        state.evidence_nodes = state.evidence_nodes[-self.settings.limits.max_steps :]
-        if state.engineering_loop is not None and kind in PROGRESS_EVIDENCE_KINDS:
-            record_progress(
-                state.engineering_loop,
-                node_id,
-                evidence_fingerprint=progress_evidence_fingerprint(kind, safe_payload),
-            )
-        if generated_from:
-            edge = EvidenceEdge(
-                from_node=node_id,
-                to_node=generated_from,
-                relationship="generated_from",
-            )
-            state.evidence_edges.append(edge.model_dump(mode="json", by_alias=True))
-            state.evidence_edges = state.evidence_edges[-self.settings.limits.max_steps :]
-        return node_id
 
     def record_invocation(
         self,

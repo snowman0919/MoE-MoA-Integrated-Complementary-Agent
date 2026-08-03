@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
+from collections.abc import Callable
 from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from .state import SessionState
+from .loop_engineering import (
+    PROGRESS_EVIDENCE_KINDS,
+    progress_evidence_fingerprint,
+    record_progress,
+)
+from .state import SessionState, now
 
 EvidenceNodeType = Literal[
     "user_objective",
@@ -335,6 +342,47 @@ def classify_evidence(kind: str, source: str) -> tuple[EvidenceNodeType, TrustCl
     else:
         trust = "unverified_assumption"
     return node_type, trust
+
+
+def append_evidence(
+    state: SessionState,
+    kind: str,
+    source: str,
+    payload: Any,
+    *,
+    max_steps: int,
+    redactor: Callable[[Any], Any],
+    generated_from: str | None = None,
+) -> str:
+    node_id = str(uuid.uuid4())
+    node_type, trust_class = classify_evidence(kind, source)
+    safe_payload = redactor(payload)
+    node = EvidenceNode(
+        node_id=node_id,
+        node_type=node_type,
+        kind=kind,
+        trust_class=trust_class,
+        source=source,
+        payload=safe_payload,
+        created_at=now(),
+    )
+    state.evidence_nodes.append(node.model_dump(mode="json"))
+    state.evidence_nodes = state.evidence_nodes[-max_steps:]
+    if state.engineering_loop is not None and kind in PROGRESS_EVIDENCE_KINDS:
+        record_progress(
+            state.engineering_loop,
+            node_id,
+            evidence_fingerprint=progress_evidence_fingerprint(kind, safe_payload),
+        )
+    if generated_from:
+        edge = EvidenceEdge(
+            from_node=node_id,
+            to_node=generated_from,
+            relationship="generated_from",
+        )
+        state.evidence_edges.append(edge.model_dump(mode="json", by_alias=True))
+        state.evidence_edges = state.evidence_edges[-max_steps:]
+    return node_id
 
 
 def stronger_evidence(left: EvidenceNode, right: EvidenceNode) -> EvidenceNode:

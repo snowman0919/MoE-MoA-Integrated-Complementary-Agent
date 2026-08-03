@@ -10732,3 +10732,13 @@ orchestration calls. The existing fail-closed Controller test passed, while Ruff
 and strict mypy passed for both affected source modules. The final full gate
 passed Ruff, strict mypy across 61 source files, and `1,218/1,218` tests in
 43.72 seconds with the existing Starlette deprecation warning.
+
+## Evidence append boundary (2026-08-03)
+
+Evidence node/edge construction, bounded retention, and engineering-loop
+progress accounting now live in `evidence.py`. `Controller.record_evidence`
+keeps its existing public call shape and supplies the existing request-policy
+redactor, so persistence still applies both credential and policy redaction.
+Focused policy and Controller evidence verification passed `17/17`; Ruff and
+strict mypy passed across all 61 source files. The complete suite then passed
+`1,218/1,218` in 49.92 seconds with the existing Starlette deprecation warning.
