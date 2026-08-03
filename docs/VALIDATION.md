@@ -10393,6 +10393,15 @@ Focused typed/content-free status and artifact ownership tests passed, followed
 by all 1,217 tests in 45.41 seconds. Ruff, strict mypy across 60 source files,
 and `git diff --check` passed.
 
+The Heavy Judge adjudication endpoint now belongs to the inference route
+registration boundary. Profile gating, remote-Judge bypass, pending-evidence
+checks, lifecycle lease acquisition/release, timeout/backend error mapping,
+trace persistence, and response schema were moved unchanged; only the existing
+trace callback is injected. Four focused local/remote Judge contracts passed,
+followed by all 1,217 tests in 42.44 seconds. Ruff, strict mypy across 60 source
+files, and `git diff --check` passed. `api.py` now directly owns only metrics
+and Chat routes; Responses remains in its dedicated adapter module.
+
 `lifecycle_samples` had identical DDL independently owned by `UsageStore` and
 `LifecycleStore`, allowing future initialization-order drift. The schema now
 has one `database.ensure_lifecycle_samples_schema` owner reused by both stores;

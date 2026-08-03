@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from .config import Settings
 from .image_generation import capability_status as image_generation_status
+from .providers import StageTimeout
 from .schemas import text_content
 from .streaming import compatible_edit_call, response_usage
 
@@ -40,6 +41,7 @@ def register_inference_routes(
     model_aliases: tuple[str, ...],
     implementation_quality_contract: str,
     status_lifecycle_record: Callable[[str], dict[str, Any]],
+    record_trace_safely: Callable[[Request, Any, str], None],
 ) -> None:
     @app.get("/healthz")
     async def healthz(request: Request) -> dict[str, Any]:
@@ -275,6 +277,76 @@ def register_inference_routes(
                 "Cache-Control": "private, no-store",
                 "X-Content-Type-Options": "nosniff",
             },
+        )
+
+    @app.post("/v1/judge/adjudications/{session_id}", dependencies=[Depends(auth)])
+    async def adjudicate(session_id: str, request: Request) -> Response:
+        profile = request.app.state.profiles.current()
+        remote = request.app.state.remote_judge is not None
+        if not remote and (
+            profile.get("active_profile") != "judge" or profile.get("status") != "ready"
+        ):
+            return error_response(
+                status.HTTP_409_CONFLICT,
+                "Heavy Judge profile is not ready",
+                "profile_conflict",
+                "judge_profile_required",
+            )
+        state = request.app.state.store.get(session_id)
+        if state is None:
+            return error_response(
+                status.HTTP_404_NOT_FOUND,
+                "adjudication session not found",
+                "invalid_request_error",
+                "session_not_found",
+            )
+        if state.judge_status != "required" or not state.pending_judge_evidence:
+            return error_response(
+                status.HTTP_409_CONFLICT,
+                "session has no pending Heavy Judge adjudication",
+                "invalid_request_error",
+                "judge_not_pending",
+            )
+        request_id = str(uuid.uuid4())
+        state.current_request_id = request_id
+        leases = await request.app.state.lifecycle.acquire_request_leases(
+            request_id,
+            () if remote else ("judge",),
+            kind="active_request",
+            require_ready=False,
+        )
+        try:
+            verdict = await request.app.state.controller.judge(
+                state, state.pending_judge_evidence
+            )
+            request.app.state.store.save(state)
+            record_trace_safely(request, state, state.task_id or session_id)
+        except StageTimeout as error:
+            return error_response(
+                status.HTTP_504_GATEWAY_TIMEOUT,
+                str(error),
+                "timeout_error",
+                "judge_timeout",
+            )
+        except (httpx.HTTPError, ValueError) as error:
+            return error_response(
+                status.HTTP_502_BAD_GATEWAY,
+                str(error),
+                "backend_error",
+                "judge_backend_error",
+            )
+        finally:
+            request.app.state.lifecycle_store.release_leases(
+                tuple(lease.lease_id for lease in leases)
+            )
+        return JSONResponse(
+            {
+                "object": "judge.adjudication",
+                "session_id": session_id,
+                "status": state.judge_status,
+                "verdict": verdict,
+                "resume_profile": None if remote else "resident",
+            }
         )
 
 
