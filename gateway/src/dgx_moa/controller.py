@@ -58,6 +58,7 @@ from .loop_engineering import (
     set_criterion,
     terminate,
 )
+from .orchestration import orchestration_requirements
 from .policy import PolicyEngine, redact_fields
 from .providers import ModelProvider, StageTimeout, parse_json_content
 from .remote_judge import (
@@ -2405,61 +2406,9 @@ class Controller:
         metadata: dict[str, Any],
         executor_complete: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]] | None = None,
     ) -> OrchestrationDecision:
-        mandatory = [
-            role for role in state.roles_required if role in {"planner", "reviewer", "judge"}
-        ]
-        objective = effective_objective(state).lower()
-        implementation_evidence = bool(
-            metadata.get("diff_summary")
-            or metadata.get("relevant_diff")
-            or metadata.get("changed_paths")
-            or metadata.get("validation_results")
-            or metadata.get("completion_evidence")
+        mandatory, architecture, code_review = orchestration_requirements(
+            state, reasoner, metadata
         )
-        architecture = bool(metadata.get("architecture") or metadata.get("design")) or any(
-            marker in objective
-            for marker in (
-                "architecture",
-                "architect",
-                "design",
-                "migration",
-                "아키텍처",
-                "설계",
-                "마이그레이션",
-            )
-        )
-        code_review = (
-            bool(metadata.get("code_review"))
-            or bool(metadata.get("executor_complete") and implementation_evidence)
-            or any(
-                marker in objective
-                for marker in ("code review", "review this", "diff review", "코드 리뷰", "검토")
-            )
-        )
-        frontier_policy = (
-            architecture
-            or code_review
-            or state.request_class == "high_risk_task"
-            or any(item.needed and item.role == "frontier" for item in reasoner.additional_agents)
-            or len(active_failures(state)) >= 2
-        )
-        if reasoner.confidence_category == "low" and "planner" not in mandatory:
-            mandatory.append("planner")
-        if architecture and "planner" not in mandatory:
-            mandatory.append("planner")
-        if code_review and "reviewer" not in mandatory:
-            mandatory.append("reviewer")
-        if state.request_class in {"multi_file_task", "recovery_task"}:
-            mandatory.append("planner")
-        if state.request_class == "high_risk_task" and implementation_evidence:
-            mandatory.append("reviewer")
-        if frontier_policy:
-            mandatory.append("frontier")
-        if metadata.get("unresolved_disagreement"):
-            mandatory.append("frontier")
-            if state.request_class == "high_risk_task" or metadata.get("heavy_review"):
-                mandatory.append("judge")
-        mandatory = list(dict.fromkeys(mandatory))
         schema = OrchestrationDecision.model_json_schema()
         schema["properties"]["reason"]["additionalProperties"]["enum"] = [
             "architecture",

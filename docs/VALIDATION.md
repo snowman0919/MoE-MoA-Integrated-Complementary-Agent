@@ -10753,3 +10753,14 @@ type, redaction, and bounded persistence; the focused evidence/policy/Controller
 selection passed `23/23` with Ruff and strict mypy clean. The complete suite
 passed `1,219/1,219` in 50.33 seconds with the existing Starlette deprecation
 warning.
+
+## Orchestration requirement boundary (2026-08-03)
+
+Hard-required Planner, Reviewer, Frontier, and Judge selection now lives in the
+pure `orchestration_requirements` policy function. Controller retains provider
+dispatch, one bounded structured-output retry, provenance, and state/event
+application. Direct Korean architecture/review and high-risk disagreement tests
+plus existing orchestration retry/dependency tests passed `6/6`; Ruff and strict
+mypy passed for the affected modules. The final full gate passed Ruff, strict
+mypy across 62 source files, and `1,221/1,221` tests in 45.09 seconds with the
+existing Starlette deprecation warning.
