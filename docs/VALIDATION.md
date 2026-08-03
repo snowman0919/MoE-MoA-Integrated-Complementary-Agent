@@ -10723,3 +10723,12 @@ seconds with the existing Starlette deprecation warning.
 - Focused verification: Ruff passed, strict mypy passed for both changed source
   modules, and `tests/test_blind_quality.py tests/test_candidate_gateway.py`
   passed `15/15`.
+
+## Review failure policy boundary (2026-08-03)
+
+Repeated semantic Frontier and local Reviewer finding normalization now lives in
+`review.py`; `Controller` retains only static compatibility aliases and
+orchestration calls. The existing fail-closed Controller test passed, while Ruff
+and strict mypy passed for both affected source modules. The final full gate
+passed Ruff, strict mypy across 61 source files, and `1,218/1,218` tests in
+43.72 seconds with the existing Starlette deprecation warning.

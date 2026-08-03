@@ -75,6 +75,8 @@ from .remote_judge import (
 from .review import (
     frontier_correction_questions,
     has_review_evidence,
+    register_frontier_review_failure,
+    register_local_review_failure,
     review_contract_evidence,
     review_tool_executions,
     review_tool_results,
@@ -476,6 +478,9 @@ def structured_response_diagnostics(response: dict[str, Any]) -> dict[str, Any]:
 
 
 class Controller:
+    register_frontier_review_failure = staticmethod(register_frontier_review_failure)
+    register_local_review_failure = staticmethod(register_local_review_failure)
+
     def __init__(
         self,
         settings: Settings,
@@ -4057,48 +4062,6 @@ class Controller:
         )
         body["messages"] = messages
         return body
-
-    @staticmethod
-    def register_frontier_review_failure(state: SessionState, result: dict[str, Any]) -> bool:
-        loop = state.engineering_loop
-        if loop is None:
-            return False
-        register_failure(
-            loop,
-            "DUPLICATE_FAILURE",
-            finding_fingerprint=progress_evidence_fingerprint("frontier_review", result),
-        )
-        return loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
-
-    @staticmethod
-    def register_local_review_failure(state: SessionState, result: dict[str, Any]) -> bool:
-        loop = state.engineering_loop
-        if loop is None:
-            return False
-        findings = [
-            {
-                key: finding.get(key)
-                for key in ("finding_id", "severity", "category", "affected_location")
-            }
-            | {"required_correction": bool(finding.get("required_correction"))}
-            for finding in result.get("findings", [])
-            if isinstance(finding, dict)
-        ]
-        register_failure(
-            loop,
-            "DUPLICATE_FAILURE",
-            finding_fingerprint=progress_evidence_fingerprint(
-                "local_review",
-                {
-                    "status": result.get("status"),
-                    "findings": sorted(
-                        findings,
-                        key=lambda finding: json.dumps(finding, sort_keys=True, default=str),
-                    ),
-                },
-            ),
-        )
-        return loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
 
     async def review(
         self,

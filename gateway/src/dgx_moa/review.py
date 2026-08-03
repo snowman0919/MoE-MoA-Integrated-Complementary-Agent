@@ -10,6 +10,7 @@ from .evidence import (
     effective_objective,
     tool_execution_changes_files,
 )
+from .loop_engineering import progress_evidence_fingerprint, register_failure
 from .security import redact
 from .state import SessionState
 from .validation import successful_validation_execution
@@ -229,3 +230,44 @@ def frontier_correction_questions(state: SessionState) -> list[str]:
         *prior_review.get("important", []),
         *prior_review.get("missing_tests", []),
     ]
+
+
+def register_frontier_review_failure(
+    state: SessionState, result: dict[str, Any]
+) -> bool:
+    return _register_review_failure(
+        state, progress_evidence_fingerprint("frontier_review", result)
+    )
+
+
+def register_local_review_failure(state: SessionState, result: dict[str, Any]) -> bool:
+    findings = [
+        {
+            key: finding.get(key)
+            for key in ("finding_id", "severity", "category", "affected_location")
+        }
+        | {"required_correction": bool(finding.get("required_correction"))}
+        for finding in result.get("findings", [])
+        if isinstance(finding, dict)
+    ]
+    return _register_review_failure(
+        state,
+        progress_evidence_fingerprint(
+            "local_review",
+            {
+                "status": result.get("status"),
+                "findings": sorted(
+                    findings,
+                    key=lambda finding: json.dumps(finding, sort_keys=True, default=str),
+                ),
+            },
+        ),
+    )
+
+
+def _register_review_failure(state: SessionState, fingerprint: str) -> bool:
+    loop = state.engineering_loop
+    if loop is None:
+        return False
+    register_failure(loop, "DUPLICATE_FAILURE", finding_fingerprint=fingerprint)
+    return loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
