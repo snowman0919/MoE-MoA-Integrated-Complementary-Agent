@@ -2862,7 +2862,12 @@ def create_app(
             raise
         except DuplicateFailedCall as error:
             finalize_request(active_stage, "failed", downstream_started=True)
-            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+            return error_response(
+                status.HTTP_409_CONFLICT,
+                str(error),
+                "loop_admission_error",
+                "loop_new_evidence_required",
+            )
         except LoopAdmissionError as error:
             termination = (
                 state.engineering_loop.termination_reason

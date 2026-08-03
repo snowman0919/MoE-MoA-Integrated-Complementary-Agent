@@ -8664,6 +8664,8 @@ def test_duplicate_failed_call_records_one_timing_and_trace(
         usage = assert_usage(client.app, "failed")
 
     assert response.status_code == 409
+    assert response.json()["error"]["type"] == "loop_admission_error"
+    assert response.json()["error"]["code"] == "loop_new_evidence_required"
     assert len(timing_events) == 1
     assert timing_events[0]["payload"]["stage_status"] == {"request": "failed"}
     trace_path = next((settings.state_db.parent.parent / "traces").rglob(f"{session_id}.jsonl"))

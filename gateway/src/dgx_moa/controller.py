@@ -1596,6 +1596,11 @@ class Controller:
             if not failed:
                 for failure in active_failures(state):
                     failure_paths = set(failure.get("target_paths", []))
+                    if (
+                        failure.get("tool_name") in REPOSITORY_MUTATION_TOOLS
+                        and not changed_files
+                    ):
+                        continue
                     same_path = bool(target_paths.intersection(failure_paths))
                     same_tool_without_path = bool(
                         not failure_paths and failure.get("tool_name") == execution["tool_name"]

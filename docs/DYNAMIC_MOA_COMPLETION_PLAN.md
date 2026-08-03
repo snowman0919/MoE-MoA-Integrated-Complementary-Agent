@@ -588,6 +588,13 @@ reconnect, plan/context 보존을 대체하지 않는다.
   진단으로 보존하며 v90의 quality margin, bootstrap seed, 표본 수, model,
   fixture, scorer, telemetry 계약은 바꾸지 않는다. 새 plan hash, seal, run ID,
   attempt order와 clean fixture에서 200회를 처음부터 다시 시작한다.
+- protocol v92는 A4에서 관측된 동일 실패 mutation 반복을 차단한다. 실패한
+  repository mutation fingerprint는 성공한 비mutation 조회·검증으로 해제하지
+  않고 실제 성공한 mutation만 해제할 수 있다. 동일 실패 호출은
+  `backend_error`가 아니라 비재시도 `loop_new_evidence_required`로 종료한다.
+  A4는 timeout 진단으로 보존하며 v91의 quality margin, bootstrap seed, 표본 수,
+  model, fixture, scorer, telemetry 계약은 바꾸지 않는다. 새 plan hash, seal,
+  run ID, attempt order와 clean fixture에서 다시 시작한다.
 
 ## 10. Release, rollback, 배포
 

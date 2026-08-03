@@ -10839,3 +10839,25 @@ new seal and clean fixtures; no prior attempt counts toward confirmation.
 Focused rejection/contract verification passed `3/3`. The complete gate passed
 Ruff, strict mypy across 62 source files, and `1,224/1,224` tests in 43.26
 seconds with the existing Starlette deprecation warning.
+
+## Codex v91 local diagnostic A4 (2026-08-03)
+
+Run `20260803-codex-rate-limiter-v91-local-a4` timed out with client exit `124`
+after 1,800.126 seconds and is **FAILED**. It stayed local and provider-pinned
+with zero variable remote cost, but telemetry was incomplete at cancellation.
+The run recorded 130 completed and one cancelled Executor call, two Planner,
+25 Reasoner, and one Reviewer call. No score was produced or inferred.
+
+Payload-free state aggregation identified 67 failed patch executions, including
+56 occurrences of one argument fingerprint. A successful non-mutating command
+could resolve the failed mutation record and remove its fingerprint, allowing
+the same failed patch to recur; subsequent duplicate conflicts were also exposed
+to the Responses client as generic backend errors. Failed mutation fingerprints
+now require an actual successful mutation to clear, and duplicate failures
+return nonretryable `loop_new_evidence_required`. Focused mutation, duplicate,
+and API contract tests passed `3/3`. The sanitized immutable evidence is at
+`/home/kotori9/code/.moa-preservation/diagnostics/20260803-codex-rate-limiter-v91-local-a4`.
+Protocol v92 therefore starts with a new hash and run ID; A4 remains diagnostic.
+The complete gate passed Ruff, strict mypy across 62 source files, and
+`1,225/1,225` tests in 43.83 seconds with the existing Starlette deprecation
+warning.

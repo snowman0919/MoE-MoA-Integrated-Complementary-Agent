@@ -2530,6 +2530,64 @@ def test_successful_output_can_describe_failures(settings, stub_provider: StubPr
     assert state.failed_call_fingerprints == []
 
 
+def test_successful_validation_does_not_clear_failed_mutation_fingerprint(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    state = SessionState(session_id="failed-mutation-repeated")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    failed_patch = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "failed-patch",
+                    "type": "function",
+                    "function": {
+                        "name": "apply_patch",
+                        "arguments": '{"patch":"*** Update File: target.py"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "failed-patch",
+            "content": '{"exit_code":1,"stderr":"patch failed"}',
+        },
+    ]
+
+    controller._observe(state, failed_patch)
+    controller._observe(
+        state,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "successful-validation",
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "arguments": '{"cmd":"python -m unittest target.py"}',
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "successful-validation",
+                "content": '{"exit_code":0,"stdout":"Ran 1 test\\nOK"}',
+            },
+        ],
+    )
+
+    repeated_patch = json.loads(json.dumps(failed_patch))
+    repeated_patch[0]["tool_calls"][0]["id"] = "failed-patch-again"
+    repeated_patch[1]["tool_call_id"] = "failed-patch-again"
+    with pytest.raises(DuplicateFailedCall):
+        controller._observe(state, repeated_patch)
+
+
 def test_successful_shell_can_report_missing_file(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     state = SessionState(session_id="stdout-failure")
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
