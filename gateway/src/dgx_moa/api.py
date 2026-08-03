@@ -22,7 +22,6 @@ from .admin_routes import build_admin_router
 from .config import Settings, get_settings
 from .controller import (
     IMPLEMENTATION_QUALITY_CONTRACT,
-    REPOSITORY_MUTATION_TOOLS,
     Controller,
     DuplicateFailedCall,
     FrontierRequiredUnavailable,
@@ -32,6 +31,7 @@ from .controller import (
     PolicyBlocked,
     ReasonerUnavailable,
 )
+from .evidence import REPOSITORY_MUTATION_TOOLS
 from .evolution import PromptRegistry
 from .frontier import (
     CodexOAuthCollaboration,

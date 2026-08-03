@@ -15,7 +15,13 @@ import httpx
 
 from .compression import compress_messages, compress_text, summarize_text
 from .config import Settings
-from .evidence import EvidenceEdge, EvidenceNode, classify_evidence
+from .evidence import (
+    REPOSITORY_MUTATION_TOOLS,
+    EvidenceEdge,
+    EvidenceNode,
+    classify_evidence,
+    tool_execution_changes_files,
+)
 from .evolution import PromptRegistry
 from .frontier import (
     CodexOAuthCollaboration,
@@ -214,20 +220,6 @@ REVIEWER_QUALITY_CONTRACT = (
     "because of its language, length, format, or summary content; final synthesis validates those "
     "requirements. Review only the implementation and currently available evidence."
 )
-
-REPOSITORY_MUTATION_TOOLS = frozenset(
-    {
-        "apply_patch",
-        "patch",
-        "delete",
-        "edit_file",
-        "edit",
-        "write",
-        "write_file",
-        "delete_file",
-    }
-)
-
 
 def fingerprint(call: dict[str, Any]) -> str:
     normalized_call = call.get("function", call)
@@ -1699,7 +1691,7 @@ class Controller:
             state.tool_executions = state.tool_executions[-self.settings.limits.max_steps :]
             observed_tool_call_ids.add(tool_call_id)
             self.store.event(state.session_id, "tool_execution_recorded", execution)
-            changed_files = not failed and self.tool_execution_changes_files(execution)
+            changed_files = not failed and tool_execution_changes_files(execution)
             validation_completed = not failed and validation_attempted
             if changed_files:
                 state.frontier_review_verified = False
@@ -2322,7 +2314,7 @@ class Controller:
             if state.repository.get("workspace_identifier") == "long-horizon"
             and any(
                 execution.get("exit_code") == 0
-                and self.tool_execution_changes_files(execution)
+                and tool_execution_changes_files(execution)
                 for execution in current_turn_executions(state)
             )
             and not attempted
@@ -3314,7 +3306,7 @@ class Controller:
                     else:
                         frontier_pending = (mode, evidence)
         local_correction_applied = state.review_status != "rejected" or any(
-            execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
+            execution.get("exit_code") == 0 and tool_execution_changes_files(execution)
             for execution in state.tool_executions[state.reviewed_tool_execution_count :]
         )
         review_evidence_available = local_correction_applied and (
@@ -4160,7 +4152,7 @@ class Controller:
             state.active_turn_requires_change
             and state.active_turn_targets_repository
             and not any(
-                execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
+                execution.get("exit_code") == 0 and tool_execution_changes_files(execution)
                 for execution in executions
             )
         ):
@@ -4183,7 +4175,7 @@ class Controller:
                 and re.search(r"(?:^|&&|\|\||;|\n|[\"'])\s*git\s+diff\b", command)
             ):
                 return True
-            if self.tool_execution_changes_files(execution):
+            if tool_execution_changes_files(execution):
                 break
         return False
 
@@ -4213,7 +4205,7 @@ class Controller:
         for execution in reversed(current_turn_executions(state)):
             if successful_validation_execution(execution):
                 return True
-            if self.tool_execution_changes_files(execution):
+            if tool_execution_changes_files(execution):
                 break
         return False
 
@@ -4226,7 +4218,7 @@ class Controller:
                 index
                 for index, execution in enumerate(executions)
                 if execution.get("exit_code") == 0
-                and self.tool_execution_changes_files(execution)
+                and tool_execution_changes_files(execution)
             ),
             default=-1,
         )
@@ -4261,7 +4253,7 @@ class Controller:
         if not (requests_change and targets_repository):
             return False
         changed = any(
-            execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
+            execution.get("exit_code") == 0 and tool_execution_changes_files(execution)
             for execution in current_turn_executions(state)
         )
         validated = self.has_validation_evidence(state, metadata)
@@ -4289,7 +4281,7 @@ class Controller:
         self, state: SessionState, metadata: dict[str, Any]
     ) -> bool:
         return any(
-            execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
+            execution.get("exit_code") == 0 and tool_execution_changes_files(execution)
             for execution in current_turn_executions(state)
         ) and not self.requires_implementation_tool_action(state, metadata)
 
@@ -4302,7 +4294,7 @@ class Controller:
                 index
                 for index, execution in enumerate(executions)
                 if execution.get("exit_code") == 0
-                and self.tool_execution_changes_files(execution)
+                and tool_execution_changes_files(execution)
             ),
             default=-1,
         )
@@ -4340,7 +4332,7 @@ class Controller:
         for execution in reversed(current_turn_executions(state)):
             if execution.get("exit_code") != 0:
                 continue
-            if self.tool_execution_changes_files(execution):
+            if tool_execution_changes_files(execution):
                 break
             arguments = execution.get("normalized_arguments")
             if isinstance(arguments, str):
@@ -4406,7 +4398,7 @@ class Controller:
         mutation_indexes = [
             index
             for index, execution in enumerate(executions)
-            if Controller.tool_execution_changes_files(execution)
+            if tool_execution_changes_files(execution)
         ][-4:]
         selected_indexes = sorted(
             set((*mutation_indexes, *range(max(0, len(executions) - 6), len(executions))))
@@ -4450,72 +4442,6 @@ class Controller:
                 if len(evidence) == 4:
                     return list(reversed(evidence))
         return list(reversed(evidence))
-
-    @staticmethod
-    def tool_execution_changes_files(execution: dict[str, Any]) -> bool:
-        tool_name = execution.get("tool_name")
-        if tool_name in REPOSITORY_MUTATION_TOOLS:
-            if tool_name in {"apply_patch", "patch"}:
-                arguments = execution.get("normalized_arguments")
-                if isinstance(arguments, str):
-                    try:
-                        arguments = json.loads(arguments)
-                    except ValueError:
-                        arguments = {"input": arguments}
-                patch = (
-                    arguments.get("input") or arguments.get("patch") or arguments.get("diff")
-                    if isinstance(arguments, dict)
-                    else None
-                )
-                targets = (
-                    re.findall(
-                        r"^\*\*\* (?:(?:Add|Update|Delete) File: |Move to: )(.+?)\r?$",
-                        patch,
-                        re.MULTILINE,
-                    )
-                    if isinstance(patch, str)
-                    else []
-                )
-                if targets and all(
-                    target in {"/state", "/inputs"} or target.startswith(("/state/", "/inputs/"))
-                    for target in targets
-                ):
-                    return False
-            return True
-        effect = execution.get("filesystem_effect")
-        if isinstance(effect, dict) and any(
-            effect.get(key) for key in ("changed_paths", "created_paths", "deleted_paths")
-        ):
-            return True
-        arguments = execution.get("normalized_arguments")
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except ValueError:
-                arguments = {}
-        command = (
-            arguments.get("cmd") or arguments.get("command")
-            if isinstance(arguments, dict)
-            else None
-        )
-        if not isinstance(command, str):
-            return False
-        direct_mutation = re.search(
-            r"(?:^|&&|\|\||;|\n)\s*(?:"
-            r"(?:cat|echo|printf)\b[^\n;]*(?<![\d>])(?:1?>|>>)|tee\b|"
-            r"sed\b[^\n;]*\s-i(?:\s|$)|perl\b[^\n;]*\s-(?:pi|ip)\b|"
-            r"apply_patch\b|"
-            r"touch\b|cp\b|mv\b|rm\b|truncate\b|install\b|"
-            r"git\s+(?:apply|checkout|restore|reset|clean)\b)",
-            command,
-        )
-        python_mutation = re.search(
-            r"(?:^|&&|\|\||;|\n)\s*python(?:3(?:\.\d+)?)?\b[\s\S]*"
-            r"(?:\.write_(?:text|bytes)\s*\(|"
-            r"\bopen\s*\([^,\n]+,\s*[\"'][wax](?:[bt+])?[\"'])",
-            command,
-        )
-        return bool(direct_mutation or python_mutation)
 
     @staticmethod
     def register_frontier_review_failure(state: SessionState, result: dict[str, Any]) -> bool:

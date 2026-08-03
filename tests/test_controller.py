@@ -19,6 +19,7 @@ from dgx_moa.controller import (
     normalize_tool_result,
     structured_response_diagnostics,
 )
+from dgx_moa.evidence import tool_execution_changes_files
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
 from dgx_moa.review import material_frontier_review
 from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
@@ -4660,10 +4661,8 @@ def test_frontier_missing_tests_block_approval() -> None:
     )
 
 
-def test_patch_tool_counts_as_a_file_change(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
-    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
-
-    assert controller.tool_execution_changes_files(
+def test_patch_tool_counts_as_a_file_change() -> None:
+    assert tool_execution_changes_files(
         {
             "tool_name": "patch",
             "normalized_arguments": {
@@ -4673,7 +4672,7 @@ def test_patch_tool_counts_as_a_file_change(settings, stub_provider: StubProvide
             "exit_code": 0,
         }
     )
-    assert not controller.tool_execution_changes_files(
+    assert not tool_execution_changes_files(
         {
             "tool_name": "apply_patch",
             "normalized_arguments": {
@@ -4684,7 +4683,7 @@ def test_patch_tool_counts_as_a_file_change(settings, stub_provider: StubProvide
             "exit_code": 0,
         }
     )
-    assert controller.tool_execution_changes_files(
+    assert tool_execution_changes_files(
         {
             "tool_name": "apply_patch",
             "normalized_arguments": {

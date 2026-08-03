@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
@@ -63,6 +65,84 @@ TRUST_RANK: dict[TrustClass, int] = {
     "tool_observed_fact": 5,
     "test_confirmed_fact": 6,
 }
+REPOSITORY_MUTATION_TOOLS = frozenset(
+    {
+        "apply_patch",
+        "patch",
+        "delete",
+        "edit_file",
+        "edit",
+        "write",
+        "write_file",
+        "delete_file",
+    }
+)
+
+
+def tool_execution_changes_files(execution: dict[str, Any]) -> bool:
+    tool_name = execution.get("tool_name")
+    if tool_name in REPOSITORY_MUTATION_TOOLS:
+        if tool_name in {"apply_patch", "patch"}:
+            arguments = execution.get("normalized_arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except ValueError:
+                    arguments = {"input": arguments}
+            patch = (
+                arguments.get("input") or arguments.get("patch") or arguments.get("diff")
+                if isinstance(arguments, dict)
+                else None
+            )
+            targets = (
+                re.findall(
+                    r"^\*\*\* (?:(?:Add|Update|Delete) File: |Move to: )(.+?)\r?$",
+                    patch,
+                    re.MULTILINE,
+                )
+                if isinstance(patch, str)
+                else []
+            )
+            if targets and all(
+                target in {"/state", "/inputs"} or target.startswith(("/state/", "/inputs/"))
+                for target in targets
+            ):
+                return False
+        return True
+    effect = execution.get("filesystem_effect")
+    if isinstance(effect, dict) and any(
+        effect.get(key) for key in ("changed_paths", "created_paths", "deleted_paths")
+    ):
+        return True
+    arguments = execution.get("normalized_arguments")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except ValueError:
+            arguments = {}
+    command = (
+        arguments.get("cmd") or arguments.get("command")
+        if isinstance(arguments, dict)
+        else None
+    )
+    if not isinstance(command, str):
+        return False
+    direct_mutation = re.search(
+        r"(?:^|&&|\|\||;|\n)\s*(?:"
+        r"(?:cat|echo|printf)\b[^\n;]*(?<![\d>])(?:1?>|>>)|tee\b|"
+        r"sed\b[^\n;]*\s-i(?:\s|$)|perl\b[^\n;]*\s-(?:pi|ip)\b|"
+        r"apply_patch\b|"
+        r"touch\b|cp\b|mv\b|rm\b|truncate\b|install\b|"
+        r"git\s+(?:apply|checkout|restore|reset|clean)\b)",
+        command,
+    )
+    python_mutation = re.search(
+        r"(?:^|&&|\|\||;|\n)\s*python(?:3(?:\.\d+)?)?\b[\s\S]*"
+        r"(?:\.write_(?:text|bytes)\s*\(|"
+        r"\bopen\s*\([^,\n]+,\s*[\"'][wax](?:[bt+])?[\"'])",
+        command,
+    )
+    return bool(direct_mutation or python_mutation)
 
 
 class EvidenceNode(BaseModel):

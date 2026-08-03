@@ -10494,3 +10494,14 @@ were added. Twelve focused review/correction tests passed. Ruff passed, strict
 mypy reported no issues across 61 source files, `git diff --check` passed, and
 the complete suite passed `1,218/1,218` in 50.05 seconds with the existing
 Starlette deprecation warning.
+
+## 2026-08-03 Tool/file-change evidence boundary
+
+The repository-mutation tool allowlist and the pure file-change detector now
+live in `evidence.py`. API tool filtering and Controller orchestration consume
+that common lower-level boundary directly; API no longer imports the allowlist
+from Controller, and Controller no longer owns the 74-line detector. Twelve
+focused evidence/validation/correction tests passed. Ruff passed, strict mypy
+reported no issues across 61 source files, `git diff --check` passed, and the
+complete suite passed `1,218/1,218` in 47.33 seconds with the existing
+Starlette deprecation warning.
