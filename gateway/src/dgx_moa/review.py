@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, cast
 
 from .evidence import current_turn_executions, tool_execution_changes_files
+from .security import redact
 from .state import SessionState
 
 REVIEW_CONTRACT_DOCUMENTS = {
@@ -11,6 +13,30 @@ REVIEW_CONTRACT_DOCUMENTS = {
     "requirements.md",
     "spec.md",
 }
+
+
+def serialize_review_evidence(evidence: dict[str, Any], limit: int) -> str:
+    bounded = cast(dict[str, Any], redact(evidence))
+    serialized = json.dumps(bounded, ensure_ascii=False, sort_keys=True)
+    marker = "...[truncated]"
+    while len(serialized) > limit:
+        key = max(
+            bounded,
+            key=lambda name: len(json.dumps(bounded[name], ensure_ascii=False, sort_keys=True)),
+        )
+        current = bounded[key]
+        source = (
+            current
+            if isinstance(current, str)
+            else json.dumps(current, ensure_ascii=False, sort_keys=True)
+        )
+        keep = max(0, len(source) - (len(serialized) - limit) - len(marker) - 2)
+        replacement = source[:keep] + marker
+        if bounded[key] == replacement:
+            raise ValueError("review evidence limit too small")
+        bounded[key] = replacement
+        serialized = json.dumps(bounded, ensure_ascii=False, sort_keys=True)
+    return serialized
 
 
 def review_tool_results(state: SessionState) -> list[dict[str, Any]]:

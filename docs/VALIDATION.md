@@ -6132,6 +6132,17 @@ Focused policy tests passed. Ruff passed, strict mypy reported no issues across
 61 source files, `git diff --check` passed, and the complete suite passed
 `1,218/1,218` in 48.76 seconds with the existing Starlette deprecation warning.
 
+## 2026-08-03 Review evidence serialization boundary
+
+Secret-redacted, size-bounded review evidence serialization now lives in
+`review.py` and accepts the configured character limit explicitly. Controller
+only assembles review inputs and selects that limit; the truncation marker,
+largest-field reduction, deterministic JSON ordering, and too-small-limit
+failure behavior are unchanged. Four focused review evidence tests passed.
+Ruff passed, strict mypy reported no issues across 61 source files,
+`git diff --check` passed, and the complete suite passed `1,218/1,218` in 50.64
+seconds with the existing Starlette deprecation warning.
+
 Fresh gateway `d12` is retained as a failed setup attempt: its caller supplied
 the unsupported trace origin `validation-d12`, so requests failed before model
 dispatch with `invalid trace_origin`. No result was reclassified. Gateway

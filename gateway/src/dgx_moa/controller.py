@@ -73,6 +73,7 @@ from .review import (
     review_contract_evidence,
     review_tool_executions,
     review_tool_results,
+    serialize_review_evidence,
 )
 from .review import material_frontier_review as has_material_frontier_review
 from .review import material_review_issue as has_material_review_issue
@@ -3333,7 +3334,7 @@ class Controller:
                 ),
                 None,
             )
-            review_evidence = self.serialize_review_evidence(
+            review_evidence = serialize_review_evidence(
                 cast(
                     dict[str, Any],
                     self.safe_payload(
@@ -3362,7 +3363,8 @@ class Controller:
                             ),
                         },
                     ),
-                )
+                ),
+                self.settings.limits.max_review_evidence_characters,
             )
             pre_review_task = asyncio.create_task(self.review(state, review_evidence))
         if reasoner_contribution is not None:
@@ -4445,31 +4447,9 @@ class Controller:
             "assistant_message": choice.get("message", {}),
             "finish_reason": choice.get("finish_reason"),
         }
-        return self.serialize_review_evidence(evidence)
-
-    def serialize_review_evidence(self, evidence: dict[str, Any]) -> str:
-        bounded = cast(dict[str, Any], redact(evidence))
-        limit = self.settings.limits.max_review_evidence_characters
-        serialized = json.dumps(bounded, ensure_ascii=False, sort_keys=True)
-        marker = "...[truncated]"
-        while len(serialized) > limit:
-            key = max(
-                bounded,
-                key=lambda name: len(json.dumps(bounded[name], ensure_ascii=False, sort_keys=True)),
-            )
-            current = bounded[key]
-            source = (
-                current
-                if isinstance(current, str)
-                else json.dumps(current, ensure_ascii=False, sort_keys=True)
-            )
-            keep = max(0, len(source) - (len(serialized) - limit) - len(marker) - 2)
-            replacement = source[:keep] + marker
-            if bounded[key] == replacement:
-                raise ValueError("review evidence limit too small")
-            bounded[key] = replacement
-            serialized = json.dumps(bounded, ensure_ascii=False, sort_keys=True)
-        return serialized
+        return serialize_review_evidence(
+            evidence, self.settings.limits.max_review_evidence_characters
+        )
 
     async def review(
         self,
