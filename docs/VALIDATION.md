@@ -10971,3 +10971,21 @@ Starlette deprecation warning. H4 remains an immutable failure at
 `/home/kotori9/code/.moa-preservation/diagnostics/20260803-hermes-webhook-verifier-v94-h4`;
 all v94 Hermes attempts remain diagnostics and the panel restarts with new v95
 run IDs.
+
+## Hermes v95 webhook-verifier diagnostic H5 (2026-08-03)
+
+Run `20260803-hermes-webhook-verifier-v95-h5` physically confirmed the
+descriptor-merge correction. The client exited 0 in 220.342 seconds and every
+public, hidden, terminal, tool-evidence, source-scope, unchanged-test,
+Korean-output, and Docker-isolation scorer gate passed. Telemetry was complete
+and provider-pinned with no provider error, switch, retryable failure, missing
+token row, or variable remote cost. Local Planner, Reviewer, Reasoner, and
+Executor participated alongside one bounded Codex OAuth secondary Executor and
+one Frontier call.
+
+This is a functional diagnostic PASS, not local-path non-inferiority evidence,
+because fixed-cost external collaboration participated. Sanitized immutable
+evidence is preserved at
+`/home/kotori9/code/.moa-preservation/diagnostics/20260803-hermes-webhook-verifier-v95-h5`.
+The remaining v95 Hermes tasks require fresh run IDs before any panel-level
+claim.
