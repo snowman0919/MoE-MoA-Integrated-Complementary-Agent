@@ -114,6 +114,8 @@ class AdminCodexRunner:
             "-c",
             f"model_providers.{provider}.wire_api={json.dumps('responses')}",
             "-c",
+            f"model_providers.{provider}.stream_idle_timeout_ms=600000",
+            "-c",
             f"sandbox_mode={json.dumps(sandbox)}",
             "-c",
             'approval_policy="never"',

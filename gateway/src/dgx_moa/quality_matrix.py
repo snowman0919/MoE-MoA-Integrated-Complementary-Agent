@@ -1262,6 +1262,8 @@ def codex_moa_command(args: argparse.Namespace, workspace: Path, task: Task) -> 
         "-c",
         f"model_providers.{provider}.wire_api={json.dumps('responses')}",
         "-c",
+        f"model_providers.{provider}.stream_idle_timeout_ms=600000",
+        "-c",
         f"model_providers.{provider}.http_headers={headers}",
         "-C",
         str(workspace),

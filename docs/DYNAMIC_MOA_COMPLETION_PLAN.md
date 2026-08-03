@@ -601,6 +601,12 @@ reconnect, plan/context 보존을 대체하지 않는다.
   sentinel을 추가하고, 기존 끝 sentinel 보정이 완성한다. patch 내용이나
   hidden fixture는 변경하지 않는다. A4는 진단으로 유지하며 새 plan hash와
   run ID에서 재검증한다.
+- protocol v94는 A8에서 Codex provider의 기본 약 120초 stream idle 제한이
+  장시간 remote Executor 호출을 취소하고 `stream disconnected before
+  completion`을 발생시킨 증거에 따라 공식 `stream_idle_timeout_ms`를 quality,
+  admin, isolated validation provider에서 600,000ms로 고정한다. 이는 기존
+  tool continuation 600초와 같고 Executor total 900초보다 낮다. A8은 reliability
+  실패로 보존하며 새 plan hash와 run ID에서 동일 작업을 재검증한다.
 
 ## 10. Release, rollback, 배포
 

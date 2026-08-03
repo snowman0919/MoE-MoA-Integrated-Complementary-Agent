@@ -95,6 +95,7 @@ def test_codex_quality_command_uses_native_patch_catalog(tmp_path: Path) -> None
     model = MODULE.codex_model_catalog()["models"][0]
 
     assert 'model_catalog_json="/state/model-catalog.json"' in command
+    assert "model_providers.dgx_moa_quality.stream_idle_timeout_ms=600000" in command
     assert model["apply_patch_tool_type"] == "freeform"
     assert "apply_patch" in model["base_instructions"]
     assert any(

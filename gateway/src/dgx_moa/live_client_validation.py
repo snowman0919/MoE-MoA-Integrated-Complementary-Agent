@@ -269,6 +269,7 @@ def main() -> None:
             f'base_url = "{base_url}/v1"\n'
             'env_key = "DGX_MOA_API_KEY"\n'
             'wire_api = "responses"\n'
+            "stream_idle_timeout_ms = 600000\n"
         )
         codex_env = client_env(root / "codex/environment", secret)
         codex_env["CODEX_HOME"] = str(codex_home)

@@ -10903,3 +10903,26 @@ local non-inferiority. It does complete the previously missing Codex functional
 rate-limiter item under the permitted fixed-cost OAuth correction path. The
 immutable sanitized evidence is preserved at
 `/home/kotori9/code/.moa-preservation/diagnostics/20260803-codex-rate-limiter-v93-frontier-a6`.
+
+## Codex v93 panel diagnostics A7–A10 (2026-08-03)
+
+Fresh `atomic-store` A7 passed all functional gates in 349.095 seconds with
+complete telemetry and provider pinning. Fresh `webhook-verifier` A9 and
+`log-report` A10 likewise passed every gate in 121.516 and 209.411 seconds.
+Each used the permitted fixed-cost Codex OAuth collaboration path, so these are
+functional diagnostics rather than local non-inferiority evidence. Sanitized
+immutable evidence is preserved under the matching A7, A9, and A10 directories
+in `/home/kotori9/code/.moa-preservation/diagnostics/`.
+
+Fresh `dag-runner` A8 passed public and hidden implementation validation but is
+**FAILED** overall: one `local_no_progress` Codex OAuth Executor invocation was
+cancelled at 118.776 seconds, telemetry was incomplete, and the client recorded
+`stream disconnected before completion`. The raw Responses wait path emitted
+SSE comments, while the Codex provider retained its default approximately
+120-second stream idle limit. Protocol v94 sets the official Codex provider
+`stream_idle_timeout_ms` to 600,000 for quality, admin, and isolated validation
+paths. Focused command/config and candidate tests passed `9/9`; A8 remains
+immutable and requires a new run ID.
+The v94 complete gate passed Ruff, strict mypy across 62 source files, and
+`1,226/1,226` tests in 43.11 seconds with the existing Starlette deprecation
+warning.
