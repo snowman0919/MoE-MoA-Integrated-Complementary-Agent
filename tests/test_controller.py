@@ -3448,7 +3448,11 @@ async def test_tool_continuation_reenters_reasoner_for_changed_context_or_no_pro
         ("reasoner", "executor"),
         tool_continuation=True,
     )
-    state.tool_results.extend([{"stdout": "first"}, {"stdout": "second"}])
+    state.tool_results.extend({"stdout": str(index)} for index in range(7))
+    await controller.prepare_executor(
+        state, changed, ("reasoner", "executor"), tool_continuation=True
+    )
+    state.tool_results.append({"stdout": "7"})
     await controller.prepare_executor(
         state, changed, ("reasoner", "executor"), tool_continuation=True
     )

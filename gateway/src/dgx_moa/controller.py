@@ -361,7 +361,15 @@ def reasoner_context_fingerprint(state: SessionState, messages: list[dict[str, A
 
 
 def reasoner_evidence_generation(state: SessionState) -> int:
-    return len(state.tool_results) // 2
+    outcomes: list[bool] = []
+    for result in state.tool_results:
+        exit_code = result.get("exit_code")
+        if isinstance(exit_code, int):
+            outcomes.append(exit_code == 0)
+    transitions = sum(
+        left != right for left, right in zip(outcomes, outcomes[1:], strict=False)
+    )
+    return len(state.tool_results) // 8 + transitions
 
 
 def pending_goal_prerequisites(state: SessionState) -> tuple[str, ...]:

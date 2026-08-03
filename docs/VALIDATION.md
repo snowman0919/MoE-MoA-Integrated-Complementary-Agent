@@ -10294,3 +10294,14 @@ The Reasoner peer at `100.90.167.128` remained offline while both loopback
 SGLang endpoints returned HTTP 200. Confirmation remains paused; readiness is
 not weakened and no new epoch may start until the fixed Reasoner topology is
 physically available. v90 remains diagnostic and cannot pass.
+
+The nine 1,800-second harness timeouts contained 36–144 model invocations each.
+Their Executor counts ranged from 24 to 72 and Reasoner counts from eight to
+41, demonstrating continuation-call amplification rather than a stalled Gemma
+kernel. The continuation checkpoint previously advanced after every two tool
+results. It now advances after eight routine results while preserving immediate
+Reasoner re-entry for user-context changes, explicit no-progress signals, and
+success/failure outcome transitions. Focused recovery and 7/8 boundary tests
+passed; the full suite passed 1,216 tests in 46.12 seconds. Ruff and strict mypy
+over all 60 gateway source files passed. A new sealed epoch is required before
+claiming a measured latency or quality improvement.
