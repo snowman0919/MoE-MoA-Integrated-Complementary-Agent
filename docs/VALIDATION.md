@@ -10871,3 +10871,18 @@ unified-diff, and variant tests passed `4/4`.
 The v93 complete gate passed Ruff, strict mypy across 62 source files, and
 `1,226/1,226` tests in 44.59 seconds with the existing Starlette deprecation
 warning.
+
+## Codex v93 local diagnostic A5 (2026-08-03)
+
+Run `20260803-codex-rate-limiter-v93-local-a5` completed the client in 166.237
+seconds with exit `0`. Public validation passed, patch transport did not repeat,
+and all routing remained local and provider-pinned. Telemetry was complete with
+no provider error, retryable failure, provider switch, or variable remote cost:
+17 Executor, one Planner, five Reasoner, and one Reviewer call.
+
+The attempt is nevertheless **FAILED**, not PASS: hidden validation exited `1`
+after the local Reviewer recorded `approved`. No hidden assertion detail was fed
+back into runtime code or prompts, and no score was inferred beyond the boolean
+gate. This establishes that v93 fixed the A4 transport/loop failure but did not
+establish local quality non-inferiority. The immutable sanitized evidence is at
+`/home/kotori9/code/.moa-preservation/diagnostics/20260803-codex-rate-limiter-v93-local-a5`.
