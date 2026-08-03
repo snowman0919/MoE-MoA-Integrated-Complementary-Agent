@@ -10566,3 +10566,14 @@ lower-level contract. All 241 API tests passed. Ruff passed, strict mypy
 reported no issues across 61 source files, `git diff --check` passed, and the
 complete suite passed `1,218/1,218` in 46.45 seconds with the existing
 Starlette deprecation warning.
+
+## 2026-08-03 Review observation ownership boundary
+
+Review observation assembly now lives with its serializer and evidence samplers
+in `review.py`; API orchestration calls that pure function directly. The shared
+active-failure and effective-objective state views moved to `evidence.py`, while
+Controller keeps provider dispatch and state mutation. No compatibility wrapper
+or new abstraction was added, and Controller shrank by 50 lines. Four focused
+review/evidence tests passed. Ruff passed, strict mypy reported no issues across
+61 source files, `git diff --check` passed, and the complete suite passed
+`1,218/1,218` in 44.79 seconds with the existing Starlette deprecation warning.

@@ -19,8 +19,10 @@ from .evidence import (
     REPOSITORY_MUTATION_TOOLS,
     EvidenceEdge,
     EvidenceNode,
+    active_failures,
     classify_evidence,
     current_turn_executions,
+    effective_objective,
     tool_execution_changes_files,
 )
 from .evolution import PromptRegistry
@@ -258,19 +260,8 @@ def classify_failure(observation: str) -> str:
     return "TEST_FAILURE"
 
 
-def active_failures(state: SessionState) -> list[dict[str, Any]]:
-    return [item for item in state.failures if item.get("resolution_status", "active") == "active"]
-
-
 def has_mcp_server_failure(state: SessionState) -> bool:
     return any(item.get("failure_class") == "MCP_SERVER_UNAVAILABLE" for item in state.failures)
-
-
-def effective_objective(state: SessionState) -> str:
-    objective = state.resolved_objective or state.objective
-    if state.active_user_instruction and state.active_user_instruction != state.objective:
-        return objective + "\n\nCURRENT USER INSTRUCTION\n" + state.active_user_instruction
-    return objective
 
 
 def invocation_budget_tokens(invocation: dict[str, Any]) -> int | None:
@@ -4413,43 +4404,6 @@ class Controller:
             ),
         )
         return loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
-
-    def review_observation(
-        self, state: SessionState, response: dict[str, Any], metadata: dict[str, Any]
-    ) -> str:
-        choice = (response.get("choices") or [{}])[0]
-        current_completion = metadata.get("completion_evidence")
-        evidence = {
-            "original_objective": effective_objective(state),
-            "acceptance_criteria": state.acceptance_criteria,
-            "changed_paths": list(
-                dict.fromkeys(
-                    [
-                        *metadata.get("changed_paths", []),
-                        *[
-                            path
-                            for item in state.implementation_evidence
-                            for path in item.get("target_paths", [])
-                        ],
-                    ]
-                )
-            ),
-            "diff_summary": metadata.get("diff_summary", ""),
-            "contract_evidence": review_contract_evidence(state),
-            "implementation_evidence": state.implementation_evidence,
-            "tool_results": review_tool_results(state),
-            "tool_executions": review_tool_executions(state),
-            "validation_results": metadata.get("validation_results", []),
-            "scope_evidence": state.approved_scope,
-            "completion_evidence": state.completion_evidence
-            | (current_completion if isinstance(current_completion, dict) else {}),
-            "known_failures": active_failures(state)[-4:],
-            "assistant_message": choice.get("message", {}),
-            "finish_reason": choice.get("finish_reason"),
-        }
-        return serialize_review_evidence(
-            evidence, self.settings.limits.max_review_evidence_characters
-        )
 
     async def review(
         self,

@@ -21,7 +21,7 @@ from dgx_moa.controller import (
 )
 from dgx_moa.evidence import tool_execution_changes_files
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
-from dgx_moa.review import material_frontier_review, review_tool_executions
+from dgx_moa.review import material_frontier_review, review_observation, review_tool_executions
 from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
 from dgx_moa.state import Phase, SessionState, StateStore
 from dgx_moa.validation import successful_validation_execution
@@ -5267,7 +5267,6 @@ async def test_rejected_review_waits_for_a_new_file_mutation(
 def test_review_observation_is_bounded_redacted_and_complete(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
-    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
     state = SessionState(
         session_id="review-evidence",
         objective="fix api_key=sk-1234567890123456",
@@ -5297,7 +5296,7 @@ def test_review_observation_is_bounded_redacted_and_complete(
         ]
     }
 
-    observation = controller.review_observation(
+    observation = review_observation(
         state,
         response,
         {
@@ -5306,6 +5305,7 @@ def test_review_observation_is_bounded_redacted_and_complete(
             "diff_summary": "one focused change",
             "validation_results": ["pytest: pass"],
         },
+        settings.limits.max_review_evidence_characters,
     )
     evidence = json.loads(observation)
 
@@ -5346,8 +5346,11 @@ def test_review_observation_is_bounded_redacted_and_complete(
         ],
         "validation_results": ["pytest: pass"],
     }
-    bounded_observation = controller.review_observation(
-        state, response, {"diff_summary": "x" * 40_000}
+    bounded_observation = review_observation(
+        state,
+        response,
+        {"diff_summary": "x" * 40_000},
+        settings.limits.max_review_evidence_characters,
     )
     bounded_evidence = json.loads(bounded_observation)
 
@@ -5374,10 +5377,11 @@ def test_review_observation_retains_bounded_contract_document(
     for index in range(15):
         controller._observe(state, tool_messages(f"later-{index}", f"result-{index}"))
 
-    observation = controller.review_observation(
+    observation = review_observation(
         state,
         {"choices": [{"message": {"role": "assistant"}, "finish_reason": "stop"}]},
         {},
+        settings.limits.max_review_evidence_characters,
     )
     evidence = json.loads(observation)
 
@@ -5427,10 +5431,11 @@ def test_review_observation_retains_relative_write_evidence(
         controller._observe(state, tool_messages(f"later-{index}", f"result-{index}"))
 
     evidence = json.loads(
-        controller.review_observation(
+        review_observation(
             state,
             {"choices": [{"message": {"role": "assistant"}, "finish_reason": "stop"}]},
             {},
+            settings.limits.max_review_evidence_characters,
         )
     )
 

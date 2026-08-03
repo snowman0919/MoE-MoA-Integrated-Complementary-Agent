@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
-from .evidence import current_turn_executions, tool_execution_changes_files
+from .evidence import (
+    active_failures,
+    current_turn_executions,
+    effective_objective,
+    tool_execution_changes_files,
+)
 from .security import redact
 from .state import SessionState
 
@@ -37,6 +42,45 @@ def serialize_review_evidence(evidence: dict[str, Any], limit: int) -> str:
         bounded[key] = replacement
         serialized = json.dumps(bounded, ensure_ascii=False, sort_keys=True)
     return serialized
+
+
+def review_observation(
+    state: SessionState,
+    response: dict[str, Any],
+    metadata: dict[str, Any],
+    limit: int,
+) -> str:
+    choice = (response.get("choices") or [{}])[0]
+    current_completion = metadata.get("completion_evidence")
+    evidence = {
+        "original_objective": effective_objective(state),
+        "acceptance_criteria": state.acceptance_criteria,
+        "changed_paths": list(
+            dict.fromkeys(
+                [
+                    *metadata.get("changed_paths", []),
+                    *[
+                        path
+                        for item in state.implementation_evidence
+                        for path in item.get("target_paths", [])
+                    ],
+                ]
+            )
+        ),
+        "diff_summary": metadata.get("diff_summary", ""),
+        "contract_evidence": review_contract_evidence(state),
+        "implementation_evidence": state.implementation_evidence,
+        "tool_results": review_tool_results(state),
+        "tool_executions": review_tool_executions(state),
+        "validation_results": metadata.get("validation_results", []),
+        "scope_evidence": state.approved_scope,
+        "completion_evidence": state.completion_evidence
+        | (current_completion if isinstance(current_completion, dict) else {}),
+        "known_failures": active_failures(state)[-4:],
+        "assistant_message": choice.get("message", {}),
+        "finish_reason": choice.get("finish_reason"),
+    }
+    return serialize_review_evidence(evidence, limit)
 
 
 def review_tool_results(state: SessionState) -> list[dict[str, Any]]:

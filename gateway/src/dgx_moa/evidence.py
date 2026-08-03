@@ -81,6 +81,17 @@ REPOSITORY_MUTATION_TOOLS = frozenset(
 )
 
 
+def active_failures(state: SessionState) -> list[dict[str, Any]]:
+    return [item for item in state.failures if item.get("resolution_status", "active") == "active"]
+
+
+def effective_objective(state: SessionState) -> str:
+    objective = state.resolved_objective or state.objective
+    if state.active_user_instruction and state.active_user_instruction != state.objective:
+        return objective + "\n\nCURRENT USER INSTRUCTION\n" + state.active_user_instruction
+    return objective
+
+
 def current_turn_executions(state: SessionState) -> list[dict[str, Any]]:
     marker = state.active_turn_after_tool_execution_id
     if not marker:

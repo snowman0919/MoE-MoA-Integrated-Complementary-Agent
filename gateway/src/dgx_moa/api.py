@@ -88,6 +88,7 @@ from .remote_judge import (
     selective_judge_reasons,
 )
 from .responses_routes import register_responses_routes
+from .review import review_observation
 from .routing import (
     COMPATIBILITY_MODEL_ALIASES,
     MODEL_MODES,
@@ -2627,8 +2628,11 @@ def create_app(
                     or runtime.controller.has_review_evidence(state, body.metadata)
                 )
             ):
-                review_observation = runtime.controller.review_observation(
-                    state, response, body.metadata
+                reviewer_observation = review_observation(
+                    state,
+                    response,
+                    body.metadata,
+                    runtime.settings.limits.max_review_evidence_characters,
                 )
                 active_stage = "reviewer"
                 try:
@@ -2648,7 +2652,7 @@ def create_app(
                         try:
                             await runtime.controller.review(
                                 state,
-                                review_observation,
+                                reviewer_observation,
                                 guard_already_owned=guard_transition_id is not None,
                             )
                         finally:
@@ -2701,10 +2705,13 @@ def create_app(
                     {"reasons": judge_reasons},
                 )
                 active_stage = "judge"
-                observation = runtime.controller.review_observation(
-                    state, response, body.metadata
+                judge_observation = review_observation(
+                    state,
+                    response,
+                    body.metadata,
+                    runtime.settings.limits.max_review_evidence_characters,
                 )
-                verdict = await runtime.controller.judge(state, observation)
+                verdict = await runtime.controller.judge(state, judge_observation)
                 stage_status["judge"] = "completed"
                 if verdict.get("verdict") != "approve":
                     correction_verdict = str(verdict.get("verdict", "revise"))
@@ -2781,8 +2788,11 @@ def create_app(
                             generated_from=state.last_decision_id,
                         )
                         active_stage = "reviewer"
-                        corrected_observation = runtime.controller.review_observation(
-                            state, response, body.metadata
+                        corrected_observation = review_observation(
+                            state,
+                            response,
+                            body.metadata,
+                            runtime.settings.limits.max_review_evidence_characters,
                         )
                         targeted_review = await runtime.controller.review(
                             state, corrected_observation
