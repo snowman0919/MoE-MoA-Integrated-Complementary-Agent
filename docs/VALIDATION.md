@@ -10385,6 +10385,14 @@ HTTP client, and profile/degraded/remote-Judge payload semantics are unchanged.
 Two focused readiness contracts passed, followed by all 1,217 tests in 43.47
 seconds. Ruff, strict mypy across 60 source files, and `git diff --check` passed.
 
+The third inference-router extraction moved authenticated model-status list and
+detail serialization plus owner-scoped image artifact delivery into
+`inference.py`. Lifecycle state construction remains in `api.py` and is passed
+as one callback; image capability probing remains shared with lifespan startup.
+Focused typed/content-free status and artifact ownership tests passed, followed
+by all 1,217 tests in 45.41 seconds. Ruff, strict mypy across 60 source files,
+and `git diff --check` passed.
+
 `lifecycle_samples` had identical DDL independently owned by `UsageStore` and
 `LifecycleStore`, allowing future initialization-order drift. The schema now
 has one `database.ensure_lifecycle_samples_schema` owner reused by both stores;

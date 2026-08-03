@@ -9,10 +9,11 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any, cast
 
 import httpx
-from fastapi import Depends, FastAPI, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from .config import Settings
+from .image_generation import capability_status as image_generation_status
 from .schemas import text_content
 from .streaming import compatible_edit_call, response_usage
 
@@ -38,6 +39,7 @@ def register_inference_routes(
     auth: Callable[..., Any],
     model_aliases: tuple[str, ...],
     implementation_quality_contract: str,
+    status_lifecycle_record: Callable[[str], dict[str, Any]],
 ) -> None:
     @app.get("/healthz")
     async def healthz(request: Request) -> dict[str, Any]:
@@ -198,6 +200,82 @@ def register_inference_routes(
                 for index, alias in enumerate(model_aliases)
             ],
         }
+
+    @app.get("/v1/model-status", dependencies=[Depends(auth)])
+    async def model_status(request: Request) -> dict[str, Any]:
+        mode = configured.lifecycle_mode
+        payload: dict[str, Any] = {
+            "object": "list",
+            "data": [status_lifecycle_record(role) for role in configured.models],
+            "lifecycle_mode": mode,
+            "control": (
+                "disabled"
+                if mode == "disabled"
+                else "observe_only"
+                if mode == "observe"
+                else "managed"
+            ),
+            "unmanaged_roles": sorted(
+                configured.models
+                if mode == "disabled"
+                else {
+                    role
+                    for role, model in configured.models.items()
+                    if role not in configured.lifecycle_unit_map
+                    and model.lifecycle_control != "external"
+                }
+            ),
+            "idle_decisions": {
+                role: decision.model_dump(mode="json")
+                for role in sorted(configured.lifecycle_unit_map)
+                if mode != "disabled"
+                and (decision := request.app.state.lifecycle_store.latest_decision(role))
+                is not None
+                and decision.mode == mode
+            },
+            "automation": request.app.state.lifecycle_store.automation_status().model_dump(
+                mode="json"
+            ),
+            "capabilities": {
+                "generate_image": image_generation_status(configured.image_generation)
+            },
+        }
+        if mode == "disabled":
+            payload["external_state"] = "not_lifecycle_managed"
+        return payload
+
+    @app.get("/v1/model-status/{role}", dependencies=[Depends(auth)], response_model=None)
+    async def model_status_detail(role: str) -> Response | dict[str, Any]:
+        if role not in configured.models:
+            return error_response(
+                status.HTTP_404_NOT_FOUND,
+                "unknown lifecycle role",
+                "invalid_request_error",
+                "model_role_not_found",
+            )
+        return status_lifecycle_record(role)
+
+    @app.get("/v1/image-artifacts/{artifact_id}", dependencies=[Depends(auth)])
+    async def image_artifact(artifact_id: str, request: Request) -> Response:
+        generator = request.app.state.image_generator
+        if generator is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "image artifact not found")
+        try:
+            artifact = generator.artifact_for(
+                artifact_id,
+                getattr(request.state, "api_token_id", ""),
+            )
+        except (KeyError, OSError, ValueError):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "image artifact not found") from None
+        return FileResponse(
+            artifact.path,
+            media_type=artifact.media_type,
+            filename=f"{artifact.artifact_id}{artifact.path.suffix}",
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
 
 def ollama_model_ready(response: httpx.Response, model: Any) -> bool:
