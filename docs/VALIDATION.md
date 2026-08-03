@@ -11014,3 +11014,24 @@ panel. Every task used bounded fixed-cost Codex OAuth secondary or Frontier
 collaboration, so the panel proves client/runtime functional stability but does
 not prove local-path or overall quality non-inferiority. It must not be counted
 as the frozen 200-attempt confirmation epoch.
+
+## OpenCode v95 rate-limiter diagnostics O1-O2 (2026-08-03)
+
+Run `20260803-opencode-rate-limiter-v95-o1` failed before implementation in
+1.531 seconds. The prepare command omitted the isolated Gateway override, so
+the generated workspace config retained the default `127.0.0.1:9000` endpoint
+instead of the live v95 Gateway on port 19308. OpenCode received HTTP 401, made
+no correlated model invocation, changed no source, and produced incomplete
+telemetry with `session_correlation_ambiguous`. O1 remains an immutable operator
+contract failure at
+`/home/kotori9/code/.moa-preservation/diagnostics/20260803-opencode-rate-limiter-v95-o1`.
+
+The corrected command explicitly supplied the same Gateway to prepare and run.
+Fresh O2 then passed every functional scorer gate in 228.840 seconds with
+complete provider-pinned telemetry, unchanged tests, allowed source-only
+changes, public and hidden validation success, and no provider error, switch,
+retryable failure, missing token row, or variable remote cost. Its immutable
+sanitized evidence is at
+`/home/kotori9/code/.moa-preservation/diagnostics/20260803-opencode-rate-limiter-v95-o2`.
+O2 used bounded Codex OAuth collaboration and is therefore functional evidence,
+not local-path non-inferiority evidence.
