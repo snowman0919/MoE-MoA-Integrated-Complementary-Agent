@@ -10,9 +10,9 @@ from dgx_moa.remote_judge import (
     JudgeEvidencePackage,
     JudgeProviderError,
     JudgeUnavailable,
-    MockJudgeProvider,
     OpenCodeGoJudgeProvider,
     RemoteJudgeVerdict,
+    selective_judge_reasons,
 )
 from dgx_moa.state import SessionState, StateStore
 
@@ -180,16 +180,10 @@ def test_remote_verdict_requires_every_criterion() -> None:
         RemoteJudgeVerdict.model_validate(payload)
 
 
-def test_selective_judge_policy_covers_risk_and_skips_tool_turns(settings, stub_provider) -> None:
-    remote = MockJudgeProvider(RemoteJudgeVerdict.model_validate(verdict()))
-    controller = Controller(
-        settings,
-        StateStore(settings.state_db),
-        stub_provider,
-        remote_judge=remote,
-    )
+def test_selective_judge_policy_covers_risk_and_skips_tool_turns() -> None:
     state = SessionState(session_id="selective", failure_families={"same-failure": 2})
-    reasons = controller.remote_judge_invocation_reasons(
+    reasons = selective_judge_reasons(
+        True,
         state,
         {
             "authentication": True,
@@ -208,7 +202,8 @@ def test_selective_judge_policy_covers_risk_and_skips_tool_turns(settings, stub_
         "repeated_failure_fingerprint",
     ]
     assert (
-        controller.remote_judge_invocation_reasons(
+        selective_judge_reasons(
+            True,
             state,
             {"authentication": True},
             {"choices": [{"message": {"tool_calls": [{"id": "call-1"}]}}]},

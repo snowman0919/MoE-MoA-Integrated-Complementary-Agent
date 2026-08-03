@@ -6120,6 +6120,18 @@ passed `30/30`. Ruff and `git diff --check` passed. The complete repository
 suite passed `1079/1079` in 34.28 seconds with the existing third-party
 Starlette deprecation warning.
 
+## 2026-08-03 Selective Remote Judge policy boundary
+
+The deterministic selective-Judge trigger policy now lives beside its provider
+and evidence schemas in `remote_judge.py`. API execution passes explicit Judge
+availability and session evidence to the pure function; Controller no longer
+owns the 42-line trigger method or a compatibility wrapper. Security,
+migration, concurrency, destructive action, production approval, repeated
+failure, terminal-verdict, and tool-turn suppression semantics are unchanged.
+Focused policy tests passed. Ruff passed, strict mypy reported no issues across
+61 source files, `git diff --check` passed, and the complete suite passed
+`1,218/1,218` in 48.76 seconds with the existing Starlette deprecation warning.
+
 Fresh gateway `d12` is retained as a failed setup attempt: its caller supplied
 the unsupported trace origin `validation-d12`, so requests failed before model
 dispatch with `invalid trace_origin`. No result was reclassified. Gateway

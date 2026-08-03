@@ -82,7 +82,11 @@ from .observation import (
 from .policy import PolicyEngine
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
-from .remote_judge import JudgeProviderError, OpenCodeGoJudgeProvider
+from .remote_judge import (
+    JudgeProviderError,
+    OpenCodeGoJudgeProvider,
+    selective_judge_reasons,
+)
 from .responses_routes import register_responses_routes
 from .routing import (
     COMPATIBILITY_MODEL_ALIASES,
@@ -1602,7 +1606,9 @@ def create_app(
             state.review_fail_closed = review_fails_closed(request_class)
             runtime.controller.select_route(state, raw["metadata"])
             stream_judge_reasons = (
-                runtime.controller.remote_judge_invocation_reasons(state, raw["metadata"])
+                selective_judge_reasons(
+                    runtime.remote_judge is not None, state, raw["metadata"]
+                )
                 if body.stream
                 else []
             )
@@ -2607,8 +2613,8 @@ def create_app(
             finish_reason = response.get("choices", [{}])[0].get("finish_reason")
             state.finish_reasons = [str(finish_reason)] if finish_reason else []
             state.truncated = finish_reason == "length"
-            judge_reasons = runtime.controller.remote_judge_invocation_reasons(
-                state, body.metadata, response
+            judge_reasons = selective_judge_reasons(
+                runtime.remote_judge is not None, state, body.metadata, response
             )
             if judge_reasons and "reviewer" not in state.roles_required:
                 await ensure_dynamic_roles(("reviewer",))
@@ -2679,8 +2685,11 @@ def create_app(
                 dict.fromkeys(
                     [
                         *judge_reasons,
-                        *runtime.controller.remote_judge_invocation_reasons(
-                            state, body.metadata, response
+                        *selective_judge_reasons(
+                            runtime.remote_judge is not None,
+                            state,
+                            body.metadata,
+                            response,
                         ),
                     ]
                 )

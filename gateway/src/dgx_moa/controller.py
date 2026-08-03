@@ -4412,48 +4412,6 @@ class Controller:
         )
         return loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
 
-    def remote_judge_invocation_reasons(
-        self,
-        state: SessionState,
-        metadata: dict[str, Any],
-        response: dict[str, Any] | None = None,
-    ) -> list[str]:
-        """Return bounded, deterministic selective-Judge triggers."""
-        if self.remote_judge is None:
-            return []
-        if state.judge_status in {"approve", "reject", "escalate"}:
-            return []
-        if response is not None:
-            message = (response.get("choices") or [{}])[0].get("message", {})
-            if message.get("tool_calls"):
-                return []
-        trigger_fields = {
-            "authentication": "security_or_authentication_change",
-            "cryptography": "security_or_authentication_change",
-            "security_sensitive_change": "security_or_authentication_change",
-            "database_schema": "database_schema_or_migration",
-            "destructive_migration": "database_schema_or_migration",
-            "concurrency": "concurrency_or_state_machine_change",
-            "state_machine": "concurrency_or_state_machine_change",
-            "destructive_action": "destructive_action",
-            "production_deployment": "production_deployment_approval",
-            "production_skill_promotion": "production_skill_promotion",
-            "prompt_promotion": "runtime_candidate_promotion",
-            "policy_promotion": "runtime_candidate_promotion",
-            "routing_promotion": "runtime_candidate_promotion",
-            "weekly_gold_candidate": "weekly_gold_candidate",
-            "tests_claim_inconsistent": "test_result_claim_inconsistency",
-            "unresolved_disagreement": "reviewer_frontier_disagreement",
-        }
-        reasons = [reason for field, reason in trigger_fields.items() if metadata.get(field)]
-        if state.request_class == "high_risk_task" or metadata.get("heavy_review"):
-            reasons.append("high_or_critical_risk")
-        if state.review_status.startswith("rejected"):
-            reasons.append("unresolved_reviewer_finding")
-        if any(count >= 2 for count in state.failure_families.values()):
-            reasons.append("repeated_failure_fingerprint")
-        return list(dict.fromkeys(reasons))
-
     def review_observation(
         self, state: SessionState, response: dict[str, Any], metadata: dict[str, Any]
     ) -> str:
