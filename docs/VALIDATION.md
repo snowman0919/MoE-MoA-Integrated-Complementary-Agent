@@ -10471,3 +10471,15 @@ Three focused state/objective tests and all 241 API tests passed. Ruff passed,
 strict mypy reported no issues across 60 source files, `git diff --check`
 passed, and the complete suite passed `1,218/1,218` in 46.56 seconds with the
 existing Starlette deprecation warning.
+
+## 2026-08-03 Controller validation responsibility boundary
+
+Four stateless command-evidence predicates no longer live as Controller
+methods. `validation.py` now exclusively owns validation-command detection,
+filtered-output rejection, successful execution, and terminal-verdict checks;
+Controller orchestrates them without compatibility wrappers. This removes 73
+lines from Controller while preserving the exact regex and failure semantics.
+Twenty focused validation/session tests passed. Ruff passed, strict mypy
+reported no issues across 60 source files, `git diff --check` passed, and the
+complete suite passed `1,218/1,218` in 44.08 seconds with the existing
+Starlette deprecation warning.

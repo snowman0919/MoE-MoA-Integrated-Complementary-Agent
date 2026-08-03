@@ -22,6 +22,7 @@ from dgx_moa.controller import (
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
 from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
 from dgx_moa.state import Phase, SessionState, StateStore
+from dgx_moa.validation import successful_validation_execution
 
 from .conftest import StubProvider
 
@@ -2734,7 +2735,7 @@ def test_filtered_validation_is_not_success_evidence(
     assert execution["exit_code"] == 0
     assert execution["failure_class"] == "TEST_FAILURE"
     assert execution["validation_evidence_status"] == "rejected_filtered_output"
-    assert not controller.successful_validation_execution(execution)
+    assert not successful_validation_execution(execution)
 
 
 def test_validation_without_terminal_verdict_is_not_success_evidence(
@@ -2771,7 +2772,7 @@ def test_validation_without_terminal_verdict_is_not_success_evidence(
     assert execution["exit_code"] == 0
     assert execution["failure_class"] == "TEST_FAILURE"
     assert execution["validation_evidence_status"] == "rejected_missing_terminal_verdict"
-    assert not controller.successful_validation_execution(execution)
+    assert not successful_validation_execution(execution)
 
 
 def test_validation_continuation_inherits_command_and_terminal_verdict(
@@ -2834,7 +2835,7 @@ def test_validation_continuation_inherits_command_and_terminal_verdict(
         "cmd": "python -m pytest -q"
     }
     assert execution["validation_continuation"] is True
-    assert controller.successful_validation_execution(execution)
+    assert successful_validation_execution(execution)
 
 
 def test_expired_validation_process_is_a_failure(

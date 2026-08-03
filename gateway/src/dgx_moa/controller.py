@@ -77,7 +77,13 @@ from .specialists import SpecialistRouter
 from .state import Phase, SessionState, StateStore, now
 from .trace import training_default, validate_provenance
 from .usage import UsageStore
-from .validation import completion_ready
+from .validation import (
+    completion_ready,
+    filtered_validation_execution,
+    successful_validation_execution,
+    validation_execution,
+    validation_verdict_present,
+)
 
 
 class DuplicateFailedCall(ValueError):
@@ -1548,10 +1554,10 @@ class Controller:
                 )
                 if pending_validation is not None:
                     validation_arguments = pending_validation.get("normalized_arguments", {})
-            validation_attempted = self.validation_execution(
+            validation_attempted = validation_execution(
                 {"tool_name": tool_name, "normalized_arguments": validation_arguments}
             )
-            filtered_validation = self.filtered_validation_execution(
+            filtered_validation = filtered_validation_execution(
                 {"tool_name": tool_name, "normalized_arguments": validation_arguments}
             )
             if filtered_validation:
@@ -1566,7 +1572,7 @@ class Controller:
                 and result["exit_code"] == 0
                 and not filtered_validation
                 and not empty_validation
-                and not self.validation_verdict_present(
+                and not validation_verdict_present(
                     {"tool_name": tool_name, "normalized_arguments": validation_arguments},
                     result["stdout"] + "\n" + result["stderr"],
                 )
@@ -2284,7 +2290,7 @@ class Controller:
             (
                 execution
                 for execution in reversed(state.tool_executions)
-                if self.validation_execution(execution)
+                if validation_execution(execution)
             ),
             None,
         )
@@ -4162,7 +4168,7 @@ class Controller:
                 if isinstance(arguments, dict)
                 else None
             )
-            if self.successful_validation_execution(execution) or (
+            if successful_validation_execution(execution) or (
                 execution.get("exit_code") == 0
                 and isinstance(command, str)
                 and re.search(r"(?:^|&&|\|\||;|\n|[\"'])\s*git\s+diff\b", command)
@@ -4196,7 +4202,7 @@ class Controller:
             if all(passed):
                 return True
         for execution in reversed(current_turn_executions(state)):
-            if self.successful_validation_execution(execution):
+            if successful_validation_execution(execution):
                 return True
             if self.tool_execution_changes_files(execution):
                 break
@@ -4230,87 +4236,8 @@ class Controller:
                 else None
             )
             if isinstance(observed, str) and observed.strip() == command.strip():
-                return True, self.successful_validation_execution(execution)
+                return True, successful_validation_execution(execution)
         return False, False
-
-    @staticmethod
-    def validation_execution(execution: dict[str, Any]) -> bool:
-        arguments = execution.get(
-            "validation_arguments", execution.get("normalized_arguments")
-        )
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except ValueError:
-                arguments = {}
-        command = (
-            arguments.get("cmd") or arguments.get("command")
-            if isinstance(arguments, dict)
-            else None
-        )
-        return isinstance(command, str) and bool(
-            re.search(
-                r"(?:^|&&|\|\||;|\n|[\"'])\s*(?:timeout\s+\S+\s+)?"
-                r"(?:uv run )?(?:python -m )?"
-                r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
-                command,
-            )
-        )
-
-    @classmethod
-    def successful_validation_execution(cls, execution: dict[str, Any]) -> bool:
-        return (
-            execution.get("exit_code") == 0
-            and execution.get("failure_class") is None
-            and cls.validation_execution(execution)
-        )
-
-    @classmethod
-    def filtered_validation_execution(cls, execution: dict[str, Any]) -> bool:
-        arguments = execution.get(
-            "validation_arguments", execution.get("normalized_arguments")
-        )
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except ValueError:
-                arguments = {}
-        command = (
-            arguments.get("cmd") or arguments.get("command")
-            if isinstance(arguments, dict)
-            else None
-        )
-        return (
-            cls.validation_execution(execution)
-            and isinstance(command, str)
-            and bool(re.search(r"(?<!\|)\|(?!\|)|(?:^|\s)(?:\d*>>?|&>)", command))
-        )
-
-    @staticmethod
-    def validation_verdict_present(execution: dict[str, Any], output: str) -> bool:
-        arguments = execution.get(
-            "validation_arguments", execution.get("normalized_arguments")
-        )
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except ValueError:
-                arguments = {}
-        command = (
-            arguments.get("cmd") or arguments.get("command")
-            if isinstance(arguments, dict)
-            else ""
-        )
-        if not isinstance(command, str):
-            return False
-        if re.search(r"(?:python -m )?pytest\b", command):
-            return bool(re.search(r"\b[1-9]\d* passed\b", output))
-        if re.search(r"(?:python -m )?unittest\b", command):
-            return bool(
-                re.search(r"\bRan [1-9]\d* tests?\b", output)
-                and re.search(r"(?m)^OK\b", output)
-            )
-        return True
 
     def requires_implementation_tool_action(
         self, state: SessionState, metadata: dict[str, Any]
