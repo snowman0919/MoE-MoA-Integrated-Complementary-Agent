@@ -6143,6 +6143,19 @@ Ruff passed, strict mypy reported no issues across 61 source files,
 `git diff --check` passed, and the complete suite passed `1,218/1,218` in 50.64
 seconds with the existing Starlette deprecation warning.
 
+## 2026-08-03 Long-horizon complete dependency boundary
+
+The existing frozen `LongHorizonBackend` now covers validation, wait/container
+lifecycle, client command and metrics, gateway progress, Git evidence, argument
+parsing, preflight, stable hashes, checkpoint execution, and final sealing.
+`main` constructs one backend and reuses it through every checkpoint and final
+validation; tests use immutable replacement instead of changing module or stdlib
+globals. A clock callable also replaced the timeout test's global time mutation.
+All 41 long-horizon tests passed, and that test module now contains zero module
+monkeypatches. Ruff passed, strict mypy reported no issues across 61 source
+files, `git diff --check` passed, and the complete suite passed `1,218/1,218` in
+44.19 seconds with the existing Starlette deprecation warning.
+
 Fresh gateway `d12` is retained as a failed setup attempt: its caller supplied
 the unsupported trace origin `validation-d12`, so requests failed before model
 dispatch with `invalid trace_origin`. No result was reclassified. Gateway

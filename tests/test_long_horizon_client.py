@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -86,29 +87,26 @@ def test_avatarforge_scope_allows_only_the_project_root() -> None:
     )
 
 
-def test_final_validation_rejects_zero_tests(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_final_validation_rejects_zero_tests(tmp_path: Path) -> None:
     args = arguments(tmp_path, "codex")
     args.timeout = 1
     state = tmp_path / "state"
     state.mkdir()
-    backend = MODULE.LongHorizonBackend(
+    backend = replace(
+        MODULE.long_horizon_backend(),
         runtime_snapshot=lambda: {},
         run_process=lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
             [], 0, "Ran 0 tests in 0.000s\n\nOK", ""
         ),
+        container_exists=lambda _name: False,
     )
-    monkeypatch.setattr(MODULE, "container_exists", lambda _name: False)
 
     exit_code, _output_sha256 = MODULE.run_validation(args, state, backend=backend)
 
     assert exit_code == 1
 
 
-def test_final_event_uses_only_committed_sanitized_workspace_review(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_final_event_uses_only_committed_sanitized_workspace_review(tmp_path: Path) -> None:
     args = arguments(tmp_path, "codex")
     workspace = args.workspace
     MODULE.git(workspace, "init", "-q")
@@ -139,9 +137,14 @@ def test_final_event_uses_only_committed_sanitized_workspace_review(
         "baseline_commit": baseline,
         **{field: "b" * 64 for field in MODULE.stable_hashes_fields()},
     }
-    monkeypatch.setattr(MODULE, "run_validation", lambda *_args: (0, "c" * 64))
+    backend = replace(
+        MODULE.long_horizon_backend(),
+        run_validation=lambda *_args, **_kwargs: (0, "c" * 64),
+    )
 
-    result = MODULE.final_event(args, tmp_path / "private-state", header, checkpoint)
+    result = MODULE.final_event(
+        args, tmp_path / "private-state", header, checkpoint, backend=backend
+    )
 
     assert result["task_outcome"] == "completed"
     review_path.write_text(
@@ -221,9 +224,7 @@ def test_evidence_is_durable_and_rejects_private_fields(tmp_path: Path) -> None:
         MODULE.append_event(evidence, {"type": "bad", "nested": {"session_id": "raw"}})
 
 
-def test_main_persists_header_and_control_before_first_checkpoint(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_main_persists_header_and_control_before_first_checkpoint(tmp_path: Path) -> None:
     args = arguments(tmp_path, "codex")
     args.profile = "avatarforge"
     args.variant = "V180"
@@ -233,19 +234,20 @@ def test_main_persists_header_and_control_before_first_checkpoint(
     args.state_db = tmp_path / "state.db"
     baseline = {"dirty_state": "clean", "commit": "a" * 40, "branch": "detached"}
     hashes = {field: "b" * 64 for field in MODULE.stable_hashes_fields()}
-    monkeypatch.setattr(MODULE, "parse_args", lambda: args)
-    monkeypatch.setattr(MODULE, "runtime_preflight", lambda: None)
-    monkeypatch.setattr(MODULE, "ensure_local_git_identity", lambda _workspace: None)
-    monkeypatch.setattr(MODULE, "git_snapshot", lambda _workspace: baseline)
-    monkeypatch.setattr(MODULE, "stable_hashes", lambda *_args: hashes)
-    monkeypatch.setattr(
-        MODULE,
-        "run_checkpoint",
-        lambda *_args: (_ for _ in ()).throw(RuntimeError("client_checkpoint_failed")),
+    backend = replace(
+        MODULE.long_horizon_backend(),
+        parse_args=lambda: args,
+        runtime_preflight=lambda: None,
+        ensure_local_git_identity=lambda _workspace: None,
+        git_snapshot=lambda _workspace: baseline,
+        stable_hashes=lambda *_args: hashes,
+        run_checkpoint=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("client_checkpoint_failed")
+        ),
     )
 
     with pytest.raises(RuntimeError, match="client_checkpoint_failed"):
-        MODULE.main()
+        MODULE.main(backend=backend)
 
     rows = MODULE.load_events(args.evidence)
     assert len(rows) == 1
@@ -257,23 +259,22 @@ def test_main_persists_header_and_control_before_first_checkpoint(
     assert args.evidence.with_suffix(".jsonl.failure.json").is_file()
 
 
-def test_runtime_preflight_fails_before_evidence_creation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_runtime_preflight_fails_before_evidence_creation(tmp_path: Path) -> None:
     args = arguments(tmp_path, "codex")
     args.evidence = tmp_path / "evidence.jsonl"
-    monkeypatch.setattr(MODULE, "parse_args", lambda: args)
-    monkeypatch.setattr(MODULE.shutil, "which", lambda executable: f"/bin/{executable}")
-    monkeypatch.setattr(
-        MODULE.subprocess,
-        "run",
-        lambda command, **_kwargs: __import__("subprocess").CompletedProcess(
-            command, 1 if command[0] == "docker" else 0, "", "denied"
+    backend = replace(
+        MODULE.long_horizon_backend(),
+        parse_args=lambda: args,
+        runtime_preflight=lambda: MODULE.runtime_preflight(
+            which=lambda executable: f"/bin/{executable}",
+            runner=lambda command, **_kwargs: __import__("subprocess").CompletedProcess(
+                command, 1 if command[0] == "docker" else 0, "", "denied"
+            ),
         ),
     )
 
     with pytest.raises(RuntimeError, match="docker_runtime_unavailable"):
-        MODULE.main()
+        MODULE.main(backend=backend)
 
     assert not args.evidence.exists()
 
@@ -757,18 +758,19 @@ def test_checkpoint_interrupt_removes_only_its_named_container(
     existence = iter((False, True))
     removed: list[str] = []
     monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
-    backend = MODULE.LongHorizonBackend(
+    backend = replace(
+        MODULE.long_horizon_backend(),
         runtime_snapshot=lambda: {},
         run_process=lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+        client_command=lambda *_args, **_kwargs: (
+            ["docker", "run", "--rm", "image", "command"],
+            {},
+            None,
+        ),
+        wait_until=lambda _target: None,
+        container_exists=lambda _name: next(existence),
+        remove_client_container=removed.append,
     )
-    monkeypatch.setattr(
-        MODULE,
-        "client_command",
-        lambda *_args, **_kwargs: (["docker", "run", "--rm", "image", "command"], {}, None),
-    )
-    monkeypatch.setattr(MODULE, "wait_until", lambda _target: None)
-    monkeypatch.setattr(MODULE, "container_exists", lambda _name: next(existence))
-    monkeypatch.setattr(MODULE, "remove_client_container", removed.append)
 
     with pytest.raises(KeyboardInterrupt):
         MODULE.run_checkpoint(args, state, control, 0, backend=backend)
@@ -776,15 +778,15 @@ def test_checkpoint_interrupt_removes_only_its_named_container(
     assert removed == [MODULE.client_container_name(args, state, 0)]
 
 
-def test_avatarforge_timeout_is_one_active_work_deadline(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_avatarforge_timeout_is_one_active_work_deadline() -> None:
     args = argparse.Namespace(profile="avatarforge", timeout=36_000)
-    monkeypatch.setattr(MODULE.time, "time", lambda: 2_800.0)
-    assert MODULE.client_timeout(args, {"started_at_epoch": 1_000}) == 34_200
-    monkeypatch.setattr(MODULE.time, "time", lambda: 37_001.0)
+    assert MODULE.client_timeout(
+        args, {"started_at_epoch": 1_000}, now=lambda: 2_800.0
+    ) == 34_200
     with pytest.raises(RuntimeError, match="client_goal_timeout"):
-        MODULE.client_timeout(args, {"started_at_epoch": 1_000})
+        MODULE.client_timeout(
+            args, {"started_at_epoch": 1_000}, now=lambda: 37_001.0
+        )
     args.profile = "journal"
     assert MODULE.client_timeout(args, {"started_at_epoch": 1_000}) == 36_000
 
@@ -866,23 +868,20 @@ def test_checkpoint_failures_are_distinguished(
         "client_session": None,
     }
     monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
-    backend = MODULE.LongHorizonBackend(
+    backend = replace(
+        MODULE.long_horizon_backend(),
         runtime_snapshot=lambda: {},
         run_process=lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
             [], returncode, "", "failure"
         ),
-    )
-    monkeypatch.setattr(
-        MODULE,
-        "client_command",
-        lambda *_args, **_kwargs: (["docker", "run", "--rm", "image", "command"], {}, None),
-    )
-    monkeypatch.setattr(MODULE, "wait_until", lambda _target: None)
-    monkeypatch.setattr(MODULE, "container_exists", lambda _name: False)
-    monkeypatch.setattr(
-        MODULE,
-        "client_metrics",
-        lambda *_args: {
+        client_command=lambda *_args, **_kwargs: (
+            ["docker", "run", "--rm", "image", "command"],
+            {},
+            None,
+        ),
+        wait_until=lambda _target: None,
+        container_exists=lambda _name: False,
+        client_metrics=lambda *_args: {
             "session": session,
             "terminal": terminal,
             "context_tokens": 0,
@@ -942,21 +941,18 @@ def test_codex_disconnect_resumes_the_only_isolated_thread_once(
             __import__("subprocess").CompletedProcess([], 1, "", "stream disconnected"),
         )
     )
-    backend = MODULE.LongHorizonBackend(
+    backend = replace(
+        MODULE.long_horizon_backend(),
         runtime_snapshot=lambda: {},
         run_process=lambda *_args, **_kwargs: next(runs),
-    )
-    monkeypatch.setattr(
-        MODULE,
-        "client_command",
-        lambda _args, _state, session, _index, _gateway: (
+        client_command=lambda _args, _state, session, _index, _gateway: (
             sessions.append(session) or ["docker", "run", "--rm", "image", "command"],
             {},
             None,
         ),
+        wait_until=lambda _target: None,
+        container_exists=lambda _name: False,
     )
-    monkeypatch.setattr(MODULE, "wait_until", lambda _target: None)
-    monkeypatch.setattr(MODULE, "container_exists", lambda _name: False)
 
     with pytest.raises(MODULE.ClientNonzeroExit):
         MODULE.run_checkpoint(args, state, control, 0, backend=backend)
@@ -991,23 +987,20 @@ def test_checkpoint_requires_committed_implementation(
         "client_session": None,
     }
     monkeypatch.setenv("TEST_LONG_API_KEY", "private-test-value")
-    backend = MODULE.LongHorizonBackend(
+    backend = replace(
+        MODULE.long_horizon_backend(),
         runtime_snapshot=lambda: {},
         run_process=lambda *_args, **_kwargs: __import__("subprocess").CompletedProcess(
             [], 0, "", ""
         ),
-    )
-    monkeypatch.setattr(
-        MODULE,
-        "client_command",
-        lambda *_args, **_kwargs: (["docker", "run", "--rm", "image", "command"], {}, None),
-    )
-    monkeypatch.setattr(MODULE, "wait_until", lambda _target: None)
-    monkeypatch.setattr(MODULE, "container_exists", lambda _name: False)
-    monkeypatch.setattr(
-        MODULE,
-        "client_metrics",
-        lambda *_args: {
+        client_command=lambda *_args, **_kwargs: (
+            ["docker", "run", "--rm", "image", "command"],
+            {},
+            None,
+        ),
+        wait_until=lambda _target: None,
+        container_exists=lambda _name: False,
+        client_metrics=lambda *_args: {
             "session": "private-session",
             "terminal": True,
             "context_tokens": 0,
@@ -1017,11 +1010,7 @@ def test_checkpoint_requires_committed_implementation(
             "unjustified_repeated_reads": 0,
             "output_sha256": "0" * 64,
         },
-    )
-    monkeypatch.setattr(
-        MODULE,
-        "gateway_progress_state",
-        lambda *_args: {
+        gateway_progress_state=lambda *_args: {
             "phase_index": index,
             "phase": (
                 MODULE.AVATARFORGE_PHASES
@@ -1033,13 +1022,9 @@ def test_checkpoint_requires_committed_implementation(
             "evidence_sha256": "0" * 64,
             "premature_completion": False,
         },
+        git_snapshot=lambda _workspace: {"dirty_state": "clean", "commit": baseline},
+        git=lambda *_args: "",
     )
-    monkeypatch.setattr(
-        MODULE,
-        "git_snapshot",
-        lambda _workspace: {"dirty_state": "clean", "commit": baseline},
-    )
-    monkeypatch.setattr(MODULE, "git", lambda *_args: "")
 
     with pytest.raises(RuntimeError, match="implementation_checkpoint_unchanged"):
         MODULE.run_checkpoint(args, state, control, index, backend=backend)

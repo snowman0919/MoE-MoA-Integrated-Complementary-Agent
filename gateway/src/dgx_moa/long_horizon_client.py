@@ -84,12 +84,21 @@ FIXED_PLAN_PROVIDERS = {
 class LongHorizonBackend:
     runtime_snapshot: Callable[[], dict[str, Any]]
     run_process: Callable[..., subprocess.CompletedProcess[str]]
-
-
-DEFAULT_BACKEND = LongHorizonBackend(
-    runtime_snapshot=RUNTIME.runtime_snapshot,
-    run_process=QUALITY.run_process,
-)
+    wait_until: Callable[[float], None]
+    container_exists: Callable[[str], bool]
+    remove_client_container: Callable[[str], None]
+    client_command: Callable[..., tuple[list[str], dict[str, str], Path | None]]
+    client_metrics: Callable[..., dict[str, Any]]
+    gateway_progress_state: Callable[..., dict[str, Any]]
+    git_snapshot: Callable[[Path], dict[str, str]]
+    git: Callable[..., str]
+    run_validation: Callable[..., tuple[int, str]]
+    parse_args: Callable[[], argparse.Namespace]
+    runtime_preflight: Callable[[], None]
+    ensure_local_git_identity: Callable[[Path], None]
+    stable_hashes: Callable[..., dict[str, str]]
+    run_checkpoint: Callable[..., tuple[dict[str, Any], dict[str, Any]]]
+    final_event: Callable[..., dict[str, Any]]
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -946,11 +955,12 @@ def run_validation(
     args: argparse.Namespace,
     state: Path,
     *,
-    backend: LongHorizonBackend = DEFAULT_BACKEND,
+    backend: LongHorizonBackend | None = None,
 ) -> tuple[int, str]:
+    backend = backend or long_horizon_backend()
     command = shlex.split(args.validation_command)
     name = f"moa-long-validation-{sha256_text(str(state))[:12]}"
-    if container_exists(name):
+    if backend.container_exists(name):
         raise RuntimeError("validation_container_already_exists")
     try:
         run = backend.run_process(
@@ -969,8 +979,8 @@ def run_validation(
             timeout=args.timeout,
         )
     finally:
-        if container_exists(name):
-            remove_client_container(name)
+        if backend.container_exists(name):
+            backend.remove_client_container(name)
     output = run.stdout + "\n" + run.stderr
     empty = any(
         marker in output.lower() for marker in ("ran 0 tests", "no tests ran", "collected 0 items")
@@ -983,12 +993,15 @@ def final_event(
     state: Path,
     header: dict[str, Any],
     checkpoint: dict[str, Any],
+    *,
+    backend: LongHorizonBackend | None = None,
 ) -> dict[str, Any]:
+    backend = backend or long_horizon_backend()
     review_path = args.workspace / "state" / "long-review.json"
     if not review_path.is_file():
         raise RuntimeError("review_evidence_missing")
     relative_review_path = review_path.relative_to(args.workspace).as_posix()
-    changed_paths = git(
+    changed_paths = backend.git(
         args.workspace,
         "diff",
         "--name-only",
@@ -1021,9 +1034,9 @@ def final_event(
     ):
         raise RuntimeError("invalid_review_evidence")
     reject_private_fields(review)
-    validation_exit, validation_hash = run_validation(args, state)
-    snapshot = git_snapshot(args.workspace)
-    implementation = git(
+    validation_exit, validation_hash = backend.run_validation(args, state, backend=backend)
+    snapshot = backend.git_snapshot(args.workspace)
+    implementation = backend.git(
         args.workspace, "diff", "--binary", header["baseline_commit"], snapshot["commit"]
     )
     reviewer_seen = any(row.get("role") == "reviewer" for row in checkpoint["provider_provenance"])
@@ -1068,10 +1081,15 @@ def avatarforge_scope_valid(paths: tuple[str, ...]) -> bool:
     return bool(paths) and all(path.startswith("avatarforge/") for path in paths)
 
 
-def client_timeout(args: argparse.Namespace, control: dict[str, Any]) -> int:
+def client_timeout(
+    args: argparse.Namespace,
+    control: dict[str, Any],
+    *,
+    now: Callable[[], float] = time.time,
+) -> int:
     if getattr(args, "profile", "journal") != "avatarforge":
         return int(args.timeout)
-    remaining = float(control["started_at_epoch"]) + args.timeout - time.time()
+    remaining = float(control["started_at_epoch"]) + args.timeout - now()
     if remaining <= 0:
         raise RuntimeError("client_goal_timeout")
     return max(1, int(remaining))
@@ -1113,26 +1131,27 @@ def run_checkpoint(
     control: dict[str, Any],
     index: int,
     *,
-    backend: LongHorizonBackend = DEFAULT_BACKEND,
+    backend: LongHorizonBackend | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    backend = backend or long_horizon_backend()
     profile = getattr(args, "profile", "journal")
     phases = AVATARFORGE_PHASES if profile == "avatarforge" else PHASES
     scheduled = float(control["started_at_epoch"]) + index * INTERVAL_SECONDS
-    wait_until(scheduled)
+    backend.wait_until(scheduled)
     before = backend.runtime_snapshot()
     started = time.time()
     container_name = client_container_name(args, state, index)
     outputs: list[tuple[str, str]] = []
     reconnects = 0
     while True:
-        command, environment, usage_file = client_command(
+        command, environment, usage_file = backend.client_command(
             args,
             state,
             control.get("client_session"),
             index,
             control["gateway_session"],
         )
-        if container_exists(container_name):
+        if backend.container_exists(container_name):
             raise RuntimeError("client_container_already_exists")
         try:
             run = backend.run_process(
@@ -1142,13 +1161,13 @@ def run_checkpoint(
                 timeout=client_timeout(args, control),
             )
         finally:
-            if container_exists(container_name):
-                remove_client_container(container_name)
+            if backend.container_exists(container_name):
+                backend.remove_client_container(container_name)
             secure_client_state(state)
         outputs.append((run.stdout, run.stderr))
         stdout = "\n".join(item[0] for item in outputs)
         stderr = "\n".join(item[1] for item in outputs)
-        metrics = client_metrics(args.harness, stdout, stderr, usage_file, state)
+        metrics = backend.client_metrics(args.harness, stdout, stderr, usage_file, state)
         session = metrics.get("session")
         if run.returncode == 124:
             raise RuntimeError(
@@ -1182,8 +1201,8 @@ def run_checkpoint(
         raise RuntimeError("client_session_changed")
     control["client_session"] = session
     gateway_session = observed_gateway_session(args.harness, control["gateway_session"], session)
-    progress = gateway_progress_state(args.state_db, gateway_session, index, phases)
-    git_state = git_snapshot(args.workspace)
+    progress = backend.gateway_progress_state(args.state_db, gateway_session, index, phases)
+    git_state = backend.git_snapshot(args.workspace)
     if git_state["dirty_state"] != "clean":
         raise RuntimeError("dirty_checkpoint")
     previous_commit = control.get("last_commit", control["baseline"]["commit"])
@@ -1193,7 +1212,7 @@ def run_checkpoint(
     )
     if requires_change and (
         git_state["commit"] == comparison_commit
-        or not git(
+        or not backend.git(
             args.workspace,
             "diff",
             "--binary",
@@ -1205,7 +1224,7 @@ def run_checkpoint(
     if profile == "avatarforge":
         changed_paths = tuple(
             path
-            for path in git(
+            for path in backend.git(
                 args.workspace,
                 "diff",
                 "--name-only",
@@ -1317,7 +1336,11 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def runtime_preflight() -> None:
+def runtime_preflight(
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> None:
     for executable, command, failure in (
         (
             "docker",
@@ -1330,20 +1353,43 @@ def runtime_preflight() -> None:
             "gpu_telemetry_unavailable",
         ),
     ):
-        if shutil.which(executable) is None:
+        if which(executable) is None:
             raise RuntimeError(failure)
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = runner(command, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             raise RuntimeError(failure)
 
 
-def main() -> int:
-    args = parse_args()
-    runtime_preflight()
+def long_horizon_backend() -> LongHorizonBackend:
+    return LongHorizonBackend(
+        runtime_snapshot=RUNTIME.runtime_snapshot,
+        run_process=QUALITY.run_process,
+        wait_until=wait_until,
+        container_exists=container_exists,
+        remove_client_container=remove_client_container,
+        client_command=client_command,
+        client_metrics=client_metrics,
+        gateway_progress_state=gateway_progress_state,
+        git_snapshot=git_snapshot,
+        git=git,
+        run_validation=run_validation,
+        parse_args=parse_args,
+        runtime_preflight=runtime_preflight,
+        ensure_local_git_identity=ensure_local_git_identity,
+        stable_hashes=stable_hashes,
+        run_checkpoint=run_checkpoint,
+        final_event=final_event,
+    )
+
+
+def main(*, backend: LongHorizonBackend | None = None) -> int:
+    backend = backend or long_horizon_backend()
+    args = backend.parse_args()
+    backend.runtime_preflight()
     profile = getattr(args, "profile", "journal")
     protocol = AVATARFORGE_PROTOCOL if profile == "avatarforge" else PROTOCOL
     phases = AVATARFORGE_PHASES if profile == "avatarforge" else PHASES
-    ensure_local_git_identity(args.workspace)
+    backend.ensure_local_git_identity(args.workspace)
     state = args.state_dir
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(state, 0o700)
@@ -1355,7 +1401,7 @@ def main() -> int:
         control = json.loads(control_path.read_text())
         header = events[0]
     else:
-        baseline = git_snapshot(args.workspace)
+        baseline = backend.git_snapshot(args.workspace)
         if baseline["dirty_state"] != "clean":
             raise SystemExit("workspace must start clean")
         control = {
@@ -1365,7 +1411,7 @@ def main() -> int:
             "client_session": None,
             "last_commit": baseline["commit"],
         }
-        control["stable_hashes"] = stable_hashes(
+        control["stable_hashes"] = backend.stable_hashes(
             args, control["gateway_session"], control["baseline"]
         )
         header = {
@@ -1389,7 +1435,9 @@ def main() -> int:
     try:
         for index in range(start_index, len(phases)):
             active_index = index
-            checkpoint, control = run_checkpoint(args, state, control, index)
+            checkpoint, control = backend.run_checkpoint(
+                args, state, control, index, backend=backend
+            )
             write_private(control_path, control)
             append_event(args.evidence, checkpoint)
             last_checkpoint = checkpoint
@@ -1397,7 +1445,9 @@ def main() -> int:
             last_checkpoint = next(
                 event for event in reversed(events) if event.get("type") == "checkpoint"
             )
-        final = final_event(args, state, header, last_checkpoint)
+        final = backend.final_event(
+            args, state, header, last_checkpoint, backend=backend
+        )
         append_event(args.evidence, final)
         failure_path.unlink(missing_ok=True)
     except Exception as error:
