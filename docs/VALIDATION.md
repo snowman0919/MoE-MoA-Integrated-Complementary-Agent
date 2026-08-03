@@ -11190,3 +11190,41 @@ new clean commit, plan hash, seal, run ID, and full 200-attempt restart; no v97
 score is reused. The final repository gate passed Ruff, strict mypy across all
 63 gateway source files, both checked-in document hashes, and `1,230/1,230`
 tests in 53.16 seconds with the existing Starlette deprecation warning.
+
+## Protocol v98 termination and Hermes title isolation (2026-08-04)
+
+The sealed v98 epoch was stopped after nine immutable scores: eight functional
+passes and one hidden-validation failure. Attempts 7 and 9 were nevertheless
+hard reliability failures because each included one cancelled local Executor
+invocation and incomplete telemetry. Both were Hermes webhook runs. Their
+cancelled request was the final request in the process window and ended about
+2.1 seconds before the runner boundary.
+
+Further source and physical evidence disproved the v98 terminal-drain
+hypothesis. Hermes intentionally launches automatic title generation in a
+daemon thread after the first exchange. The Gateway matcher recognized only
+the older OpenCode title shape, so current Hermes title requests were routed as
+full orchestrated native-agent turns. The client then exited normally while
+the optional background title request was still active. This auxiliary
+cancellation did not affect the user-visible implementation result but was
+incorrectly mixed into main-task confirmation telemetry.
+
+Protocol v99 recognizes the bounded Hermes title contract and routes it as a
+fast child request. When a client ignores the configured quality session
+header, fallback correlation excludes fast auxiliary requests from both main
+session selection and orphan-error calculation while retaining their usage and
+status in SQLite. The speculative terminal-drain implementation and its test
+were removed; true mid-stream cancellation behavior remains unchanged.
+
+Focused validation passed four API cancellation/title tests and nine telemetry
+tests with Ruff and strict mypy clean. A loopback physical probe then generated
+one orchestrated main request and one fast title child under a shared synthetic
+session. The main request completed, the deliberately abandoned title child
+was recorded as cancelled, all requests were terminal, and main telemetry was
+complete with zero provider errors, orphan errors, or provider switches. No
+prompt, provider output, session identifier, or credential was retained in the
+reported evidence. Protocol v99 requires a new clean commit, plan hash, seal,
+run ID, and 200-attempt restart; no v98 score is reused. The final repository
+gate passed Ruff, strict mypy across all 63 gateway source files, both document
+hashes, and `1,231/1,231` tests in 53.70 seconds with the existing Starlette
+deprecation warning.

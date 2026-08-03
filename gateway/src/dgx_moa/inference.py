@@ -472,14 +472,20 @@ def ollama_model_ready(response: httpx.Response, model: Any) -> bool:
 
 
 def title_request_index(messages: list[dict[str, Any]]) -> int | None:
-    """Return OpenCode's trailing automatic title prompt, if present."""
-    title_generator = any(
-        message.get("role") == "system"
-        and text_content(message.get("content"))
-        .strip()
-        .lower()
-        .startswith("you are a title generator. you output only a thread title.")
+    """Return a supported client's trailing automatic title prompt, if present."""
+    system_texts = [
+        " ".join(text_content(message.get("content")).strip().lower().split())
         for message in messages
+        if message.get("role") == "system"
+    ]
+    opencode_title = any(
+        text.startswith("you are a title generator. you output only a thread title.")
+        for text in system_texts
+    )
+    hermes_title = any(
+        "generate a short, descriptive title" in text
+        and "return only the title text" in text
+        for text in system_texts
     )
     for index in range(len(messages) - 1, -1, -1):
         message = messages[index]
@@ -487,7 +493,9 @@ def title_request_index(messages: list[dict[str, Any]]) -> int | None:
             content = text_content(message.get("content")).strip().lower()
             if content.startswith("generate a title for this conversation"):
                 return index
-            if not title_generator:
+            if hermes_title and content.startswith("user:") and "\n\nassistant:" in content:
+                return index
+            if not opencode_title:
                 return None
     return None
 
@@ -813,11 +821,9 @@ class ResponseOwnedIterator:
         self,
         stream: AsyncIterator[bytes],
         cleanup: Callable[[], Awaitable[None]],
-        before_close: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._stream = stream
         self._cleanup = cleanup
-        self._before_close = before_close
 
     def __aiter__(self) -> ResponseOwnedIterator:
         return self
@@ -831,8 +837,6 @@ class ResponseOwnedIterator:
 
     async def aclose(self) -> None:
         try:
-            if self._before_close is not None:
-                await self._before_close()
             close = getattr(self._stream, "aclose", None)
             if close is not None:
                 await close()

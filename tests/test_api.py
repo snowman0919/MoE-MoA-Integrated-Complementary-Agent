@@ -19,6 +19,7 @@ from dgx_moa.controller import fingerprint
 from dgx_moa.inference import (
     has_matching_tool_result,
     remap_reused_tool_call_ids,
+    title_request_index,
     unsafe_frontier_correction_tool_call,
 )
 from dgx_moa.lifecycle import (
@@ -49,6 +50,21 @@ def test_runtime_version_is_2_0(settings: Settings) -> None:
 
     assert __version__ == "2.0.0"
     assert app.version == "2.0.0"
+
+
+def test_hermes_automatic_title_request_is_detected() -> None:
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Generate a short, descriptive title for a conversation. "
+                "Return ONLY the title text, nothing else."
+            ),
+        },
+        {"role": "user", "content": "User: request\n\nAssistant: result"},
+    ]
+
+    assert title_request_index(messages) == 1
 
 
 def test_reused_frontier_tool_call_id_is_remapped() -> None:
@@ -7444,60 +7460,6 @@ async def test_streaming_api_close_after_done_persists_terminal_success(
             == 1
         )
         assert_terminal_evidence(settings, app.state.store, "terminal-close", "completed")
-
-
-@pytest.mark.asyncio
-async def test_streaming_api_close_after_finish_reason_drains_done(
-    settings, stub_provider: StubProvider
-) -> None:  # type: ignore[no-untyped-def]
-    closed = asyncio.Event()
-    stop = b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
-    done = b"data: [DONE]\n\n"
-
-    async def delayed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
-        async def upstream():  # type: ignore[no-untyped-def]
-            try:
-                yield stop
-                yield done
-            finally:
-                closed.set()
-
-        return upstream()
-
-    stub_provider.stream = delayed  # type: ignore[method-assign]
-    app = create_app(settings)
-    async with app.router.lifespan_context(app):
-        app.state.provider = stub_provider
-        app.state.controller.provider = stub_provider
-        response = await chat_endpoint(app)(
-            ChatRequest(
-                model="dgx-moa-agent",
-                stream=True,
-                messages=[{"role": "user", "content": "work"}],
-                metadata={"session_id": "finish-close"},
-            ),
-            Request({"type": "http", "app": app}),
-            x_session_id=None,
-            x_runtime_channel=None,
-            x_trace_origin=None,
-            x_task_id=None,
-            x_workspace_path=None,
-            x_workspace_id=None,
-            x_repository_branch=None,
-            x_repository_commit=None,
-            x_dirty_state=None,
-        )
-        assert isinstance(response, StreamingResponse)
-        assert await anext(response.body_iterator) == stop
-
-        await response.body_iterator.aclose()
-        await asyncio.wait_for(closed.wait(), timeout=1)
-
-        state = app.state.store.get("finish-close")
-        assert state
-        assert state.finish_reasons == ["stop"]
-        assert_usage(app, "completed")
-        assert_terminal_evidence(settings, app.state.store, "finish-close", "completed")
 
 
 @pytest.mark.asyncio

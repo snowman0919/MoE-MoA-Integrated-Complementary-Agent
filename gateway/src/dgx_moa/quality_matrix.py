@@ -1472,9 +1472,14 @@ def invocation_telemetry(
                     (session_id,),
                 ).fetchone()[0]
                 if not matched:
+                    auxiliary_filter = (
+                        " AND runtime_mode != 'fast'"
+                        if "runtime_mode" in request_columns
+                        else ""
+                    )
                     observed = connection.execute(
                         "SELECT DISTINCT session_id FROM request_usage "
-                        f"WHERE ({accepted_epoch}) BETWEEN ? AND ?",
+                        f"WHERE ({accepted_epoch}) BETWEEN ? AND ?{auxiliary_filter}",
                         (started_at, ended_at),
                     ).fetchall()
                     if len(observed) != 1:
@@ -1520,6 +1525,12 @@ def invocation_telemetry(
                     "JOIN request_usage AS request ON request.request_id = invocation.request_id "
                     "WHERE invocation.invoked_at BETWEEN ? AND ? "
                     "AND request.session_id != ? "
+                    + (
+                        "AND request.runtime_mode != 'fast' "
+                        if "runtime_mode" in request_columns
+                        else ""
+                    )
+                    +
                     "AND invocation.status NOT IN ('completed', 'success')",
                     (started_at, ended_at, effective_session_id),
                 ).fetchone()[0]

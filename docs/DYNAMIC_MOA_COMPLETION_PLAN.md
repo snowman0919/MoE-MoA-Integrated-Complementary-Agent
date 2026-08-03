@@ -644,6 +644,17 @@ reconnect, plan/context 보존을 대체하지 않는다.
   quality/speed margin, bootstrap seed, 표본 수, prompt, model, fixture, scorer,
   telemetry 계약은 변경하지 않고 새 analysis commit, plan hash, seal, run ID와
   clean fixture에서 200회를 처음부터 시작한다.
+- protocol v99는 v98 attempt 7과 9의 취소가 main response가 아니라 Hermes의
+  fire-and-forget automatic title generation임을 확인한다. 최신 Hermes title
+  system/user shape를 fast `:title` child로 분류하고, header를 무시하는 client의
+  telemetry fallback은 `runtime_mode=fast` auxiliary request를 main session 후보와
+  orphan provider-error 판정에서 제외한다. auxiliary usage와 cancellation은 DB에
+  그대로 남는다. v98에서 추가한 terminal drain은 원인 해결에 필요하지 않아
+  제거하고 기존 true client-cancellation 계약을 복원한다. v98의 9개 score
+  (8 PASS, 1 FAIL)는 diagnostic으로 보존하고 재개하지 않는다. 동결 quality/speed
+  margin, bootstrap seed, 표본 수, prompt, model, fixture, scorer 계약은 유지하며,
+  telemetry correlation 계약 변경 때문에 새 analysis commit, plan hash, seal,
+  run ID와 clean fixture에서 200회를 처음부터 시작한다.
 
 ## 10. Release, rollback, 배포
 

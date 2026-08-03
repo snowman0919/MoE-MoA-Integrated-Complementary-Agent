@@ -604,13 +604,13 @@ def test_invocation_telemetry_correlates_one_observed_session_when_header_is_ign
         )
         connection.execute(
             "CREATE TABLE request_usage (request_id TEXT, session_id TEXT, accepted_at REAL, "
-            "retryable_failure_class TEXT)"
+            "retryable_failure_class TEXT, runtime_mode TEXT)"
         )
         connection.execute(
             "CREATE TABLE events (session_id TEXT, event_type TEXT, payload TEXT, created_at TEXT)"
         )
         connection.execute(
-            "INSERT INTO request_usage VALUES ('request', 'observed', 2, NULL)"
+            "INSERT INTO request_usage VALUES ('request', 'observed', 2, NULL, 'orchestrated')"
         )
         connection.execute(
             "INSERT INTO model_invocation_usage VALUES "
@@ -621,6 +621,44 @@ def test_invocation_telemetry_correlates_one_observed_session_when_header_is_ign
     result = MODULE.invocation_telemetry(database, 1, 4, session_id="configured")
 
     assert result["complete"] is True
+    assert result["total_tokens"] == 10
+
+
+def test_invocation_telemetry_excludes_cancelled_title_child(tmp_path: Path) -> None:
+    database = tmp_path / "gateway.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE model_invocation_usage ("
+            "request_id TEXT, role TEXT, provider TEXT, model TEXT, status TEXT, "
+            "fallback_reason TEXT, latency_ms REAL, prompt_tokens INTEGER, "
+            "completion_tokens INTEGER, total_tokens INTEGER, cached_tokens INTEGER, "
+            "cost_usd REAL, invoked_at REAL)"
+        )
+        connection.execute(
+            "CREATE TABLE request_usage (request_id TEXT, session_id TEXT, accepted_at REAL, "
+            "retryable_failure_class TEXT, runtime_mode TEXT)"
+        )
+        connection.execute(
+            "CREATE TABLE events (session_id TEXT, event_type TEXT, payload TEXT, created_at TEXT)"
+        )
+        connection.executemany(
+            "INSERT INTO request_usage VALUES (?, ?, ?, NULL, ?)",
+            (("main", "observed", 2, "orchestrated"), ("title", "title-hash", 3, "fast")),
+        )
+        connection.executemany(
+            "INSERT INTO model_invocation_usage VALUES (?, 'executor', 'local', 'model', ?, "
+            "NULL, 10, ?, ?, ?, ?, 0, ?)",
+            (
+                ("main", "completed", 7, 3, 10, 0, 2),
+                ("title", "cancelled", None, None, None, None, 3),
+            ),
+        )
+
+    result = MODULE.invocation_telemetry(database, 1, 4, session_id="configured")
+
+    assert result["complete"] is True
+    assert result["provider_errors"] == 0
+    assert result["orphan_provider_errors"] == 0
     assert result["total_tokens"] == 10
 
 
