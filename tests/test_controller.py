@@ -20,6 +20,7 @@ from dgx_moa.controller import (
     structured_response_diagnostics,
 )
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
+from dgx_moa.review import material_frontier_review
 from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
 from dgx_moa.state import Phase, SessionState, StateStore
 from dgx_moa.validation import successful_validation_execution
@@ -4648,10 +4649,8 @@ def test_new_user_turn_does_not_reuse_prior_completion_latch(
     )
 
 
-def test_frontier_missing_tests_block_approval(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
-    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
-
-    assert controller.material_frontier_review(
+def test_frontier_missing_tests_block_approval() -> None:
+    assert material_frontier_review(
         {
             "verdict": "approve",
             "critical": [],

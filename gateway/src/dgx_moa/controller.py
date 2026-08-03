@@ -61,6 +61,15 @@ from .remote_judge import (
     JudgeTimeout,
     RemoteJudgeVerdict,
 )
+from .review import (
+    frontier_correction_questions,
+)
+from .review import (
+    material_frontier_review as has_material_frontier_review,
+)
+from .review import (
+    material_review_issue as has_material_review_issue,
+)
 from .routing import ChangeRisk, heavy_eligible, needs_planner, needs_reviewer, select_route
 from .schemas import (
     JudgeVerdict,
@@ -3193,7 +3202,7 @@ class Controller:
                 )
                 specific_questions = list(request.get("metadata", {}).get("frontier_questions", []))
                 if state.frontier_correction_pending_verification:
-                    specific_questions = self.frontier_correction_questions(state)
+                    specific_questions = frontier_correction_questions(state)
                 evidence = {
                     "_paid_fallback_required": bool(
                         request.get("metadata", {}).get("frontier_required") or "judge" in roles
@@ -3550,7 +3559,7 @@ class Controller:
                 collaboration_context += "\nLocal Reviewer contribution:\n" + json.dumps(
                     safe_reviewer["output"], ensure_ascii=False
                 )
-                material_review_issue = self.material_review_issue(pre_review_result)
+                material_review_issue = has_material_review_issue(pre_review_result)
                 review_assurance_needed = pre_review_result.get("status") == "approved" and (
                     state.frontier_correction_pending_verification
                     or (
@@ -3627,7 +3636,7 @@ class Controller:
                                 **(
                                     {
                                         "specific_questions": (
-                                            self.frontier_correction_questions(state)
+                                            frontier_correction_questions(state)
                                         )
                                     }
                                     if state.frontier_correction_pending_verification
@@ -3748,7 +3757,7 @@ class Controller:
                 )
                 material_frontier_review = (
                     frontier_result.mode == "code_review"
-                    and self.material_frontier_review(frontier_result.output)
+                    and has_material_frontier_review(frontier_result.output)
                 )
                 if material_frontier_review:
                     state.frontier_review_verified = False
@@ -4509,32 +4518,6 @@ class Controller:
         return bool(direct_mutation or python_mutation)
 
     @staticmethod
-    def material_review_issue(result: dict[str, Any]) -> bool:
-        if result.get("status") == "rejected":
-            return True
-        findings = result.get("findings", [])
-        if not isinstance(findings, list):
-            return False
-        for finding in findings:
-            if isinstance(finding, dict) and str(finding.get("severity", "")).lower() in {
-                "critical",
-                "important",
-            }:
-                return True
-            if isinstance(finding, str) and finding.lower().startswith(("critical:", "important:")):
-                return True
-        return False
-
-    @staticmethod
-    def material_frontier_review(result: dict[str, Any]) -> bool:
-        return bool(
-            result.get("verdict") in {"revise", "reject"}
-            or result.get("critical")
-            or result.get("important")
-            or result.get("missing_tests")
-        )
-
-    @staticmethod
     def register_frontier_review_failure(state: SessionState, result: dict[str, Any]) -> bool:
         loop = state.engineering_loop
         if loop is None:
@@ -4575,28 +4558,6 @@ class Controller:
             ),
         )
         return loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
-
-    @staticmethod
-    def frontier_correction_questions(state: SessionState) -> list[str]:
-        prior_review: dict[str, Any] = next(
-            (
-                artifact.get("output", {})
-                for artifact in reversed(state.agent_artifacts)
-                if artifact.get("role") == "frontier"
-                and isinstance(artifact.get("output"), dict)
-                and artifact["output"].get("verdict") in {"revise", "reject"}
-            ),
-            {},
-        )
-        return [
-            "Correction verification: report all unresolved prior material findings and all "
-            "material regressions introduced by the correction in this one response; never "
-            "serialize known findings across later reviews, and keep unrelated new hardening as "
-            "suggestions.",
-            *prior_review.get("critical", []),
-            *prior_review.get("important", []),
-            *prior_review.get("missing_tests", []),
-        ]
 
     def remote_judge_invocation_reasons(
         self,

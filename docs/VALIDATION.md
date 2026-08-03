@@ -10483,3 +10483,14 @@ Twenty focused validation/session tests passed. Ruff passed, strict mypy
 reported no issues across 60 source files, `git diff --check` passed, and the
 complete suite passed `1,218/1,218` in 44.08 seconds with the existing
 Starlette deprecation warning.
+
+## 2026-08-03 Controller material-review boundary
+
+Material local-review detection, material Frontier-review detection, and
+Frontier correction-question construction now live in the focused `review.py`
+module. Controller retains state mutation, failure registration, provider
+dispatch, and orchestration; no compatibility wrappers or new class hierarchy
+were added. Twelve focused review/correction tests passed. Ruff passed, strict
+mypy reported no issues across 61 source files, `git diff --check` passed, and
+the complete suite passed `1,218/1,218` in 50.05 seconds with the existing
+Starlette deprecation warning.
