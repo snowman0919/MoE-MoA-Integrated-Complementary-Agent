@@ -21,7 +21,7 @@ from dgx_moa.controller import (
 )
 from dgx_moa.evidence import tool_execution_changes_files
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
-from dgx_moa.review import material_frontier_review
+from dgx_moa.review import material_frontier_review, review_tool_executions
 from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
 from dgx_moa.state import Phase, SessionState, StateStore
 from dgx_moa.validation import successful_validation_execution
@@ -4741,7 +4741,7 @@ def test_review_tool_evidence_keeps_older_mutations() -> None:
         ],
     )
 
-    evidence = Controller.review_tool_executions(state)
+    evidence = review_tool_executions(state)
 
     assert evidence[0]["tool_name"] == "apply_patch"
     assert [item["normalized_arguments"]["cmd"] for item in evidence[1:]] == [

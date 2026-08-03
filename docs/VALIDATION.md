@@ -10505,3 +10505,14 @@ focused evidence/validation/correction tests passed. Ruff passed, strict mypy
 reported no issues across 61 source files, `git diff --check` passed, and the
 complete suite passed `1,218/1,218` in 47.33 seconds with the existing
 Starlette deprecation warning.
+
+## 2026-08-03 Review evidence sampling boundary
+
+Active-turn execution slicing now lives in `evidence.py`; bounded tool-result,
+mutation-aware execution, and contract-document sampling now live in
+`review.py`. Controller only selects when those artifacts enter orchestration
+or provider requests. The existing 8-result, 4-mutation, 6-recent-execution,
+4-contract-document, and 4,000-character limits are unchanged. Fifteen focused
+review/current-turn tests passed. Ruff passed, strict mypy reported no issues
+across 61 source files, `git diff --check` passed, and the complete suite passed
+`1,218/1,218` in 45.64 seconds with the existing Starlette deprecation warning.

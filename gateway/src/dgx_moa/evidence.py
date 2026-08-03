@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
+from .state import SessionState
+
 EvidenceNodeType = Literal[
     "user_objective",
     "constraint",
@@ -77,6 +79,16 @@ REPOSITORY_MUTATION_TOOLS = frozenset(
         "delete_file",
     }
 )
+
+
+def current_turn_executions(state: SessionState) -> list[dict[str, Any]]:
+    marker = state.active_turn_after_tool_execution_id
+    if not marker:
+        return state.tool_executions
+    for index, execution in enumerate(state.tool_executions):
+        if execution.get("tool_execution_id") == marker:
+            return state.tool_executions[index + 1 :]
+    return state.tool_executions
 
 
 def tool_execution_changes_files(execution: dict[str, Any]) -> bool:

@@ -20,6 +20,7 @@ from .evidence import (
     EvidenceEdge,
     EvidenceNode,
     classify_evidence,
+    current_turn_executions,
     tool_execution_changes_files,
 )
 from .evolution import PromptRegistry
@@ -69,13 +70,12 @@ from .remote_judge import (
 )
 from .review import (
     frontier_correction_questions,
+    review_contract_evidence,
+    review_tool_executions,
+    review_tool_results,
 )
-from .review import (
-    material_frontier_review as has_material_frontier_review,
-)
-from .review import (
-    material_review_issue as has_material_review_issue,
-)
+from .review import material_frontier_review as has_material_frontier_review
+from .review import material_review_issue as has_material_review_issue
 from .routing import ChangeRisk, heavy_eligible, needs_planner, needs_reviewer, select_route
 from .schemas import (
     JudgeVerdict,
@@ -140,13 +140,6 @@ GOAL_PREREQUISITE_DOCUMENTS = (
     "docs/VALIDATION.md",
     "docs/TRACE_SCHEMA.md",
 )
-REVIEW_CONTRACT_DOCUMENTS = {
-    "agents.md",
-    "readme.md",
-    "requirements.md",
-    "spec.md",
-}
-
 IMPLEMENTATION_QUALITY_CONTRACT = (
     "Treat the written contract and surrounding code as authoritative; supplied tests are "
     "examples, not the complete specification. Before finalizing, derive and run at least one "
@@ -297,16 +290,6 @@ def invocation_budget_tokens(invocation: dict[str, Any]) -> int | None:
     ):
         return prompt - cached + completion
     return total if isinstance(total, int) and not isinstance(total, bool) and total >= 0 else None
-
-
-def current_turn_executions(state: SessionState) -> list[dict[str, Any]]:
-    marker = state.active_turn_after_tool_execution_id
-    if not marker:
-        return state.tool_executions
-    for index, execution in enumerate(state.tool_executions):
-        if execution.get("tool_execution_id") == marker:
-            return state.tool_executions[index + 1 :]
-    return state.tool_executions
 
 
 def user_turn_intent(content: str) -> tuple[bool, bool]:
@@ -3205,13 +3188,13 @@ class Controller:
                     "reasoner_recommendations": reasoner_contribution.recommended_actions,
                     "relevant_evidence": {
                         "implementation": state.implementation_evidence,
-                        "contract": self.review_contract_evidence(state),
+                        "contract": review_contract_evidence(state),
                         "changed_paths": request.get("metadata", {}).get("changed_paths", []),
                         "diff": request.get("metadata", {}).get(
                             "diff_summary", request.get("metadata", {}).get("relevant_diff", "")
                         ),
                         "tests": request.get("metadata", {}).get("validation_results", []),
-                        "tool_results": self.review_tool_results(state),
+                        "tool_results": review_tool_results(state),
                     },
                     "specific_questions": specific_questions,
                 }
@@ -3359,12 +3342,12 @@ class Controller:
                             "objective": effective_objective(state),
                             "acceptance_criteria": state.acceptance_criteria,
                             "implementation_evidence": state.implementation_evidence,
-                            "contract_evidence": self.review_contract_evidence(state),
+                            "contract_evidence": review_contract_evidence(state),
                             "changed_paths": metadata.get("changed_paths", []),
                             "diff_summary": metadata.get("diff_summary", ""),
                             "validation_results": metadata.get("validation_results", []),
-                            "tool_results": self.review_tool_results(state),
-                            "tool_executions": self.review_tool_executions(state),
+                            "tool_results": review_tool_results(state),
+                            "tool_executions": review_tool_executions(state),
                             **(
                                 {
                                     "correction_verification": {
@@ -3617,10 +3600,10 @@ class Controller:
                                 "test_results": request.get("metadata", {}).get(
                                     "validation_results", []
                                 ),
-                                "tool_results": self.review_tool_results(state),
-                                "tool_executions": self.review_tool_executions(state),
+                                "tool_results": review_tool_results(state),
+                                "tool_executions": review_tool_executions(state),
                                 "implementation_evidence": state.implementation_evidence,
-                                "contract_evidence": self.review_contract_evidence(state),
+                                "contract_evidence": review_contract_evidence(state),
                                 "local_reviewer_findings": pre_review_result,
                                 "known_limitations": request.get("metadata", {}).get(
                                     "known_limitations", []
@@ -4388,62 +4371,6 @@ class Controller:
         return False
 
     @staticmethod
-    def review_tool_results(state: SessionState) -> list[dict[str, Any]]:
-        results = state.tool_results
-        return list(results) if len(results) <= 8 else [*results[:4], *results[-4:]]
-
-    @staticmethod
-    def review_tool_executions(state: SessionState) -> list[dict[str, Any]]:
-        executions = current_turn_executions(state)
-        mutation_indexes = [
-            index
-            for index, execution in enumerate(executions)
-            if tool_execution_changes_files(execution)
-        ][-4:]
-        selected_indexes = sorted(
-            set((*mutation_indexes, *range(max(0, len(executions) - 6), len(executions))))
-        )
-        return [
-            {
-                key: execution[key]
-                for key in (
-                    "tool_name",
-                    "normalized_arguments",
-                    "exit_code",
-                    "stdout_summary",
-                    "stderr_summary",
-                )
-                if key in execution
-            }
-            for execution in (executions[index] for index in selected_indexes)
-        ]
-
-    @staticmethod
-    def review_contract_evidence(state: SessionState) -> list[dict[str, str]]:
-        evidence: list[dict[str, str]] = []
-        seen: set[str] = set()
-        for node in reversed(state.evidence_nodes):
-            if node.get("kind") != "tool_observed_fact":
-                continue
-            payload = node.get("payload")
-            if not isinstance(payload, dict) or payload.get("exit_code") != 0:
-                continue
-            stdout = payload.get("stdout")
-            paths = payload.get("target_paths")
-            if not isinstance(stdout, str) or not isinstance(paths, list):
-                continue
-            for path in paths:
-                name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
-                normalized = name.lower()
-                if normalized not in REVIEW_CONTRACT_DOCUMENTS or normalized in seen:
-                    continue
-                evidence.append({"document": name, "content": stdout[:4_000]})
-                seen.add(normalized)
-                if len(evidence) == 4:
-                    return list(reversed(evidence))
-        return list(reversed(evidence))
-
-    @staticmethod
     def register_frontier_review_failure(state: SessionState, result: dict[str, Any]) -> bool:
         loop = state.engineering_loop
         if loop is None:
@@ -4548,10 +4475,10 @@ class Controller:
                 )
             ),
             "diff_summary": metadata.get("diff_summary", ""),
-            "contract_evidence": self.review_contract_evidence(state),
+            "contract_evidence": review_contract_evidence(state),
             "implementation_evidence": state.implementation_evidence,
-            "tool_results": self.review_tool_results(state),
-            "tool_executions": self.review_tool_executions(state),
+            "tool_results": review_tool_results(state),
+            "tool_executions": review_tool_executions(state),
             "validation_results": metadata.get("validation_results", []),
             "scope_evidence": state.approved_scope,
             "completion_evidence": state.completion_evidence
