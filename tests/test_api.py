@@ -5673,27 +5673,38 @@ def test_profile_aware_readiness(settings, stub_provider: StubProvider, monkeypa
         def __init__(self, timeout) -> None:  # type: ignore[no-untyped-def]
             self.timeout = timeout
 
-        async def __aenter__(self):  # type: ignore[no-untyped-def]
+        async def __aenter__(self) -> FakeAsyncClient:  # type: ignore[no-untyped-def]
             return self
 
         async def __aexit__(self, *args) -> None:  # type: ignore[no-untyped-def]
             return None
 
         async def get(self, url: str) -> httpx.Response:
-            status_code = (
-                200 if url.endswith(":8101/v1/models") or url.endswith(":8104/v1/models") else 503
-            )
+            status_code = 200 if (":8101/" in url or ":8104/" in url) else 503
             return httpx.Response(status_code, request=httpx.Request("GET", url))
 
-    monkeypatch.setattr("dgx_moa.api.httpx.AsyncClient", FakeAsyncClient)
+    def fake_managed_http_client(*_args, **kwargs):  # type: ignore[no-untyped-def]
+        timeout = kwargs.get("timeout")
+
+        class _Manager:
+            async def __aenter__(self):
+                return FakeAsyncClient(timeout)
+
+            async def __aexit__(self, *args) -> None:
+                return None
+
+        return _Manager()
+
+    monkeypatch.setattr("dgx_moa.api.managed_http_client", fake_managed_http_client)
     app = create_app(settings)
     with TestClient(app) as client:
         app.state.provider = stub_provider
         app.state.controller.provider = stub_provider
         app.state.profiles.record("resident")
         response = client.get("/readyz")
+        response_json = response.json()
         assert response.status_code == 200
-        assert response.json() == {
+        assert response_json == {
             "status": "ready",
             "profile": "resident",
             "services": {

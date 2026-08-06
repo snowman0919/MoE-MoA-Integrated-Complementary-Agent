@@ -104,4 +104,21 @@ or evaluation logic changes are allowed without creating a new immutable epoch.
 ## 8.1 Frozen checkpoint marker
 
 - This version is immutable for current edits unless a new epoch is created:
-  - `DYNAMIC_MOA_COMPLETION_PLAN.md.sha256 = d8340c6856917224c030ff42fb90d8f807768c4acac6452ceeb17bb049f08b2d`
+  - `DYNAMIC_MOA_COMPLETION_PLAN.md.sha256 = d5a56be6dd4e807854df33a7981078e087be39d7da00e41490cdcb6a7a40ece7`
+
+## 8.2 AvatarForge 10h benchmark protocol (frozen fixture)
+
+- Fixture source: `/home/kotori9/.codex/attachments/536d35e4-c763-4ee5-ae8d-72e663c3bc2b/avatarforge-10h-validation-goal.md`
+- Fixture prompt hash (frozen): `37878be8c6e67262e80b680cea5effa504ed3cafef55d886ae41e9bc35d507fa`  
+  (stored in `.goal-avatarforge-goal-sha256.txt`)
+- Execution contract:
+  - Per tool-path (Codex/OpenCode/Hermes) run `>=5h` active-work with same repository, same seed, same fixture.
+  - Every tool-path run writes a run artifact root under a unique `run_id` and never reuses live production runtime state.
+  - Each run keeps: plan file snapshot, command transcript, client stdout/stderr, readiness probe result, failure/retry/reconnect events, and completion markers.
+- Gatekeeper checks before pass:
+  - `generic` and `primary` model calls on the harness gateway both return `200`.
+  - each client receives exact marker phrase for its path without tool-carrying fallback tricks.
+  - execution has no `INCONCLUSIVE`, `BLOCKED`, or unclassified incomplete state.
+  - non-empty `executor` and `reasoner` invocation counts are recorded and >0.
+- Failure handling:
+  - if a client hangs beyond command timeout, stop and mark protocol as `RUN_ERROR` with timeout evidence, then restart that segment with a smaller scope only for that tool-path.

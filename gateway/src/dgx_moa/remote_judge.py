@@ -251,23 +251,23 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
                         response.raise_for_status()
                     response.raise_for_status()
                     payload = response.json()
-                content = payload["choices"][0]["message"]["content"]
-                verdict = RemoteJudgeVerdict.model_validate_json(content)
-                raw_usage = payload.get("usage", {})
-                usage = {
-                    key: int(raw_usage[key])
-                    for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-                    if isinstance(raw_usage.get(key), int)
-                }
-                async with self._call_lock:
-                    self._usage[package.request_id] = usage
-                    self._usage.move_to_end(package.request_id)
-                    while len(self._usage) > 10_000:
-                        self._usage.popitem(last=False)
-                return verdict
+                    content = payload["choices"][0]["message"]["content"]
+                    verdict = RemoteJudgeVerdict.model_validate_json(content)
+                    raw_usage = payload.get("usage", {})
+                    usage = {
+                        key: int(raw_usage[key])
+                        for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                        if isinstance(raw_usage.get(key), int)
+                    }
+                    async with self._call_lock:
+                        self._usage[package.request_id] = usage
+                        self._usage.move_to_end(package.request_id)
+                        while len(self._usage) > 10_000:
+                            self._usage.popitem(last=False)
+                    return verdict
             except httpx.TimeoutException as error:
                 if attempt == self.max_retries:
-                    raise JudgeTimeout("Remote Judge timed out") from error
+                    raise JudgeUnavailable("Remote Judge timed out") from error
             except httpx.HTTPStatusError as error:
                 if attempt == self.max_retries:
                     if error.response.status_code == 429:

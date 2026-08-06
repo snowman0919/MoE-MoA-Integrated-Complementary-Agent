@@ -148,7 +148,9 @@ class ModelProvider:
         body = ModelProvider.body(role, model, request)
         try:
             async with asyncio.timeout(timeout_seconds):
-                async with managed_http_client(timeout=None) as client:
+                async with managed_http_client(
+                    timeout=None, client_factory=httpx.AsyncClient
+                ) as client:
                     response = await client.post(
                         f"{model.base_url.rstrip('/')}/tokenize",
                         json={
@@ -298,7 +300,9 @@ class ModelProvider:
         timeout_seconds = self.timeout if timeout_seconds is None else timeout_seconds
         try:
             async with asyncio.timeout(timeout_seconds):
-                async with managed_http_client(timeout=None) as client:
+                async with managed_http_client(
+                    timeout=None, client_factory=httpx.AsyncClient
+                ) as client:
                     if model.provider == "ollama":
                         response = await client.post(
                             f"{model.base_url.rstrip('/')}/api/chat",
@@ -335,7 +339,7 @@ class ModelProvider:
         body["stream"] = True
         timeout_seconds = self.timeout if timeout_seconds is None else timeout_seconds
         timeout_stage = stage or role
-        client = make_http_client(timeout=None)
+        client = make_http_client(timeout=None, client_factory=httpx.AsyncClient)
         response: httpx.Response | None = None
         try:
             async with asyncio.timeout(timeout_seconds):
