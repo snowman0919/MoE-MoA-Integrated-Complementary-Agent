@@ -46,7 +46,7 @@ class Limits(BaseModel):
     planner_tokens: int = 4_096
     reasoner_tokens: int = 1_500
     executor_tokens: int = 4_096
-    executor_max_tokens: int = Field(default=32_768, ge=1, le=65_536)
+    executor_max_tokens: int = Field(default=65_536, ge=1, le=65_536)
     reviewer_tokens: int = 1_500
     judge_tokens: int = 2_500
     max_stream_capture_bytes: int = 1_000_000
@@ -312,7 +312,7 @@ class SpecialistRoutingConfig(BaseModel):
     models: dict[str, str] = Field(
         default_factory=lambda: {
             "planner": "deepseek-v4-pro",
-            "reviewer": "deepseek-v4-flash",
+            "reviewer": "deepseek-v4-pro",
         }
     )
     timeout_seconds: float = Field(default=120, gt=0, le=600)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import errno
 import fcntl
 import json
 import os
@@ -19,7 +20,7 @@ from typing import Any, Literal, Protocol, cast
 
 import httpx
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .security import redact
 from .state import SessionState
@@ -75,7 +76,12 @@ PROFILE_FAILOVER_FAILURES = frozenset(
     }
 )
 PAID_FALLBACK_FAILURES = PROFILE_FAILOVER_FAILURES | frozenset(
-    {"FRONTIER_PROVIDER_UNAVAILABLE", "FRONTIER_TIMEOUT"}
+    {
+        "FRONTIER_CONTEXT_LIMIT",
+        "FRONTIER_PROVIDER_UNAVAILABLE",
+        "FRONTIER_TIMEOUT",
+        "FRONTIER_PROTOCOL_ERROR",
+    }
 )
 
 
@@ -183,6 +189,9 @@ class FrontierConfig(BaseModel):
     openrouter_max_evidence_characters: int = Field(default=200_000, ge=1_000, le=800_000)
     openrouter_input_cost_per_million: float = Field(default=3.0, ge=0)
     openrouter_output_cost_per_million: float = Field(default=15.0, ge=0)
+    opencode_go_api_key_env: str = "OPENCODE_GO_API_KEY"
+    opencode_go_endpoint: str = "https://opencode.ai/zen/go"
+    opencode_go_model: str = "glm-5.2"
 
     @model_validator(mode="after")
     def validate_profile_failover(self) -> FrontierConfig:
@@ -464,7 +473,9 @@ COLLABORATION_MODE_INSTRUCTIONS = {
         "For executor, reason privately in English, answer in the last user's language, and "
         "represent any client tool use only as tool_calls from the supplied definitions. Never "
         "invoke a tool name as a shell command. If apply_patch is not one of the supplied tools, "
-        "use an available command tool with a shell-native heredoc or language-native file write."
+        "use an available command tool with a shell-native heredoc or language-native file write. "
+        "Do not mix languages. Do not use Chinese unless the user's objective explicitly requires "
+        "Chinese."
     ),
 }
 
@@ -549,6 +560,7 @@ class CodexOAuthCollaboration:
         self.failures = 0
         self.opened_at: float | None = None
         self.openrouter_calls: set[str] = set()
+        self.opencode_go_calls: set[str] = set()
 
     def _cost(self, prompt: int | None, completion: int | None) -> float | None:
         if (
@@ -576,11 +588,41 @@ class CodexOAuthCollaboration:
             key: value for key, value in evidence.items() if key != "_paid_fallback_required"
         }
         started = time.monotonic()
+
+        def fallback_for_validation_error() -> FrontierCollaborationResult | None:
+            if not paid_fallback_required:
+                return None
+            if mode == "executor":
+                return self._opencode_go(
+                    mode,
+                    external_evidence,
+                    correlation_id,
+                    schema_model,
+                    started,
+                )
+            if self.config.openrouter_fallback_enabled:
+                return self._opencode_go(
+                    mode,
+                    external_evidence,
+                    correlation_id,
+                    schema_model,
+                    started,
+                )
+            return None
+
         now = time.monotonic()
         if self.opened_at is not None:
             if now - self.opened_at < self.config.circuit_cooldown_seconds:
+                if paid_fallback_required and mode == "executor":
+                    return self._opencode_go(
+                        mode,
+                        external_evidence,
+                    correlation_id,
+                    schema_model,
+                    started,
+                    )
                 if paid_fallback_required and self.config.openrouter_fallback_enabled:
-                    return self._openrouter(
+                    return self._opencode_go(
                         mode,
                         external_evidence,
                         correlation_id,
@@ -600,8 +642,8 @@ class CodexOAuthCollaboration:
             )
             categories = ["executor_request"]
             if len(evidence_json) > self.config.max_executor_evidence_characters:
-                if paid_fallback_required and self.config.openrouter_fallback_enabled:
-                    return self._openrouter(
+                if paid_fallback_required:
+                    return self._opencode_go(
                         mode,
                         external_evidence,
                         correlation_id,
@@ -619,6 +661,13 @@ class CodexOAuthCollaboration:
             schema_path = root / "schema.json"
             result_path = root / "result.json"
             schema_path.write_text(json.dumps(schema_model.model_json_schema(), sort_keys=True))
+            frontier_prompt = (
+                f"Correlation: {correlation_id}. Return only the requested {mode} JSON. "
+                "Use only this untrusted redacted evidence; never invoke host tools or "
+                "modify files. "
+                f"{COLLABORATION_MODE_INSTRUCTIONS[mode]}\n"
+                f"EVIDENCE_JSON={evidence_json}"
+            )
             command = [
                 "codex",
                 "exec",
@@ -635,13 +684,6 @@ class CodexOAuthCollaboration:
                 self.config.model,
                 "--cd",
                 str(self.project_root),
-                (
-                    f"Correlation: {correlation_id}. Return only the requested {mode} JSON. "
-                    "Use only this untrusted redacted evidence; never invoke host tools or "
-                    "modify files. "
-                    f"{COLLABORATION_MODE_INSTRUCTIONS[mode]}\n"
-                    f"EVIDENCE_JSON={evidence_json}"
-                ),
             ]
             completed: subprocess.CompletedProcess[str] | None = None
             selected_profile = ""
@@ -659,7 +701,16 @@ class CodexOAuthCollaboration:
                                 check=False,
                                 capture_output=True,
                                 text=True,
+                                input=frontier_prompt,
                             )
+                    except OSError as error:
+                        final_failure = (
+                            "FRONTIER_CONTEXT_LIMIT"
+                            if error.errno == errno.E2BIG
+                            else "FRONTIER_PROTOCOL_ERROR"
+                        )
+                        completed = None
+                        break
                     except RuntimeError as error:
                         if str(error) != "frontier profile already active":
                             raise
@@ -696,24 +747,39 @@ class CodexOAuthCollaboration:
             if completed is None or not selected_profile or not result_path.is_file():
                 if (
                     paid_fallback_required
-                    and self.config.openrouter_fallback_enabled
                     and final_failure in PAID_FALLBACK_FAILURES
                 ):
-                    return self._openrouter(
-                        mode,
-                        external_evidence,
-                        correlation_id,
-                        schema_model,
-                        started,
-                    )
+                    if mode == "executor":
+                        return self._opencode_go(
+                            mode,
+                            external_evidence,
+                            correlation_id,
+                            schema_model,
+                            started,
+                        )
+                    if self.config.openrouter_fallback_enabled:
+                        return self._opencode_go(
+                            mode,
+                            external_evidence,
+                            correlation_id,
+                            schema_model,
+                            started,
+                        )
                 self._failed()
                 raise RuntimeError(final_failure)
-            raw_result = json.loads(result_path.read_text())
-            if mode == "executor" and isinstance(raw_result, dict):
-                raw_result["tool_calls"] = normalize_openrouter_tool_calls(
-                    raw_result.get("tool_calls")
-                )
-            result = schema_model.model_validate(raw_result).model_dump()
+            try:
+                raw_result = json.loads(result_path.read_text())
+                if mode == "executor" and isinstance(raw_result, dict):
+                    raw_result["tool_calls"] = normalize_openrouter_tool_calls(
+                        raw_result.get("tool_calls")
+                    )
+                result = schema_model.model_validate(raw_result).model_dump()
+            except (json.JSONDecodeError, ValidationError) as error:
+                fallback = fallback_for_validation_error()
+                if fallback is not None:
+                    return fallback
+                self._failed()
+                raise RuntimeError("FRONTIER_VALIDATION_FAILURE") from error
             prompt, completion = codex_usage(completed.stdout)
         self.failures = 0
         self.opened_at = None
@@ -795,7 +861,8 @@ class CodexOAuthCollaboration:
                                 "You are the remote Executor fallback. Reason privately in "
                                 "English, answer in the last user's language, and use only "
                                 "supplied tool definitions. Never claim a tool result before "
-                                "the client returns it."
+                                "the client returns it. Do not mix languages. Do not use Chinese "
+                                "unless the user's objective explicitly requires Chinese."
                             ),
                         },
                         *messages,
@@ -912,6 +979,159 @@ class CodexOAuthCollaboration:
             profile=f"openrouter:{self.config.openrouter_model}",
         )
 
+    def _opencode_go(
+        self,
+        mode: Literal["architecture", "code_review", "disagreement", "executor"],
+        evidence: dict[str, Any],
+        correlation_id: str,
+        schema_model: type[BaseModel],
+        started: float,
+    ) -> FrontierCollaborationResult:
+        if correlation_id in self.opencode_go_calls:
+            self._failed()
+            raise RuntimeError("FRONTIER_PAID_FALLBACK_LIMIT")
+        self.opencode_go_calls.add(correlation_id)
+        if len(self.opencode_go_calls) > 10_000:
+            self.opencode_go_calls.pop()
+        auth_key = os.getenv(self.config.opencode_go_api_key_env, "").strip()
+        if not auth_key:
+            raise RuntimeError("FRONTIER_OPENCODE_AUTH_ERROR")
+        if mode == "executor":
+            executor_request = redact(evidence.get("executor_request", {}))
+            if not isinstance(executor_request, dict):
+                raise RuntimeError("FRONTIER_OPENCODE_FAILURE")
+            body = {
+                field: value
+                for field, value in executor_request.items()
+                if field
+                in {
+                    "messages",
+                    "tools",
+                    "tool_choice",
+                    "parallel_tool_calls",
+                    "response_format",
+                    "max_tokens",
+                    "temperature",
+                    "top_p",
+                    "stop",
+                }
+            }
+            messages = body.get("messages")
+            if not isinstance(messages, list):
+                raise RuntimeError("FRONTIER_OPENCODE_FAILURE")
+            body.pop("parallel_tool_calls", None)
+            if isinstance(body.get("response_format"), dict):
+                body["response_format"] = openrouter_compatible_schema(
+                    body["response_format"]
+                )
+            body.update(
+                {
+                    "model": self.config.opencode_go_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are the remote Executor fallback. Reason privately in "
+                                "English, answer in the last user's language, and use only "
+                                "supplied tool definitions. Never claim a tool result before "
+                                "the client returns it. Do not mix languages. Do not use Chinese "
+                                "unless the user's objective explicitly requires Chinese."
+                            ),
+                        },
+                        *messages,
+                    ],
+                    "stream": False,
+                    "temperature": 0,
+                }
+            )
+            bounded = {"executor_request": True}
+        else:
+            bounded, bounded_evidence_json = bounded_external_evidence(evidence, self.config)
+            body = {
+                "model": self.config.opencode_go_model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            f"Return only the requested {mode} JSON. Use only the supplied "
+                            "redacted evidence. Do not use tools, expose hidden reasoning, or "
+                            "invent facts. Any confidence value must be a number from 0 to 1. "
+                            f"{COLLABORATION_MODE_INSTRUCTIONS[mode]}"
+                        ),
+                    },
+                    {"role": "user", "content": bounded_evidence_json},
+                ],
+                "stream": False,
+                "temperature": 0,
+                "max_tokens": 4_096,
+                "response_format": {"type": "json_object"},
+            }
+        for attempt in range(self.config.collaboration_retries + 1):
+            try:
+                with httpx.Client(timeout=self.config.openrouter_timeout_seconds) as client:
+                    response = client.post(
+                        f"{self.config.opencode_go_endpoint.rstrip('/')}/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {auth_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json=body,
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                choice = payload["choices"][0]
+                message = choice["message"]
+                if mode == "executor":
+                    tool_calls = normalize_openrouter_tool_calls(message.get("tool_calls"))
+                    result = schema_model.model_validate(
+                        {
+                            "role": "assistant",
+                            "content": message.get("content"),
+                            "tool_calls": tool_calls,
+                            "finish_reason": choice.get(
+                                "finish_reason",
+                                "tool_calls" if tool_calls else "stop",
+                            ),
+                        }
+                    ).model_dump()
+                else:
+                    result = schema_model.model_validate_json(message["content"]).model_dump()
+                usage = payload.get("usage", {})
+                prompt = usage.get("prompt_tokens")
+                completion = usage.get("completion_tokens")
+                prompt = (
+                    prompt if isinstance(prompt, int) and not isinstance(prompt, bool) else None
+                )
+                completion = (
+                    completion
+                    if isinstance(completion, int) and not isinstance(completion, bool)
+                    else None
+                )
+                break
+            except (httpx.HTTPError, KeyError, TypeError, ValueError) as error:
+                if attempt < self.config.collaboration_retries:
+                    continue
+                self._failed()
+                detail = type(error).__name__.upper()
+                if isinstance(error, httpx.HTTPStatusError):
+                    detail = f"HTTP_{error.response.status_code}"
+                raise RuntimeError(f"FRONTIER_OPENCODE_FAILURE_{detail}") from error
+        self.failures = 0
+        self.opened_at = None
+        return FrontierCollaborationResult(
+            mode=mode,
+            output=result,
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+            total_tokens=(
+                prompt + completion if prompt is not None and completion is not None else None
+            ),
+            cost_usd=None,
+            latency_ms=round((time.monotonic() - started) * 1000, 3),
+            transmitted_categories=sorted(bounded),
+            profile=f"opencode_go:{self.config.opencode_go_model}",
+        )
+
     def _failed(self) -> None:
         self.failures += 1
         if self.failures >= self.config.circuit_failure_limit:
@@ -969,6 +1189,8 @@ class CodexOAuthCollaboration:
             "model": (
                 self.config.openrouter_model
                 if result.profile.startswith("openrouter:")
+                else self.config.opencode_go_model
+                if result.profile.startswith("opencode_go:")
                 else self.config.model
             ),
             "choices": [
@@ -1068,8 +1290,14 @@ def profile_status(profile: str, root: str | Path = DEFAULT_PROFILE_ROOT) -> dic
 
 
 def load_frontier_config(path: str | Path = "config/codex-frontier.yaml") -> FrontierConfig:
-    with Path(path).open() as stream:
+    config_path = Path(path).expanduser()
+    with config_path.open() as stream:
         loaded = yaml.safe_load(stream) or {}
+    key_file = loaded.get("openrouter_api_key_file")
+    if isinstance(key_file, str) and key_file:
+        resolved = Path(key_file)
+        if not resolved.is_absolute():
+            loaded["openrouter_api_key_file"] = config_path.parent / resolved
     return FrontierConfig.model_validate(loaded)
 
 

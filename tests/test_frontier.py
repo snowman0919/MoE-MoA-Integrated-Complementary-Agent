@@ -131,6 +131,13 @@ def test_frontier_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
     )
 
 
+def test_frontier_config_resolves_relative_openrouter_key_file(tmp_path) -> None:
+    config = tmp_path / "frontier.yaml"
+    config.write_text("openrouter_fallback_enabled: true\nopenrouter_api_key_file: openrouter_api\n")
+    loaded = load_frontier_config(config)
+    assert loaded.openrouter_api_key_file == config.parent / "openrouter_api"
+
+
 def test_frontier_code_review_keeps_bounded_tool_executions() -> None:
     evidence, _ = bounded_external_evidence(
         {
@@ -651,9 +658,7 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
 ) -> None:  # type: ignore[no-untyped-def]
     profiles: list[str] = []
     requests: list[dict[str, object]] = []
-    key_path = tmp_path / "openrouter_api"
-    key_path.write_text("synthetic-openrouter-key")
-    key_path.chmod(0o600)
+    monkeypatch.setenv("OPENCODE_GO_API_KEY", "synthetic-opencode-go-key")
 
     def oauth_context_failure(command, **kwargs):  # type: ignore[no-untyped-def]
         profiles.append(Path(kwargs["env"]["CODEX_HOME"]).name)
@@ -706,8 +711,6 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
             allow_profile_failover=True,
             profile_root=tmp_path / "profiles",
             collaboration_retries=0,
-            openrouter_fallback_enabled=True,
-            openrouter_api_key_file=key_path,
         ),
         tmp_path / "run",
         tmp_path,
@@ -735,23 +738,84 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
 
     assert profiles == ["primary", "secondary"]
     assert result["choices"][0]["message"]["content"] == "완료했습니다."
-    assert result["provider_provenance"]["provider"].startswith("openrouter:")
-    assert result["provider_provenance"]["cost_usd"] == pytest.approx(0.0006)
+    assert result["provider_provenance"]["provider"] == "opencode_go:glm-5.2"
+    assert result["provider_provenance"]["cost_usd"] is None
     assert len(requests) == 1
     sent = requests[0]
-    assert sent["headers"]["Authorization"] == "Bearer synthetic-openrouter-key"
-    assert sent["json"]["model"] == "anthropic/claude-sonnet-4.6"
-    assert sent["json"]["reasoning"] == {"effort": "high", "exclude": True}
+    assert sent["headers"]["Authorization"] == "Bearer synthetic-opencode-go-key"
+    assert sent["json"]["model"] == "glm-5.2"
     assert "parallel_tool_calls" not in sent["json"]
     assert "minimum" not in json.dumps(sent["json"]["response_format"])
     assert "synthetic-openrouter-key" not in json.dumps(sent["json"])
 
 
+@pytest.mark.asyncio
+async def test_executor_uses_paid_fallback_for_argument_list_too_long(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("OPENCODE_GO_API_KEY", "synthetic-opencode-go-key")
+
+    def too_long_run(*_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+        raise OSError(7, "Argument list too long: 'codex'")
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "완료했습니다.",
+                            "tool_calls": [],
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+            }
+
+    class FakeClient:
+        def __init__(self, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+        def post(self, _url, **_kwargs) -> FakeResponse:  # type: ignore[no-untyped-def]
+            return FakeResponse()
+
+    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", too_long_run)
+    monkeypatch.setattr("dgx_moa.frontier.httpx.Client", FakeClient)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(
+            enabled=True,
+            openrouter_fallback_enabled=False,
+        ),
+        tmp_path / "run",
+        tmp_path,
+    )
+    response = await runner.execute(
+        {
+            "messages": [{"role": "user", "content": "긴 요청입니다."}],
+            "tools": [],
+            "stream": True,
+        },
+        "overflow-request",
+    )
+
+    assert response["provider_provenance"]["provider"] == "opencode_go:glm-5.2"
+    assert response["choices"][0]["message"]["content"] == "완료했습니다."
+
+
 def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # type: ignore[no-untyped-def]
-    key_path = tmp_path / "openrouter_api"
-    key_path.write_text("synthetic-openrouter-key")
     requests = 0
 
     class FakeResponse:
@@ -807,11 +871,11 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
         FrontierConfig(
             enabled=True,
             openrouter_fallback_enabled=True,
-            openrouter_api_key_file=key_path,
         ),
         tmp_path / "run",
         tmp_path,
     )
+    monkeypatch.setenv("OPENCODE_GO_API_KEY", "synthetic-opencode-go-key")
     runner.opened_at = time.monotonic()
 
     result = runner._run(
@@ -823,7 +887,7 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
         "required-review",
     )
 
-    assert result.profile == "openrouter:anthropic/claude-sonnet-4.6"
+    assert result.profile == "opencode_go:glm-5.2"
     assert result.output["verdict"] == "approve"
     assert requests == 2
 

@@ -109,6 +109,16 @@ class PolicyBlocked(RuntimeError):
     pass
 
 
+_RUNTIME_PATH_PATTERNS = (
+    re.compile(r"/home/[^\s\"'`]+"),
+    re.compile(r"/tmp/[^\s\"'`]+"),
+    re.compile(r"/workspace/[^\s\"'`]+"),
+    re.compile(r"/root/[^\s\"'`]+"),
+    re.compile(r"/srv/[^\s\"'`]+"),
+    re.compile(r"\b[a-zA-Z]:\\[^\\s\"'`]+"),
+)
+
+
 GOAL_PREREQUISITE_DOCUMENTS = (
     "AGENTS.md",
     "docs/STATE.md",
@@ -457,11 +467,14 @@ class Controller:
                 timeout_seconds=getattr(self.settings.limits, f"{role}_timeout_seconds"),
                 stage=role,
             )
-            return response, {
+            decision = {
                 "specialist_role": role,
                 "selected_provider": "local",
                 "routing_reason": "specialist_router_disabled",
             }
+            state.specialist_routing.append(cast(dict[str, Any], self.safe_payload(state, decision)))
+            state.specialist_routing = state.specialist_routing[-self.settings.limits.max_steps :]
+            return response, decision
         response, decision = await self.specialists.complete(
             role,
             request,
@@ -641,6 +654,32 @@ class Controller:
     def safe_payload(state: SessionState, payload: Any) -> Any:
         """Apply built-in and request policy redaction before a persistence boundary."""
         return redact_fields(redact(payload), state.policy_redact_fields)
+
+    @staticmethod
+    def _mask_runtime_text(text: str, replacements: tuple[str, ...]) -> str:
+        masked = text
+        for target in replacements:
+            if target:
+                masked = masked.replace(target, "<workspace>")
+        for pattern in _RUNTIME_PATH_PATTERNS:
+            masked = pattern.sub("<path>", masked)
+        return masked
+
+    @classmethod
+    def _sanitize_runtime_payload(cls, payload: Any, state: SessionState) -> Any:
+        replacements = tuple(
+            value for key, value in state.repository.items() if key.endswith("_path") and isinstance(value, str)
+        )
+        if isinstance(payload, str):
+            return cls._mask_runtime_text(payload, replacements)
+        if isinstance(payload, list):
+            return [cls._sanitize_runtime_payload(item, state) for item in payload]
+        if isinstance(payload, dict):
+            return {
+                key: cls._sanitize_runtime_payload(value, state)
+                for key, value in payload.items()
+            }
+        return payload
 
     def record_evidence(
         self,
@@ -1440,7 +1479,10 @@ class Controller:
                 "decision_id": state.last_decision_id or "unknown",
                 "session_id": state.session_id,
                 "tool_name": str(function.get("name", result["tool_name"])),
-                "normalized_arguments": self.safe_payload(state, arguments),
+                "normalized_arguments": self._sanitize_runtime_payload(
+                    self.safe_payload(state, arguments),
+                    state,
+                ),
                 "argument_fingerprint": fingerprint(call),
                 "started_at": "legacy_unavailable",
                 "ended_at": now(),
@@ -1448,8 +1490,16 @@ class Controller:
                 "exit_code": result["exit_code"],
                 "stdout_bytes": len(result["stdout"].encode()),
                 "stderr_bytes": len(result["stderr"].encode()),
-                "stdout_summary": result["stdout"][:500],
-                "stderr_summary": result["stderr"][:500],
+                "stdout_summary": self._sanitize_runtime_payload(
+                    result["stdout"][:500], state
+                )
+                if isinstance(result["stdout"], str)
+                else "",
+                "stderr_summary": self._sanitize_runtime_payload(
+                    result["stderr"][:500], state
+                )
+                if isinstance(result["stderr"], str)
+                else "",
                 "truncated": result["truncated"],
                 "failure_class": failure_class,
                 "filesystem_effect": effect,
@@ -2040,8 +2090,11 @@ class Controller:
         language_constraint = (
             "Reason internally in English. Reply in the natural language of the user's actual "
             "objective; when a wrapper points to an objective file, use the language of that "
-            "file rather than the wrapper."
-            if role == "executor"
+            "file rather than the wrapper. If objective language is Korean, output only Korean "
+            "for prose. No code blocks, identifiers, or JSON should switch language. Do not "
+            "mix languages. Do not use Chinese unless the user explicitly requested Chinese in "
+            "the objective."
+            if role in {"executor", "planner", "reviewer"}
             else ""
         )
         mcp_fallback_constraint = (

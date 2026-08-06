@@ -393,6 +393,22 @@ def _responses_payload(
     return payload
 
 
+def _scrub_response_payload(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        return {
+            key: _scrub_response_payload(value)
+            for key, value in payload.items()
+            if key not in {"provider_provenance"}
+        }
+    if isinstance(payload, list):
+        return [_scrub_response_payload(item) for item in payload]
+    return payload
+
+
+def _public_completion_payload(response: dict[str, Any]) -> dict[str, Any]:
+    return cast(dict[str, Any], _scrub_response_payload(response))
+
+
 def _chat_response_payload(response: Response) -> dict[str, Any] | None:
     raw_body = getattr(response, "body", None)
     if not raw_body:
@@ -400,7 +416,9 @@ def _chat_response_payload(response: Response) -> dict[str, Any] | None:
     try:
         return cast(
             dict[str, Any],
-            json.loads(raw_body.decode() if isinstance(raw_body, bytes) else raw_body),
+            _public_completion_payload(
+                json.loads(raw_body.decode() if isinstance(raw_body, bytes) else raw_body)
+            ),
         )
     except ValueError:
         return None
@@ -2451,6 +2469,7 @@ def create_app(
                 scoped_request = {
                     **executor_request,
                     "_client_workspace_path": state.repository.get("workspace_path"),
+                    "_paid_fallback_required": True,
                 }
                 response = await frontier_provider.execute(
                     scoped_request,
@@ -2763,6 +2782,8 @@ def create_app(
                                     "message": "remote Executor fallback unavailable",
                                     "type": "backend_error",
                                     "code": "frontier_required_unavailable",
+                                    "failure_class": type(error).__name__,
+                                    "failure_code": str(error)[:128],
                                 }
                             }
                             yield (
@@ -3307,6 +3328,7 @@ def create_app(
                     ),
                 )
             finalize_request(None, "completed", current_state=state)
+            response = _public_completion_payload(response)
             return JSONResponse(response, headers={"X-Session-ID": session_id})
         except asyncio.CancelledError:
             current = state or request.app.state.store.get(state_session_id)
