@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import importlib.util
 import json
-import runpy
 import subprocess
+import sys
 from argparse import Namespace
 from pathlib import Path
 from unittest import mock
@@ -10,8 +11,14 @@ from unittest import mock
 import pytest
 
 SCRIPT = Path(__file__).parents[1] / "scripts/run-client-quality-matrix.py"
-GLOBALS = runpy.run_path(str(SCRIPT))
-SUCCESS = GLOBALS["successful_hermes_test_result"]
+spec = importlib.util.spec_from_file_location("run_client_quality_matrix", str(SCRIPT))
+if spec is None or spec.loader is None:
+    raise RuntimeError(f"Unable to load script module from {SCRIPT}")
+module = importlib.util.module_from_spec(spec)
+sys.modules.setdefault("run_client_quality_matrix", module)
+spec.loader.exec_module(module)
+SUCCESS = module.successful_hermes_test_result
+GLOBALS = module.__dict__
 
 
 def test_installed_hermes_execute_code_is_valid_test_evidence() -> None:
