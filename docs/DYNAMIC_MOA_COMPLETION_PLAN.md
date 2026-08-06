@@ -104,4 +104,4 @@ or evaluation logic changes are allowed without creating a new immutable epoch.
 ## 8.1 Frozen checkpoint marker
 
 - This version is immutable for current edits unless a new epoch is created:
-  - `DYNAMIC_MOA_COMPLETION_PLAN.md.sha256 = d8340c6856917224c030ff42fb90d8f807768c4acac6452ceeb17bb049f08b2d`
+  - `DYNAMIC_MOA_COMPLETION_PLAN.md.sha256 = d5a56be6dd4e807854df33a7981078e087be39d7da00e41490cdcb6a7a40ece7`
