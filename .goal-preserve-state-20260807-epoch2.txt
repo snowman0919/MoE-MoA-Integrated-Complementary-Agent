@@ -1,0 +1,52 @@
+# MoA Goal Preserve Snapshot 2026-08-06T19:39:16Z
+## Worktree: dev/mainline checkout
+HEAD=f2c20a7 dev
+main=396e045
+merge-base(main,HEAD)=0
+branch status:   M  docs/DYNAMIC_MOA_COMPLETION_PLAN.md
+  AM docs/DYNAMIC_MOA_COMPLETION_PLAN.md.sha256
+   M gateway/src/dgx_moa/http_client.py
+   M gateway/src/dgx_moa/key_dashboard.py
+   M gateway/src/dgx_moa/providers.py
+   M gateway/src/dgx_moa/remote_judge.py
+   M tests/test_api.py
+   M tests/test_api_keys.py
+  ?? .goal-preserve-state-20260806-193517.txt
+  ?? .goal-preserve-state-20260807-epoch1.txt
+  ?? .goal-preserve-state-20260807-epoch2.txt
+remotes:
+origin	https://github.com/snowman0919/MoE-MoA-Integrated-Complementary-Agent.git (fetch)
+origin	https://github.com/snowman0919/MoE-MoA-Integrated-Complementary-Agent.git (push)
+## Worktree list
+/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent                     f2c20a7 [dev]
+/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent-observability-eval  fc892f9 [auto/validation/all-model-observability-eval]
+/home/kotori9/code/MoE-MoA-sglang-gemma4                                      607a4a3 [auto/runtime/sglang-gemma4-v1]
+/home/kotori9/code/MoE-MoA-sglang-topology-integration                        704fe5c [auto/integration/sglang-topology-v1]
+/home/kotori9/code/dgx-moa-imp-2026-0001                                      9054f57 [auto/controller/IMP-2026-0001]
+/var/tmp/dgx-moa-avatarforge-v171/workspace                                   bed3669 (detached HEAD)
+/var/tmp/dgx-moa-long-v34/codex-workspace                                     bc46dfe (detached HEAD)
+/var/tmp/dgx-moa-long-v35/codex-workspace                                     652cfa1 (detached HEAD)
+## Production worktree
+HEAD=396e045 main
+main=396e045
+branch status:
+ M config/codex-frontier.yaml
+ M config/models.yaml
+ M gateway/src/dgx_moa/api.py
+ M gateway/src/dgx_moa/config.py
+ M gateway/src/dgx_moa/controller.py
+ M gateway/src/dgx_moa/frontier.py
+ M tests/test_frontier.py
+?? data/state/backups/
+?? runtime_state.sqlite
+merge-base(main,HEAD)=0
+2026-08-06T19:39:36Z STASH/BASIS SNAPSHOT
+## dev/worktree
+git stash list:
+stash@{0}: On dev: branch-realign-preserve
+stash@{1}: On main: goal-active-preserve-and-switch-to-dev
+stash@{2}: On dev: user-requested-production-main-normalization-20260804
+merge-base(main,HEAD): 396e0458f25977293281b953d2c804cf5b689970
+## production/main
+git stash list:
+merge-base(main,HEAD): 396e0458f25977293281b953d2c804cf5b689970

@@ -1,0 +1,8 @@
+preservation_log: .goal-preserve-state-20260807-epoch1.txt
+plan_epoch_file: docs/DYNAMIC_MOA_COMPLETION_PLAN.md
+plan_sha: ca5268524870dc4c5da7d639b63d9b46cb8a541a1e5c67e7f8e750bf4daa1aff
+main_status: ## main...origin/main; M config/codex-frontier.yaml; M config/models.yaml; M gateway/src/dgx_moa/api.py; M gateway/src/dgx_moa/config.py; M gateway/src/dgx_moa/controller.py; M gateway/src/dgx_moa/frontier.py; M tests/test_frontier.py;?? data/state/backups/;?? runtime_state.sqlite;
+main_dirty_files: 9
+dev_dirty_files: 8
+worktree_count: 8
+root_status_brief: ## dev...origin/dev;M  docs/DYNAMIC_MOA_COMPLETION_PLAN.md;AM docs/DYNAMIC_MOA_COMPLETION_PLAN.md.sha256; M gateway/src/dgx_moa/http_client.py; M gateway/src/dgx_moa/key_dashboard.py; M gateway/src/dgx_moa/providers.py; M gateway/src/dgx_moa/remote_judge.py;?? .goal-preserve-state-20260806-193517.txt;?? .goal-preserve-state-20260807-epoch1.txt;

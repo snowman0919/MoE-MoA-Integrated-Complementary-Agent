@@ -1,0 +1,12 @@
+preserve_ts=2026-08-06T19:35:17Z
+root=/home/kotori9/code/MoE-MoA-Integrated-Complementary-Agent
+local_main_commit=396e0458f25977293281b953d2c804cf5b689970
+local_dev_commit=22205e2342bc095e9a4d9af958e134233038ab16
+origin_main=396e0458f25977293281b953d2c804cf5b689970
+origin_dev=f2c20a78d814ef9cd59424f372fa42d503874054
+dev_ahead=0 ahead, 566 behind
+main_upstream=origin/main
+remote_head=refs/remotes/origin/main
+dev_dirty=no
+worktree_prod=main
+worktree_count=5
