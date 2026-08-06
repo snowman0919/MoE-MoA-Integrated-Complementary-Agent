@@ -44,6 +44,7 @@ from .frontier import (
     profile_lock,
     profile_status,
 )
+from .http_client import managed_http_client
 from .key_dashboard import API_KEY_DASHBOARD
 from .knowledge import KnowledgeRegistry
 from .lifecycle import (
@@ -509,7 +510,7 @@ def create_app(
         if model is None:
             return False
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with managed_http_client(timeout=30) as client:
                 if role in {"planner", "reviewer"} and model.provider != "ollama":
                     response = await client.post(
                         f"{model.base_url.rstrip('/')}/v1/chat/completions",
@@ -1310,7 +1311,7 @@ def create_app(
             )
         service_status = {role: "stopped" for role in configured.models}
         try:
-            async with httpx.AsyncClient(timeout=2) as client:
+            async with managed_http_client(timeout=2) as client:
                 results = await asyncio.gather(
                     *(
                         client.get(

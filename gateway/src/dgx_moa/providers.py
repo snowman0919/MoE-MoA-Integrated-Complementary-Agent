@@ -8,6 +8,7 @@ from typing import Any, cast
 import httpx
 
 from .config import ModelConfig
+from .http_client import make_http_client, managed_http_client
 
 PLANNER_REASONING_TOKENS = 768
 PLANNER_FINAL_TOKENS = 1_536
@@ -147,7 +148,7 @@ class ModelProvider:
         body = ModelProvider.body(role, model, request)
         try:
             async with asyncio.timeout(timeout_seconds):
-                async with httpx.AsyncClient(timeout=None) as client:
+                async with managed_http_client(timeout=None) as client:
                     response = await client.post(
                         f"{model.base_url.rstrip('/')}/tokenize",
                         json={
@@ -297,7 +298,7 @@ class ModelProvider:
         timeout_seconds = self.timeout if timeout_seconds is None else timeout_seconds
         try:
             async with asyncio.timeout(timeout_seconds):
-                async with httpx.AsyncClient(timeout=None) as client:
+                async with managed_http_client(timeout=None) as client:
                     if model.provider == "ollama":
                         response = await client.post(
                             f"{model.base_url.rstrip('/')}/api/chat",
@@ -334,7 +335,7 @@ class ModelProvider:
         body["stream"] = True
         timeout_seconds = self.timeout if timeout_seconds is None else timeout_seconds
         timeout_stage = stage or role
-        client = httpx.AsyncClient(timeout=None)
+        client = make_http_client(timeout=None)
         response: httpx.Response | None = None
         try:
             async with asyncio.timeout(timeout_seconds):

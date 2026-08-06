@@ -13,6 +13,7 @@ from typing import Any, Literal, cast
 import httpx
 
 from .config import ModelConfig, SpecialistRoutingConfig
+from .http_client import managed_http_client
 from .providers import ModelProvider, StageTimeout
 
 SpecialistRole = Literal["planner", "reviewer"]
@@ -136,7 +137,7 @@ class _RemoteProvider:
             body["response_format"] = {"type": "json_object"}
         try:
             async with asyncio.timeout(timeout_seconds):
-                async with httpx.AsyncClient(transport=self.transport, timeout=None) as client:
+                async with managed_http_client(timeout=None, transport=self.transport) as client:
                     response = await client.post(
                         f"{self.endpoint}/v1/chat/completions",
                         headers={"Authorization": f"Bearer {api_key}"},

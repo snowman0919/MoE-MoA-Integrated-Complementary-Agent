@@ -9,6 +9,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from .http_client import managed_http_client
 from .security import redact
 from .training import sanitize
 
@@ -191,8 +192,8 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
 
     async def available(self) -> bool:
         try:
-            async with httpx.AsyncClient(
-                transport=self.transport, timeout=self.timeout_seconds
+            async with managed_http_client(
+                timeout=self.timeout_seconds, transport=self.transport
             ) as client:
                 response = await client.get(self._url("models"), headers=self._headers())
                 response.raise_for_status()
@@ -238,8 +239,8 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
         }
         for attempt in range(self.max_retries + 1):
             try:
-                async with httpx.AsyncClient(
-                    transport=self.transport, timeout=self.timeout_seconds
+                async with managed_http_client(
+                    timeout=self.timeout_seconds, transport=self.transport
                 ) as client:
                     response = await client.post(
                         self._url("chat/completions"),

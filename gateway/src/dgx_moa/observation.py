@@ -12,6 +12,7 @@ from typing import Any, Literal, Protocol
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from .http_client import managed_http_client
 from .security import redact
 
 PUBLISHED_EVENTS = {
@@ -465,7 +466,7 @@ class DiscordProvider:
 
     async def send(self, events: Sequence[ObservationEvent]) -> None:
         params = {"thread_id": self.thread_id} if self.thread_id else None
-        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
+        async with managed_http_client(timeout=self.timeout, transport=self.transport) as client:
             response = await client.post(
                 self.webhook_url, params=params, json={"content": render_events(events)}
             )
@@ -497,7 +498,7 @@ class TelegramProvider:
         }
         if self.message_thread_id is not None:
             payload["message_thread_id"] = self.message_thread_id
-        async with httpx.AsyncClient(timeout=self.timeout, transport=self.transport) as client:
+        async with managed_http_client(timeout=self.timeout, transport=self.transport) as client:
             response = await client.post(self.url, json=payload)
             response.raise_for_status()
 
