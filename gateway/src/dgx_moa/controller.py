@@ -2566,7 +2566,7 @@ class Controller:
                 return
             frontier_limit = self.frontier.config.max_invocations_per_task
             review_slot_reserved = (
-                mode == "architecture" and "reviewer" in roles and frontier_limit > 1
+                mode == "architecture" and state.engineering_loop is not None and frontier_limit > 1
             )
             if review_slot_reserved:
                 frontier_limit -= 1

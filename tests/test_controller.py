@@ -29,6 +29,7 @@ from dgx_moa.execution_graph import (
     compile_execution_graph,
 )
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
+from dgx_moa.loop_engineering import new_loop
 from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
 from dgx_moa.state import Phase, SessionState, StateStore
 from dgx_moa.usage import UsageStore
@@ -674,6 +675,7 @@ async def test_architecture_reserves_last_frontier_call_for_review(
         request_class="explicit_orchestrated",
         roles_required=["reasoner", "executor", "reviewer"],
         frontier_invocations=2,
+        engineering_loop=new_loop("frontier-review-slot", "Implement the bounded change"),
     )
 
     await controller.prepare_executor(
