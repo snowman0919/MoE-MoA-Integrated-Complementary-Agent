@@ -1241,3 +1241,26 @@ requests used 35,542 tokens over 94.253 active seconds; three Graph compiles,
 six resumes, and zero shadow failures were recorded. Candidate A, production,
 and Pilot remained HTTP 200. The targeted primary write gate is recovered; a
 fresh client-quality matrix is now the next post-Pilot epoch.
+
+## Client-quality v106 and scoped-validation recovery v107 — 2026-08-12
+
+The frozen v106 matrix completed all 20 cells without gateway restart:
+baseline `5/5`, OpenCode `5/5`, Codex `0/5`, and Hermes `0/5`. Hermes passed
+visible and hidden validation in every task but failed native unittest tool
+evidence `5/5`; Codex recorded writes in every task but failed visible and
+hidden validation `5/5`. Blind and later gates remain unopened.
+
+State evidence exposed a Korean scoped-write classifier gap. The objective
+`webhook.py만 구현하라. 테스트나 요구사항 파일은 수정하지 마라` was treated as
+globally read-only, allowing completion after mutation without a later
+successful test. `write_stdin failed: Unknown process id 0` was also normalized
+as success. Commit `60f7a236e` adds only those two common guards. Ruff, strict
+mypy on 49 source files, and pytest `1062/1062` passed.
+
+Isolated v107 passed the same Codex webhook cell in 434.176 seconds. Two native
+unittest failures were retained, the third native unittest call exited zero,
+and all scoring checks passed. Attempt 01 failed before readiness because the
+transient unit omitted `WorkingDirectory`; attempt 02 changed only that launch
+variable and passed. Production, Pilot attempt 12, and Candidate A remained
+HTTP 200; v107 services cleaned up successfully. A fresh post-recovery matrix
+is still required before blind non-inferiority.

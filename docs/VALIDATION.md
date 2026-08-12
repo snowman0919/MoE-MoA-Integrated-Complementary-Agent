@@ -8188,3 +8188,31 @@ Exact stop/start moved attempt 11 to `success` and attempt 12 to active PID
 Pilot, and Candidate A remained HTTP 200. This closes only the targeted primary
 write gate and authorizes a separately named fresh client-quality matrix; it
 does not authorize blind noninferiority or later release gates.
+
+### Client-quality v106 and targeted v107 recovery — 2026-08-12
+
+`mistral-128k-v106-post-write-recovery-full-matrix-20260812` completed its
+frozen 20-cell order: baseline `5/5`, OpenCode `5/5`, Codex `0/5`, Hermes
+`0/5`. `usability_not_below_baseline` was false for Codex and Hermes and true
+for OpenCode. Summary SHA-256 is
+`c1dd1ffe64fdbcd3a48ade5e41a4090a120526b1135a7b630d7a48542852b45d`;
+execution-log SHA-256 is
+`b065ebe1f2b8f08f816bfda2fa5cce08a159ced8cc81c98da56b75f6588dcd41`.
+
+All five Hermes implementations passed visible and hidden validation but had
+no successful unittest tool-call evidence. All five Codex cells recorded a
+source mutation and tool evidence but failed visible and hidden validation.
+The webhook trace showed a shell write followed by a textual
+`TACTICAL_EXECShellCommand(...)`, not a native test call. State inspection
+proved Korean scoped text was classified as global read-only. It also recorded
+`write_stdin failed: Unknown process id 0` envelopes as exit zero.
+
+Commit `60f7a236e` recognizes Korean `만 구현/수정/변경` as scoped change and
+normalizes standard `<tool> failed:` envelopes to nonzero. Targeted tests
+passed `105/105`; the clean gate passed Ruff, strict mypy on 49 files, and
+pytest `1062/1062`. Isolated v107 then passed the identical Codex webhook task
+after native unittest exits `1, 1, 0`; duration was 434.176 seconds and all ten
+scoring checks passed. Attempt 01 preserved a pre-readiness
+`config/codex-frontier.yaml` `FileNotFoundError`; attempt 02 added only the
+transient `WorkingDirectory` and succeeded. Cleanup returned success, and
+production, Pilot, and Candidate A each returned HTTP 200.
