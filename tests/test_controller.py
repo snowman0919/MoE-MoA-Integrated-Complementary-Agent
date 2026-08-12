@@ -3172,8 +3172,10 @@ def test_implementation_completion_requires_change_validation_and_review(
         tool_executions=[{"tool_name": "shell", "exit_code": 0}],
     )
     instruction = [{"role": "user", "content": "exec_command로 새 상태를 확인하라."}]
+    unrelated = SessionState.model_validate(unrelated.model_dump(mode="json"))
     assert controller.requires_explicit_tool_evidence(unrelated, instruction) is True
     unrelated.tool_executions.append({"tool_name": "shell", "exit_code": 0})
+    unrelated = SessionState.model_validate(unrelated.model_dump(mode="json"))
     assert controller.requires_explicit_tool_evidence(unrelated, instruction) is False
     assert (
         controller.requires_explicit_tool_evidence(
