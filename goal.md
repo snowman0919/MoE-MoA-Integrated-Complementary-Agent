@@ -757,3 +757,8 @@ BLOCKED
 - Codex repository write: tool surface fixed, primary write still
   `FAILED_OPEN` and requires a new recovery epoch.
 - Goal: active `PILOT_ACTIVE`; `blocked`/`complete` 금지.
+
+Primary Codex repository-write epoch 04 now passes at controller `2a3afdce8`
+with an exact two-line diff, `103 passed`, Reviewer approval, and zero Graph
+shadow failures. Pilot attempt 12 is active. Resume the interrupted
+client-quality sequence only in a fresh epoch; later gates remain ordered.

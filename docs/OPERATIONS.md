@@ -997,3 +997,10 @@ Candidate order remains explicit vLLM Blackwell-native NVFP4 candidate A,
 isolated SGLang native candidate B, then MARLIN compatibility rollback. V66 and
 v98 preserve the current SGLang physical failures; retry only a new supported
 registry/source combination in a separately named protocol epoch.
+
+An `apply_patch verification failed:` tool payload without an explicit numeric
+exit code is failure evidence, never a successful filesystem effect. Also do
+not interpret `Do not modify any other file` as global read-only intent: it is
+a scope restriction on an otherwise explicit write task. Before accepting a
+Codex write completion, require a successful change-capable tool execution,
+successful validation after that change, and the configured review result.

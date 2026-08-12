@@ -134,3 +134,9 @@ defaults/restart, rollback rehearsal, and limited canary still open.
   preserved for this epoch; MARLIN remains rollback only.
 - Goal status remains active `PILOT_ACTIVE`; neither terminal `blocked` nor
   `complete` is authorized.
+
+Primary Codex write recovery now passes in epoch 04 at controller
+`2a3afdce8`: an exact two-line diff, `103 passed`, Reviewer approval, and zero
+Graph shadow failures. Epochs 02 and 03 preserve the two false-completion root
+causes. The next allowed gate is a fresh post-recovery client-quality matrix;
+blind, ablation, and later gates remain unopened.

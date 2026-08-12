@@ -1218,3 +1218,26 @@ candidate B was isolated in v66 and v98 and rejected only for this pinned
 runtime's MLA/model-shape and API/tool semantic failures. MARLIN remains
 compatibility rollback; no result establishes it as generally optimal on
 Blackwell. The Goal remains active in `PILOT_ACTIVE`.
+
+## Primary Codex write recovery — 2026-08-12
+
+Write epoch 02 reproduced a false completion: a Codex `apply_patch`
+verification error carried no numeric exit code and was normalized as success.
+Commit `b6912a119` recognizes that standard failure envelope as nonzero. Epoch
+03 physically confirmed every malformed patch as `exit_code=1/TEST_FAILURE`,
+but exposed a second shared classifier defect: the scoped constraint `Do not
+modify any other file` was treated as global read-only intent.
+
+Commit `2a3afdce826b7fbc4e5cf3d682085b427ebcfa22` preserves write intent for that
+scoped constraint. Clean validation passed Ruff, strict mypy on 49 source
+files, and pytest `1062/1062`. Pilot attempt 12 is active at that revision with
+PID `3790208`, zero restarts, and unchanged 1/2/0.5 GiB limits.
+
+Epoch 04 then passed the same primary `dgx-moa` repository-write task. Two
+malformed patches remained durable failures; the third `apply_patch` succeeded,
+the isolated worktree contained exactly two requested insertions in one file,
+pytest reported `103 passed`, and Reviewer approved with no findings. Seven
+requests used 35,542 tokens over 94.253 active seconds; three Graph compiles,
+six resumes, and zero shadow failures were recorded. Candidate A, production,
+and Pilot remained HTTP 200. The targeted primary write gate is recovered; a
+fresh client-quality matrix is now the next post-Pilot epoch.

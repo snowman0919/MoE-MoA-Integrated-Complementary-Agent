@@ -8152,3 +8152,39 @@ Production gateway PID `3107456` and Pilot PID `3704865` remained active with
 zero restarts. This does not change the qualified vLLM native-NVFP4 candidate
 A, the v66/v98 SGLang candidate-B rejection for this exact epoch, or MARLIN's
 rollback-only status.
+
+### Primary Codex write recovery epochs 02–04 — 2026-08-12
+
+Epoch 02 (`54cb7eb5-f337-4872-ac4c-e0a321a4b376`) proved a false completion:
+the only patch failed verification, no diff existed, and no test ran, but the
+missing numeric exit code became zero. Four requests used 20,930 tokens over
+24.034 active seconds. Commit `b6912a11955fe216b678d3f576fe5a7fb371d278`
+maps the observed `apply_patch verification failed:` envelope to exit code 1.
+
+Epoch 03 (`c715880e-b680-4f52-816c-401ea68f9328`) physically proved that fix:
+six malformed/tool parse failures were classified, no failed patch became
+change evidence, and Reviewer correctly rejected the unchanged worktree.
+However, the client still received a false completion because `Do not modify
+any other file` matched the global read-only substring guard. Eleven requests
+used 48,666 tokens over 155.793 active seconds. This distinct failure remains
+preserved rather than overwritten.
+
+Commit `2a3afdce826b7fbc4e5cf3d682085b427ebcfa22` excludes that scoped constraint
+from global read-only classification. Ruff check/format, strict mypy over 49
+source files, and the full `1062/1062` suite passed; the JUnit artifact records
+zero failures and errors.
+
+Epoch 04 (`c6e01c18-662b-4bb3-b363-baddb7ceb14e`) passed. The client advertised
+`apply_patch`; two malformed calls were retained as `TEST_FAILURE`; the third
+succeeded. The physical diff was exactly two insertions in
+`tests/test_controller.py`, targeted pytest returned `103 passed`, Reviewer
+returned approved/no-findings, and the client completed normally. Seven
+requests used 35,542 tokens over 94.253 seconds, with three Graph compiles, six
+resumes, and zero shadow failures. Raw hashes and identities are frozen in each
+epoch's `result.json`.
+
+Exact stop/start moved attempt 11 to `success` and attempt 12 to active PID
+`3790208`, restart 0, under the same cgroup limits. Production PID `3107456`,
+Pilot, and Candidate A remained HTTP 200. This closes only the targeted primary
+write gate and authorizes a separately named fresh client-quality matrix; it
+does not authorize blind noninferiority or later release gates.
