@@ -2954,7 +2954,7 @@ class Controller:
                     "planner_failed",
                     {"failure_class": type(error).__name__},
                 )
-                if state.request_class != "high_risk_task":
+                if isinstance(error, ValueError) and state.request_class != "high_risk_task":
                     planner_error = None
                     state.observability_degraded = True
                     state.observability_status = "degraded"
