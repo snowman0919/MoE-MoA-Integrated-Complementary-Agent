@@ -1514,6 +1514,85 @@ def test_frontier_correction_latch_requires_a_new_file_change(
     )
 
 
+def test_frontier_missing_test_latch_accepts_fresh_validation(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="frontier-missing-test",
+        review_status="rejected_frontier",
+        review_deferred=True,
+        frontier_correction_required=True,
+        agent_artifacts=[
+            {
+                "role": "frontier",
+                "output": {
+                    "verdict": "revise",
+                    "critical": [],
+                    "important": ["No successful test evidence was supplied."],
+                    "missing_tests": ["Run python -m unittest discover -s tests -v."],
+                },
+            }
+        ],
+    )
+
+    controller._observe(
+        state,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "validate-after-frontier",
+                        "type": "function",
+                        "function": {
+                            "name": "shell",
+                            "arguments": json.dumps(
+                                {
+                                    "cmd": (
+                                        "timeout 120s python -m unittest "
+                                        "discover -s tests -v"
+                                    )
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "validate-after-frontier",
+                "content": '{"exit_code":0,"stdout":"Ran 3 tests in 0.1s\\n\\nOK"}',
+            },
+        ],
+    )
+
+    assert state.frontier_correction_required is False
+    assert state.frontier_correction_pending_verification is True
+    assert state.review_status == "deferred"
+    assert any(
+        event["event_type"] == "frontier_correction_applied"
+        and event["payload"]["reason"]
+        == "requested_validation_completed_after_frontier_rejection"
+        for event in store.events(state.session_id)
+    )
+
+    state.frontier_correction_required = True
+    state.frontier_correction_pending_verification = False
+    state.agent_artifacts.append(
+        {
+            "role": "frontier",
+            "output": {
+                "verdict": "reject",
+                "critical": ["The implementation is still incorrect."],
+                "missing_tests": ["Repeat the test after fixing it."],
+            },
+        }
+    )
+    assert controller.frontier_rejection_requests_validation(state) is False
+
+
 def test_successful_output_can_describe_failures(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     state = SessionState(session_id="failure-doc")
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]

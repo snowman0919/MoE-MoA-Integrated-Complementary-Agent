@@ -73,6 +73,7 @@ from .review_evidence import (
 from .review_evidence import (
     has_review_evidence as build_has_review_evidence,
 )
+from .review_evidence import is_successful_validation_execution
 from .review_evidence import (
     material_frontier_review as has_material_frontier_review,
 )
@@ -1498,6 +1499,23 @@ class Controller:
                     "frontier_correction_applied",
                     {
                         "reason": "implementation_changed_after_frontier_rejection",
+                        "verification": "pending",
+                    },
+                )
+            elif (
+                state.frontier_correction_required
+                and is_successful_validation_execution(execution)
+                and self.frontier_rejection_requests_validation(state)
+            ):
+                state.frontier_correction_required = False
+                state.frontier_correction_pending_verification = True
+                state.review_status = "deferred"
+                state.review_deferred = True
+                self.store.event(
+                    state.session_id,
+                    "frontier_correction_applied",
+                    {
+                        "reason": "requested_validation_completed_after_frontier_rejection",
                         "verification": "pending",
                     },
                 )
@@ -3576,6 +3594,19 @@ class Controller:
     @staticmethod
     def material_frontier_review(result: dict[str, Any]) -> bool:
         return has_material_frontier_review(result)
+
+    @staticmethod
+    def frontier_rejection_requests_validation(state: SessionState) -> bool:
+        for artifact in reversed(state.agent_artifacts):
+            if artifact.get("role") != "frontier":
+                continue
+            output = artifact.get("output")
+            return bool(
+                isinstance(output, dict)
+                and not output.get("critical")
+                and output.get("missing_tests")
+            )
+        return False
 
     def remote_judge_invocation_reasons(
         self,

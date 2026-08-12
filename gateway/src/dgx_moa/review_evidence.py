@@ -96,25 +96,39 @@ def has_review_evidence(state: SessionState, metadata: dict[str, Any]) -> bool:
             if isinstance(arguments, dict)
             else None
         )
-        if (
+        if is_successful_validation_execution(execution) or (
             execution.get("exit_code") == 0
             and isinstance(command, str)
-            and (
-                re.search(
-                    r"(?:^|&&|\|\||;|\n|[\"'])\s*"
-                    r"(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]+\s+)*"
-                    r"(?:timeout\s+\d+(?:\.\d+)?[smh]?\s+)?"
-                    r"(?:uv run )?(?:python -m )?"
-                    r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
-                    command,
-                )
-                or re.search(r"(?:^|&&|\|\||;|\n|[\"'])\s*git\s+diff\b", command)
-            )
+            and re.search(r"(?:^|&&|\|\||;|\n|[\"'])\s*git\s+diff\b", command)
         ):
             return True
         if tool_execution_changes_files(execution):
             break
     return False
+
+
+def is_successful_validation_execution(execution: dict[str, Any]) -> bool:
+    arguments = execution.get("normalized_arguments")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except ValueError:
+            arguments = {}
+    command = (
+        arguments.get("cmd") or arguments.get("command")
+        if isinstance(arguments, dict)
+        else None
+    )
+    return execution.get("exit_code") == 0 and isinstance(command, str) and bool(
+        re.search(
+            r"(?:^|&&|\|\||;|\n|[\"'])\s*"
+            r"(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]+\s+)*"
+            r"(?:timeout\s+\d+(?:\.\d+)?[smh]?\s+)?"
+            r"(?:uv run )?(?:python -m )?"
+            r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
+            command,
+        )
+    )
 
 
 def review_tool_results(state: SessionState) -> list[dict[str, Any]]:
