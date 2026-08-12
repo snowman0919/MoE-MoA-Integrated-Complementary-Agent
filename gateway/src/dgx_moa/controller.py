@@ -363,7 +363,7 @@ def clean_tool_output(value: object) -> str:
 
 def embedded_tool_exit_code(value: object) -> int:
     text = str(value)
-    if text.startswith("apply_patch verification failed:"):
+    if re.match(r"^[A-Za-z_][A-Za-z0-9_]* (?:verification )?failed:", text):
         return 1
     match = re.search(r"(?m)^Process exited with code (-?\d+)\s*$", text)
     return int(match.group(1)) if match else 0
@@ -3411,6 +3411,9 @@ class Controller:
                 "do not modify any other",
                 "don't edit any other",
                 "don't modify any other",
+                "만 구현",
+                "만 수정",
+                "만 변경",
             )
         )
         if read_only and not scoped_change:

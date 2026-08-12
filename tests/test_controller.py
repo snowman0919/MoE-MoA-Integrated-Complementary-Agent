@@ -232,6 +232,14 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
         }
     )
     assert failed_patch["exit_code"] == 1
+    failed_stdin = normalize_tool_result(
+        {
+            "role": "tool",
+            "name": "write_stdin",
+            "content": "write_stdin failed: Unknown process id 0",
+        }
+    )
+    assert failed_stdin["exit_code"] == 1
 
 
 def test_role_schemas_discard_hidden_reasoning_and_require_structured_findings() -> None:
@@ -3179,6 +3187,12 @@ def test_implementation_completion_requires_change_validation_and_review(
         objective="Modify tests/test_controller.py. Do not modify any other file.",
     )
     assert controller.requires_implementation_tool_action(scoped_change, {}) is True
+
+    korean_scoped_change = SessionState(
+        session_id="korean-scoped-change",
+        objective="webhook.py만 구현하라. 테스트나 요구사항 파일은 수정하지 마라.",
+    )
+    assert controller.requires_implementation_tool_action(korean_scoped_change, {}) is True
 
     unrelated = SessionState(
         session_id="request-scoped-tool-evidence",
