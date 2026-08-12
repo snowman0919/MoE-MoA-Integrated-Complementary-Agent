@@ -151,6 +151,7 @@ def select_executor_provider(
     output_budget_exceeded: bool = False,
     frontier_correction: bool = False,
     completion_stalled: bool = False,
+    pending_process: bool = False,
     repeated_failure: bool = False,
     stalled: bool = False,
 ) -> tuple[ExecutorProvider, str]:
@@ -164,6 +165,7 @@ def select_executor_provider(
         (output_budget_exceeded, "local_output_budget_exceeded"),
         (frontier_correction, "frontier_correction_required"),
         (completion_stalled, "local_completion_stalled"),
+        (pending_process, "local_pending_process"),
         (repeated_failure, "local_repeated_failure"),
         (stalled, "local_no_progress"),
     ):
