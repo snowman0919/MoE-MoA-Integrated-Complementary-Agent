@@ -1114,7 +1114,7 @@ async def test_duplicate_unavailable_mcp_replans_without_409_and_removes_read_to
     assert "call the required tool in the same response" in executor_prompt
     assert "never return only a progress marker" in executor_prompt
     assert "Never request elevated permissions" in executor_prompt
-    assert "timeout 120s python -m unittest" in executor_prompt
+    assert "exec_command has no `timeout` argument" in executor_prompt
     assert "unless pipefail is enabled" in executor_prompt
     assert "A yielded or still-running process is pending" in executor_prompt
     assert any(
