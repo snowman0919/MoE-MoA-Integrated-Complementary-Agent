@@ -2613,6 +2613,33 @@ async def test_planner_retries_one_malformed_structured_response(  # type: ignor
 
 
 @pytest.mark.asyncio
+async def test_optional_planner_failure_degrades_without_failing_executor(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    async def malformed_planner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "planner":
+            stub_provider.calls.append(role)
+            return {"choices": [{"message": {"content": None}}]}
+        return await StubProvider().complete(role, model, request, **kwargs)
+
+    stub_provider.complete = malformed_planner  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session("degraded-plan", [{"role": "user", "content": "task"}])
+
+    await controller.prepare_executor(
+        state, {"model": "dgx-moa-agent", "messages": []}, ("planner", "executor")
+    )
+
+    assert stub_provider.calls == ["planner", "planner"]
+    assert state.plan == []
+    assert state.observability_status == "degraded"
+    assert any(
+        event["event_type"] == "planner_degraded" for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
 async def test_reviewer_retries_one_malformed_structured_response(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

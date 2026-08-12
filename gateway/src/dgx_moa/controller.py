@@ -2954,6 +2954,15 @@ class Controller:
                     "planner_failed",
                     {"failure_class": type(error).__name__},
                 )
+                if state.request_class != "high_risk_task":
+                    planner_error = None
+                    state.observability_degraded = True
+                    state.observability_status = "degraded"
+                    self.store.event(
+                        state.session_id,
+                        "planner_degraded",
+                        {"reason": "optional_planner_failed"},
+                    )
             finally:
                 state.timings_ms["planner"] = round((time.monotonic() - planner_started) * 1000, 3)
             if planner is not None and planner_error is None:
