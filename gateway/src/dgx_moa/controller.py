@@ -174,7 +174,9 @@ IMPLEMENTATION_QUALITY_CONTRACT = (
     "naturally means none; reject negative values. Do not invent a stronger boundary than the "
     "written contract. "
     "Validation commands that can block on concurrency, subprocesses, network, or long-running "
-    "services must use a finite timeout appropriate to the task. A yielded or still-running "
+    "services must be started with an OS-level finite timeout appropriate to the task (for "
+    "example, `timeout 120s python -m unittest ...`). Avoid validation pipelines unless pipefail "
+    "is enabled so an earlier command failure cannot appear successful. A yielded or still-running "
     "process is pending, not successful evidence; poll or cancel it before starting a duplicate. "
     "Do not claim completion merely because the supplied tests pass."
 )
