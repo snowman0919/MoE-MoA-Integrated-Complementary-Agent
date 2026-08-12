@@ -7382,6 +7382,83 @@ def test_graph_shadow_reprojects_failed_tool_before_collaborator_reentry(
     assert not any(event["event_type"] == "execution_graph_shadow_failed" for event in events)
 
 
+def test_graph_shadow_reprojects_after_bounded_successful_tool_cycles(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    settings.execution_graph.mode = "shadow"
+    calls = 0
+
+    async def complete(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        if role != "executor":
+            return await StubProvider.complete(stub_provider, role, model, request, **kwargs)
+        calls += 1
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": f"call-{calls}",
+                                "type": "function",
+                                "function": {"name": "shell", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"total_tokens": 2},
+        }
+
+    stub_provider.complete = complete  # type: ignore[method-assign]
+    session_id = "graph-successful-tool-budget"
+    headers = {"Authorization": "Bearer test-secret", "X-Session-ID": session_id}
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "shell", "parameters": {"type": "object"}},
+        }
+    ]
+    messages: list[dict[str, object]] = [{"role": "user", "content": "inspect and test"}]
+    graph_ids: list[str] = []
+
+    with client_with_stub(settings, stub_provider) as client:
+        for index in range(4):
+            response = client.post(
+                "/v1/chat/completions",
+                headers=headers,
+                json={"model": "dgx-moa-fast", "messages": messages, "tools": tools},
+            )
+            assert response.status_code == 200
+            assistant = response.json()["choices"][0]["message"]
+            state = client.app.state.store.get(session_id)
+            assert state is not None and state.execution_graph_id is not None
+            graph_ids.append(state.execution_graph_id)
+            messages.extend(
+                [
+                    assistant,
+                    {
+                        "role": "tool",
+                        "tool_call_id": f"call-{index + 1}",
+                        "content": '{"stdout":"ok","exit_code":0}',
+                    },
+                ]
+            )
+        events = client.app.state.store.events(session_id)
+
+    assert graph_ids[0] == graph_ids[1] == graph_ids[2]
+    assert graph_ids[3] != graph_ids[2]
+    assert any(
+        event["event_type"] == "execution_graph_shadow_reprojected"
+        and event["payload"]["reason"] == "tool_cycle_budget_exhausted"
+        for event in events
+    )
+    assert not any(event["event_type"] == "execution_graph_shadow_failed" for event in events)
+
+
 def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def]
     settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:

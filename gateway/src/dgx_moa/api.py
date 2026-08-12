@@ -2708,6 +2708,11 @@ def create_app(
                         raise ValueError("tool continuation has no Evidence node")
                     if resumed.resume_tool_result(tool_evidence_id, state.tool_executions[-1]):
                         state.execution_checkpoint_id = resumed.last_checkpoint_id
+                        tool_cycle_budget_exhausted = any(
+                            edge.edge_type == EdgeType.ON_BUDGET
+                            and edge.edge_id in resumed.selected_edge_ids
+                            for edge in resumed.graph.edges
+                        )
                         request.app.state.store.event(
                             state_session_id,
                             "execution_graph_resumed",
@@ -2719,10 +2724,24 @@ def create_app(
                         )
                         request.app.state.store.save(state)
                         if not (
-                            new_failure_observed
-                            and any(role in roles for role in ("reasoner", "planner", "frontier"))
+                            tool_cycle_budget_exhausted
+                            or (
+                                new_failure_observed
+                                and any(
+                                    role in roles for role in ("reasoner", "planner", "frontier")
+                                )
+                            )
                         ):
                             return cast(ExecutionGraphRuntime, resumed)
+                        if tool_cycle_budget_exhausted:
+                            request.app.state.store.event(
+                                state_session_id,
+                                "execution_graph_shadow_reprojected",
+                                {
+                                    "previous_graph_id": resumed.graph.graph_id,
+                                    "reason": "tool_cycle_budget_exhausted",
+                                },
+                            )
                 except (KeyError, RuntimeError, ValueError, sqlite3.Error) as error:
                     record_shadow_failure(
                         request.app.state.store, state_session_id, "resume", error
