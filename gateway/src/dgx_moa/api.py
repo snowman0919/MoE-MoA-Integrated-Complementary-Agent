@@ -4607,6 +4607,7 @@ def create_app(
                             or request.app.state.controller.requires_implementation_tool_action(
                                 state, current_body.metadata
                             )
+                            or request.app.state.controller.requires_explicit_tool_evidence(state)
                         )
                     )
 

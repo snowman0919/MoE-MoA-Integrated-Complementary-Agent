@@ -3305,8 +3305,9 @@ class Controller:
                 "completed_implementation_tools_suppressed",
                 {"reason": "change_validation_and_review_complete"},
             )
-        elif available_tools and self.requires_implementation_tool_action(
-            state, dict(request.get("metadata", {}))
+        elif available_tools and (
+            self.requires_explicit_tool_evidence(state)
+            or self.requires_implementation_tool_action(state, dict(request.get("metadata", {})))
         ):
             body["tool_choice"] = "required"
             self.store.event(
@@ -3348,6 +3349,12 @@ class Controller:
         body["messages"] = messages
         return body
 
+    @staticmethod
+    def requires_explicit_tool_evidence(state: SessionState) -> bool:
+        return "exec_command" in effective_objective(state) and not any(
+            execution.get("exit_code") == 0 for execution in state.tool_executions
+        )
+
     def has_review_evidence(self, state: SessionState, metadata: dict[str, Any]) -> bool:
         return build_has_review_evidence(state, metadata)
 
@@ -3365,7 +3372,9 @@ class Controller:
                 "read-only",
                 "read only",
                 "변경하지 마",
+                "변경하지 말",
                 "수정하지 마",
+                "수정하지 말",
             )
         ):
             return False

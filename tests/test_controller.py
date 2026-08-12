@@ -3158,10 +3158,13 @@ def test_implementation_completion_requires_change_validation_and_review(
 
     read_only_audit = SessionState(
         session_id="read-only-audit",
-        objective="읽기 전용 감사다. 파일을 수정하지 마라.",
+        objective="읽기 전용 감사다. 파일을 수정하지 말고 exec_command로 확인하라.",
         plan=[{"step": "저장소 파일을 확인하고 수정 여부를 판정한다."}],
     )
     assert controller.requires_implementation_tool_action(read_only_audit, {}) is False
+    assert controller.requires_explicit_tool_evidence(read_only_audit) is True
+    read_only_audit.tool_executions.append({"tool_name": "exec_command", "exit_code": 0})
+    assert controller.requires_explicit_tool_evidence(read_only_audit) is False
 
 
 def test_frontier_missing_tests_block_approval(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
