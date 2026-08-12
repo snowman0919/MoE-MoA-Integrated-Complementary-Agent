@@ -192,6 +192,8 @@ REVIEWER_QUALITY_CONTRACT = (
     "value < 0 does not reject booleans. Reject unused auxiliary state, long-lived structures "
     "that grow with total historical requests without contract-required retention, and "
     "input-ordering or monotonicity restrictions absent from the written contract. "
+    "Enumerate every documented constructor and public parameter plus every explicit rejection "
+    "clause; verify each one in the bounded code, including callable parameters and defaults. "
     "Explicitly verify bool rejection for integer version, "
     "expected_version, revision, sequence, count, index, limit, and names ending in _limit. "
     "Require TypeError or "
@@ -3826,7 +3828,8 @@ class Controller:
                                 "required schema. Example: "
                                 '{"status":"approved","findings":[]}. '
                                 "Reject when the evidence shows defects. No prose; fewer than 300 "
-                                f"tokens.\nBounded evidence:\n{retry_evidence}"
+                                "tokens. Apply the same reviewer quality contract: "
+                                f"{REVIEWER_QUALITY_CONTRACT}\nBounded evidence:\n{retry_evidence}"
                             ),
                         }
                     ]

@@ -2872,6 +2872,8 @@ async def test_reviewer_retries_one_malformed_structured_response(
     )
     assert stub_provider.requests[-1]["max_tokens"] == 1024
     assert "bounded evidence" in stub_provider.requests[-1]["messages"][0]["content"]
+    assert "every documented constructor" in stub_provider.requests[-1]["messages"][0]["content"]
+    assert "callable parameters and defaults" in stub_provider.requests[-1]["messages"][0]["content"]
     assert [
         invocation["mode"]
         for invocation in state.agent_invocations
