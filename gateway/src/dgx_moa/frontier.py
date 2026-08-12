@@ -1023,6 +1023,15 @@ class CodexOAuthCollaboration:
             8,
         )
 
+    def _openrouter_available(self) -> bool:
+        if os.getenv(self.config.openrouter_api_key_env, "").strip():
+            return True
+        path = self.config.openrouter_api_key_file
+        try:
+            return bool(path and path.stat().st_size and not path.stat().st_mode & 0o077)
+        except OSError:
+            return False
+
     async def _run(
         self,
         mode: Literal["architecture", "code_review", "disagreement", "executor"],
@@ -1041,7 +1050,11 @@ class CodexOAuthCollaboration:
         now = time.monotonic()
         if self.opened_at is not None:
             if now - self.opened_at < self.config.circuit_cooldown_seconds:
-                if paid_fallback_required and self.config.openrouter_fallback_enabled:
+                if (
+                    paid_fallback_required
+                    and self.config.openrouter_fallback_enabled
+                    and self._openrouter_available()
+                ):
                     return self._openrouter(
                         mode,
                         external_evidence,
@@ -1062,7 +1075,11 @@ class CodexOAuthCollaboration:
             )
             categories = ["executor_request"]
             if len(evidence_json) > self.config.max_executor_evidence_characters:
-                if paid_fallback_required and self.config.openrouter_fallback_enabled:
+                if (
+                    paid_fallback_required
+                    and self.config.openrouter_fallback_enabled
+                    and self._openrouter_available()
+                ):
                     return self._openrouter(
                         mode,
                         external_evidence,
@@ -1212,6 +1229,7 @@ class CodexOAuthCollaboration:
                 if (
                     paid_fallback_required
                     and self.config.openrouter_fallback_enabled
+                    and self._openrouter_available()
                     and final_failure in PAID_FALLBACK_FAILURES
                 ):
                     return self._openrouter(
