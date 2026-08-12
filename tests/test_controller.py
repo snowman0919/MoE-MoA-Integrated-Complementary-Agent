@@ -233,6 +233,18 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
     )
     assert running["exit_code"] == 1
     assert running["session_id"] == 123
+    running_text = normalize_tool_result(
+        {
+            "role": "tool",
+            "name": "exec_command",
+            "content": (
+                "Chunk ID: abc123\nWall time: 10 seconds\n"
+                "Process running with session ID 123\nOutput:\ntest started ..."
+            ),
+        }
+    )
+    assert running_text["exit_code"] == 1
+    assert "Process running with session ID 123" in running_text["stdout"]
     failed_patch = normalize_tool_result(
         {
             "role": "tool",

@@ -350,7 +350,11 @@ def argument_paths(arguments: Any) -> set[str]:
 
 def clean_tool_output(value: object) -> str:
     text = str(value)
-    if text.startswith("Chunk ID: ") and "\nOutput:\n" in text:
+    if (
+        "Process running with session ID " not in text
+        and text.startswith("Chunk ID: ")
+        and "\nOutput:\n" in text
+    ):
         text = text.split("\nOutput:\n", 1)[1]
     return "".join(
         line
@@ -363,6 +367,8 @@ def clean_tool_output(value: object) -> str:
 
 def embedded_tool_exit_code(value: object) -> int:
     text = str(value)
+    if "Process running with session ID " in text:
+        return 1
     if re.match(r"^[A-Za-z_][A-Za-z0-9_]* (?:verification )?failed:", text):
         return 1
     match = re.search(r"(?m)^Process exited with code (-?\d+)\s*$", text)
