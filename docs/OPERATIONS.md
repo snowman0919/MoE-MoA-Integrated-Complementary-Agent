@@ -2,15 +2,48 @@
 
 ## Dynamic MoA operational boundary
 
+Current Executor operations follow the decision table at the top of
+`docs/STATE.md`. In particular, 96 GiB is a steady-state optimization target,
+not a hard runtime limit. Set each isolated experiment watchdog from measured
+host availability and the headroom required to protect the gateway and unrelated
+processes; record both its threshold and the observed peak. Candidate A is the
+qualified vLLM Blackwell-native profile: fixed revision, 131072 context, seq1,
+3.4 GB KV, FlashInfer B12x dense/MoE, TRITON_MLA, and
+`FULL_DECODE_ONLY`. MARLIN and `cudagraph_mode=NONE` are rollback/diagnostic
+profiles, not production defaults.
+
+Before starting the checked-in Executor for a Pilot, verify the unit resolves
+`MemoryHigh=12G`, `MemoryMax=16G`, `MemorySwapMax=4G`, `OOMPolicy=stop`, and
+`KillMode=control-group`. A qualification service must use its own capped slice.
+Do not run an uncapped compiler/kernel challenger in `app.slice`: v64 proved
+that a global user-session OOM can kill the gateway and user manager. The
+physical containment record is
+`data/diagnostics/pilot/pilot-v1-transition-20260812/containment-result.json`.
+
 The primary model alias is `dgx-moa`; it requires the external Ollama Reasoner
 and local Executor. `dgx-moa-fast` is the explicit degraded/low-latency
 Executor-only alias. Do not silently reroute a failed default Reasoner request
 to fast mode. `dgx-moa-agent` keeps the Reasoner + Executor core while OpenCode
 or Hermes owns native tool execution. See `MOA_ORCHESTRATION.md`.
 
-Frontier uses an existing Codex OAuth profile and read-only `codex exec`; no
-OpenAI API key is configured. Enablement requires both the gateway feature gate
-and a reviewed Frontier config. Safe checked-in defaults remain disabled. See
+`dgx-moa-fast` must remain Executor-only even when a continuation contains
+implementation, changed-file, validation, or tool-result evidence. Audit
+`request_usage.runtime_mode=fast`, `roles_required=["executor"]`, and the exact
+request event window; any Reviewer, Frontier, or remote-Executor selection is a
+contract regression. Use exact service stop/start for isolated gateway rollback;
+do not alter candidate A or the production gateway for this compatibility path.
+
+The deployed Frontier uses an existing Codex OAuth profile and read-only
+`codex exec`; no OpenAI API key is configured. The current development config
+instead connects through `codex app-server proxy` to an operator-managed,
+profile-specific persistent daemon. It starts/resumes non-ephemeral read-only
+threads, compacts after eight completed turns, and stores only a hashed
+API-key/session scope plus the opaque thread ID in a mode-`0600` bounded state
+file. The gateway never starts or stops the daemon. It falls back to stdin
+`codex exec` only when the proxy reports typed App Server unavailability.
+Authentication, usage-limit, and timeout failures do not trigger that transport
+fallback. Enablement still requires both the gateway feature gate and a
+reviewed Frontier config. Safe checked-in defaults remain disabled. See
 `FRONTIER.md`.
 
 The 2026-07-21 production deployment passed that gate and enables Frontier.
@@ -35,20 +68,20 @@ When the admin API is enabled, `DGX_MOA_ADMIN_TOKEN_IDS` selects the configured
 keys that initially receive administrator authority. General keys can call only
 the authenticated AI API. Administrator keys can also open `/admin/api-keys`
 and call `/v1/admin/api-keys`; `DGX_MOA_MAX_ADMIN_API_KEYS` bounds active
-administrator keys. The operator UI supports named creation, raw-value viewing,
-rotation, expiry, revocation, cumulative request/token limits, and content-free
-request-class/model usage charts filtered by key and date. It also renders
+administrator keys. The operator UI supports named creation, one-time value
+return on creation or rotation, expiry, revocation, cumulative request/token
+limits, and content-free request-class/model usage charts filtered by key and
+date. Existing values are never revealed. It also renders
 measured model tokens as an OpenCode-style daily stacked bar chart; it does not
 estimate cost when invocation-level cost is unavailable.
 
-Raw key viewing is an explicit internal-only tradeoff. The key registry is in
-the state database, whose mode is forced to `0600`; responses use `no-store`,
-and management events contain names/actions but no key values. Login exchanges
-the operator credential for a hashed server-side session and a 30-day
-HttpOnly, SameSite-Strict cookie; the raw credential is not kept in browser
-storage. Raw key values are fetched only by the eye/copy controls. State
-database backups must be treated as secrets. A limit reached response is `429`;
-expired or revoked keys receive the same `401` as an unknown key.
+The key registry stores only a one-way credential digest, an empty legacy
+column tombstone, and a display mask. Its database mode is forced to `0600`;
+responses use `no-store`, and management events contain names/actions but no
+key values. Login exchanges the operator credential for a hashed server-side
+session and a 30-day HttpOnly, SameSite-Strict cookie; the raw credential is
+not kept in browser storage. A limit reached response is `429`; expired or
+revoked keys receive the same `401` as an unknown key.
 
 `/admin` is the operator landing page. It links to API Key Control and includes
 an independent Codex CLI client configured against the loopback gateway as a
@@ -65,6 +98,19 @@ provider key exists only in the Codex process environment; Codex tool
 subprocesses inherit only core non-secret environment names. The UI and safe
 NDJSON adapter expose final agent messages, command names/status, file-change
 status, and token usage, but not reasoning items or raw command output.
+Because no plaintext recovery path exists, the managed key is rotated into
+process memory on first use after a gateway restart.
+
+For isolated Codex Responses qualification, do not treat SSE comment
+keepalives (`: keep-alive`) as proof of client continuity. Codex 0.146 can
+reconnect with `idle timeout waiting for SSE` while those comments are flowing,
+and can then report `stream closed before response.completed`. Acceptance
+requires a zero-reconnect client trace ending in exactly one
+`response.completed`; public and hidden fixture success alone is insufficient.
+Named `event: ping` frames must also be emitted immediately from both the outer
+Chat wait and the inner Responses translation loop. If inner pings are appended
+to the translated terminal buffer, short requests can pass while long tool
+continuations still disconnect around the client idle boundary.
 
 ## Gateway and systemd
 
@@ -77,7 +123,8 @@ scripts/healthcheck.sh
 
 Gateway binds the configured tailnet address on port `9000`.
 `dgx-moa-loopback.socket` exposes `127.0.0.1:9000` through the systemd socket
-proxy to that same authenticated gateway; it never binds `0.0.0.0`. Local model
+proxy, and `dgx-moa-lan.socket` exposes `192.168.0.42:9000` to the local LAN,
+to that same authenticated gateway. Neither proxy binds `0.0.0.0`. Local model
 servers bind only ports `8101`, `8102`, `8103`, and `8110` on loopback. The
 configured Ollama Reasoner is an external dependency and must remain protected
 by its own network boundary; this gateway does not expose or proxy its native
@@ -196,6 +243,65 @@ and `OPENCODE_GO_API_KEY` outside Git, use only bounded sanitized synthetic
 evidence, and do not enable production until the physical matrix passes. See
 `docs/REMOTE_JUDGE.md` and `docs/SPECIALIST_ROUTING.md`.
 
+The Dynamic MoA v3 candidate maps Planner and Reviewer to the physically
+validated OpenCode Go model recorded in current `STATE.md`/`VALIDATION.md`, and
+Judge to `kimi-k3`. The rejected GLM Reviewer and early truncated Kimi attempts
+remain historical evidence; never treat hidden `reasoning_content` as a role
+artifact. Keep the checked-in candidate roles disabled pending broader release
+gates.
+After approval, write the retry to a durable sanitized checkpoint rather than
+terminal-only output:
+
+```bash
+uv run python scripts/validate-specialist-routing.py \
+  --output data/diagnostics/opencode-completion/specialists-YYYYMMDD.json
+```
+
+The file is replaced atomically after each role and never contains prompts,
+raw content, reasoning content, credentials, or exception messages.
+
+Executor API-key scheduling and `deepseek-v4-flash` overflow are also disabled.
+The operator enabled China-hosted models and the same endpoint, key/workspace
+identity, and exact model then completed successfully. Native tool continuation,
+stream completion, and client cancellation also passed. Treat the earlier
+`RegionError` as resolved workspace-policy evidence, not a provider or runtime
+regression. Provider pinning, same-key depth three/FIFO fairness, cross-key
+overflow, request-shape recovery, and high-risk fail-closed behavior
+subsequently passed in isolated direct and authenticated HTTP gates. Keep
+scheduling disabled because the broader full-matrix, evaluation, release, and
+promotion gates remain open.
+
+The live Runtime Dashboard is separately controlled by
+`gateway.dashboard_enabled` / `DGX_MOA_DASHBOARD_ENABLED` and remains false.
+Enabling it requires an isolated HTTPS/WSS gate, same-key/cross-key isolation,
+operator aggregate redaction, audited raw-view reason, reconnect/gap recovery,
+and inference-independence checks. Never pass API keys in a WebSocket URL; the
+browser must exchange a bearer credential for the HttpOnly dashboard cookie.
+
+When both Dashboard and Execution Graph shadow mode are enabled in an isolated
+development runtime, `GET /v1/dashboard/snapshot` returns persisted graph,
+attempt, checkpoint, and compact active state only to the owning API key.
+Operator scope receives aggregate template/terminal/active/pending counts, not
+graph IDs, request IDs, paths, prompt, output, or active-state content. An
+audited request-detail raw view remains the only cross-key content path.
+
+`WS /v1/dashboard/live` sends committed `graph_saved`, `node_attempt`, and
+`graph_checkpoint` deltas with a scope-local monotonic `seq`. Reconnect with
+`?last_seq=N`; an in-window cursor receives only later events. A stale or future
+cursor receives `RESYNC_REQUIRED` and must reload the REST snapshot. Queue gaps
+are explicitly marked and never block Graph persistence or inference. The UI
+renders compiler nodes in fixed role lanes with parallel group, conditional
+edge, provider, attempt state, and latency metadata. Checked-in Dashboard and
+Graph defaults remain disabled.
+
+The development API-key schema also scrubs historical plaintext and makes
+admin reveal permanently unavailable. Do not deploy that migration without
+separate approval, a tested upgraded rollback build, and an operator plan for
+the process-memory-only `admin-codex-cli` key. Authentication hashes and key
+IDs survive, but rolling back to older code after the scrub would leave its
+plaintext-dependent admin Codex helper unavailable. Do not copy the old raw
+key column into a backup or training artifact to preserve that obsolete path.
+
 ## Isolated runtime evolution development
 
 Prompt, Policy, Routing, failure-handling, and Judge-prompt candidates remain
@@ -216,9 +322,36 @@ an isolated gateway and pass a complete versioned policy object through
 metadata; do not store credentials or approval secrets inside a policy file.
 See `docs/POLICY_ENGINE.md` for the implemented and missing enforcement edges.
 
+## Isolated Execution Graph shadow development
+
+The checked-in `gateway.execution_graph.mode` value is `disabled`. `shadow` may
+be used only with a development-owned state database; it compiles and persists
+candidate topology beside the legacy Controller but owns no routing, tools, or
+final response. Restore rollback behavior by setting the mode to `disabled` and
+restarting only the development gateway. There is intentionally no `enforced`
+mode until paired parity, fault-injection, long-horizon, Dashboard, and human
+approval gates pass. Never point a shadow experiment at the production state
+database or describe its candidate graph as the active workflow.
+
+Shadow projection stores a content-addressed `session-active-state-v1` object
+and an immutable checkpoint with event cursor and before/after byte sizes. The
+active-state byte ceiling is the existing tool-output character budget times
+the retained-observation count; oversized fields retain a SHA-256 and bounded
+redacted summary. Durable `events` rows are not compacted or deleted. Resume
+must validate graph/compiler/policy/snapshot hashes and records a new checkpoint
+before continuation.
+
+Trace v3 is not extended. Graph ID/hash/template/checkpoint/object references
+live inside its existing `metrics.execution_graph` object. When training is
+explicitly enabled, only an already-eligible request may resolve those
+references into a sanitized routing candidate. Hash, template, checkpoint, and
+active-state mismatches fail the collector closed. Measured attempt latency and
+cost are retained; absent quality delta is recorded as `not_measured`, never
+inferred. Checked-in Graph and training gates remain disabled.
+
 ## Live observation operations
 
-Checked-in `gateway.live_observation.enabled` remains `false`. Supply webhook and
+Checked-in `gateway.live_observation.enabled` remains `false`. Supply Telegram
 bot credentials only through the protected
 `DGX_MOA_LIVE_OBSERVATION` runtime object. Never commit them. Controls require
 both `admin_api_enabled` and `live_observation.controls.enabled`, plus an empty-
@@ -226,8 +359,9 @@ by-default user/role policy. Issue request-scoped nonces through
 `POST /v1/admin/observation/nonces` and submit bounded commands through
 `POST /v1/admin/observation/commands`. See `docs/LIVE_OBSERVATION.md`.
 
-The reviewed production override currently enables only Telegram observation;
-Discord and controls remain disabled. The token and target are 0600 files outside
+The reviewed production override enables Telegram observation; the excluded
+Discord compatibility transport has been removed from `dev`. Controls remain
+disabled. The token and target are 0600 files outside
 the worktree and are injected into the ignored 0600 environment. Rollback is to
 remove `DGX_MOA_LIVE_OBSERVATION` from that environment, restart the fixed
 gateway unit, wait for resident restoration, and verify observer metrics stop
@@ -331,13 +465,51 @@ This gate authorizes only a draft `dev`-to-`main` PR. Merge, deployment,
 systemd installation, lifecycle enablement, resident-target activation, and
 production restart remain separate operations requiring explicit approval.
 
-## Phase 3 measured runtime decision
+## Measured Executor runtime decision
 
-The selected executor command remains `--max-model-len 65536`,
-`--max-num-seqs 1`, `--kv-cache-memory-bytes 1700000000`,
-`--gpu-memory-utilization 0.5`, and `--moe-backend MARLIN`. Do not add the
-rejected FP8, eager, prefix, chunked-prefill, CPU-offload, or KV-offload settings
-to production from this study.
+Phase 3's 65K/1.7 GB baseline remains historical rollback evidence. The
+subsequent fixed-revision qualification passed that contract and repeated exact
+stop/start at `--max-model-len 131072`, `--max-num-seqs 1`, and
+`--kv-cache-memory-bytes 3400000000`. Candidate A subsequently qualified native
+FlashInfer B12x dense/MoE, TRITON_MLA, lazy safetensors, cudaMallocAsync, and
+`FULL_DECODE_ONLY` CUDA Graph on that fixed revision. This is now the checked-in
+default. `DGX_MOA_EXECUTOR_LINEAR_BACKEND=MARLIN`,
+`DGX_MOA_EXECUTOR_MOE_BACKEND=MARLIN`, and
+`DGX_MOA_EXECUTOR_COMPILATION_CONFIG='{"cudagraph_mode":"NONE"}'` select the
+known rollback profile explicitly. Do not add the rejected FP8, eager, prefix,
+chunked-prefill, CPU-offload, or KV-offload settings.
+
+Pilot installation is still a release operation: confirm the deployed config
+does not retain old environment overrides such as context `65536` or MARLIN,
+inspect the fully expanded command, perform exact stop/start, and compare the
+revision, kernel identity, KV bytes, graph mode, cgroup limits, health, memory,
+and tool semantics with the Candidate A evidence before admitting traffic.
+
+Do not repeat v49-v53 argument combinations. `CUTLASS_MLA` is capability-10
+only on this stack; native allocator fragmentation tuning still crosses the
+MARLIN packing safety guard; and cudaMallocAsync FULL decode capture fails when
+Triton receives capture-created pointers on SM121/CUDA 13. The upstream MLA
+workspace-preallocation backport alone does not fix the general pointer class.
+Those are historical MARLIN/early-graph failures, not a contradiction of the
+later explicit B12x Candidate A success. Any future challenger must remain in a
+capped isolated runtime and cannot displace A without equivalent evidence.
+
+Client-quality diagnosis must preserve failed tool semantics. Do not rewrite an
+invalid or invented Responses `write_stdin` session into a successful shell
+no-op; retain the tool name and use invalid sentinel session `0` so the client
+can recover from an actual failure. The v46 physical rerun recovered three
+Codex cells, but webhook-verifier still timed out at 1,800.101 seconds after
+passing its public and hidden tests. Do not claim full-matrix noninferiority
+until that terminal-response path and a fresh randomized full matrix pass.
+
+For progress-only Responses retries, request another implementation tool only
+when the persisted state still lacks change/test/review evidence. When that
+evidence already exists, request a concrete final result and do not induce a
+redundant validation loop. Physical v47/v48 webhook runs passed this terminal
+path twice. Full-matrix promotion is still prohibited: v48 Codex atomic-store
+timed out after successful validation, and the interrupted dag-runner trace
+showed reviewer/correction churn when shell writes had no trustworthy
+changed-path projection and `git` was unavailable in the client container.
 
 Exact full service stop/start is the selected unload and mandatory fallback.
 The original isolated lifecycle row measured a `942.7537190914154`-second cold
@@ -401,10 +573,19 @@ scripts/switch-profile.sh restore
 scripts/switch-profile.sh status
 ```
 
-## Tailscale
+## Network ingress
 
 Set `DGX_MOA_BIND_HOST` to the resolved tailnet IPv4 address. Never use
-Tailscale Serve or Funnel; tailnet ACLs and bearer auth remain administrator-controlled.
+Tailscale Serve or Funnel. The LAN proxy listens only on `192.168.0.42:9000`;
+gateway bearer authentication remains mandatory on both paths. If the host LAN
+address changes, update `dgx-moa-lan.socket` before reinstalling the units.
+On hosts using UFW with inbound deny, admit only the local subnet and gateway
+address:
+
+```bash
+sudo ufw allow from 192.168.0.0/24 to 192.168.0.42 port 9000 proto tcp \
+  comment 'DGX MoA authenticated LAN gateway'
+```
 
 ## OpenCode
 
@@ -454,11 +635,202 @@ in `docs/API_CLIENT_MODES.md`; Hermes configuration is in
 scripts/verify-models.sh executor reviewer planner
 scripts/verify-models.sh executor reviewer planner judge
 scripts/estimate-model-storage.sh judge
-scripts/tune-context.sh resident
-scripts/tune-context.sh judge
 ```
 
 Downloads are pinned, resumable, lock-protected, and never remove unrelated caches.
+The legacy context/profile tuner is retired; preserve `docs/CONTEXT_TUNING.md`
+as historical evidence and use only a separately approved isolated protocol for
+new context experiments.
+
+For the graph-active 131K validation runtime, v54 established that native
+allocator retention must be reclaimed inside vLLM's shared quantized-module
+post-load loop. Do not repeat cudaMallocAsync graph variants v24-v25 or v49-v53,
+and do not create a post-MARLIN `sharded_state` checkpoint: its keys do not match
+fresh compressed-tensors initialization and repacking still runs. The validated
+isolated candidate is native allocation, dense/MoE MARLIN, TRITON_MLA,
+`FULL_DECODE_ONLY`, fixed 3.4 GB KV, and `empty_cache()` after each quantized
+module. This is validation evidence, not production deployment authority.
+
+For Blackwell native qualification, do not use the installed `auto` NVFP4
+selection on this host. It selects FlashInfer CUTLASS for both dense and MoE
+and caused a global-OOM warmup incident in v64. The physically passing native
+candidate is explicit FlashInfer B12x; it is still a qualification candidate,
+not production deployment authority. Any further large-runtime experiment must
+use the checked external `/bin/kill` qualification guard (the dash builtin does
+not accept the required `-- -PGID` form), retain the 24 GiB host floor, and
+pass `test-run-qualified.sh` before launch. It must run in an isolated process
+group with immediate `SIGKILL` and verify the production listener before and after.
+Do not restart the production gateway after an OOM incident without separate
+operator approval.
+
+Blackwell backend qualification now keeps vLLM explicit FlashInfer B12x v64 as
+immutable known-good candidate A and evaluates SGLang only as isolated candidate
+B. Use a loopback-only transient process group, `MAX_JOBS=1`, the checked
+qualification guard, context 131072, one running request, and
+`--max-total-tokens 147568` (3,399,966,720-byte MLA BF16 KV pool). Do not expose
+the SGLang role endpoint or alter the authenticated production gateway. Keep
+cold runs prefix-clean and separate from the 80K-100K RadixAttention agent-prefix
+lane. A readiness response alone is not a promotion gate.
+
+The v66 SGLang epoch is now closed as a failed challenger: native SM121 FP4,
+FlashInfer MLA, batch-one CUDA Graph, RadixCache, Chat, tools, streaming, and
+cancel recovery ran, but verbatim tool-result continuation and standard
+Responses string input failed. Do not run cold or agent-prefix performance
+lanes for that exact runtime or promote it from tok/s. A future SGLang retry
+must identify a source revision that changes both failed API paths, register
+that revision as the single runtime variable, and rerun correctness before any
+performance comparison. Keep vLLM B12x candidate A unchanged and MARLIN as
+rollback only.
+
+The separately named v98 SGLang `0.5.17` epoch is closed as a failed native
+challenger. Preserve its auto Triton 256/512 graph failure, TRTLLM-Gen
+`Unsupported architecture`, and CUTLASS MLA `D_q_nope == D_latent` failure.
+The ready FlashInfer wrapper used non-native FA2 attention and is not a native
+promotion candidate. Do not run its cold or Radix-prefix performance lanes or
+cycle additional registered backend names. Keep the dedicated venv and frozen
+artifacts for reproduction, candidate A as the selected backend, and MARLIN as
+rollback only. Before resuming a new client matrix, require candidate A loopback
+health plus Chat, Responses, native tool continuation, streaming recovery, and
+both authenticated gateway health checks.
+
+Those post-v98 recovery checks passed for the validation topology. Candidate A
+is active on loopback port 19301 with the exact v64 backend contract; the
+validation gateway is ready and authenticated traffic passed. The production
+gateway service is healthy but its unchanged production roles remain stopped,
+so do not reinterpret its expected `/readyz` 503 as a Candidate A failure or
+start production roles without separate deployment approval.
+
+The candidate-A-pinned v67 full matrix is also closed for execution, not
+promotion: 20/20 cells ran and 19 passed. Preserve the failed Hermes
+atomic-store cell exactly; do not rerun it in place, extend its frozen timeout,
+or discard it because its implementation and validations passed. Its failure
+class is bounded terminal convergence: every assistant turn requested another
+tool and no final response appeared. Investigate that behavior in a separately
+named targeted recovery epoch while leaving candidate A, v66, the v67 schedule,
+and all score artifacts immutable. Do not begin blind noninferiority or later
+release gates until the targeted recovery passes the same final-response,
+tool-evidence, source-scope, public-test, and hidden-test contract.
+
+Targeted Hermes recovery v72 now passes that contract, but it converged before
+the 20-turn maximum and therefore did not exercise its compact fast-summary
+fallback. Preserve v68-v71 failures and v72's limitation. Resume with a new,
+candidate-A-pinned full matrix; do not edit or relabel v67, and do not start
+blind noninferiority or release gates until the new matrix passes in full.
+
+That fresh matrix is v73 and is now frozen at `17/20`. Do not rerun its three
+failed cells in place. Recover Codex rc-139 startup/process failure, Codex
+terminal convergence, and Hermes cancelled-request terminal fallback in
+separately named epochs. Keep candidate A resident and unchanged: v73 ended
+with all services HTTP 200 and stable GPU memory. Blind noninferiority and
+release gates remain unstarted.
+
+Fresh matrix v80 is frozen at `5/20`, but its common prerequisite was invalid:
+the isolated gateway launcher omitted `/home/kotori9/.local/bin` from `PATH`,
+so the configured bare `codex` command could not spawn and runtime events
+recorded `FRONTIER_PROCESS_SPAWN_FAILED`. Do not rerun or relabel v80. For the
+next isolated epoch, prepend that exact directory to the transient gateway
+`PATH`, verify `command -v codex` from the service environment, and require one
+direct Codex OAuth Frontier completion before any client cell. Do not alter
+Candidate A or production, and do not treat v80 as an NVFP4 backend failure.
+
+The separate v81 prerequisite epoch has now passed that exact contract:
+the service environment resolved `/home/kotori9/.local/bin/codex`, one normal
+Codex OAuth Frontier collaboration completed, and no
+`FRONTIER_PROCESS_SPAWN_FAILED` event occurred. v81 was exactly stopped after
+verification. A new full client-quality epoch may reuse the v80 contract with
+the corrected PATH; never edit or relabel v80, and retain the direct Frontier
+completion as its prerequisite artifact.
+
+The corrected-PATH full matrix v82 is now frozen at `15/20`: baseline and
+Hermes `5/5`, Codex `2/5`, OpenCode `3/5`. Its state DB records no Frontier
+spawn failure and no remote-Executor-fallback-unavailable payload, so do not
+repeat the PATH prerequisite or relabel v80. Preserve v82 and use separately
+named targeted epochs for Codex rate-limiter/atomic-store/dag-runner and
+OpenCode atomic-store/dag-runner. Treat the first four as convergence/timeout
+failures and the OpenCode dag-runner result as a Korean-final-format failure
+unless newer direct evidence narrows them further. Keep Candidate A unchanged,
+stop only each transient unit, and require every failed cell's original scoring
+contract before starting a new full matrix. Blind noninferiority and release
+gates remain unstarted.
+
+Targeted v83 exact-replayed OpenCode dag-runner and passed 10/10 in 204.123
+seconds, including the Korean-final check. Do not change prompt or gateway
+behavior from the single v82 language miss. Preserve both epochs and continue
+the remaining v82 failed cells in separately named targeted epochs.
+
+Targeted v84 exact-replayed OpenCode atomic-store and passed 10/10 in 489.769
+seconds. The v82 timeout was not reproduced. v83 and v84 therefore require no
+OpenCode prompt/client/gateway change; retain their passing evidence alongside
+v82 and continue the three Codex targeted recoveries.
+
+Codex atomic-store v85 reproduced the timeout and isolated stale review
+evidence as its direct loop driver. v86 selected the latest eight results and
+eliminated all Frontier correction retries, but still timed out because earlier
+failing tests remained in that window beside newer passes. Do not deploy v86.
+The next admissible single variable is latest-four review results in another
+isolated gateway; retain separately extracted contract evidence and require the
+unchanged 10-check cell contract.
+
+v88 recovered Codex rate-limiter terminal behavior but failed hidden quality
+at 9/10 because positive float windows were rejected. Four repeated Frontier
+architecture calls exhausted the task budget before clean-local-review
+assurance. Do not weaken hidden validation. Reuse a prior architecture artifact
+in the next isolated epoch and require the same 10-check rate-limiter contract.
+
+v87 physically passed that latest-four candidate: Codex atomic-store completed
+10/10 in 1,058.352 seconds, including a real rejected review, applied
+correction, correction verification, public/hidden validation, and Korean
+terminal. Keep the code undeployed and validate Codex rate-limiter and
+dag-runner in separately named isolated epochs before any fresh full matrix.
+
+A passing targeted cell qualifies a preregistered controller branch only when
+its event is physically observed. v89 passed Codex rate-limiter 10/10 but
+emitted no architecture collaboration or architecture-reuse event, so retain
+it as replay success only. Stop only its named transient gateway and preserve
+candidate A plus both persistent gateways.
+
+v90 passed the remaining Codex dag-runner target 10/10 with latest-four alone.
+Its 4 architecture calls and 20 post-budget unavailable events remain evidence;
+do not infer that targeted passes replace the fresh full-matrix requirement.
+
+V91 is frozen after the second cell and its transient services are stopped.
+False changed
+paths derived from prose slashes or files created inside `TemporaryDirectory`
+are evidence-extraction failures. V92 physically recovered the tempfile case
+but failed Codex rate-limiter hidden validation and exposed Python return
+annotations as false redirect paths. Retain both epochs; validate the corrected
+redirect matcher and Codex cell in a separately named new-process epoch before
+another full matrix.
+
+V93 passed the functional Codex cell but failed its parser-specific acceptance
+because `/remaining(` and `cutoff` remained false targets. Do not promote that
+epoch as parser qualification. Replay the conservative command-specific
+redirect matcher in a new process before starting the full matrix.
+
+V94 passed that replay 10/10 and recorded only `rate_limiter.py` as an
+implementation target. Preserve v91-v93 failures and use the v94-loaded source
+for the next separately named full matrix; do not treat the targeted pass as
+matrix noninferiority.
+
+V95 is frozen and all its transient units are inactive. It is not a clean full
+matrix because its initial stop monitor interrupted cell 02 and the pause race
+started cell 03 before termination. Treat its partial scores as evidence only.
+Validate the explicit `limit`/`*_limit` bool-rejection contract in a separate
+new-process cell before creating another clean full matrix.
+
+V96 physically cleared the bool-limit hidden check but timed out because
+architecture fanout preempted every code-review escalation. Do not start the
+full matrix. First replay Codex log-report with architecture deferred whenever
+implementation evidence and the reviewer role are both present; verify that
+the observed Frontier mode is code-review, not architecture.
+
+V97 passed that replay 10/10 in 329.680 seconds. The preserved first launch
+attempt was a pre-request setup error; attempt 2 included runner preparation,
+observed two code-review and zero architecture Frontier calls, verified the
+applied correction, and had no unavailable or bad-terminal evidence. The
+convergence correction is qualified. Do not start the full matrix yet: the
+operator-prioritized v98 SGLang backend qualification now runs first, after
+which the selected backend receives a separately named clean matrix epoch.
 
 To use a prepared executor LoRA, set `models.executor.lora_adapter` to its local
 path. Omit it for the validated original post-trained checkpoint. This project
@@ -468,6 +840,30 @@ Production deployment is a fast-forward/pull of reviewed `main` into
 `/home/kotori9/dgx-moa-agent`, followed by proportional checks. `dev` may be
 deployed there only as an explicitly identified validation runtime; its traces
 must use `runtime_channel=dev` and must never be labeled production.
+
+## Blind paired evaluation statistics
+
+After blind scores and their assignment mapping are frozen, run:
+
+```bash
+scripts/evaluate-paired-noninferiority.py input.json result.json
+```
+
+The input is one comparator matrix using schema `paired-noninferiority-v1`.
+It must name all preregistered pair IDs, contain at least 30 observed pairs,
+cover all seven task categories and Codex/OpenCode/Hermes/raw client strata,
+match the protocol epoch and condition hashes, retain failed runs as success
+`0`, carry complete telemetry and quality-evidence hashes, and attest that
+implementation identities were hidden during scoring. Success `1` also
+requires completed status, passed hidden tests, and no false completion. A
+missing/unexpected pair, mismatched condition, mixed epoch, incomplete telemetry, failed
+reliability gate, or insufficient coverage returns `INCONCLUSIVE` with exit 2.
+The fixed statistic is target minus comparator task success, margin `-0.10`,
+10,000 paired resamples with seed `20260808`, and a two-sided 95% percentile
+interval using linear interpolation at rank `(n-1)q`. Only a lower bound
+strictly greater than the margin returns `PASS`. Run separate frozen inputs for
+GPT-5.6-sol High and Claude Opus 5-class; never combine comparators or epochs.
+
 ## Runtime metrics
 
 The gateway exposes the Goal-specific fixed metric set at
@@ -477,6 +873,71 @@ the collector. Loop counters are fed by the append-only event boundary; Skill,
 observer, and training counters are overlaid from their bounded stores.
 Not-yet-run weekly operations report zero. The authenticated production endpoint
 has physical Training counter evidence.
+
+Invocation cache accounting is nullable. `cached_tokens=null` means the
+provider did not report a cache measurement; `cached_tokens=0` means it
+explicitly measured zero reuse. Do not coerce the former to zero in clients,
+CSV consumers, Dashboard summaries, traces, or training data. Every role call
+gets a separate `model_invocation_usage` row, so repeated Planner, Reviewer,
+Frontier, Judge, or Executor calls must be summed rather than taking the last
+row. Legacy invocation tables gain only the nullable `cached_tokens` column on
+open; request-level token totals are unchanged. Responses wire output omits the
+optional `input_tokens_details` object when cache measurement is unavailable;
+strict clients therefore receive neither a false zero nor an invalid null
+integer. A measured zero or positive value still emits the detail object.
+
+Execution Graph remains disabled by default. In an isolated development
+runtime with `execution_graph.mode: shadow`, requests compile after Runtime
+Policy and API-key admission but before Reasoner dispatch; scheduler-enabled
+requests additionally persist the pinned API-key admission snapshot.
+Reasoner, Planner, `FRONTIER_A`, executor preparation, primary Executor, and
+matching control/checkpoint/terminal nodes persist actual attempts. The
+straight-through high-risk path also records actual Reviewer and Judge
+attempts. A client tool call persists `WAITING_TOOL`; a matching same-session
+result resumes the same checkpoint, and an observed validation command records
+`TEST` before the primary Executor retries. Tool/test cycles stop after two
+traversals. Generated Evidence without independent validation still terminates
+as `degraded`. A Judge `revise` and a failed tool can return to the same pinned
+primary Executor through bounded repair/fallback edges; a targeted Reviewer and
+optional Judge recheck close the corrected path. `reject`/`escalate` instead
+select `ON_REJECTION` and fail closed without a correction call. When compiled,
+`FRONTIER_B` uses the existing configured OpenRouter transport directly,
+records disagreement Evidence, and opens the bounded Executor repair. A
+disabled transport, missing credential, or provider failure fails closed;
+Frontier A remains Codex OAuth. Streaming client tool calls pause at the persisted
+`WAITING_TOOL` boundary used by non-streaming continuation. General post-stream
+Reviewer/Judge execution remains deferred because output has already been
+delivered. `execution_graph_shadow_failed` is observational degradation only;
+investigate it without retrying or changing the pinned inference provider.
+
+Declarative-policy approval pauses persist `HUMAN_APPROVAL` as
+`WAITING_APPROVAL`. The existing nonce-, allowlist-, role-, request-, and
+idempotency-scoped observation `approve` command records operator policy
+Evidence, clears only a matching `PERMISSION_REQUIRED` stop, selects
+`ON_APPROVAL`, and lets the retried request resume that Graph. Rejection and
+termination remain fail-closed.
+
+Execution attempt accounting is runtime-owned: node-type lookup, observed
+token/cache/cost/latency normalization, and deterministic role failure
+fingerprints use the same `ExecutionGraphRuntime` methods from API and
+Controller stage boundaries. Provider invocation accounting remains the source
+of observed metrics; Graph code does not infer missing usage. All shadow
+persistence exceptions must use `record_shadow_failure()` so the stage and
+exception class retain one fail-soft event contract.
+
+Orchestrated role selection is Runtime Policy-owned. Do not expect or configure
+an Executor `orchestration_decision` model call. Planner is selected for
+unclear explicit-orchestrated, multi-file, recovery, escalation, or high-risk
+work; review-only requests skip Planner. Reviewer requires an explicit review
+signal, high-risk implementation evidence, or bounded implementation evidence
+paired with a change objective. Reasoner recommendations cannot add roles.
+Audit `executor_orchestration_decided.payload.authority`; the current value must
+be `runtime_policy`. Lifecycle admission for policy-selected roles occurs before
+the Reasoner call, so a typed cold/unmanaged response must have no model usage.
+After admission, optional Reasoner, Planner, and Frontier A tasks start before
+the join; none waits for another role's output. Their inputs therefore contain
+only the pre-fan-out active state. A completed sibling artifact remains durable
+when another branch fails, while the failed join still prevents synthesis.
 
 ## Weekly and training administration
 
@@ -489,3 +950,32 @@ jobs use the configured Seoul schedules and emit only allowlisted summaries.
 These routes remain `404` under checked-in defaults. The reviewed production
 feature gates are enabled; retention stays dry-run unless `apply=true`, and
 export is not authorized.
+
+## V99 client-quality recovery boundary
+
+V99 completed all 20 cells but failed the functional gate at `18/20`. Preserve
+the exact Codex log-report `sample_limit=0` rejection and baseline atomic-store
+boolean-version acceptance. Do not rerun either cell in place. Use separately
+named targeted recovery epochs, then a new full-matrix epoch. Keep Candidate A
+fixed and do not start blind noninferiority, Reasoner ablation, long-horizon,
+canary, or release gates until that fresh full matrix passes.
+
+V100 recovered Codex log-report but baseline atomic-store still classified a
+boolean expected version as `VersionConflict`. Preserve that score. Replay only
+the baseline cell in a new epoch; do not restart the full matrix yet.
+
+V101 reproduced the baseline failure. V102 passed the same cell at xhigh.
+Freeze `DGX_MOA_BASELINE_REASONING_EFFORT=xhigh` for the next fresh matrix;
+retain high as the checked-in default and do not alter other harness settings.
+
+V103 completed that fresh matrix at `18/20`. Keep its three transient units
+stopped and preserve the Codex rate-limiter constructor failure and Codex
+atomic-store invalid-update acceptance. Do not retry either workspace in place.
+Use separately named targeted recovery epochs with Candidate A and baseline
+`xhigh` fixed, then require another fresh 20-cell matrix before starting blind
+noninferiority or any later release gate.
+
+V104 recovered both Codex failures at `10/10` after preserving a request-free
+setup attempt that lacked `prepare`. Keep v104 transients stopped. Start only a
+new full-matrix epoch with Candidate A and baseline `xhigh` fixed; do not treat
+the two targeted passes as authorization for blind noninferiority.

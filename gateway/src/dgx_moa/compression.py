@@ -25,7 +25,10 @@ def compress_text(text: str, limits: Limits) -> str:
 def compress_messages(messages: list[dict[str, Any]], limits: Limits) -> list[dict[str, Any]]:
     compressed: list[dict[str, Any]] = []
     seen: set[str] = set()
-    retained = messages[-limits.max_retained_observations :]
+    start = max(0, len(messages) - limits.max_retained_observations)
+    while start and messages[start].get("role") == "tool":
+        start -= 1
+    retained = messages[start:]
     tool_count = sum(message.get("role") == "tool" for message in retained)
     tool_budget = limits.max_tool_output_characters // max(1, tool_count)
     for message in retained:

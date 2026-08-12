@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import errno
 import json
+import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -9,6 +13,7 @@ import pytest
 from dgx_moa.frontier import (
     COLLABORATION_MODE_INSTRUCTIONS,
     COLLABORATION_SCHEMAS,
+    CodexAppServerTurn,
     CodexOAuthCollaboration,
     CodexOAuthProvider,
     FrontierCollaborationResult,
@@ -30,6 +35,8 @@ from dgx_moa.frontier import (
     profile_lock,
     profile_status,
     record_frontier_run,
+    run_codex_app_server,
+    run_codex_exec,
     sanitize_executor_tool_paths,
     select_frontier_profile,
     validate_isolated_worktree,
@@ -40,7 +47,354 @@ from dgx_moa.state import Phase, SessionState
 from pydantic import ValidationError
 
 
+@pytest.mark.asyncio
+async def test_codex_exec_transports_large_prompt_over_stdin(tmp_path: Path) -> None:
+    prompt = "x" * 300_000
+    command = [
+        sys.executable,
+        "-c",
+        "import sys; data=sys.stdin.read(); print(len(data)); print('stderr-ok', file=sys.stderr)",
+    ]
+
+    result = await run_codex_exec(
+        command,
+        prompt=prompt,
+        cwd=tmp_path,
+        environment=dict(os.environ),
+        timeout=10,
+    )
+
+    assert result.stdout.strip() == str(len(prompt))
+    assert result.stderr.strip() == "stderr-ok"
+    assert prompt not in result.args
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_uses_ephemeral_read_only_turn(tmp_path: Path) -> None:
+    fake_server = """
+import json
+import sys
+def send(value):
+    print(json.dumps(value), flush=True)
+for line in sys.stdin:
+    message = json.loads(line)
+    if message.get("id") == 1:
+        send({"id": 1, "result": {"userAgent": "fake"}})
+    elif message.get("id") == 2:
+        params = message["params"]
+        assert params["ephemeral"] is True
+        assert params["approvalPolicy"] == "never"
+        assert params["sandbox"] == "read-only"
+        send({"id": 2, "result": {"thread": {"id": "thread-1"}}})
+    elif message.get("id") == 3:
+        params = message["params"]
+        assert params["sandboxPolicy"]["type"] == "readOnly"
+        assert params["input"][0]["text"] == "private prompt"
+        send({"id": 3, "result": {"turn": {"id": "turn-1"}}})
+        send({
+            "method": "thread/tokenUsage/updated",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "tokenUsage": {"last": {"inputTokens": 7, "outputTokens": 3}},
+            },
+        })
+        send({
+            "method": "item/completed",
+            "params": {"item": {"type": "reasoning", "content": ["discard"]}},
+        })
+        send({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": "{\\\"answer\\\":\\\"ok\\\"}",
+                }
+            },
+        })
+        send({
+            "method": "turn/completed",
+            "params": {"turn": {"id": "turn-1", "status": "completed"}},
+        })
+"""
+    command = [sys.executable, "-u", "-c", fake_server]
+
+    result = await run_codex_app_server(
+        command,
+        prompt="private prompt",
+        output_schema={"type": "object"},
+        model="gpt-5.6-sol",
+        effort="high",
+        cwd=tmp_path,
+        environment=dict(os.environ),
+        timeout=10,
+    )
+
+    assert result.output == {"answer": "ok"}
+    assert (result.prompt_tokens, result.completion_tokens) == (7, 3)
+    assert "private prompt" not in command
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_normalizes_closed_stdin(tmp_path: Path) -> None:
+    command = [
+        sys.executable,
+        "-c",
+        "import os, time; os.close(0); os.close(1); time.sleep(0.1)",
+    ]
+
+    with pytest.raises(RuntimeError, match="^FRONTIER_APP_SERVER_UNAVAILABLE$"):
+        await run_codex_app_server(
+            command,
+            prompt="bounded",
+            output_schema={"type": "object"},
+            model="gpt-5.6-sol",
+            effort="high",
+            cwd=tmp_path,
+            environment=dict(os.environ),
+            timeout=10,
+        )
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_resumes_and_compacts_persistent_thread(
+    tmp_path: Path,
+) -> None:
+    fake_server = """
+import json
+import sys
+def send(value):
+    print(json.dumps(value), flush=True)
+for line in sys.stdin:
+    message = json.loads(line)
+    method = message.get("method")
+    if message.get("id") == 1:
+        send({"id": 1, "result": {"userAgent": "fake"}})
+    elif method == "thread/resume":
+        assert message["params"]["threadId"] == "thread-existing"
+        assert "ephemeral" not in message["params"]
+        send({"id": 2, "result": {"thread": {"id": "thread-existing"}}})
+    elif method == "thread/compact/start":
+        send({"id": 3, "result": {}})
+        send({"method": "turn/started", "params": {"turn": {"id": "compact-1"}}})
+        send({
+            "method": "turn/completed",
+            "params": {"turn": {"id": "compact-1", "status": "completed"}},
+        })
+    elif method == "turn/start":
+        send({"id": 4, "result": {"turn": {"id": "turn-2"}}})
+        send({
+            "method": "item/completed",
+            "params": {"item": {"type": "agentMessage", "text": "{\\"answer\\":\\"ok\\"}"}},
+        })
+        send({
+            "method": "turn/completed",
+            "params": {"turn": {"id": "turn-2", "status": "completed"}},
+        })
+"""
+
+    result = await run_codex_app_server(
+        [sys.executable, "-u", "-c", fake_server],
+        prompt="bounded follow-up",
+        output_schema={"type": "object"},
+        model="gpt-5.6-sol",
+        effort="high",
+        cwd=tmp_path,
+        environment=dict(os.environ),
+        timeout=10,
+        thread_id="thread-existing",
+        persistent=True,
+        compact_before_turn=True,
+    )
+
+    assert result.output == {"answer": "ok"}
+    assert result.thread_id == "thread-existing"
+    assert result.compacted is True
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_interrupts_cancelled_turn(tmp_path: Path) -> None:
+    ready = tmp_path / "ready"
+    interrupted = tmp_path / "interrupted"
+    fake_server = f"""
+import json
+import pathlib
+import sys
+def send(value):
+    print(json.dumps(value), flush=True)
+for line in sys.stdin:
+    message = json.loads(line)
+    method = message.get("method")
+    if message.get("id") == 1:
+        send({{"id": 1, "result": {{"userAgent": "fake"}}}})
+    elif method == "thread/start":
+        send({{"id": 2, "result": {{"thread": {{"id": "thread-cancel"}}}}}})
+    elif method == "turn/start":
+        send({{"id": 3, "result": {{"turn": {{"id": "turn-cancel"}}}}}})
+        pathlib.Path({str(ready)!r}).touch()
+    elif method == "turn/interrupt":
+        assert message["params"] == {{"threadId": "thread-cancel", "turnId": "turn-cancel"}}
+        pathlib.Path({str(interrupted)!r}).touch()
+        send({{"id": 5, "result": {{}}}})
+"""
+    task = asyncio.create_task(
+        run_codex_app_server(
+            [sys.executable, "-u", "-c", fake_server],
+            prompt="cancel me",
+            output_schema={"type": "object"},
+            model="gpt-5.6-sol",
+            effort="high",
+            cwd=tmp_path,
+            environment=dict(os.environ),
+            timeout=10,
+            persistent=True,
+        )
+    )
+    for _ in range(100):
+        if ready.is_file():
+            break
+        await asyncio.sleep(0.01)
+    assert ready.is_file()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert interrupted.is_file()
+
+
+@pytest.mark.asyncio
+async def test_app_server_unavailable_falls_back_once_to_stdin_exec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = {"app_server": 0, "exec": 0}
+
+    async def unavailable(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        calls["app_server"] += 1
+        raise RuntimeError("FRONTIER_APP_SERVER_UNAVAILABLE")
+
+    async def exec_fallback(command, **_kwargs):  # type: ignore[no-untyped-def]
+        calls["exec"] += 1
+        result_path = Path(command[command.index("--output-last-message") + 1])
+        result_path.write_text(
+            json.dumps(
+                {
+                    "recommended_architecture": "bounded",
+                    "design_decisions": [],
+                    "tradeoffs": [],
+                    "failure_modes": [],
+                    "implementation_sequence": [],
+                    "review_questions": [],
+                }
+            )
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_app_server", unavailable)
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_exec", exec_fallback)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(
+            enabled=True,
+            protocol="codex-app-server-jsonrpc",
+            collaboration_retries=0,
+        ),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    result = await runner.collaborate("architecture", {"objective": "bounded"}, "request")
+
+    assert calls == {"app_server": 1, "exec": 1}
+    assert result.transport == "codex_exec_fallback"
+
+
+@pytest.mark.asyncio
+async def test_app_server_auth_failure_does_not_use_cli_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def auth_failure(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("FRONTIER_AUTH_ERROR")
+
+    async def unexpected_exec(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        pytest.fail("CLI fallback must not retry an App Server auth failure")
+
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_app_server", auth_failure)
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_exec", unexpected_exec)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(
+            enabled=True,
+            protocol="codex-app-server-jsonrpc",
+            collaboration_retries=0,
+        ),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    with pytest.raises(RuntimeError, match="FRONTIER_AUTH_ERROR"):
+        await runner.collaborate("architecture", {"objective": "bounded"}, "request")
+
+
+@pytest.mark.asyncio
+async def test_collaboration_persists_bounded_daemon_thread_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_app_server(command, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append({"command": command, **kwargs})
+        return CodexAppServerTurn(
+            output={
+                "recommended_architecture": "bounded",
+                "design_decisions": [],
+                "tradeoffs": [],
+                "failure_modes": [],
+                "implementation_sequence": [],
+                "review_questions": [],
+            },
+            prompt_tokens=7,
+            completion_tokens=3,
+            thread_id=kwargs.get("thread_id") or "thread-persisted",
+            compacted=bool(kwargs["compact_before_turn"]),
+        )
+
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_app_server", fake_app_server)
+    config = FrontierConfig(
+        enabled=True,
+        protocol="codex-app-server-jsonrpc",
+        collaboration_retries=0,
+        app_server_compact_after_turns=1,
+        app_server_max_threads=1,
+    )
+    run_dir = tmp_path / "run"
+    first = CodexOAuthCollaboration(config, run_dir, tmp_path)
+    await first.collaborate("architecture", {"objective": "one"}, "task:frontier:1")
+
+    restarted = CodexOAuthCollaboration(config, run_dir, tmp_path)
+    result = await restarted.collaborate("architecture", {"objective": "two"}, "task:frontier:2")
+
+    assert result.transport == "codex_app_server"
+    assert calls[0]["command"] == ["codex", "app-server", "proxy"]
+    assert calls[0]["thread_id"] is None
+    assert calls[1]["thread_id"] == "thread-persisted"
+    assert calls[1]["compact_before_turn"] is True
+    await restarted.collaborate("architecture", {"objective": "other"}, "other-task:frontier:1")
+    assert calls[2]["thread_id"] is None
+    state_file = run_dir / "frontier-app-server-sessions.json"
+    saved = state_file.read_text()
+    assert "task" not in saved
+    threads = json.loads(saved)["threads"]
+    assert len(threads) == 1
+    assert threads.popitem()[1]["turns"] == 1
+    assert state_file.stat().st_mode & 0o777 == 0o600
+    state_file.chmod(0o644)
+    with pytest.raises(ValueError, match="insecure Frontier App Server session state"):
+        CodexOAuthCollaboration(config, run_dir, tmp_path)
+
+
 def test_frontier_profile_and_selection(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValidationError):
+        FrontierConfig(protocol="unbounded")  # type: ignore[arg-type]
     assert validate_profile_name("primary") == "primary"
     with pytest.raises(ValueError):
         validate_profile_name("../secret")
@@ -276,9 +630,7 @@ def test_executor_tool_calls_repair_only_known_freeform_arguments() -> None:
     )
 
     assert json.loads(calls[0]["function"]["arguments"]) == {"input": patch}
-    assert json.loads(calls[1]["function"]["arguments"]) == {
-        "cmd": "python -m unittest"
-    }
+    assert json.loads(calls[1]["function"]["arguments"]) == {"cmd": "python -m unittest"}
     assert calls[2]["function"]["arguments"] == "not-json"
     with pytest.raises(ValidationError):
         FrontierExecutorResult.model_validate(
@@ -315,7 +667,11 @@ async def test_remote_executor_repairs_known_freeform_tool_arguments(
         transmitted_categories=["executor_request"],
         profile="primary",
     )
-    monkeypatch.setattr(runner, "_run", lambda *_args, **_kwargs: collaboration)
+
+    async def fake_run(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return collaboration
+
+    monkeypatch.setattr(runner, "_run", fake_run)
 
     result = await runner.execute({"_client_workspace_path": str(tmp_path)}, "request")
 
@@ -324,12 +680,62 @@ async def test_remote_executor_repairs_known_freeform_tool_arguments(
     assert result["choices"][0]["finish_reason"] == "tool_calls"
 
 
-def test_codex_oauth_executor_repairs_freeform_before_schema_validation(
+@pytest.mark.asyncio
+async def test_remote_executor_recovers_nested_assistant_tool_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = CodexOAuthCollaboration(FrontierConfig(), tmp_path / "run", tmp_path)
+    collaboration = FrontierCollaborationResult(
+        mode="executor",
+        output={
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "role": "assistant",
+                    "content": "Inspecting the repository.",
+                    "tool_calls": [
+                        {
+                            "id": "inspect",
+                            "type": "function",
+                            "function": {
+                                "name": "terminal",
+                                "arguments": {"command": "pwd"},
+                            },
+                        }
+                    ],
+                }
+            ),
+            "tool_calls": [],
+            "finish_reason": "stop",
+        },
+        latency_ms=1,
+        transmitted_categories=["executor_request"],
+        profile="primary",
+    )
+
+    async def fake_run(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return collaboration
+
+    monkeypatch.setattr(runner, "_run", fake_run)
+
+    result = await runner.execute({"_client_workspace_path": str(tmp_path)}, "request")
+
+    choice = result["choices"][0]
+    assert choice["finish_reason"] == "tool_calls"
+    assert choice["message"]["content"] == "Inspecting the repository."
+    assert choice["message"]["tool_calls"][0]["function"] == {
+        "name": "terminal",
+        "arguments": '{"command":"pwd"}',
+    }
+
+
+@pytest.mark.asyncio
+async def test_codex_oauth_executor_repairs_freeform_before_schema_validation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     patch = "*** Begin Patch\n*** Add File: result.txt\n+ok\n*** End Patch"
 
-    def fake_run(command, **_kwargs):  # type: ignore[no-untyped-def]
+    async def fake_run(command, **_kwargs):  # type: ignore[no-untyped-def]
         result_path = Path(command[command.index("--output-last-message") + 1])
         result_path.write_text(
             json.dumps(
@@ -352,23 +758,24 @@ def test_codex_oauth_executor_repairs_freeform_before_schema_validation(
         )
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_exec", fake_run)
     runner = CodexOAuthCollaboration(
         FrontierConfig(enabled=True, collaboration_retries=0),
         tmp_path / "run",
         tmp_path,
     )
 
-    result = runner._run("executor", {"executor_request": {}}, "correlation")
+    result = await runner._run("executor", {"executor_request": {}}, "correlation")
 
     arguments = result.output["tool_calls"][0]["function"]["arguments"]
     assert json.loads(arguments) == {"input": patch}
 
 
-def test_codex_oauth_executor_rejects_unknown_freeform_arguments(
+@pytest.mark.asyncio
+async def test_codex_oauth_executor_rejects_unknown_freeform_arguments(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fake_run(command, **_kwargs):  # type: ignore[no-untyped-def]
+    async def fake_run(command, **_kwargs):  # type: ignore[no-untyped-def]
         result_path = Path(command[command.index("--output-last-message") + 1])
         result_path.write_text(
             json.dumps(
@@ -391,7 +798,7 @@ def test_codex_oauth_executor_rejects_unknown_freeform_arguments(
         )
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_exec", fake_run)
     runner = CodexOAuthCollaboration(
         FrontierConfig(enabled=True, collaboration_retries=0),
         tmp_path / "run",
@@ -399,7 +806,7 @@ def test_codex_oauth_executor_rejects_unknown_freeform_arguments(
     )
 
     with pytest.raises(ValidationError):
-        runner._run("executor", {"executor_request": {}}, "correlation")
+        await runner._run("executor", {"executor_request": {}}, "correlation")
 
 
 def test_frontier_review_requires_finite_arithmetic_parameters() -> None:
@@ -464,14 +871,15 @@ def test_codex_oauth_environment_excludes_gateway_secrets(
         ),
     ],
 )
-def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
+@pytest.mark.asyncio
+async def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
     tmp_path, monkeypatch: pytest.MonkeyPatch, mode: str, output: dict[str, object]
 ) -> None:  # type: ignore[no-untyped-def]
     observed: dict[str, object] = {}
 
-    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+    async def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
         observed["command"] = command
-        observed["task"] = command[-1]
+        observed["task"] = kwargs["prompt"]
         result_path = Path(command[command.index("--output-last-message") + 1])
         result_path.write_text(json.dumps(output))
         return subprocess.CompletedProcess(
@@ -481,7 +889,7 @@ def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
             stderr="",
         )
 
-    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_exec", fake_run)
     runner = CodexOAuthCollaboration(
         FrontierConfig(
             enabled=True,
@@ -494,7 +902,7 @@ def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
         tmp_path / "run",
         tmp_path,
     )
-    result = runner._run(  # type: ignore[arg-type]
+    result = await runner._run(  # type: ignore[arg-type]
         mode,
         {"objective": "review", "api_key": "sk-secret-value"},
         "correlation",
@@ -502,6 +910,7 @@ def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
 
     command = observed["command"]
     assert isinstance(command, list)
+    assert command[-1] == "-"
     assert command[command.index("--sandbox") + 1] == "read-only"
     assert "sk-secret-value" not in str(observed["task"])
     if mode == "executor":
@@ -515,14 +924,15 @@ def test_codex_oauth_collaboration_modes_are_read_only_and_redacted(
     assert result.cost_usd == 0.000021
 
 
-def test_codex_oauth_timeout_opens_circuit(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
+@pytest.mark.asyncio
+async def test_codex_oauth_timeout_opens_circuit(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[no-untyped-def]
     profiles: list[str] = []
 
-    def timeout(command, **kwargs):  # type: ignore[no-untyped-def]
-        profiles.append(Path(kwargs["env"]["CODEX_HOME"]).name)
-        raise subprocess.TimeoutExpired(command, 1)
+    async def timeout(_command, **kwargs):  # type: ignore[no-untyped-def]
+        profiles.append(Path(kwargs["environment"]["CODEX_HOME"]).name)
+        raise RuntimeError("FRONTIER_PROVIDER_TIMEOUT")
 
-    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", timeout)
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_exec", timeout)
     runner = CodexOAuthCollaboration(
         FrontierConfig(
             enabled=True,
@@ -537,21 +947,46 @@ def test_codex_oauth_timeout_opens_circuit(tmp_path, monkeypatch: pytest.MonkeyP
         tmp_path / "run",
         tmp_path,
     )
-    with pytest.raises(RuntimeError, match="FRONTIER_TIMEOUT"):
-        runner._run("architecture", {"objective": "x"}, "one")
+    with pytest.raises(RuntimeError, match="FRONTIER_PROVIDER_TIMEOUT"):
+        await runner._run("architecture", {"objective": "x"}, "one")
     with pytest.raises(RuntimeError, match="FRONTIER_CIRCUIT_OPEN"):
-        runner._run("architecture", {"objective": "x"}, "two")
+        await runner._run("architecture", {"objective": "x"}, "two")
     assert profiles == ["primary"]
 
 
+@pytest.mark.asyncio
+async def test_codex_oauth_e2big_is_typed_and_not_retried(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    attempts = 0
+
+    async def e2big(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        nonlocal attempts
+        attempts += 1
+        raise OSError(errno.E2BIG, "argument list too long")
+
+    monkeypatch.setattr("dgx_moa.frontier.asyncio.create_subprocess_exec", e2big)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(enabled=True, collaboration_retries=3),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    with pytest.raises(RuntimeError, match="FRONTIER_INPUT_TRANSPORT_TOO_LARGE"):
+        await runner._run("architecture", {"objective": "x" * 20_000}, "e2big")
+
+    assert attempts == 1
+
+
 @pytest.mark.parametrize("primary_failure", ["not logged in", "usage limit", "rate limit"])
-def test_codex_oauth_falls_back_to_secondary_profile(
+@pytest.mark.asyncio
+async def test_codex_oauth_falls_back_to_secondary_profile(
     tmp_path, monkeypatch: pytest.MonkeyPatch, primary_failure: str
 ) -> None:  # type: ignore[no-untyped-def]
     profiles: list[str] = []
 
-    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
-        profile = Path(kwargs["env"]["CODEX_HOME"]).name
+    async def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        profile = Path(kwargs["environment"]["CODEX_HOME"]).name
         profiles.append(profile)
         if profile == "primary":
             return subprocess.CompletedProcess(command, 1, stdout="", stderr=primary_failure)
@@ -575,7 +1010,7 @@ def test_codex_oauth_falls_back_to_secondary_profile(
             stderr="",
         )
 
-    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_exec", fake_run)
     runner = CodexOAuthCollaboration(
         FrontierConfig(
             enabled=True,
@@ -589,21 +1024,24 @@ def test_codex_oauth_falls_back_to_secondary_profile(
         tmp_path,
     )
 
-    result = runner._run("architecture", {"objective": "x"}, "fallback")
+    result = await runner._run("architecture", {"objective": "x"}, "fallback")
 
     assert profiles == ["primary", "secondary"]
     assert result.profile == "secondary"
     assert result.total_tokens == 10
 
 
-def test_codex_oauth_uses_global_default_as_tertiary_profile(
+@pytest.mark.asyncio
+async def test_codex_oauth_uses_global_default_as_tertiary_profile(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # type: ignore[no-untyped-def]
     profiles: list[str] = []
 
-    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+    async def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
         profile = (
-            Path(kwargs["env"]["CODEX_HOME"]).name if "CODEX_HOME" in kwargs["env"] else "default"
+            Path(kwargs["environment"]["CODEX_HOME"]).name
+            if "CODEX_HOME" in kwargs["environment"]
+            else "default"
         )
         profiles.append(profile)
         if profile != "default":
@@ -624,7 +1062,7 @@ def test_codex_oauth_uses_global_default_as_tertiary_profile(
         )
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_exec", fake_run)
     runner = CodexOAuthCollaboration(
         FrontierConfig(
             enabled=True,
@@ -639,7 +1077,7 @@ def test_codex_oauth_uses_global_default_as_tertiary_profile(
         tmp_path,
     )
 
-    result = runner._run("architecture", {"objective": "x"}, "tertiary")
+    result = await runner._run("architecture", {"objective": "x"}, "tertiary")
 
     assert profiles == ["primary", "secondary", "default"]
     assert result.profile == "default"
@@ -655,8 +1093,8 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
     key_path.write_text("synthetic-openrouter-key")
     key_path.chmod(0o600)
 
-    def oauth_context_failure(command, **kwargs):  # type: ignore[no-untyped-def]
-        profiles.append(Path(kwargs["env"]["CODEX_HOME"]).name)
+    async def oauth_context_failure(command, **kwargs):  # type: ignore[no-untyped-def]
+        profiles.append(Path(kwargs["environment"]["CODEX_HOME"]).name)
         return subprocess.CompletedProcess(command, 1, stdout="", stderr="context window exceeded")
 
     class FakeResponse:
@@ -696,7 +1134,7 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
             requests.append(kwargs)
             return FakeResponse()
 
-    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", oauth_context_failure)
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_exec", oauth_context_failure)
     monkeypatch.setattr("dgx_moa.frontier.httpx.Client", FakeClient)
     runner = CodexOAuthCollaboration(
         FrontierConfig(
@@ -736,23 +1174,35 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
     assert profiles == ["primary", "secondary"]
     assert result["choices"][0]["message"]["content"] == "완료했습니다."
     assert result["provider_provenance"]["provider"].startswith("openrouter:")
-    assert result["provider_provenance"]["cost_usd"] == pytest.approx(0.0006)
+    assert result["provider_provenance"]["cost_usd"] == pytest.approx(0.001)
     assert len(requests) == 1
     sent = requests[0]
     assert sent["headers"]["Authorization"] == "Bearer synthetic-openrouter-key"
-    assert sent["json"]["model"] == "anthropic/claude-sonnet-4.6"
+    assert sent["json"]["model"] == "anthropic/claude-opus-5"
     assert sent["json"]["reasoning"] == {"effort": "high", "exclude": True}
     assert "parallel_tool_calls" not in sent["json"]
     assert "minimum" not in json.dumps(sent["json"]["response_format"])
     assert "synthetic-openrouter-key" not in json.dumps(sent["json"])
 
 
-def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
+@pytest.mark.asyncio
+async def test_direct_openrouter_collaboration_fails_closed_when_disabled(tmp_path) -> None:
+    runner = CodexOAuthCollaboration(FrontierConfig(), tmp_path / "run", tmp_path)
+
+    with pytest.raises(RuntimeError, match="FRONTIER_PROVIDER_UNAVAILABLE"):
+        await runner.collaborate_openrouter(
+            "disagreement", {"objective": "adjudicate"}, "frontier-b-disabled"
+        )
+
+
+@pytest.mark.asyncio
+async def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # type: ignore[no-untyped-def]
     key_path = tmp_path / "openrouter_api"
     key_path.write_text("synthetic-openrouter-key")
     requests = 0
+    sent_requests: list[dict[str, object]] = []
 
     class FakeResponse:
         def __init__(self, valid: bool) -> None:
@@ -764,25 +1214,25 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
         def json(self) -> dict[str, object]:
             return {
                 "choices": [
-                        {
-                            "message": {
-                                "content": (
-                                    json.dumps(
-                                        {
-                                            "verdict": "approve",
-                                            "critical": [],
-                                            "important": [],
-                                            "suggestions": [],
-                                            "missing_tests": [],
-                                            "confidence": 0.9,
-                                        }
-                                    )
-                                    if self.valid
-                                    else "{}"
+                    {
+                        "message": {
+                            "content": (
+                                json.dumps(
+                                    {
+                                        "verdict": "approve",
+                                        "critical": [],
+                                        "important": [],
+                                        "suggestions": [],
+                                        "missing_tests": [],
+                                        "confidence": 0.9,
+                                    }
                                 )
-                            },
-                            "finish_reason": "stop",
-                        }
+                                if self.valid
+                                else "{}"
+                            )
+                        },
+                        "finish_reason": "stop",
+                    }
                 ],
                 "usage": {"prompt_tokens": 10, "completion_tokens": 10},
             }
@@ -797,9 +1247,10 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
         def __exit__(self, *_args) -> None:  # type: ignore[no-untyped-def]
             return None
 
-        def post(self, _url, **_kwargs):  # type: ignore[no-untyped-def]
+        def post(self, _url, **kwargs):  # type: ignore[no-untyped-def]
             nonlocal requests
             requests += 1
+            sent_requests.append(kwargs)
             return FakeResponse(valid=requests > 1)
 
     monkeypatch.setattr("dgx_moa.frontier.httpx.Client", FakeClient)
@@ -814,7 +1265,7 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
     )
     runner.opened_at = time.monotonic()
 
-    result = runner._run(
+    result = await runner._run(
         "code_review",
         {
             "bounded_diff": "bounded",
@@ -823,9 +1274,10 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
         "required-review",
     )
 
-    assert result.profile == "openrouter:anthropic/claude-sonnet-4.6"
+    assert result.profile == "openrouter:anthropic/claude-opus-5"
     assert result.output["verdict"] == "approve"
     assert requests == 2
+    assert all("temperature" not in request["json"] for request in sent_requests)
 
 
 @pytest.mark.parametrize(
@@ -835,7 +1287,8 @@ def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
         ("malformed response", "FRONTIER_PROTOCOL_ERROR"),
     ],
 )
-def test_codex_oauth_does_not_fail_over_unapproved_failures(
+@pytest.mark.asyncio
+async def test_codex_oauth_does_not_fail_over_unapproved_failures(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
     primary_failure: str,
@@ -843,11 +1296,11 @@ def test_codex_oauth_does_not_fail_over_unapproved_failures(
 ) -> None:  # type: ignore[no-untyped-def]
     profiles: list[str] = []
 
-    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
-        profiles.append(Path(kwargs["env"]["CODEX_HOME"]).name)
+    async def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        profiles.append(Path(kwargs["environment"]["CODEX_HOME"]).name)
         return subprocess.CompletedProcess(command, 1, stdout="", stderr=primary_failure)
 
-    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_exec", fake_run)
     runner = CodexOAuthCollaboration(
         FrontierConfig(
             enabled=True,
@@ -862,23 +1315,24 @@ def test_codex_oauth_does_not_fail_over_unapproved_failures(
     )
 
     with pytest.raises(RuntimeError, match=failure_class):
-        runner._run("architecture", {"objective": "x"}, "no-fallback")
+        await runner._run("architecture", {"objective": "x"}, "no-fallback")
 
     assert profiles == ["primary"]
 
 
-def test_codex_oauth_does_not_fail_over_validation_failure(
+@pytest.mark.asyncio
+async def test_codex_oauth_does_not_fail_over_validation_failure(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # type: ignore[no-untyped-def]
     profiles: list[str] = []
 
-    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
-        profiles.append(Path(kwargs["env"]["CODEX_HOME"]).name)
+    async def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        profiles.append(Path(kwargs["environment"]["CODEX_HOME"]).name)
         result_path = Path(command[command.index("--output-last-message") + 1])
         result_path.write_text("{}")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    monkeypatch.setattr("dgx_moa.frontier.subprocess.run", fake_run)
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_exec", fake_run)
     runner = CodexOAuthCollaboration(
         FrontierConfig(
             enabled=True,
@@ -893,7 +1347,7 @@ def test_codex_oauth_does_not_fail_over_validation_failure(
     )
 
     with pytest.raises(ValueError):
-        runner._run("architecture", {"objective": "x"}, "invalid-result")
+        await runner._run("architecture", {"objective": "x"}, "invalid-result")
 
     assert profiles == ["primary"]
 

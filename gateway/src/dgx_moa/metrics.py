@@ -37,7 +37,6 @@ METRIC_NAMES = (
     "judge_tokens_total",
     "observer_events_sent_total",
     "observer_events_dropped_total",
-    "discord_errors_total",
     "telegram_errors_total",
     "approval_requests_total",
     "approval_timeouts_total",

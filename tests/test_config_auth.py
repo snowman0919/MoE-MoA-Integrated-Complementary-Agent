@@ -143,7 +143,7 @@ def test_remote_judge_requires_explicit_endpoint_and_environment_credential(
     settings = load_settings(config)
 
     assert settings.remote_judge.enabled is True
-    assert settings.remote_judge.model == "glm-5.2"
+    assert settings.remote_judge.model == "kimi-k3"
     assert settings.remote_judge.max_calls_per_request == 2
     assert Settings(auth_enabled=False).remote_judge.enabled is False
     with pytest.raises(ValidationError, match="requires an endpoint"):
@@ -213,16 +213,24 @@ def test_live_observation_secrets_are_external_and_hidden(monkeypatch, tmp_path:
     monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
     monkeypatch.setenv(
         "DGX_MOA_LIVE_OBSERVATION",
-        '{"enabled":true,"discord":{"webhook_url":"https://discord.invalid/secret"},'
-        '"telegram":{"bot_token":"synthetic-token","chat_id":"chat-1"}}',
+        '{"enabled":true,"telegram":{"bot_token":"synthetic-token","chat_id":"chat-1"}}',
     )
 
     settings = load_settings(config)
 
     assert settings.live_observation.enabled is True
-    assert settings.live_observation.discord is not None
-    assert "discord.invalid" not in repr(settings.live_observation.discord.webhook_url)
+    assert settings.live_observation.telegram is not None
+    assert "synthetic-token" not in repr(settings.live_observation.telegram.bot_token)
     assert Settings(auth_enabled=False).live_observation.enabled is False
+
+
+def test_executor_scheduler_is_bounded_disabled_and_requires_flash() -> None:
+    settings = Settings(auth_enabled=False)
+
+    assert settings.executor_scheduling.enabled is False
+    assert settings.executor_scheduling.same_key_max_local_queue == 3
+    with pytest.raises(ValidationError, match="requires OpenCode Go Flash"):
+        Settings(auth_enabled=False, executor_scheduling={"enabled": True})
 
 
 def test_training_store_is_disabled_separate_and_unknown_repositories_fail_closed(

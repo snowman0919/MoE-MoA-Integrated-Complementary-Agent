@@ -142,10 +142,25 @@ def test_response_usage_rejects_malformed_token_details(invalid: object) -> None
 
     assert usage == {
         "input_tokens": 3,
-        "input_tokens_details": {"cached_tokens": 0},
         "output_tokens": 2,
         "output_tokens_details": {"reasoning_tokens": 0},
         "total_tokens": 5,
+    }
+
+
+def test_response_usage_distinguishes_unreported_cache_from_measured_zero() -> None:
+    unreported = response_usage({"prompt_tokens": 3, "completion_tokens": 2})
+    measured_zero = response_usage(
+        {
+            "prompt_tokens": 3,
+            "completion_tokens": 2,
+            "prompt_tokens_details": {"cached_tokens": 0},
+        }
+    )
+
+    assert unreported is not None and "input_tokens_details" not in unreported
+    assert measured_zero is not None and measured_zero["input_tokens_details"] == {
+        "cached_tokens": 0
     }
 
 
@@ -580,10 +595,8 @@ async def test_responses_sse_replaces_invented_write_stdin_session_id() -> None:
         for event in events
         if event["type"] == "response.output_item.done" and event["output_index"] == 1
     )
-    assert output["item"]["name"] == "exec_command"
-    assert json.loads(done["arguments"]) == {
-        "cmd": "printf '%s\\n' 'No active process session; use exec_command or apply_patch.'"
-    }
+    assert output["item"]["name"] == "write_stdin"
+    assert json.loads(done["arguments"])["session_id"] == 0
 
 
 @pytest.mark.asyncio
@@ -629,6 +642,18 @@ async def test_keepalive_sse_covers_silent_upstream() -> None:
     assert await anext(stream) == b": keep-alive\n\n"
     release.set()
     assert await anext(stream) == b"event: done\ndata: done\n\n"
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_keepalive_sse_accepts_responses_ping() -> None:
+    async def upstream():
+        await asyncio.Event().wait()
+        yield b"unreachable"
+
+    heartbeat = b"event: ping\ndata: {}\n\n"
+    stream = keepalive_sse(upstream(), interval_seconds=0.01, heartbeat=heartbeat)
+    assert await anext(stream) == heartbeat
     await stream.aclose()
 
 

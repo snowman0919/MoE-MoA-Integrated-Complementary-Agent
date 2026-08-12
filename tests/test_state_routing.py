@@ -13,6 +13,7 @@ from dgx_moa.routing import (
     required_roles,
     resolve_runtime_mode,
     review_fails_closed,
+    select_executor_provider,
     select_route,
 )
 from dgx_moa.state import Phase, SessionState, StateStore
@@ -51,6 +52,25 @@ def test_route_selection_has_machine_reasons() -> None:
     ) == ("fast", ["clear_limited_validated_change"])
     route, reasons = select_route({"authentication": True})
     assert route == "escalation" and reasons == ["authentication"]
+
+
+def test_executor_provider_selection_is_pinned_and_priority_ordered() -> None:
+    assert select_executor_provider(frontier_available=False, local_busy=True) == (
+        "local",
+        "local_ready",
+    )
+    assert select_executor_provider(
+        frontier_available=True,
+        context_exceeded=True,
+        output_budget_exceeded=True,
+        stalled=True,
+    ) == ("frontier", "local_context_exceeded")
+    assert select_executor_provider(
+        "frontier",
+        "local_busy",
+        frontier_available=True,
+        frontier_correction=True,
+    ) == ("frontier", "local_busy")
 
 
 @pytest.mark.parametrize(

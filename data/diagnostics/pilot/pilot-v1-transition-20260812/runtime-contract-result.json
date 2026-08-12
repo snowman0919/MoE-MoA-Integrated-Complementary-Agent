@@ -1,0 +1,91 @@
+{
+  "gate": "pilot_runtime_contract",
+  "status": "passed_isolated",
+  "candidate": "vLLM native NVFP4 Candidate A",
+  "endpoint": "http://127.0.0.1:19320",
+  "auth": {
+    "configured_key_ids": ["pilot"],
+    "unauthorized_http": 401,
+    "authorized_http": 200,
+    "stored_graph_api_key_id": "pilot",
+    "credential_material_persisted": false
+  },
+  "protocol": {
+    "chat": {"http": 200, "content": "PILOT_OK"},
+    "responses": {"http": 200, "status": "completed"},
+    "streaming": {
+      "http": 200,
+      "response_created": true,
+      "response_completed": true,
+      "content": "STREAM_OK"
+    },
+    "native_tool_call": {
+      "http": 200,
+      "name": "get_status",
+      "arguments": {"component": "gateway"}
+    },
+    "tool_result_continuation": {
+      "http": 200,
+      "same_session": "pilot-tool-continuation",
+      "content": "Task completed.",
+      "graph_resumed_events": 1
+    },
+    "high_risk_fail_closed": {
+      "http": 403,
+      "error_type": "policy_blocked",
+      "error_code": "approval_required",
+      "graph_state": "WAITING_APPROVAL"
+    },
+    "post_failure_recovery": {"http": 200, "content": "RECOVERY_OK"}
+  },
+  "durability": {
+    "graphs_before_restart": 4,
+    "graphs_after_restart": 4,
+    "final_graphs": 6,
+    "attempts": 25,
+    "checkpoints": 57,
+    "active_states": 6,
+    "execution_graph_shadow_failures": 0,
+    "state_db_sha256": "37e6dac4cf4c752ce1d8618ec0187f4612f86084fca7de4c544649405fadfa31"
+  },
+  "resource_limits": {
+    "gateway_memory_high_bytes": 1073741824,
+    "gateway_memory_max_bytes": 2147483648,
+    "gateway_memory_swap_max_bytes": 536870912,
+    "candidate_a_memory_high_bytes": 12884901888,
+    "candidate_a_memory_max_bytes": 17179869184,
+    "candidate_a_memory_swap_max_bytes": 4294967296
+  },
+  "attempts": [
+    {
+      "name": "attempt01",
+      "status": "rejected_before_inference",
+      "failure_class": "invalid trace_origin",
+      "change_for_next_attempt": "trace_origin only: pilot_validation -> validation"
+    },
+    {
+      "name": "attempt02_attempt03",
+      "status": "passed",
+      "note": "attempt03 reused the attempt02 state DB and enabled the Pilot approval policy"
+    },
+    {
+      "name": "attempt04",
+      "status": "passed",
+      "regression_fixed": "scheduler-disabled graphs no longer mislabel Candidate A as legacy_local_qwen",
+      "selected_executor": "local_mistral",
+      "executor_node_provider": "local_mistral",
+      "state_db_sha256": "82525b4614ddb4234c88225f39df95b5cf4503d898b3a79ec214310704f195da"
+    }
+  ],
+  "artifact_sha256": {
+    "chat.json": "8735078022d1c1c6f20fadf1447e90e0ea50ce1ea4e1bdbd667f348a1d7fff36",
+    "responses.json": "ea52a935e9d5a5429bc4079776dfb9062b905c428ed92f82aa05b4e6ffe88ad6",
+    "stream.sse": "d3f8036616634c1296a01dbe7deade56674d2b6c519d9b77fe7f8ebd922da04e",
+    "tool.json": "b9d99381f179c9d274bd044a076c8efd85980c23fb046dab2f4a00f903760aa9",
+    "tool-continuation.json": "58b4a85426c702c39dc7cb015653804d9c45210369122e089fe82f6155d1b478",
+    "high-risk.json": "0db0a3c1755de83f9ae2a315455c443f213b684f7be792447a93201af20eae4f",
+    "recovery.json": "62e39478aec6b90454e214f98721aeb8d6af8e94ac18f7cd2d2b12d5f583840e",
+    "attempt04-chat.json": "abdd23636934815b624dced80c436312800be7f3a644650021292add8699aa3a"
+  },
+  "remaining_boundary": "This is isolated physical evidence, not a production deployment. A reviewed release revision, installed unit restart with the checked-in caps/native defaults, rollback rehearsal, and limited developer canary remain before PILOT_ACTIVE."
+}

@@ -30,7 +30,7 @@ gateway:
     enabled: false
     provider: disabled
     mode: selective
-    model: glm-5.2
+    model: kimi-k3
     endpoint: null
     api_key_env: OPENCODE_GO_API_KEY
     timeout_seconds: 120
@@ -42,7 +42,7 @@ gateway:
     provider: disabled
     endpoint: https://opencode.ai/zen/go
     api_key_env: OPENCODE_GO_API_KEY
-    models: {planner: deepseek-v4-pro, reviewer: deepseek-v4-flash}
+    models: {planner: deepseek-v4-pro, reviewer: deepseek-v4-pro}
     timeout_seconds: 120
     local_latency_seconds: {planner: 30, reviewer: 45}
     remote_latency_seconds: {planner: 25, reviewer: 5}
@@ -58,6 +58,18 @@ gateway:
     enabled: false
     version: development-disabled
     policies: []
+  execution_graph:
+    mode: disabled
+  executor_scheduling:
+    enabled: false
+    same_key_max_local_queue: 3
+    max_total_local_queue: 256
+    queue_timeout_seconds: 14400
+    flash_provider: disabled
+    flash_model: deepseek-v4-flash
+    flash_endpoint: https://opencode.ai/zen/go
+    flash_api_key_env: OPENCODE_GO_API_KEY
+  dashboard_enabled: false
   live_observation:
     enabled: false
     level: normal

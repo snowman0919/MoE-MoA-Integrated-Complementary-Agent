@@ -1,0 +1,9 @@
+[Unit]
+Description=DGX MoA LAN gateway socket
+
+[Socket]
+ListenStream=192.168.0.42:9000
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target

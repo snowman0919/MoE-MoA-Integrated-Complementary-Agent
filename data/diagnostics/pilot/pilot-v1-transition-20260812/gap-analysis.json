@@ -1,0 +1,33 @@
+{
+  "state": "DEVELOPMENT",
+  "proven": [
+    "fixed-revision vLLM native NVFP4 Candidate A at 131072/seq1/KV3.4GB/CUDA Graph",
+    "Chat, Responses, streaming, native tool call, tool-result continuation",
+    "authenticated gateway and API-key isolation implementation/evidence",
+    "DeepSeek V4 Flash overflow and scheduling gates",
+    "durable ExecutionGraph/request/event/evidence persistence in isolated development runtime",
+    "hidden-reasoning exclusion and secret-redaction tests/evidence",
+    "high-risk approval and fail-closed paths",
+    "known MARLIN rollback runtime evidence"
+  ],
+  "open_pilot_gates": [
+    "install checked-in Candidate A memory limits/native defaults and verify exact restart",
+    "Pilot release revision and exact rollback rehearsal",
+    "limited Pilot canary and recovery"
+  ],
+  "closed_pilot_gates": [
+    "qualification memory blast-radius containment physical evidence",
+    "Pilot runtime durable telemetry physical projection for real requests",
+    "developer-key-only ingress and high-risk policy verification on the isolated release candidate"
+  ],
+  "not_pilot_blockers": [
+    "synthetic client matrix 20/20",
+    "blind noninferiority",
+    "Reasoner final ablation",
+    "SGLang final selection",
+    "Dashboard completeness",
+    "training pipeline completeness",
+    "codebase net reduction",
+    "final branch/worktree cleanup"
+  ]
+}

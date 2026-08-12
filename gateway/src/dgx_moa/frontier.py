@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import errno
 import fcntl
+import hashlib
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, cast
 
 import httpx
 import yaml
@@ -53,7 +57,12 @@ IMMUTABLE_EVALUATOR_PATHS = (
 FRONTIER_FAILURES = frozenset(
     {
         "FRONTIER_AUTH_ERROR",
+        "FRONTIER_APP_SERVER_UNAVAILABLE",
+        "FRONTIER_CONTEXT_PACKAGE_TOO_LARGE",
         "FRONTIER_CONTEXT_LIMIT",
+        "FRONTIER_INPUT_TRANSPORT_TOO_LARGE",
+        "FRONTIER_PROCESS_SPAWN_FAILED",
+        "FRONTIER_PROVIDER_TIMEOUT",
         "FRONTIER_USAGE_LIMIT",
         "FRONTIER_RATE_LIMIT",
         "FRONTIER_TIMEOUT",
@@ -75,8 +84,19 @@ PROFILE_FAILOVER_FAILURES = frozenset(
     }
 )
 PAID_FALLBACK_FAILURES = PROFILE_FAILOVER_FAILURES | frozenset(
-    {"FRONTIER_PROVIDER_UNAVAILABLE", "FRONTIER_TIMEOUT"}
+    {"FRONTIER_PROVIDER_UNAVAILABLE", "FRONTIER_PROVIDER_TIMEOUT", "FRONTIER_TIMEOUT"}
 )
+
+MAX_CODEX_PROCESS_OUTPUT_BYTES = 2_000_000
+
+
+@dataclass(frozen=True)
+class CodexAppServerTurn:
+    output: dict[str, Any]
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    thread_id: str
+    compacted: bool = False
 
 
 class FrontierTask(BaseModel):
@@ -130,7 +150,7 @@ class FrontierConfig(BaseModel):
         "oauth_unavailable",
         "usage_limited",
     ] = "configuration_disabled"
-    protocol: str = "codex-exec-jsonl"
+    protocol: Literal["codex-app-server-jsonrpc", "codex-exec-jsonl"] = "codex-exec-jsonl"
     model: str = "gpt-5.6-sol"
     reasoning_effort: Literal["high"] = "high"
     max_invocations_per_task: int = 4
@@ -142,6 +162,8 @@ class FrontierConfig(BaseModel):
     profile_root: Path | None = None
     collaboration_timeout_seconds: int = 300
     collaboration_retries: int = 1
+    app_server_compact_after_turns: int = Field(default=8, ge=1, le=100)
+    app_server_max_threads: int = Field(default=32, ge=1, le=1_000)
     circuit_failure_limit: int = 3
     circuit_cooldown_seconds: int = 300
     max_evidence_characters: int = Field(default=24_000, ge=1_000, le=100_000)
@@ -176,13 +198,13 @@ class FrontierConfig(BaseModel):
     output_cost_per_million: float | None = None
     openrouter_fallback_enabled: bool = False
     openrouter_endpoint: str = "https://openrouter.ai/api/v1"
-    openrouter_model: str = "anthropic/claude-sonnet-4.6"
+    openrouter_model: str = "anthropic/claude-opus-5"
     openrouter_api_key_env: str = "OPENROUTER_API_KEY"
     openrouter_api_key_file: Path | None = None
     openrouter_timeout_seconds: int = Field(default=300, ge=1, le=900)
     openrouter_max_evidence_characters: int = Field(default=200_000, ge=1_000, le=800_000)
-    openrouter_input_cost_per_million: float = Field(default=3.0, ge=0)
-    openrouter_output_cost_per_million: float = Field(default=15.0, ge=0)
+    openrouter_input_cost_per_million: float = Field(default=5.0, ge=0)
+    openrouter_output_cost_per_million: float = Field(default=25.0, ge=0)
 
     @model_validator(mode="after")
     def validate_profile_failover(self) -> FrontierConfig:
@@ -234,11 +256,7 @@ def openrouter_compatible_schema(value: Any) -> Any:
 
     def clean(value: Any) -> Any:
         if isinstance(value, dict):
-            return {
-                key: clean(item)
-                for key, item in value.items()
-                if key not in unsupported
-            }
+            return {key: clean(item) for key, item in value.items() if key not in unsupported}
         if isinstance(value, list):
             return [clean(item) for item in value]
         return value
@@ -479,6 +497,7 @@ class FrontierCollaborationResult(BaseModel):
     latency_ms: float
     transmitted_categories: list[str]
     profile: str = "unknown"
+    transport: str = "unknown"
 
 
 def codex_usage(output: str) -> tuple[int | None, int | None]:
@@ -501,6 +520,370 @@ def codex_usage(output: str) -> tuple[int | None, int | None]:
             completion = max(completion, output_tokens)
             found = True
     return (prompt, completion) if found else (None, None)
+
+
+async def _drain_bounded(
+    stream: asyncio.StreamReader | None,
+    limit: int = MAX_CODEX_PROCESS_OUTPUT_BYTES,
+) -> str:
+    if stream is None:
+        return ""
+    retained = bytearray()
+    while chunk := await stream.read(65_536):
+        if len(retained) < limit:
+            retained.extend(chunk[: limit - len(retained)])
+    return retained.decode(errors="replace")
+
+
+async def _stop_process_group(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(process.wait(), timeout=5)
+    except TimeoutError:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        await process.wait()
+
+
+async def run_codex_exec(
+    command: list[str],
+    *,
+    prompt: str,
+    cwd: Path,
+    environment: dict[str, str],
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=cwd,
+            env=environment,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=1_000_000,
+            start_new_session=True,
+        )
+    except OSError as error:
+        code = (
+            "FRONTIER_INPUT_TRANSPORT_TOO_LARGE"
+            if error.errno == errno.E2BIG
+            else "FRONTIER_PROCESS_SPAWN_FAILED"
+        )
+        raise RuntimeError(code) from error
+
+    async def write_input() -> None:
+        assert process.stdin is not None
+        try:
+            process.stdin.write(prompt.encode())
+            await process.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            process.stdin.close()
+            with suppress(BrokenPipeError, ConnectionResetError):
+                await process.stdin.wait_closed()
+
+    stdout_task = asyncio.create_task(_drain_bounded(process.stdout))
+    stderr_task = asyncio.create_task(_drain_bounded(process.stderr))
+    try:
+        async with asyncio.timeout(timeout):
+            await write_input()
+            await process.wait()
+            stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
+    except TimeoutError as error:
+        await _stop_process_group(process)
+        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+        raise RuntimeError("FRONTIER_PROVIDER_TIMEOUT") from error
+    except asyncio.CancelledError:
+        await _stop_process_group(process)
+        stdout_task.cancel()
+        stderr_task.cancel()
+        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+        raise
+    return subprocess.CompletedProcess(command, process.returncode or 0, stdout, stderr)
+
+
+async def run_codex_app_server(
+    command: list[str],
+    *,
+    prompt: str,
+    output_schema: dict[str, Any],
+    model: str,
+    effort: str,
+    cwd: Path,
+    environment: dict[str, str],
+    timeout: int,
+    thread_id: str | None = None,
+    persistent: bool = False,
+    compact_before_turn: bool = False,
+) -> CodexAppServerTurn:
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=cwd,
+            env=environment,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=1_000_000,
+            start_new_session=True,
+        )
+    except OSError as error:
+        raise RuntimeError("FRONTIER_APP_SERVER_UNAVAILABLE") from error
+
+    assert process.stdin is not None and process.stdout is not None
+    stdin = process.stdin
+    stdout = process.stdout
+    stderr_task = asyncio.create_task(_drain_bounded(process.stderr))
+    final_text: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    compacted = False
+    active_turn_id: str | None = None
+
+    async def send(message: dict[str, Any]) -> None:
+        try:
+            stdin.write(
+                (json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+            )
+            await stdin.drain()
+        except (BrokenPipeError, ConnectionResetError, RuntimeError) as error:
+            raise RuntimeError("FRONTIER_APP_SERVER_UNAVAILABLE") from error
+
+    async def interrupt() -> None:
+        if thread_id is None or active_turn_id is None:
+            return
+        with suppress(BrokenPipeError, ConnectionResetError, TimeoutError, ValueError):
+            async with asyncio.timeout(1):
+                await send(
+                    {
+                        "method": "turn/interrupt",
+                        "id": 5,
+                        "params": {"threadId": thread_id, "turnId": active_turn_id},
+                    }
+                )
+                while line := await stdout.readline():
+                    response = json.loads(line)
+                    if isinstance(response, dict) and response.get("id") == 5:
+                        break
+
+    try:
+        async with asyncio.timeout(timeout):
+            await send(
+                {
+                    "method": "initialize",
+                    "id": 1,
+                    "params": {
+                        "clientInfo": {
+                            "name": "dgx_moa",
+                            "title": "DGX MoA Frontier",
+                            "version": "2.0.0",
+                        },
+                        "capabilities": {
+                            "optOutNotificationMethods": [
+                                "item/reasoning/summaryTextDelta",
+                                "item/reasoning/summaryPartAdded",
+                                "item/reasoning/textDelta",
+                            ]
+                        },
+                    },
+                }
+            )
+            turn_started = False
+            compact_request_id: int | None = None
+            compact_accepted = False
+            compact_completed = False
+            turn_request_id: int | None = None
+
+            async def start_turn() -> None:
+                nonlocal turn_request_id
+                assert thread_id is not None
+                turn_request_id = 4 if compact_request_id is not None else 3
+                await send(
+                    {
+                        "method": "turn/start",
+                        "id": turn_request_id,
+                        "params": {
+                            "threadId": thread_id,
+                            "input": [{"type": "text", "text": prompt}],
+                            "cwd": str(cwd),
+                            "approvalPolicy": "never",
+                            "sandboxPolicy": {
+                                "type": "readOnly",
+                                "access": {"type": "fullAccess"},
+                            },
+                            "model": model,
+                            "effort": effort,
+                            "outputSchema": output_schema,
+                        },
+                    }
+                )
+
+            while True:
+                line = await stdout.readline()
+                if not line:
+                    raise RuntimeError("FRONTIER_APP_SERVER_UNAVAILABLE")
+                try:
+                    message = json.loads(line)
+                except ValueError as error:
+                    raise RuntimeError("FRONTIER_APP_SERVER_UNAVAILABLE") from error
+                if not isinstance(message, dict):
+                    continue
+                response_id = message.get("id")
+                if response_id is not None and isinstance(message.get("error"), dict):
+                    failure = classify_frontier_failure(json.dumps(message["error"]))
+                    raise RuntimeError(
+                        failure
+                        if failure != "FRONTIER_PROTOCOL_ERROR"
+                        else "FRONTIER_APP_SERVER_UNAVAILABLE"
+                    )
+                if response_id == 1 and isinstance(message.get("result"), dict):
+                    await send({"method": "initialized", "params": {}})
+                    thread_params: dict[str, Any] = {
+                        "model": model,
+                        "cwd": str(cwd),
+                        "approvalPolicy": "never",
+                        "sandbox": "read-only",
+                    }
+                    if thread_id is None:
+                        thread_params.update(
+                            {
+                                "ephemeral": not persistent,
+                                "serviceName": "dgx_moa_frontier",
+                            }
+                        )
+                    else:
+                        thread_params["threadId"] = thread_id
+                    await send(
+                        {
+                            "method": "thread/resume" if thread_id else "thread/start",
+                            "id": 2,
+                            "params": thread_params,
+                        }
+                    )
+                    continue
+                if response_id == 2 and isinstance(message.get("result"), dict):
+                    thread = message["result"].get("thread")
+                    thread_id = thread.get("id") if isinstance(thread, dict) else None
+                    if not isinstance(thread_id, str) or not thread_id:
+                        raise RuntimeError("FRONTIER_APP_SERVER_UNAVAILABLE")
+                    if compact_before_turn:
+                        compact_request_id = 3
+                        await send(
+                            {
+                                "method": "thread/compact/start",
+                                "id": compact_request_id,
+                                "params": {"threadId": thread_id},
+                            }
+                        )
+                    else:
+                        await start_turn()
+                    continue
+                if response_id == compact_request_id and isinstance(message.get("result"), dict):
+                    compact_accepted = True
+                    if compact_completed:
+                        await start_turn()
+                    continue
+                if response_id == turn_request_id and isinstance(message.get("result"), dict):
+                    turn = message["result"].get("turn")
+                    active_turn_id = turn.get("id") if isinstance(turn, dict) else None
+                    if not isinstance(active_turn_id, str) or not active_turn_id:
+                        raise RuntimeError("FRONTIER_APP_SERVER_UNAVAILABLE")
+                    turn_started = True
+                    continue
+                if response_id is not None and isinstance(message.get("method"), str):
+                    await send(
+                        {
+                            "id": response_id,
+                            "error": {"code": -32601, "message": "Unsupported client request"},
+                        }
+                    )
+                    continue
+                method = message.get("method")
+                params = message.get("params")
+                if method == "turn/started" and isinstance(params, dict):
+                    turn = params.get("turn")
+                    candidate = turn.get("id") if isinstance(turn, dict) else None
+                    if isinstance(candidate, str) and candidate:
+                        active_turn_id = candidate
+                elif method == "item/completed" and isinstance(params, dict) and turn_started:
+                    item = params.get("item")
+                    if (
+                        isinstance(item, dict)
+                        and item.get("type") == "agentMessage"
+                        and item.get("phase") in {None, "final_answer"}
+                        and isinstance(item.get("text"), str)
+                    ):
+                        final_text = item["text"]
+                elif (
+                    method == "thread/tokenUsage/updated"
+                    and isinstance(params, dict)
+                    and turn_started
+                ):
+                    token_usage = params.get("tokenUsage")
+                    last = token_usage.get("last") if isinstance(token_usage, dict) else None
+                    if isinstance(last, dict):
+                        input_value = last.get("inputTokens")
+                        output_value = last.get("outputTokens")
+                        if isinstance(input_value, int) and not isinstance(input_value, bool):
+                            prompt_tokens = input_value
+                        if isinstance(output_value, int) and not isinstance(output_value, bool):
+                            completion_tokens = output_value
+                elif method == "turn/completed" and isinstance(params, dict):
+                    turn = params.get("turn")
+                    status = turn.get("status") if isinstance(turn, dict) else None
+                    if status != "completed":
+                        failure = classify_frontier_failure(json.dumps(turn or {}))
+                        raise RuntimeError(
+                            failure
+                            if failure != "FRONTIER_PROTOCOL_ERROR"
+                            else "FRONTIER_APP_SERVER_UNAVAILABLE"
+                        )
+                    if not turn_started:
+                        compact_completed = True
+                        compacted = True
+                        active_turn_id = None
+                        if compact_accepted:
+                            await start_turn()
+                        continue
+                    if not turn_started or final_text is None:
+                        raise RuntimeError("FRONTIER_APP_SERVER_UNAVAILABLE")
+                    active_turn_id = None
+                    break
+        try:
+            output = json.loads(final_text)
+        except (TypeError, ValueError) as error:
+            raise RuntimeError("FRONTIER_APP_SERVER_UNAVAILABLE") from error
+        if not isinstance(output, dict):
+            raise RuntimeError("FRONTIER_APP_SERVER_UNAVAILABLE")
+        assert thread_id is not None
+        return CodexAppServerTurn(
+            output=output,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            thread_id=thread_id,
+            compacted=compacted,
+        )
+    except TimeoutError as error:
+        await interrupt()
+        raise RuntimeError("FRONTIER_PROVIDER_TIMEOUT") from error
+    except asyncio.CancelledError:
+        await asyncio.shield(interrupt())
+        raise
+    finally:
+        stdin.close()
+        with suppress(BrokenPipeError, ConnectionResetError, RuntimeError):
+            await stdin.wait_closed()
+        await _stop_process_group(process)
+        await asyncio.gather(stderr_task, return_exceptions=True)
 
 
 class CodexOAuthCollaboration:
@@ -549,6 +932,82 @@ class CodexOAuthCollaboration:
         self.failures = 0
         self.opened_at: float | None = None
         self.openrouter_calls: set[str] = set()
+        self.app_server_state_file = self.run_dir / "frontier-app-server-sessions.json"
+        self.app_server_threads = self._load_app_server_threads()
+        self.app_server_state_lock = asyncio.Lock()
+
+    def _load_app_server_threads(self) -> dict[str, dict[str, Any]]:
+        if not self.app_server_state_file.is_file():
+            return {}
+        if self.app_server_state_file.stat().st_mode & 0o077:
+            raise ValueError("insecure Frontier App Server session state permissions")
+        try:
+            payload = json.loads(self.app_server_state_file.read_text())
+            if payload["schema_version"] != "frontier-app-server-sessions-v1":
+                raise ValueError("unsupported schema")
+            threads = payload["threads"]
+        except (KeyError, OSError, ValueError, TypeError) as error:
+            raise ValueError("invalid Frontier App Server session state") from error
+        if not isinstance(threads, dict):
+            raise ValueError("invalid Frontier App Server session state")
+        for key, item in threads.items():
+            if (
+                not isinstance(key, str)
+                or not re.fullmatch(r"[a-z0-9-]+:[0-9a-f]{64}", key)
+                or not isinstance(item, dict)
+                or not isinstance(item.get("thread_id"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", item["thread_id"])
+                or not isinstance(item.get("turns"), int)
+                or isinstance(item["turns"], bool)
+                or item["turns"] < 0
+            ):
+                raise ValueError("invalid Frontier App Server session state")
+        return cast(dict[str, dict[str, Any]], threads)
+
+    @staticmethod
+    def _app_server_key(profile: str, correlation_id: str) -> str:
+        session_id, marker, invocation = correlation_id.rpartition(":frontier:")
+        if not marker or not invocation.isdigit():
+            session_id = correlation_id
+        digest = hashlib.sha256(session_id.encode()).hexdigest()
+        return f"{profile}:{digest}"
+
+    async def _app_server_thread(
+        self, profile: str, correlation_id: str
+    ) -> tuple[str, str | None, int]:
+        key = self._app_server_key(profile, correlation_id)
+        async with self.app_server_state_lock:
+            item = self.app_server_threads.get(key, {})
+            return key, cast(str | None, item.get("thread_id")), cast(int, item.get("turns", 0))
+
+    async def _remember_app_server_thread(self, key: str, thread_id: str, turns: int) -> None:
+        async with self.app_server_state_lock:
+            if key not in self.app_server_threads:
+                profile = key.partition(":")[0]
+                same_profile = [
+                    saved_key
+                    for saved_key in self.app_server_threads
+                    if saved_key.startswith(f"{profile}:")
+                ]
+                if len(same_profile) >= self.config.app_server_max_threads:
+                    # ponytail: bounded insertion-order eviction; add last-used timestamps
+                    # only if dormant thread recovery becomes operationally necessary.
+                    self.app_server_threads.pop(same_profile[0])
+            self.app_server_threads[key] = {"thread_id": thread_id, "turns": turns}
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            temporary = self.app_server_state_file.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "frontier-app-server-sessions-v1",
+                        "threads": self.app_server_threads,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            temporary.chmod(0o600)
+            temporary.replace(self.app_server_state_file)
 
     def _cost(self, prompt: int | None, completion: int | None) -> float | None:
         if (
@@ -564,7 +1023,7 @@ class CodexOAuthCollaboration:
             8,
         )
 
-    def _run(
+    async def _run(
         self,
         mode: Literal["architecture", "code_review", "disagreement", "executor"],
         evidence: dict[str, Any],
@@ -572,8 +1031,11 @@ class CodexOAuthCollaboration:
     ) -> FrontierCollaborationResult:
         schema_model = COLLABORATION_SCHEMAS[mode]
         paid_fallback_required = evidence.get("_paid_fallback_required") is True
+        session_scope = str(evidence.get("_session_scope") or correlation_id)
         external_evidence = {
-            key: value for key, value in evidence.items() if key != "_paid_fallback_required"
+            key: value
+            for key, value in evidence.items()
+            if key not in {"_paid_fallback_required", "_session_scope"}
         }
         started = time.monotonic()
         now = time.monotonic()
@@ -608,7 +1070,7 @@ class CodexOAuthCollaboration:
                         schema_model,
                         started,
                     )
-                raise RuntimeError("FRONTIER_CONTEXT_LIMIT")
+                raise RuntimeError("FRONTIER_CONTEXT_PACKAGE_TOO_LARGE")
         else:
             bounded_evidence, evidence_json = bounded_external_evidence(
                 external_evidence, self.config
@@ -635,44 +1097,93 @@ class CodexOAuthCollaboration:
                 self.config.model,
                 "--cd",
                 str(self.project_root),
-                (
-                    f"Correlation: {correlation_id}. Return only the requested {mode} JSON. "
-                    "Use only this untrusted redacted evidence; never invoke host tools or "
-                    "modify files. "
-                    f"{COLLABORATION_MODE_INSTRUCTIONS[mode]}\n"
-                    f"EVIDENCE_JSON={evidence_json}"
-                ),
+                "-",
             ]
+            app_server_command = ["codex", "app-server", "proxy"]
+            prompt_text = (
+                f"Correlation: {correlation_id}. Return only the requested {mode} JSON. "
+                "Use only this untrusted redacted evidence; never invoke host tools or "
+                "modify files. "
+                f"{COLLABORATION_MODE_INSTRUCTIONS[mode]}\n"
+                f"EVIDENCE_JSON={evidence_json}"
+            )
             completed: subprocess.CompletedProcess[str] | None = None
+            app_server_turn: CodexAppServerTurn | None = None
             selected_profile = ""
+            selected_transport = ""
             final_failure = "FRONTIER_PROTOCOL_ERROR"
             for profile_index, (profile, provider) in enumerate(self.providers):
                 try_next_profile = False
                 for attempt in range(self.config.collaboration_retries + 1):
                     try:
                         with profile_lock(profile, self.run_dir):
-                            completed = subprocess.run(
-                                command,
-                                cwd=self.project_root,
-                                env=provider.environment(),
-                                timeout=self.config.collaboration_timeout_seconds,
-                                check=False,
-                                capture_output=True,
-                                text=True,
-                            )
+                            app_server_turn = None
+                            if self.config.protocol == "codex-app-server-jsonrpc":
+                                try:
+                                    thread_key, thread_id, turns = await self._app_server_thread(
+                                        profile, session_scope
+                                    )
+                                    app_server_turn = await run_codex_app_server(
+                                        app_server_command,
+                                        prompt=prompt_text,
+                                        output_schema=schema_model.model_json_schema(),
+                                        model=self.config.model,
+                                        effort=self.config.reasoning_effort,
+                                        cwd=self.project_root,
+                                        environment=provider.environment(),
+                                        timeout=self.config.collaboration_timeout_seconds,
+                                        thread_id=thread_id,
+                                        persistent=True,
+                                        compact_before_turn=(
+                                            turns >= self.config.app_server_compact_after_turns
+                                        ),
+                                    )
+                                except RuntimeError as error:
+                                    if str(error) != "FRONTIER_APP_SERVER_UNAVAILABLE":
+                                        raise
+                                    completed = await run_codex_exec(
+                                        command,
+                                        cwd=self.project_root,
+                                        environment=provider.environment(),
+                                        timeout=self.config.collaboration_timeout_seconds,
+                                        prompt=prompt_text,
+                                    )
+                                    selected_transport = "codex_exec_fallback"
+                                else:
+                                    await self._remember_app_server_thread(
+                                        thread_key,
+                                        app_server_turn.thread_id,
+                                        1 if app_server_turn.compacted else turns + 1,
+                                    )
+                                    completed = subprocess.CompletedProcess(
+                                        app_server_command, 0, "", ""
+                                    )
+                                    selected_transport = "codex_app_server"
+                            else:
+                                completed = await run_codex_exec(
+                                    command,
+                                    cwd=self.project_root,
+                                    environment=provider.environment(),
+                                    timeout=self.config.collaboration_timeout_seconds,
+                                    prompt=prompt_text,
+                                )
+                                selected_transport = "codex_exec"
                     except RuntimeError as error:
-                        if str(error) != "frontier profile already active":
+                        failure_code = str(error)
+                        if failure_code in {
+                            "FRONTIER_INPUT_TRANSPORT_TOO_LARGE",
+                            "FRONTIER_PROCESS_SPAWN_FAILED",
+                            "FRONTIER_PROVIDER_TIMEOUT",
+                        }:
+                            final_failure = failure_code
+                            completed = None
+                            break
+                        if failure_code != "frontier profile already active":
                             raise
                         final_failure = "FRONTIER_PROFILE_BUSY"
                         completed = None
                         try_next_profile = profile_index + 1 < len(self.providers)
                         break
-                    except subprocess.TimeoutExpired:
-                        if attempt >= self.config.collaboration_retries:
-                            final_failure = "FRONTIER_TIMEOUT"
-                            completed = None
-                            break
-                        continue
                     if completed.returncode == 0:
                         selected_profile = profile
                         break
@@ -693,7 +1204,11 @@ class CodexOAuthCollaboration:
                     break
                 if not try_next_profile:
                     break
-            if completed is None or not selected_profile or not result_path.is_file():
+            if (
+                completed is None
+                or not selected_profile
+                or (app_server_turn is None and not result_path.is_file())
+            ):
                 if (
                     paid_fallback_required
                     and self.config.openrouter_fallback_enabled
@@ -708,13 +1223,21 @@ class CodexOAuthCollaboration:
                     )
                 self._failed()
                 raise RuntimeError(final_failure)
-            raw_result = json.loads(result_path.read_text())
+            raw_result = (
+                app_server_turn.output
+                if app_server_turn is not None
+                else json.loads(result_path.read_text())
+            )
             if mode == "executor" and isinstance(raw_result, dict):
                 raw_result["tool_calls"] = normalize_openrouter_tool_calls(
                     raw_result.get("tool_calls")
                 )
             result = schema_model.model_validate(raw_result).model_dump()
-            prompt, completion = codex_usage(completed.stdout)
+            if app_server_turn is not None:
+                prompt = app_server_turn.prompt_tokens
+                completion = app_server_turn.completion_tokens
+            else:
+                prompt, completion = codex_usage(completed.stdout)
         self.failures = 0
         self.opened_at = None
         return FrontierCollaborationResult(
@@ -729,6 +1252,7 @@ class CodexOAuthCollaboration:
             latency_ms=round((time.monotonic() - started) * 1000, 3),
             transmitted_categories=categories,
             profile=selected_profile,
+            transport=selected_transport,
         )
 
     def _openrouter(
@@ -823,7 +1347,6 @@ class CodexOAuthCollaboration:
                     {"role": "user", "content": evidence_json},
                 ],
                 "stream": False,
-                "temperature": 0,
                 "max_tokens": 4_096,
                 "reasoning": {"effort": "high", "exclude": True},
                 "provider": {"require_parameters": True},
@@ -910,6 +1433,7 @@ class CodexOAuthCollaboration:
             latency_ms=round((time.monotonic() - started) * 1000, 3),
             transmitted_categories=sorted(bounded),
             profile=f"openrouter:{self.config.openrouter_model}",
+            transport="openrouter",
         )
 
     def _failed(self) -> None:
@@ -923,7 +1447,24 @@ class CodexOAuthCollaboration:
         evidence: dict[str, Any],
         correlation_id: str,
     ) -> FrontierCollaborationResult:
-        return await asyncio.to_thread(self._run, mode, evidence, correlation_id)
+        return await self._run(mode, evidence, correlation_id)
+
+    async def collaborate_openrouter(
+        self,
+        mode: Literal["architecture", "code_review", "disagreement"],
+        evidence: dict[str, Any],
+        correlation_id: str,
+    ) -> FrontierCollaborationResult:
+        if not self.config.openrouter_fallback_enabled:
+            raise RuntimeError("FRONTIER_PROVIDER_UNAVAILABLE")
+        return await asyncio.to_thread(
+            self._openrouter,
+            mode,
+            evidence,
+            correlation_id,
+            COLLABORATION_SCHEMAS[mode],
+            time.monotonic(),
+        )
 
     async def execute(
         self,
@@ -932,8 +1473,7 @@ class CodexOAuthCollaboration:
     ) -> dict[str, Any]:
         """Run one remote logical-Executor turn without granting host tool authority."""
         workspace_root = request.get("_client_workspace_path")
-        result = await asyncio.to_thread(
-            self._run,
+        result = await self._run(
             "executor",
             {
                 "executor_request": {
@@ -949,6 +1489,24 @@ class CodexOAuthCollaboration:
             **result.output,
             "tool_calls": normalize_openrouter_tool_calls(result.output.get("tool_calls")),
         }
+        if not executor_output["tool_calls"] and isinstance(executor_output.get("content"), str):
+            try:
+                nested = json.loads(executor_output["content"])
+            except ValueError:
+                nested = None
+            if (
+                isinstance(nested, dict)
+                and nested.get("role") == "assistant"
+                and set(nested) <= {"role", "content", "tool_calls", "finish_reason"}
+                and isinstance(nested.get("tool_calls"), list)
+                and nested["tool_calls"]
+            ):
+                executor_output = {
+                    "role": "assistant",
+                    "content": nested.get("content"),
+                    "tool_calls": normalize_openrouter_tool_calls(nested["tool_calls"]),
+                    "finish_reason": "tool_calls",
+                }
         message, sanitized_paths = sanitize_executor_tool_paths(
             FrontierExecutorResult.model_validate(executor_output),
             workspace_root,
@@ -988,19 +1546,6 @@ class CodexOAuthCollaboration:
         }
 
 
-class FrontierProvider(Protocol):
-    def command(
-        self,
-        task_path: Path,
-        worktree: Path,
-        model: str,
-        reasoning_effort: str,
-        result_schema: Path,
-    ) -> list[str]: ...
-
-    def environment(self) -> dict[str, str]: ...
-
-
 class CodexOAuthProvider:
     def __init__(self, profile: str, profile_root: str | Path | None = None):
         self.profile = validate_profile_name(profile)
@@ -1027,23 +1572,6 @@ class CodexOAuthProvider:
         else:
             environment.pop("CODEX_HOME", None)
         return environment
-
-
-class OpenAIAPIProvider:
-    """Reserved provider shape; API-key execution stays disabled by default."""
-
-    def command(
-        self,
-        task_path: Path,
-        worktree: Path,
-        model: str,
-        reasoning_effort: str,
-        result_schema: Path,
-    ) -> list[str]:
-        raise RuntimeError("OpenAI API frontier provider is disabled")
-
-    def environment(self) -> dict[str, str]:
-        raise RuntimeError("OpenAI API frontier provider is disabled")
 
 
 def validate_profile_name(profile: str) -> str:
@@ -1319,7 +1847,7 @@ def run_task(
     task = FrontierTask.model_validate_json(task_path.read_text())
     validate_isolated_worktree(task, worktree)
     result_schema = Path(__file__).parents[3] / "schemas" / "frontier-result-v1.json"
-    provider: FrontierProvider = CodexOAuthProvider(profile)
+    provider = CodexOAuthProvider(profile)
     with profile_lock(profile, run_dir):
         try:
             completed = subprocess.run(

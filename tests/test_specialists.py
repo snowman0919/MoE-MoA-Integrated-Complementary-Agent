@@ -10,6 +10,7 @@ from dgx_moa.specialists import (
     MockPlannerProvider,
     MockReviewerProvider,
     RemotePlannerProvider,
+    RemoteReviewerProvider,
     SpecialistRouter,
     SpecialistUnavailable,
 )
@@ -59,9 +60,7 @@ class ContextAwarePlannerProvider(MockPlannerProvider):
         self.fits = fits
         self.context_requests: list[dict[str, Any]] = []
 
-    async def context_fits(
-        self, request: dict[str, Any], *, timeout_seconds: float
-    ) -> bool | None:
+    async def context_fits(self, request: dict[str, Any], *, timeout_seconds: float) -> bool | None:
         del timeout_seconds
         self.context_requests.append(request)
         return self.fits
@@ -290,9 +289,7 @@ async def test_failed_local_provider_is_not_reselected_on_next_call() -> None:
     )
 
     with pytest.raises(RuntimeError, match="local failed"):
-        await router.complete(
-            "planner", {}, request_id="first", revision="rev", timeout_seconds=5
-        )
+        await router.complete("planner", {}, request_id="first", revision="rev", timeout_seconds=5)
     response, decision = await router.complete(
         "planner", {}, request_id="second", revision="rev", timeout_seconds=5
     )
@@ -363,3 +360,12 @@ async def test_opencode_specialist_uses_role_model_and_drops_tools(
     assert "metadata" not in body
     assert body["response_format"] == {"type": "json_object"}
     assert requests[0].headers["authorization"] == "Bearer synthetic-secret"
+
+    reviewer = RemoteReviewerProvider(
+        endpoint="https://opencode.invalid",
+        api_key_env="TEST_OPENCODE_KEY",
+        model="glm-5.2",
+        transport=httpx.MockTransport(respond),
+    )
+    await reviewer.complete({"messages": [], "thinking": {"type": "enabled"}}, timeout_seconds=5)
+    assert json.loads(requests[1].content)["thinking"] == {"type": "disabled"}

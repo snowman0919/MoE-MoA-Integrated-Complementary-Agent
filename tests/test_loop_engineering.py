@@ -64,7 +64,7 @@ def test_call_budget_and_failure_fingerprint_are_deterministic() -> None:
     assert first != failure_fingerprint(failure_class="TYPECHECK_FAILURE", stderr="failed")
 
 
-def test_duplicate_failure_requires_new_strategy_then_terminates() -> None:
+def test_duplicate_failure_new_strategy_resets_duplicate_count() -> None:
     loop = new_loop("request", "fix it")
 
     first = register_failure(loop, "TEST_FAILURE", strategy="retry", stderr="assertion failed")
@@ -77,7 +77,8 @@ def test_duplicate_failure_requires_new_strategy_then_terminates() -> None:
         loop, "TEST_FAILURE", strategy="inspect fixture", stderr="assertion failed"
     )
     assert third.attempted_strategies == ["retry", "inspect fixture"]
-    assert loop.termination_reason == "DUPLICATE_FAILURE_LIMIT"
+    assert third.occurrence_count == 1
+    assert loop.termination_reason is None
 
 
 def test_token_and_external_cost_budgets_fail_closed() -> None:

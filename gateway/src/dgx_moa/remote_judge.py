@@ -150,7 +150,7 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
         *,
         endpoint: str,
         api_key_env: str,
-        model: str = "glm-5.2",
+        model: str = "kimi-k3",
         timeout_seconds: float = 120,
         max_retries: int = 1,
         max_calls_per_request: int = 2,
@@ -224,8 +224,8 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
                 },
                 {"role": "user", "content": evidence.model_dump_json()},
             ],
-            "temperature": 0,
-            "max_tokens": 1024,
+            "temperature": 1 if self.model == "kimi-k3" else 0,
+            "max_tokens": 4096,
             "seed": 0,
             "stream": False,
             "response_format": {
@@ -252,6 +252,10 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
                     response.raise_for_status()
                     payload = response.json()
                 content = payload["choices"][0]["message"]["content"]
+                if isinstance(content, str) and not content.strip():
+                    if attempt < self.max_retries:
+                        continue
+                    raise JudgeProviderError("Remote Judge returned empty structured output")
                 verdict = RemoteJudgeVerdict.model_validate_json(content)
                 raw_usage = payload.get("usage", {})
                 usage = {
@@ -273,10 +277,10 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
                     if error.response.status_code == 429:
                         raise JudgeRateLimited("Remote Judge rate limited") from error
                     raise JudgeUnavailable("Remote Judge provider unavailable") from error
-            except (KeyError, TypeError, ValueError) as error:
+            except (KeyError, TypeError, ValueError):
                 raise JudgeProviderError(
                     "Remote Judge returned invalid structured output"
-                ) from error
+                ) from None
         raise AssertionError("unreachable")
 
     async def usage(self, request_id: str) -> dict[str, int]:

@@ -29,9 +29,7 @@ class SpecialistUnavailable(RuntimeError):
 class SpecialistProvider(ABC):
     name: str
 
-    async def context_fits(
-        self, request: dict[str, Any], *, timeout_seconds: float
-    ) -> bool | None:
+    async def context_fits(self, request: dict[str, Any], *, timeout_seconds: float) -> bool | None:
         del request, timeout_seconds
         return None
 
@@ -66,9 +64,7 @@ class _LocalProvider:
             stage=self.role,
         )
 
-    async def context_fits(
-        self, request: dict[str, Any], *, timeout_seconds: float
-    ) -> bool | None:
+    async def context_fits(self, request: dict[str, Any], *, timeout_seconds: float) -> bool | None:
         return await self.provider.context_fits(
             self.model,
             request,
@@ -115,6 +111,8 @@ class _RemoteProvider:
         body["model"] = self.model
         body["stream"] = False
         body["max_tokens"] = max(int(body.get("max_tokens", 0) or 0), self.min_completion_tokens)
+        if self.role == "reviewer" and self.model == "glm-5.2":
+            body["thinking"] = {"type": "disabled"}
         body.pop("tools", None)
         body.pop("tool_choice", None)
         body.pop("metadata", None)

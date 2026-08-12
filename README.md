@@ -1,7 +1,7 @@
 # DGX MoA Agent 2.0
 
 OpenAI-compatible, Executor-directed dynamic Mixture-of-Agents gateway. OpenCode
-and other clients connect to one authenticated tailnet endpoint. The primary
+and other clients connect to one authenticated tailnet or LAN endpoint. The primary
 `dgx-moa` path always combines an external Ollama Reasoner with the local 80B
 Executor. The Executor owns routing, native tool calls, and final synthesis; it
 adds Planner, Reviewer, Codex OAuth Frontier collaboration, or the mutually
@@ -23,9 +23,11 @@ Production is the human-reviewed `main` branch deployed at
 isolated `auto/<layer>/<proposal-id>` worktrees created from `dev` and driven by
 the stable `main` runtime.
 
-Direct tailnet access uses `http://<DGX_TAILSCALE_IP>:9000/v1`; set
+Direct tailnet access uses `http://<DGX_TAILSCALE_IP>:9000/v1`; LAN clients use
+`http://192.168.0.42:9000/v1`. Keep
 `DGX_MOA_BIND_HOST="$(tailscale ip -4 | head -n1)"` in `.env.local` after
-resolving it in the shell. Tailscale Serve and Funnel are not required.
+resolving it in the shell; the LAN listener is a systemd socket proxy to that
+same authenticated gateway. Tailscale Serve and Funnel are not required.
 
 See `docs/API_CLIENT_MODES.md` for the model aliases, standard request and SSE
 contracts, typed errors, curl/OpenAI SDK/OpenCode examples, and output limits.
@@ -56,8 +58,7 @@ compatibility fixes were promoted through reviewed `dev`-to-`main` PRs.
 Skills and canaries, a separate Runtime Knowledge registry, OpenCode Go GLM-5.2
 Remote Judge transport, remote-first cold-start routing for local Planner and
 Reviewer specialists, declarative policy, typed Evidence Graph/replay, safe
-Telegram observation (with an optional disabled Discord compatibility transport),
-privacy-filtered training candidates, and Seoul
+Telegram observation, privacy-filtered training candidates, and Seoul
 weekly 7z packaging/retention workflows. These are not production capabilities
 until the physical client/provider/archive gates in `docs/VALIDATION.md` pass.
 

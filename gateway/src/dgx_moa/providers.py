@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import re
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
@@ -12,6 +14,34 @@ from .http_client import make_http_client, managed_http_client
 
 PLANNER_REASONING_TOKENS = 768
 PLANNER_FINAL_TOKENS = 1_536
+MISTRAL_TOOL_CALL_ID = re.compile(r"^[A-Za-z0-9]{9}$")
+
+
+def mistral_tool_call_id(value: object) -> str:
+    original = str(value)
+    if MISTRAL_TOOL_CALL_ID.fullmatch(original):
+        return original
+    return hashlib.sha256(original.encode()).hexdigest()[:9]
+
+
+def mistral_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized = []
+    leading_instructions = True
+    for source in messages:
+        role = source.get("role")
+        message = dict(source)
+        if role in {"developer", "system"}:
+            message["role"] = "system" if leading_instructions else "user"
+        else:
+            leading_instructions = False
+        if calls := source.get("tool_calls"):
+            message["tool_calls"] = [
+                {**call, "id": mistral_tool_call_id(call.get("id", ""))} for call in calls
+            ]
+        if source.get("role") == "tool" and "tool_call_id" in source:
+            message["tool_call_id"] = mistral_tool_call_id(source["tool_call_id"])
+        normalized.append(message)
+    return normalized
 
 
 class StageTimeout(TimeoutError):
@@ -77,6 +107,11 @@ class ModelProvider:
         body = request.copy()
         body["model"] = model.served_name
         body.pop("metadata", None)
+        if role == "executor" and model.reasoning_parser == "mistral":
+            body["messages"] = mistral_messages(body.get("messages", []))
+            if body["messages"] and body["messages"][-1].get("role") == "assistant":
+                body["continue_final_message"] = True
+                body["add_generation_prompt"] = False
         if role != "executor":
             body.pop("tools", None)
             body.pop("tool_choice", None)

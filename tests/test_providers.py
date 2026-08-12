@@ -5,6 +5,7 @@ import json
 
 import httpx
 import pytest
+from dgx_moa.http_client import make_http_client
 from dgx_moa.providers import ModelProvider, parse_json_content
 
 
@@ -26,6 +27,15 @@ class CountingClient(httpx.AsyncClient):
     async def aclose(self) -> None:
         self.close_count += 1
         await super().aclose()
+
+
+@pytest.mark.asyncio
+async def test_explicit_none_disables_httpx_default_timeout() -> None:
+    client = make_http_client(timeout=None)
+    try:
+        assert client.timeout == httpx.Timeout(None)
+    finally:
+        await client.aclose()
 
 
 def tracked_stream_transport(
@@ -114,6 +124,94 @@ def test_judge_is_read_only(settings) -> None:  # type: ignore[no-untyped-def]
     assert "tools" not in body
     assert "tool_choice" not in body
     assert body["stream"] is False
+
+
+def test_mistral_executor_maps_developer_role_without_mutating_request(settings) -> None:  # type: ignore[no-untyped-def]
+    request = {
+        "messages": [
+            {"role": "developer", "content": "Follow the client instructions."},
+            {"role": "user", "content": "Work."},
+        ]
+    }
+
+    model = settings.models["executor"].model_copy(update={"reasoning_parser": "mistral"})
+    body = ModelProvider.body("executor", model, request)
+
+    assert body["messages"] == [
+        {"role": "system", "content": "Follow the client instructions."},
+        {"role": "user", "content": "Work."},
+    ]
+    assert request["messages"][0]["role"] == "developer"
+
+    continuation = ModelProvider.body(
+        "executor",
+        model,
+        {"messages": [{"role": "assistant", "content": "Partial answer"}]},
+    )
+    assert continuation["continue_final_message"] is True
+    assert continuation["add_generation_prompt"] is False
+
+
+def test_mistral_executor_normalizes_matching_tool_call_ids_without_mutation(settings) -> None:  # type: ignore[no-untyped-def]
+    call_id = "call_9e8d4c55b9a64c24985c9d943248048e"
+    request = {
+        "messages": [
+            {"role": "assistant", "tool_calls": [{"id": call_id, "type": "function"}]},
+            {"role": "tool", "tool_call_id": call_id, "content": "done"},
+        ]
+    }
+    model = settings.models["executor"].model_copy(update={"reasoning_parser": "mistral"})
+
+    body = ModelProvider.body("executor", model, request)
+
+    normalized_id = body["messages"][0]["tool_calls"][0]["id"]
+    assert normalized_id == body["messages"][1]["tool_call_id"]
+    assert len(normalized_id) == 9
+    assert request["messages"][0]["tool_calls"][0]["id"] == call_id
+
+
+def test_mistral_executor_keeps_shared_suffix_tool_call_ids_distinct(settings) -> None:  # type: ignore[no-untyped-def]
+    first = "call_read_agents_requirements"
+    second = "call_read_readme_requirements"
+    request = {
+        "messages": [
+            {
+                "role": "assistant",
+                "tool_calls": [{"id": first}, {"id": second}],
+            },
+            {"role": "tool", "tool_call_id": first, "content": "agents"},
+            {"role": "tool", "tool_call_id": second, "content": "readme"},
+        ]
+    }
+    model = settings.models["executor"].model_copy(update={"reasoning_parser": "mistral"})
+
+    body = ModelProvider.body("executor", model, request)
+
+    call_ids = [call["id"] for call in body["messages"][0]["tool_calls"]]
+    result_ids = [message["tool_call_id"] for message in body["messages"][1:]]
+    assert len(set(call_ids)) == 2
+    assert call_ids == result_ids
+
+
+def test_mistral_executor_does_not_put_system_messages_after_tools(settings) -> None:  # type: ignore[no-untyped-def]
+    request = {
+        "messages": [
+            {"role": "developer", "content": "Initial instructions"},
+            {"role": "assistant", "tool_calls": [{"id": "123456789"}]},
+            {"role": "tool", "tool_call_id": "123456789", "content": "done"},
+            {"role": "developer", "content": "Repeated instructions"},
+        ]
+    }
+    model = settings.models["executor"].model_copy(update={"reasoning_parser": "mistral"})
+
+    body = ModelProvider.body("executor", model, request)
+
+    assert [message["role"] for message in body["messages"]] == [
+        "system",
+        "assistant",
+        "tool",
+        "user",
+    ]
 
 
 def test_nemotron_planner_keeps_bounded_reasoning(settings) -> None:  # type: ignore[no-untyped-def]

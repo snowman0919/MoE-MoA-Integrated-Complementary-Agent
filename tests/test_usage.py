@@ -175,7 +175,7 @@ def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
         "memory_before_bytes",
         "memory_after_bytes",
     }
-    assert {"provider", "fallback_reason"} <= invocation_columns
+    assert {"provider", "fallback_reason", "cached_tokens"} <= invocation_columns
 
 
 def test_legacy_chat_runtime_mode_reads_as_fast(tmp_path: Path) -> None:
@@ -571,6 +571,16 @@ def test_model_invocation_rates_are_written_to_runtime_csv(tmp_path: Path) -> No
     store.record_model_invocation(
         "request-1",
         role="executor",
+        model="executor-model",
+        mode="repair",
+        status="completed",
+        latency_ms=2.5,
+        cached_tokens=0,
+        total_tokens=9,
+    )
+    store.record_model_invocation(
+        "request-1",
+        role="executor",
         model="retired-executor-model",
         mode="legacy",
         status="failed",
@@ -596,11 +606,13 @@ def test_model_invocation_rates_are_written_to_runtime_csv(tmp_path: Path) -> No
         row for row in rows if row["window"] == "all_time" and row["role"] == "frontier"
     )
     assert executor["invocation_rate_percent"] == "100.0"
-    assert executor["invocation_count"] == "1"
-    assert executor["total_tokens"] == "7"
+    assert executor["invocation_count"] == "2"
+    assert executor["cached_tokens"] == "0"
+    assert executor["total_tokens"] == "16"
     assert retired["invocation_count"] == "1"
     assert retired["failure_count"] == "1"
     assert frontier["invocation_rate_percent"] == "0.0"
+    assert frontier["cached_tokens"] == ""
 
 
 def test_api_token_dashboard_tracks_fallback_provenance(tmp_path: Path) -> None:
@@ -623,6 +635,7 @@ def test_api_token_dashboard_tracks_fallback_provenance(tmp_path: Path) -> None:
         latency_ms=10,
         prompt_tokens=2,
         completion_tokens=3,
+        cached_tokens=0,
         total_tokens=5,
     )
     store.record_model_invocation(
@@ -663,6 +676,7 @@ def test_api_token_dashboard_tracks_fallback_provenance(tmp_path: Path) -> None:
         "invocations": 1,
         "prompt_tokens": 7,
         "completion_tokens": 11,
+        "cached_tokens": None,
         "total_tokens": 18,
     }
 

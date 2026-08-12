@@ -32,6 +32,7 @@ class AdminCodexRunner:
         # ponytail: one global turn lock; add per-workspace locks only if concurrent jobs matter.
         self.lock = asyncio.Lock()
         self.sessions: dict[str, tuple[str, str]] = {}
+        self._provider_token: str | None = None
 
     @staticmethod
     def code_root() -> Path:
@@ -65,30 +66,41 @@ class AdminCodexRunner:
         return relative.as_posix(), candidate
 
     def provider_key(self) -> str:
+        if self._provider_token is not None:
+            return self._provider_token
         name = "admin-codex-cli"
+        request = ApiKeyRequest(
+            name=name,
+            kind="general",
+            expires_in_days=365,
+            request_limit=10_000,
+            token_limit=100_000_000,
+        )
         try:
             record = self.api_keys.get(name)
         except KeyError:
-            token, _ = self.api_keys.create(
-                ApiKeyRequest(
-                    name=name,
-                    kind="general",
-                    expires_in_days=365,
-                    request_limit=10_000,
-                    token_limit=100_000_000,
-                )
-            )
+            token, _ = self.api_keys.create(request)
             self.store.event("admin-codex", "admin_codex_key_created", {"kind": "general"})
-            return str(token)
-        if record["kind"] != "general" or record["status"] != "active":
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "admin-codex-cli key must be an active general key",
-            )
-        return str(record["api_key"])
+        else:
+            if record["kind"] != "general" or record["status"] != "active":
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "admin-codex-cli key must be an active general key",
+                )
+            token, _ = self.api_keys.create(request, replace=True)
+            self.store.event("admin-codex", "admin_codex_key_rotated", {"kind": "general"})
+        self._provider_token = token
+        return token
 
     def command(self, body: AdminCodexRequest, workspace: Path) -> list[str]:
-        sandbox = "workspace-write" if body.mode == "agent" else "read-only"
+        unsandboxed = os.getenv("DGX_MOA_ADMIN_CODEX_UNSANDBOXED") == "true"
+        sandbox = (
+            "danger-full-access"
+            if body.mode == "agent" and unsandboxed
+            else "workspace-write"
+            if body.mode == "agent"
+            else "read-only"
+        )
         provider = "dgx_moa_admin"
         base_url = f"http://127.0.0.1:{self.settings.bind_port}/v1"
         options = [
@@ -98,7 +110,7 @@ class AdminCodexRunner:
             "-c",
             f"model={json.dumps(self.settings.model_name)}",
             "-c",
-            "model_context_window=65536",
+            "model_context_window=131072",
             "-c",
             'model_reasoning_effort="high"',
             "-c",
@@ -118,7 +130,7 @@ class AdminCodexRunner:
             "-c",
             'approval_policy="never"',
             "-c",
-            "sandbox_workspace_write.network_access=false",
+            f"sandbox_workspace_write.network_access={'true' if unsandboxed else 'false'}",
             "-c",
             "allow_login_shell=false",
             "-c",

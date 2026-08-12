@@ -377,11 +377,13 @@ def register_failure(
         )
         loop.open_failures.append(failure)
         return failure
-    existing.occurrence_count += 1
-    existing.strategy_change_required = existing.occurrence_count >= 2
     if strategy and strategy not in existing.attempted_strategies:
         existing.attempted_strategies.append(strategy)
+        existing.occurrence_count = 1
         existing.strategy_change_required = False
+        return existing
+    existing.occurrence_count += 1
+    existing.strategy_change_required = existing.occurrence_count >= 2
     if existing.occurrence_count >= 3:
         terminate(loop, "DUPLICATE_FAILURE_LIMIT")
     return existing

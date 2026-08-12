@@ -1,0 +1,24 @@
+{
+  "status": "passed",
+  "ruff_check": "passed",
+  "ruff_format_check": "103 files formatted",
+  "mypy": "Success: no issues found in 49 source files",
+  "pytest": {
+    "passed": 1059,
+    "failed": 0,
+    "warnings": 1,
+    "duration_seconds": 39.62
+  },
+  "systemd_verify": "passed",
+  "qualified_executor_command": {
+    "context_length": 131072,
+    "max_num_seqs": 1,
+    "kv_cache_memory_bytes": 3400000000,
+    "attention_backend": "TRITON_MLA",
+    "moe_backend": "flashinfer_b12x",
+    "cuda_graph": "FULL_DECODE_ONLY",
+    "linear_backend_argument": null,
+    "safetensors_load_strategy": "lazy"
+  },
+  "note": "Static validation covers the current development worktree. It is not a reviewed commit or installed production revision."
+}

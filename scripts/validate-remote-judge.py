@@ -35,15 +35,16 @@ async def validate(output: Path) -> None:
     provider = OpenCodeGoJudgeProvider(
         endpoint=endpoint,
         api_key_env="OPENCODE_GO_API_KEY",
-        model="glm-5.2",
+        model="kimi-k3",
         timeout_seconds=120,
         max_retries=1,
         max_calls_per_request=2,
     )
     if not await provider.available():
-        raise RuntimeError("OpenCode Go GLM-5.2 model catalog is unavailable")
+        raise RuntimeError("OpenCode Go kimi-k3 model catalog is unavailable")
 
     results: dict[str, dict[str, object]] = {}
+    created_at = datetime.now(UTC).isoformat()
 
     def write_status(status: str) -> None:
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -53,9 +54,9 @@ async def validate(output: Path) -> None:
                 {
                     "schema_version": "live-remote-judge-validation-v1",
                     "status": status,
-                    "created_at": datetime.now(UTC).isoformat(),
+                    "created_at": created_at,
                     "provider": "opencode_go",
-                    "model": "glm-5.2",
+                    "model": "kimi-k3",
                     "cases": results,
                 },
                 indent=2,
@@ -66,8 +67,17 @@ async def validate(output: Path) -> None:
         temporary.replace(output)
 
     async def run(name: str, evidence: JudgeEvidencePackage) -> RemoteJudgeVerdict:
-        verdict = await provider.judge(evidence)
+        try:
+            verdict = await provider.judge(evidence)
+        except Exception as error:
+            results[name] = {
+                "status": "failed",
+                "failure_class": type(error).__name__,
+            }
+            write_status("failed")
+            raise
         results[name] = {
+            "status": "passed",
             "verdict": verdict.verdict,
             "criteria": verdict.criteria.model_dump(mode="json"),
             "finding_count": len(verdict.findings),
@@ -171,7 +181,16 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    asyncio.run(validate(args.output.resolve()))
+    output = args.output.resolve()
+    try:
+        asyncio.run(validate(output))
+    except Exception as error:
+        payload = json.loads(output.read_text()) if output.is_file() else {}
+        payload.update({"status": "failed", "failure_class": type(error).__name__})
+        temporary = output.with_suffix(f"{output.suffix}.tmp")
+        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        temporary.replace(output)
+        raise
 
 
 if __name__ == "__main__":

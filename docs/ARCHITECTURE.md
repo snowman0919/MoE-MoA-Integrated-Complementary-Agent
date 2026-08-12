@@ -10,8 +10,8 @@ provider validation is gated. Neither development feature changes the
 Executor's sole ownership of tools, routing, corrections, final validation, or
 client-visible synthesis.
 
-OpenCode connects over tailnet TCP to the authenticated gateway. The controller
-stores session state in SQLite and calls loopback-only local role servers. The
+OpenCode connects over tailnet or local-LAN TCP to the authenticated gateway.
+The controller stores session state in SQLite and calls loopback-only local role servers. The
 Reasoner is an externally managed Ollama service configured as an explicit
 external dependency; no local role endpoint is exposed by this gateway.
 Resident and judge profiles remain mutually exclusive systemd targets.

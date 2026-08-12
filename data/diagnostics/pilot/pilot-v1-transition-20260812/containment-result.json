@@ -1,0 +1,43 @@
+{
+  "gate": "qualification_memory_containment",
+  "status": "passed",
+  "observed_at": "2026-08-12T13:01:19+09:00",
+  "pressure_unit": {
+    "name": "dgx-moa-pilot-containment-pressure-attempt02.service",
+    "slice": "dgx-moa-qualification.slice",
+    "memory_max_bytes": 134217728,
+    "memory_swap_max_bytes": 0,
+    "allocation_step_mib": 8,
+    "last_completed_allocation_mib": 120,
+    "result": "oom-kill",
+    "signal": "SIGKILL",
+    "slice_memory_peak_bytes": 134258688
+  },
+  "health_sampling": {
+    "samples": 320,
+    "production_gateway_failures": 0,
+    "validation_gateway_failures": 0
+  },
+  "pid_stability": {
+    "user_manager_before_after": 3107444,
+    "production_gateway_before_after": 3107456,
+    "candidate_a_before_after": 2383374
+  },
+  "candidate_a_runtime_limits": {
+    "memory_high_bytes": 12884901888,
+    "memory_max_bytes": 17179869184,
+    "memory_swap_max_bytes": 4294967296,
+    "oom_policy": "stop",
+    "kill_mode": "control-group",
+    "observed_memory_current_bytes": 2841907200,
+    "observed_memory_peak_bytes": 8295600128,
+    "observed_swap_current_bytes": 2193113088,
+    "persistence": "runtime-only; must be encoded and restart-verified before PILOT_READY"
+  },
+  "post_check": {
+    "production_health_http": 200,
+    "validation_health_http": 200,
+    "candidate_a_active": true
+  },
+  "interpretation": "The qualification pressure process was killed inside its capped cgroup without restarting or interrupting the user manager, Candidate A, or either gateway. This closes the physical blast-radius test; persistent launch enforcement remains a separate Pilot gate."
+}

@@ -51,7 +51,7 @@ gateway:
     enabled: false
     provider: disabled
     mode: selective
-    model: glm-5.2
+    model: kimi-k3
     endpoint: null
     api_key_env: OPENCODE_GO_API_KEY
     timeout_seconds: 120
@@ -69,7 +69,7 @@ gateway:
     api_key_env: OPENCODE_GO_API_KEY
     models:
       planner: deepseek-v4-pro
-      reviewer: deepseek-v4-flash
+      reviewer: deepseek-v4-pro
     timeout_seconds: 120
     local_latency_seconds: {planner: 30, reviewer: 45}
     remote_latency_seconds: {planner: 25, reviewer: 5}
@@ -85,6 +85,18 @@ gateway:
     enabled: false
     version: development-disabled
     policies: []
+  execution_graph:
+    mode: disabled
+  executor_scheduling:
+    enabled: false
+    same_key_max_local_queue: 3
+    max_total_local_queue: 256
+    queue_timeout_seconds: 14400
+    flash_provider: disabled
+    flash_model: deepseek-v4-flash
+    flash_endpoint: https://opencode.ai/zen/go
+    flash_api_key_env: OPENCODE_GO_API_KEY
+  dashboard_enabled: false
   live_observation:
     enabled: false
     level: normal
@@ -209,16 +221,17 @@ gateway:
 
 models:
   executor:
-    repository: RedHatAI/Qwen3-Coder-Next-NVFP4
-    revision: 27a8f16f463b9a13c91c332c40cf93e09717347e
-    classification: community-maintained
+    repository: mistralai/Mistral-Small-4-119B-2603-NVFP4
+    revision: b1a9048590131d38491bd23a7c9f6ed0962f0358
+    classification: official
     base_url: http://127.0.0.1:8101
     served_name: dgx-moa-executor
-    destination: /home/kotori9/models/dgx-moa/executor
-    context_length: 65536
+    destination: /home/kotori9/models/.hf-cache/models--mistralai--Mistral-Small-4-119B-2603-NVFP4/snapshots/b1a9048590131d38491bd23a7c9f6ed0962f0358
+    context_length: 131072
     max_num_seqs: 1
     quantization: compressed-tensors
-    tool_call_parser: qwen3_coder
+    tool_call_parser: mistral
+    reasoning_parser: mistral
     trust_remote_code: false
     required: true
   planner:
@@ -264,7 +277,7 @@ models:
     repository: ollama/Qwythos-v2-9B
     revision: Q4
     classification: external
-    base_url: http://192.168.0.197:11434
+    base_url: http://100.90.167.128:11434
     served_name: Qwythos-v2-9B:Q4
     destination: /home/kotori9/models/dgx-moa/reasoner
     provider: ollama

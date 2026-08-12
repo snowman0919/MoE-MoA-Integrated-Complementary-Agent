@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import fnmatch
 import hashlib
 import json
@@ -17,15 +18,19 @@ from .compression import compress_messages, compress_text
 from .config import Settings
 from .evidence import EvidenceEdge, EvidenceNode, classify_evidence
 from .evolution import PromptRegistry
+from .execution_graph import (
+    ExecutionGraphRuntime,
+    ExecutionGraphStore,
+    NodeType,
+    SchedulingSnapshot,
+    record_shadow_failure,
+)
+from .execution_graph import (
+    project_execution_graph as persist_execution_graph_projection,
+)
 from .frontier import (
     CodexOAuthCollaboration,
     FrontierCollaborationResult,
-    FrontierResult,
-    FrontierTask,
-    build_frontier_task,
-    evaluate_frontier_candidate,
-    frontier_eligible,
-    select_frontier_profile,
 )
 from .knowledge import KnowledgeQuery, KnowledgeRegistry
 from .loop_engineering import (
@@ -59,6 +64,25 @@ from .remote_judge import (
     JudgeTimeout,
     RemoteJudgeVerdict,
 )
+from .review_evidence import (
+    changed_paths_evidence,
+    review_contract_evidence,
+    review_tool_executions,
+    review_tool_results,
+)
+from .review_evidence import (
+    has_review_evidence as build_has_review_evidence,
+)
+from .review_evidence import (
+    material_frontier_review as has_material_frontier_review,
+)
+from .review_evidence import material_review_issue as has_material_review_issue
+from .review_evidence import (
+    review_observation as build_review_observation,
+)
+from .review_evidence import (
+    tool_execution_changes_files as execution_changes_files,
+)
 from .routing import ChangeRisk, heavy_eligible, needs_planner, needs_reviewer, select_route
 from .schemas import (
     JudgeVerdict,
@@ -73,7 +97,7 @@ from .skills import SkillQuery, SkillRegistry
 from .specialists import SpecialistRouter
 from .state import Phase, SessionState, StateStore, now
 from .trace import training_default, validate_provenance
-from .usage import UsageStore
+from .usage import SQLITE_MAX_INTEGER, UsageStore
 from .validation import completion_ready
 
 
@@ -116,13 +140,6 @@ GOAL_PREREQUISITE_DOCUMENTS = (
     "docs/VALIDATION.md",
     "docs/TRACE_SCHEMA.md",
 )
-REVIEW_CONTRACT_DOCUMENTS = {
-    "agents.md",
-    "readme.md",
-    "requirements.md",
-    "spec.md",
-}
-
 IMPLEMENTATION_QUALITY_CONTRACT = (
     "Treat the written contract and surrounding code as authoritative; supplied tests are "
     "examples, not the complete specification. Before finalizing, derive and run at least one "
@@ -136,8 +153,11 @@ IMPLEMENTATION_QUALITY_CONTRACT = (
     "contract does not require. "
     "In Python, bool is a subclass of int, so a comparison such as value < 0 is not a sufficient "
     "type check; use an explicit boolean guard or an exact integer type check. Parameters named "
-    "version, expected_version, revision, sequence, count, or index require an explicit bool "
-    "rejection when their contract requires an integer. Preserve every "
+    "version, expected_version, revision, sequence, count, index, limit, or names ending in "
+    "_limit require an explicit bool "
+    "rejection when their contract requires an integer. Use TypeError or ValueError for invalid "
+    "types and bounds; reserve domain conflict exceptions for valid values that conflict with "
+    "current state unless the contract says otherwise. Preserve every "
     "documented container type before calling methods such as items(), and reject invalid "
     "containers without mutating durable state. For strict JSON storage, validate the fully "
     "merged object and use allow_nan=False on the actual dump before any write; strict reads "
@@ -146,6 +166,8 @@ IMPLEMENTATION_QUALITY_CONTRACT = (
     "documented public function signature, including optional argv-style entry points. "
     "For documented whole-string regular-expression formats, use fullmatch or an equivalent "
     "strict end-of-string check; a `$` anchor may match before a final newline. "
+    "When a public operation is documented to return bool and malformed inputs are described "
+    "as rejected, return False unless the contract explicitly requires an exception. "
     "Classify numeric bounds by their contract semantics instead of applying one rule to every "
     "limit. Security or resource capacities and timeouts must be strictly positive unless zero "
     "explicitly disables them. Collection, sample, and selection counts may be zero when zero "
@@ -163,7 +185,10 @@ REVIEWER_QUALITY_CONTRACT = (
     "that grow with total historical requests without contract-required retention, and "
     "input-ordering or monotonicity restrictions absent from the written contract. "
     "Explicitly verify bool rejection for integer version, "
-    "expected_version, revision, sequence, count, and index parameters. Before approving, "
+    "expected_version, revision, sequence, count, index, limit, and names ending in _limit. "
+    "Require TypeError or "
+    "ValueError for invalid types and bounds; reserve domain conflict exceptions for valid values "
+    "that conflict with current state unless the contract says otherwise. Before approving, "
     "inspect every documented public "
     "function signature and every public numeric parameter in the bounded code evidence; reject "
     "missing explicit type or boundary checks and changed optional argv-style entry points. "
@@ -172,6 +197,8 @@ REVIEWER_QUALITY_CONTRACT = (
     "dump, and reject non-finite constants on read. "
     "For documented whole-string regular-expression formats, require fullmatch or an equivalent "
     "strict end-of-string check; a `$` anchor may match before a final newline. "
+    "When a public operation is documented to return bool and malformed inputs are described "
+    "as rejected, require False unless the contract explicitly requires an exception. "
     "Classify numeric bounds by their contract semantics. Security or resource capacities and "
     "timeouts must be strictly positive unless zero explicitly disables them. Collection, "
     "sample, and selection counts may be zero when zero naturally means none; reject negative "
@@ -267,25 +294,54 @@ def pending_goal_prerequisites(state: SessionState) -> tuple[str, ...]:
 
 
 def argument_paths(arguments: Any) -> set[str]:
-    text = arguments if isinstance(arguments, str) else json.dumps(arguments, sort_keys=True)
+    if isinstance(arguments, str):
+        with contextlib.suppress(ValueError):
+            arguments = json.loads(arguments)
+    text = (
+        arguments
+        if isinstance(arguments, str)
+        else "\n".join(
+            value
+            for key in ("cmd", "command", "input", "patch")
+            if isinstance((value := arguments.get(key)), str)
+        )
+        if isinstance(arguments, dict)
+        else ""
+    )
     paths = {
         match.removeprefix("file://").rstrip(",.);]")
-        for match in re.findall(r"(?:file://)?/[^\s\"'\\]+", text)
+        for match in re.findall(
+            r"(?:file://|(?<![A-Za-z0-9_.:/)\]-]))/[^\s\"'\\(),;]+",
+            text,
+        )
     }
     if isinstance(arguments, dict):
         for key, value in arguments.items():
             normalized = key.lower().replace("_", "")
             if (
-                normalized in {"path", "file", "filepath", "filename", "target", "targetpath"}
+                normalized
+                in {"path", "file", "filepath", "filename", "target", "targetpath", "uri"}
                 and isinstance(value, str)
                 and value
                 and "\n" not in value
             ):
                 paths.add(value.removeprefix("file://"))
     paths.update(
-        match.strip()
-        for match in re.findall(
-            r"(?<![\w./-])(?:[\w.-]+/)*[\w.-]+\.(?:py|js|ts|json|toml|yaml|yml|md)\b",
+        match.rstrip(",.);]")
+        for pattern in (
+            r"(?m)^\*\*\* (?:Add|Update|Delete) File:\s*(\S+)",
+            r"(?m)(?:^|[;&|]\s*)(?:cat|echo|printf)\b[^\n;&|]*?"
+            r"(?<![\d>])>{1,2}\s*([^\s;&|]+)",
+            r"\bopen\s*\(\s*[\"']([^\"']+)[\"']\s*,\s*[\"'][wax]",
+            r"\bPath\s*\(\s*[\"']([^\"']+)[\"']\s*\)\s*\.write_",
+        )
+        for match in re.findall(pattern, text)
+        if match not in {"/dev/null", "/dev/stdout", "/dev/stderr"}
+    )
+    paths.update(
+        re.findall(
+            r"(?:^|[\s])((?:[\w.-]+/)*[\w.-]+\.(?:py|js|ts|json|toml|yaml|yml|md))"
+            r"(?=$|[\s;&|])",
             text,
         )
     )
@@ -354,10 +410,7 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
         try:
             prefix, offset = json.JSONDecoder().raw_decode(content)
             suffix = content[offset:].strip()
-            if not (
-                isinstance(prefix, dict)
-                and suffix.startswith("[Tool loop warning:")
-            ):
+            if not (isinstance(prefix, dict) and suffix.startswith("[Tool loop warning:")):
                 raise ValueError
             parsed = dict(prefix)
             output_key = "stdout" if "stdout" in parsed else "output"
@@ -440,6 +493,11 @@ class Controller:
         self.specialists: SpecialistRouter | None = None
         self.lifecycle_store: Any | None = None
         self._review_lock = asyncio.Lock()
+        self.execution_graph_store = (
+            ExecutionGraphStore(settings.state_db)
+            if settings.execution_graph.mode == "shadow"
+            else None
+        )
 
     async def complete_specialist(
         self,
@@ -625,17 +683,28 @@ class Controller:
         assert self.frontier is not None
         self.admit_loop_action(state, "frontier_calls")
         state.frontier_invocations += 1
-        invocation_id = (
-            f"{state.task_id or state.session_id}:frontier:{state.frontier_invocations}"
-        )
+        invocation_id = f"{state.task_id or state.session_id}:frontier:{state.frontier_invocations}"
+        evidence = {
+            **evidence,
+            "_session_scope": (
+                f"{state.api_token_id or 'legacy'}:{state.task_id or state.session_id}"
+            ),
+        }
         scoped_evidence = (
-            {**evidence, "_paid_fallback_required": True}
-            if mode == "code_review"
-            else evidence
+            {**evidence, "_paid_fallback_required": True} if mode == "code_review" else evidence
         )
-        return await self.frontier.collaborate(
-            mode, scoped_evidence, invocation_id
-        )
+        return await self.frontier.collaborate(mode, scoped_evidence, invocation_id)
+
+    async def _frontier_b_collaborate(
+        self,
+        state: SessionState,
+        evidence: dict[str, Any],
+    ) -> FrontierCollaborationResult:
+        assert self.frontier is not None
+        self.admit_loop_action(state, "frontier_calls")
+        state.frontier_invocations += 1
+        invocation_id = f"{state.task_id or state.session_id}:frontier:{state.frontier_invocations}"
+        return await self.frontier.collaborate_openrouter("disagreement", evidence, invocation_id)
 
     @staticmethod
     def safe_payload(state: SessionState, payload: Any) -> Any:
@@ -694,6 +763,14 @@ class Controller:
     ) -> None:
         raw_usage = response.get("usage")
         usage = cast(dict[str, Any], raw_usage) if isinstance(raw_usage, dict) else {}
+        raw_details = usage.get("prompt_tokens_details")
+        details = cast(dict[str, Any], raw_details) if isinstance(raw_details, dict) else {}
+        cached_tokens = details.get("cached_tokens")
+        cached_tokens = (
+            cached_tokens
+            if type(cached_tokens) is int and 0 <= cached_tokens <= SQLITE_MAX_INTEGER
+            else None
+        )
         provenance = response.get("provider_provenance")
         provenance = cast(dict[str, Any], provenance) if isinstance(provenance, dict) else {}
         self.record_observed_invocation(
@@ -706,6 +783,7 @@ class Controller:
                 "prompt_tokens": usage.get("prompt_tokens"),
                 "completion_tokens": usage.get("completion_tokens"),
                 "total_tokens": usage.get("total_tokens"),
+                "cached_tokens": cached_tokens,
                 "status": "completed",
                 **(
                     {"provider": provider or provenance.get("provider")}
@@ -766,6 +844,7 @@ class Controller:
                 prompt_tokens=invocation.get("prompt_tokens"),
                 completion_tokens=invocation.get("completion_tokens"),
                 total_tokens=invocation.get("total_tokens"),
+                cached_tokens=invocation.get("cached_tokens"),
             )
         except Exception as error:
             self.store.event(
@@ -1120,6 +1199,33 @@ class Controller:
             )
             self.store.save(state)
 
+    def project_execution_graph(
+        self,
+        state: SessionState,
+        metadata: dict[str, Any],
+        *,
+        executor_provider: Literal[
+            "local_mistral", "opencode_go", "legacy_local_qwen", "codex_frontier"
+        ],
+        scheduling: SchedulingSnapshot | None = None,
+        tools_requested: bool,
+        validation_required: bool,
+        deadline_seconds: float,
+    ) -> ExecutionGraphRuntime | None:
+        return persist_execution_graph_projection(
+            self.settings,
+            self.store,
+            self.execution_graph_store,
+            state,
+            metadata,
+            risk=cast(Literal["low", "medium", "high", "critical"], self._loop_risk(metadata)),
+            executor_provider=executor_provider,
+            scheduling=scheduling,
+            tools_requested=tools_requested,
+            validation_required=validation_required,
+            deadline_seconds=deadline_seconds,
+        )
+
     def apply_declarative_policy(self, state: SessionState, metadata: dict[str, Any]) -> None:
         if self.policy is None or not self.settings.declarative_policy.enabled:
             return
@@ -1199,132 +1305,6 @@ class Controller:
             self.terminate_loop(state, "PERMISSION_REQUIRED")
             self.store.save(state)
             raise PolicyBlocked("operator approval required by declarative policy")
-
-    def frontier_eligible(self, state: SessionState, metadata: dict[str, Any]) -> tuple[bool, str]:
-        metadata = metadata | {"frontier_invocations": state.frontier_invocations}
-        eligible, reason = frontier_eligible(state, metadata)
-        if eligible and not self.settings.frontier_enabled:
-            required = bool(metadata.get("frontier_required"))
-            event = "frontier_required_but_disabled" if required else "frontier_disabled"
-            self.store.event(
-                state.session_id,
-                event,
-                {"reason": self.settings.frontier_disabled_reason, "eligible_reason": reason},
-            )
-            if required:
-                state.phase = Phase.BLOCKED
-                state.final_status = "blocked"
-            self.store.save(state)
-            return False, "FRONTIER_DISABLED"
-        self.store.event(
-            state.session_id,
-            "frontier_usage_limited"
-            if reason == "frontier_invocation_limit"
-            else "frontier_eligible",
-            {"eligible": eligible, "reason": reason},
-        )
-        self.store.save(state)
-        return eligible, reason
-
-    def select_frontier_profile(
-        self,
-        state: SessionState,
-        *,
-        explicit_profile: str | None,
-        primary_profile: str | None,
-        primary_auth_failed: bool = False,
-        allow_failover: bool = False,
-        failover_profile: str | None = None,
-    ) -> str | None:
-        profile = select_frontier_profile(
-            explicit_profile=explicit_profile,
-            primary_profile=primary_profile,
-            primary_auth_failed=primary_auth_failed,
-            allow_failover=allow_failover,
-            failover_profile=failover_profile,
-        )
-        self.store.event(
-            state.session_id,
-            "frontier_profile_selected",
-            {"profile": profile, "reason": "explicit_or_configured" if profile else "unavailable"},
-        )
-        self.store.save(state)
-        return profile
-
-    def build_frontier_task(self, state: SessionState, metadata: dict[str, Any]) -> FrontierTask:
-        return build_frontier_task(state, metadata)
-
-    def start_frontier_run(self, state: SessionState, profile: str, task: FrontierTask) -> None:
-        if state.frontier_human_approval_required:
-            self.store.event(
-                state.session_id,
-                "frontier_candidate_awaiting_approval",
-                {"reason": "human_approval"},
-            )
-            self.store.save(state)
-            raise ValueError("frontier human approval required")
-        if state.frontier_invocations >= 1:
-            self.store.event(state.session_id, "frontier_usage_limited", {"reason": "task_limit"})
-            self.store.save(state)
-            raise ValueError("frontier invocation limit reached")
-        if state.recursive_cycles >= 3:
-            self.store.event(state.session_id, "frontier_usage_limited", {"reason": "cycle_limit"})
-            self.store.save(state)
-            raise ValueError("frontier recursive cycle limit reached")
-        self.admit_loop_action(state, "frontier_calls")
-        state.frontier_invocations += 1
-        state.recursive_cycles += 1
-        self.store.event(
-            state.session_id,
-            "frontier_run_started",
-            {"profile": profile, "task_id": task.task_id, "base_commit": task.base_commit},
-        )
-        self.store.save(state)
-
-    def collect_frontier_result(
-        self, state: SessionState, result: dict[str, Any]
-    ) -> FrontierResult:
-        parsed = FrontierResult.model_validate(result)
-        event = "frontier_run_completed" if parsed.status == "completed" else "frontier_run_failed"
-        self.store.event(
-            state.session_id, event, {"status": parsed.status, "summary": parsed.summary}
-        )
-        self.store.save(state)
-        return parsed
-
-    def evaluate_frontier_candidate(
-        self,
-        state: SessionState,
-        result: FrontierResult,
-        *,
-        changed_paths: list[str],
-        task: FrontierTask,
-        focused_tests_passed: bool,
-        benchmark_passed: bool,
-        secret_scan_passed: bool,
-        local_review_passed: bool,
-        prior_stable_evaluation: bool = False,
-    ) -> dict[str, Any]:
-        evaluation = evaluate_frontier_candidate(
-            result,
-            changed_paths=changed_paths,
-            task=task,
-            focused_tests_passed=focused_tests_passed,
-            benchmark_passed=benchmark_passed,
-            secret_scan_passed=secret_scan_passed,
-            local_review_passed=local_review_passed,
-            prior_stable_evaluation=prior_stable_evaluation,
-        )
-        state.frontier_human_approval_required = True
-        self.store.event(
-            state.session_id,
-            "frontier_candidate_awaiting_approval"
-            if evaluation["accepted_for_human_review"]
-            else "frontier_candidate_rejected",
-            evaluation,
-        )
-        self.store.save(state)
-        return evaluation
 
     def _observe(self, state: SessionState, messages: list[dict[str, Any]]) -> None:
         calls_by_id: dict[str, dict[str, Any]] = {}
@@ -1561,11 +1541,21 @@ class Controller:
             state.no_progress_count = 0
             if actionable_failure and call:
                 call_fingerprint = fingerprint(call)
+                failure_strategy_fingerprint = (
+                    fingerprint(
+                        {
+                            "call": call_fingerprint,
+                            "implementation": state.implementation_evidence[-1:],
+                        }
+                    )
+                    if state.implementation_evidence
+                    else call_fingerprint
+                )
                 if state.engineering_loop is not None:
                     loop_failure = register_failure(
                         state.engineering_loop,
                         normalized_failure_class(str(failure_class)),
-                        strategy=call_fingerprint,
+                        strategy=failure_strategy_fingerprint,
                         tool_name=execution["tool_name"],
                         command=arguments,
                         exit_code=result["exit_code"],
@@ -1586,11 +1576,14 @@ class Controller:
                     if state.engineering_loop.termination_reason is not None:
                         state.phase = Phase.BLOCKED
                         state.final_status = "blocked"
-                if call_fingerprint in state.failed_call_fingerprints:
+                if failure_strategy_fingerprint in state.failed_call_fingerprints:
                     self.store.event(
                         state.session_id,
                         "failure_classified",
-                        {"class": "REPEATED_ACTION", "fingerprint": call_fingerprint},
+                        {
+                            "class": "REPEATED_ACTION",
+                            "fingerprint": failure_strategy_fingerprint,
+                        },
                     )
                     state.failures.append(
                         {
@@ -1621,7 +1614,7 @@ class Controller:
                         continue
                     self.store.save(state)
                     raise DuplicateFailedCall("identical failed tool call blocked")
-                state.failed_call_fingerprints.append(call_fingerprint)
+                state.failed_call_fingerprints.append(failure_strategy_fingerprint)
                 family = failure_family(observation)
                 state.failure_families[family] = state.failure_families.get(family, 0) + 1
                 self.store.event(
@@ -1639,7 +1632,7 @@ class Controller:
                         "resolved_at": None,
                         "resolving_commit": None,
                         "related_proposal_ids": [],
-                        "tool_call_fingerprint": call_fingerprint,
+                        "tool_call_fingerprint": failure_strategy_fingerprint,
                         "failure_family": family,
                         "target_paths": sorted(target_paths),
                     }
@@ -1742,6 +1735,7 @@ class Controller:
         facts = state.verified_facts[-8:]
         base = {
             "acceptance_criteria": state.acceptance_criteria,
+            "contract_evidence": review_contract_evidence(state),
             "repository": state.repository,
             "route": {"name": state.route, "reasons": state.route_reasons},
             "pending_goal_prerequisites": pending_goal_prerequisites(state),
@@ -2124,14 +2118,12 @@ class Controller:
             return "high"
         return "medium"
 
-    async def orchestration_decision(
+    def orchestration_policy(
         self,
         state: SessionState,
-        reasoner: ReasonerContribution,
         metadata: dict[str, Any],
-        executor_complete: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]] | None = None,
     ) -> OrchestrationDecision:
-        mandatory = [
+        required = [
             role for role in state.roles_required if role in {"planner", "reviewer", "judge"}
         ]
         objective = effective_objective(state).lower()
@@ -2162,161 +2154,83 @@ class Controller:
                 for marker in ("code review", "review this", "diff review", "코드 리뷰", "검토")
             )
         )
+        implementation_review = implementation_evidence and (
+            bool(state.tool_results)
+            or any(
+                marker in objective
+                for marker in (
+                    "implement",
+                    "modify",
+                    "fix ",
+                    "add ",
+                    "refactor",
+                    "구현",
+                    "수정",
+                    "추가",
+                )
+            )
+        )
         frontier_policy = (
             architecture
             or code_review
             or state.request_class == "high_risk_task"
-            or any(item.needed and item.role == "frontier" for item in reasoner.additional_agents)
             or len(active_failures(state)) >= 2
         )
-        if reasoner.confidence_category == "low" and "planner" not in mandatory:
-            mandatory.append("planner")
-        if architecture and "planner" not in mandatory:
-            mandatory.append("planner")
-        if code_review and "reviewer" not in mandatory:
-            mandatory.append("reviewer")
-        if state.request_class in {"multi_file_task", "recovery_task"}:
-            mandatory.append("planner")
+        if (
+            architecture
+            or state.route == "escalation"
+            or state.request_class == "explicit_orchestrated"
+            and not (code_review or implementation_review)
+            or state.request_class
+            in {
+                "multi_file_task",
+                "recovery_task",
+                "high_risk_task",
+            }
+        ):
+            required.append("planner")
+        if code_review or implementation_review:
+            required.append("reviewer")
         if state.request_class == "high_risk_task" and implementation_evidence:
-            mandatory.append("reviewer")
+            required.append("reviewer")
         if frontier_policy:
-            mandatory.append("frontier")
+            required.append("frontier")
         if metadata.get("unresolved_disagreement"):
-            mandatory.append("frontier")
+            required.append("frontier")
             if state.request_class == "high_risk_task" or metadata.get("heavy_review"):
-                mandatory.append("judge")
-        mandatory = list(dict.fromkeys(mandatory))
-        schema = OrchestrationDecision.model_json_schema()
-        request = {
-            "model": self.settings.models["executor"].served_name,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are the Executor and authoritative orchestration controller. "
-                        "Choose bounded additional agents; do not answer the user or call tools. "
-                        "Hard-required agents cannot be removed. Return JSON only.\n"
-                        + json.dumps(
-                            redact(
-                                {
-                                    "objective": effective_objective(state),
-                                    "request_class": state.request_class,
-                                    "route": state.route,
-                                    "reasoner": reasoner.model_dump(),
-                                    "hard_required_agents": mandatory,
-                                    "observable_evidence": {
-                                        "tool_failures": active_failures(state)[-4:],
-                                        "has_tool_results": bool(state.tool_results),
-                                        "metadata_signals": {
-                                            key: metadata.get(key)
-                                            for key in (
-                                                "architecture",
-                                                "design",
-                                                "code_review",
-                                                "authentication",
-                                                "public_api",
-                                                "database_schema",
-                                                "concurrency",
-                                                "unresolved_disagreement",
-                                            )
-                                            if key in metadata
-                                        },
-                                    },
-                                }
-                            ),
-                            ensure_ascii=False,
-                        )
-                    ),
-                }
-            ],
-            "stream": False,
-            "max_tokens": self.settings.limits.planner_tokens,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {"name": "orchestration_decision", "strict": True, "schema": schema},
-            },
-        }
+                required.append("judge")
+        required = list(dict.fromkeys(required))
+        parallel_roles = {"planner", "reviewer", "frontier"}.intersection(required)
+        decision = OrchestrationDecision(
+            action="invoke_agents" if required else "respond",
+            required_agents=cast(
+                list[Literal["planner", "reviewer", "frontier", "judge"]], required
+            ),
+            optional_agents=[],
+            reason={role: "deterministic runtime policy" for role in required},
+            parallelizable=len(parallel_roles) > 1,
+            continue_after="synthesize" if required else "respond",
+            confidence=1.0,
+        )
+        return decision
+
+    def orchestration_decision(
+        self,
+        state: SessionState,
+        reasoner: ReasonerContribution,
+        metadata: dict[str, Any],
+    ) -> OrchestrationDecision:
+        decision = self.orchestration_policy(state, metadata)
+        required = decision.required_agents
         decision_id = self._record_decision(
             "executor",
             state,
-            {"type": "orchestration_request"},
+            {
+                "type": "orchestration_policy",
+                "request_class": state.request_class,
+                "route": state.route,
+            },
             effective_objective(state),
-        )
-        orchestration_started = time.monotonic()
-        response = (
-            await executor_complete(request, "orchestration")
-            if executor_complete is not None
-            else await self.provider.complete(
-                "executor",
-                self.settings.models["executor"],
-                request,
-                timeout_seconds=self.settings.limits.planner_timeout_seconds,
-                stage="orchestration",
-            )
-        )
-        self.record_invocation(
-            state,
-            "executor",
-            response,
-            orchestration_started,
-            mode="orchestration",
-        )
-        try:
-            decision = OrchestrationDecision.model_validate(parse_json_content(response))
-        except ValueError:
-            self.store.event(
-                state.session_id,
-                "executor_orchestration_retry",
-                {"failure_class": "invalid_structured_output", "attempt": 2},
-            )
-            retry_request = dict(request)
-            retry_request["messages"] = [
-                {
-                    "role": "system",
-                    "content": (
-                        "Return one minimal valid orchestration_decision JSON object only. "
-                        "The previous bounded response was invalid or truncated. Use an empty "
-                        "reason object when possible, no prose, and fewer than 300 tokens. "
-                        f"Hard-required agents: {json.dumps(mandatory)}."
-                    ),
-                }
-            ]
-            retry_request["max_tokens"] = min(self.settings.limits.planner_tokens, 512)
-            retry_started = time.monotonic()
-            response = (
-                await executor_complete(retry_request, "orchestration_retry")
-                if executor_complete is not None
-                else await self.provider.complete(
-                    "executor",
-                    self.settings.models["executor"],
-                    retry_request,
-                    timeout_seconds=self.settings.limits.planner_timeout_seconds,
-                    stage="orchestration_retry",
-                )
-            )
-            self.record_invocation(
-                state,
-                "executor",
-                response,
-                retry_started,
-                mode="orchestration_retry",
-            )
-            decision = OrchestrationDecision.model_validate(parse_json_content(response))
-        required = list(dict.fromkeys([*mandatory, *decision.required_agents]))
-        decision = decision.model_copy(
-            update={
-                "action": "invoke_agents" if required else decision.action,
-                "required_agents": required,
-                "parallelizable": decision.parallelizable
-                or (architecture and {"planner", "frontier"}.issubset(required))
-                or (code_review and {"reviewer", "frontier"}.issubset(required)),
-                "reason": decision.reason
-                | {
-                    role: "hard safety/routing policy"
-                    for role in mandatory
-                    if role not in decision.reason
-                },
-            }
         )
         data = decision.model_dump()
         safe_data = cast(dict[str, Any], self.safe_payload(state, data))
@@ -2328,7 +2242,7 @@ class Controller:
         self.record_evidence(
             state,
             "orchestration_decision",
-            "executor",
+            "runtime_policy",
             data,
             generated_from=decision_id,
         )
@@ -2345,7 +2259,7 @@ class Controller:
                             "recommendation": "invoke",
                             "resolution": "accepted" if role in selected else "rejected",
                             "reason": decision.reason.get(
-                                role, "Executor did not select this recommendation"
+                                role, "Runtime Policy did not select this recommendation"
                             ),
                         }
                         for role in sorted(reasoner_recommendations | selected)
@@ -2367,7 +2281,12 @@ class Controller:
         self.store.event(
             state.session_id,
             "executor_orchestration_decided",
-            {"decision_id": decision_id, "agents": required, "parallel": decision.parallelizable},
+            {
+                "decision_id": decision_id,
+                "agents": required,
+                "parallel": decision.parallelizable,
+                "authority": "runtime_policy",
+            },
         )
         return decision
 
@@ -2379,12 +2298,47 @@ class Controller:
         ensure_roles: Callable[[tuple[str, ...]], Awaitable[None]] | None = None,
         *,
         tool_continuation: bool = False,
-        executor_complete: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]] | None = None,
         reasoner_complete: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]] | None = None,
+        execution_runtime: ExecutionGraphRuntime | None = None,
     ) -> dict[str, Any]:
         body = request.copy()
         metadata = dict(request.get("metadata", {}))
         pending_prerequisites = pending_goal_prerequisites(state)
+
+        def graph_start(node_type: NodeType) -> str | None:
+            if execution_runtime is None:
+                return None
+            try:
+                attempt = execution_runtime.start_node_type(node_type)
+                return attempt.attempt_id if attempt is not None else None
+            except (ValueError, sqlite3.Error) as error:
+                record_shadow_failure(self.store, state.session_id, node_type.value.lower(), error)
+                return None
+
+        def graph_finish(attempt_id: str | None, role: str, evidence_id: str) -> None:
+            if execution_runtime is None or attempt_id is None:
+                return
+            invocation = next(
+                (item for item in reversed(state.agent_invocations) if item.get("role") == role),
+                {},
+            )
+            try:
+                execution_runtime.finish_observed_attempt(
+                    attempt_id,
+                    invocation,
+                    generated_evidence_ids=(evidence_id,),
+                )
+            except (ValueError, sqlite3.Error) as error:
+                record_shadow_failure(self.store, state.session_id, role, error)
+
+        def graph_fail(attempt_id: str | None, role: str, error: Exception) -> None:
+            if execution_runtime is None or attempt_id is None:
+                return
+            try:
+                execution_runtime.fail_role_attempt(attempt_id, role, error)
+            except (ValueError, sqlite3.Error) as graph_error:
+                record_shadow_failure(self.store, state.session_id, role, graph_error)
+
         if (
             tool_continuation
             and state.runtime_mode == "orchestrated"
@@ -2455,7 +2409,161 @@ class Controller:
         )
         reasoner_advice = ""
         reasoner_contribution: ReasonerContribution | None = None
+        orchestration: OrchestrationDecision | None = None
+        frontier_task: asyncio.Task[FrontierCollaborationResult] | None = None
+        frontier_graph_attempt: str | None = None
+        frontier_degraded = False
+        planner_task: asyncio.Task[tuple[dict[str, Any], dict[str, Any]]] | None = None
+        planner_request: dict[str, Any] | None = None
+        planner_graph_attempt: str | None = None
+        planner_decision_id: str | None = None
+        planner_started: float | None = None
+        collaboration_context = ""
+        fanout_started = False
+
+        async def start_fanout() -> None:
+            nonlocal collaboration_context, fanout_started, frontier_degraded
+            nonlocal frontier_graph_attempt, frontier_task, planner_decision_id
+            nonlocal planner_graph_attempt, planner_request, planner_started, planner_task, roles
+            if fanout_started:
+                return
+            fanout_started = True
+            if state.runtime_mode == "orchestrated":
+                policy = self.orchestration_policy(state, metadata)
+                roles = tuple(dict.fromkeys((*roles, *policy.required_agents)))
+                state.roles_required = list(roles)
+                lifecycle_roles = tuple(
+                    role for role in policy.required_agents if role in {"planner", "reviewer"}
+                )
+                if lifecycle_roles and ensure_roles is not None:
+                    await ensure_roles(lifecycle_roles)
+            if "planner" in roles and needs_planner(state) and "planner" in self.settings.models:
+                planner_graph_attempt = graph_start(NodeType.PLANNER)
+                state.phase = Phase.PLANNING
+                planner_request = {
+                    "model": self.settings.models["planner"].served_name,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": self.prompt_sandwich(
+                                "planner",
+                                state,
+                                "New or invalidated task",
+                                "Create dependency-ordered plan",
+                            ),
+                        }
+                    ],
+                    "max_tokens": self.settings.limits.planner_tokens,
+                    "stream": False,
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "plan",
+                            "strict": True,
+                            "schema": PlannerPlan.model_json_schema(),
+                        },
+                    },
+                }
+                planner_decision_id = self._record_decision(
+                    "planner", state, {"type": "plan_request"}, "New or invalidated task"
+                )
+                self.store.event(state.session_id, "planner_invoked", {"role": "planner"})
+                planner_started = time.monotonic()
+                self.admit_loop_action(state, "planner_calls")
+                planner_task = asyncio.create_task(
+                    self.complete_specialist(
+                        state,
+                        "planner",
+                        planner_request,
+                        mandatory=state.request_class == "high_risk_task",
+                    )
+                )
+            if "frontier" not in roles:
+                return
+            mode: Literal["architecture", "code_review", "disagreement"] = (
+                "disagreement"
+                if metadata.get("unresolved_disagreement")
+                else "code_review"
+                if (
+                    state.frontier_correction_pending_verification
+                    or metadata.get("code_review")
+                    or "review" in effective_objective(state).lower()
+                )
+                else "architecture"
+            )
+            if (
+                mode == "architecture"
+                and "reviewer" in roles
+                and (state.implementation_evidence or build_has_review_evidence(state, metadata))
+            ):
+                return
+            if mode == "disagreement" and state.judge_verdict is not None:
+                collaboration_context += "\nHeavy Judge verdict:\n" + json.dumps(
+                    redact(state.judge_verdict), ensure_ascii=False
+                )
+                self.store.event(
+                    state.session_id,
+                    "judge_adjudication_resumed",
+                    {"status": state.judge_status},
+                )
+                return
+            changed_paths = changed_paths_evidence(state, metadata)
+            required = bool(metadata.get("frontier_required") or "judge" in roles)
+            if self.frontier is None:
+                self.store.event(
+                    state.session_id,
+                    "frontier_unavailable",
+                    {"failure_class": "FRONTIER_DISABLED", "required": required},
+                )
+                frontier_degraded = True
+                if required:
+                    raise FrontierRequiredUnavailable("required Frontier unavailable")
+                return
+            if (
+                state.frontier_invocations >= self.frontier.config.max_invocations_per_task
+                and not state.frontier_correction_pending_verification
+            ):
+                self.store.event(
+                    state.session_id,
+                    "frontier_unavailable",
+                    {"failure_class": "FRONTIER_INVOCATION_LIMIT", "required": False},
+                )
+                frontier_degraded = True
+                return
+            evidence = {
+                "objective": effective_objective(state),
+                "constraints": state.acceptance_criteria,
+                "relevant_evidence": {
+                    "changed_paths": changed_paths,
+                    "diff": metadata.get("diff_summary", metadata.get("relevant_diff", "")),
+                    "tests": metadata.get("validation_results", []),
+                    "tool_results": review_tool_results(state),
+                },
+                "specific_questions": metadata.get("frontier_questions", []),
+            }
+            frontier_graph_attempt = graph_start(NodeType.FRONTIER_A)
+            frontier_task = asyncio.create_task(self._frontier_collaborate(state, mode, evidence))
+            self.store.event(
+                state.session_id,
+                "frontier_collaboration_started",
+                {
+                    "mode": mode,
+                    "parallel": True,
+                    "provider": "codex_oauth",
+                    "model": self.frontier.config.model,
+                },
+            )
+
+        async def cancel_fanout() -> None:
+            pending = [task for task in (planner_task, frontier_task) if task is not None]
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
         if reasoner:
+            reasoner_graph_attempt = graph_start(NodeType.REASONER)
             reasoner_request = {
                 "model": reasoner.served_name,
                 "messages": [
@@ -2521,13 +2629,21 @@ class Controller:
                 for attempt in range(2):
                     try:
                         self.admit_loop_action(state, "reasoner_reentries")
-                        reasoner_response = await self.provider.complete(
-                            "reasoner",
-                            reasoner,
-                            reasoner_request,
-                            timeout_seconds=self.settings.limits.reasoner_timeout_seconds,
-                            stage="reasoner",
+                        try:
+                            await start_fanout()
+                        except BaseException:
+                            await cancel_fanout()
+                            raise
+                        reasoner_task = asyncio.create_task(
+                            self.provider.complete(
+                                "reasoner",
+                                reasoner,
+                                reasoner_request,
+                                timeout_seconds=self.settings.limits.reasoner_timeout_seconds,
+                                stage="reasoner",
+                            )
                         )
+                        reasoner_response = await reasoner_task
                         contribution = ReasonerContribution.model_validate(
                             parse_json_content(reasoner_response)
                         )
@@ -2557,6 +2673,8 @@ class Controller:
                     },
                 )
                 if reasoner_complete is None:
+                    graph_fail(reasoner_graph_attempt, "reasoner", error)
+                    await cancel_fanout()
                     raise ReasonerUnavailable("required Reasoner unavailable") from error
                 self.admit_loop_action(state, "frontier_calls")
                 reasoner_record_started = time.monotonic()
@@ -2572,9 +2690,13 @@ class Controller:
                     contribution = ReasonerContribution.model_validate(
                         parse_json_content(reasoner_response)
                     )
-                except LoopAdmissionError:
+                except LoopAdmissionError as fallback_error:
+                    graph_fail(reasoner_graph_attempt, "reasoner", fallback_error)
+                    await cancel_fanout()
                     raise
                 except Exception as fallback_error:
+                    graph_fail(reasoner_graph_attempt, "reasoner", fallback_error)
+                    await cancel_fanout()
                     self.record_provider_failure(state, "reasoner", fallback_error)
                     failure_code = str(fallback_error)
                     self.store.event(
@@ -2621,13 +2743,14 @@ class Controller:
                 -self.settings.limits.max_steps :
             ]
             state.decisions[-1]["structured_decision"] = safe_contribution
-            self.record_evidence(
+            reasoner_evidence_id = self.record_evidence(
                 state,
                 "model_assertion",
                 "reasoner",
                 contribution_data,
                 generated_from=decision_id,
             )
+            graph_finish(reasoner_graph_attempt, "reasoner", reasoner_evidence_id)
             state.decisions[-1]["outcome"] = {
                 "status": "success",
                 "progress_made": True,
@@ -2663,16 +2786,15 @@ class Controller:
                 },
             )
             state.reasoner_context_fingerprint = context_fingerprint
-        orchestration: OrchestrationDecision | None = None
-        frontier_task: asyncio.Task[FrontierCollaborationResult] | None = None
-        frontier_pending: (
-            tuple[Literal["architecture", "code_review", "disagreement"], dict[str, Any]] | None
-        ) = None
-        frontier_degraded = False
+        else:
+            try:
+                await start_fanout()
+            except BaseException:
+                await cancel_fanout()
+                raise
         pre_review_task: asyncio.Task[dict[str, Any]] | None = None
         planner_error: Exception | None = None
         review_error: Exception | None = None
-        collaboration_context = ""
         progress_retry = bool(request.get("metadata", {}).get("responses_progress_retry"))
         reuse_trigger = (
             "responses_progress_retry"
@@ -2699,123 +2821,27 @@ class Controller:
                 {"roles": sorted(reused_roles), "trigger": reuse_trigger},
             )
         if state.runtime_mode == "orchestrated" and reasoner_contribution is not None:
-            orchestration = await self.orchestration_decision(
-                state,
-                reasoner_contribution,
-                dict(request.get("metadata", {})),
-                executor_complete,
+            orchestration = self.orchestration_decision(
+                state, reasoner_contribution, dict(request.get("metadata", {}))
             )
-            dynamic = tuple(
-                role
-                for role in orchestration.required_agents
-                if role in {"planner", "reviewer", "judge"}
-            )
-            roles = tuple(dict.fromkeys((*roles, *dynamic)))
-            state.roles_required = list(roles)
-            lifecycle_roles = tuple(role for role in dynamic if role != "judge")
-            if lifecycle_roles and ensure_roles is not None:
-                await ensure_roles(lifecycle_roles)
-            if "frontier" in orchestration.required_agents:
-                mode: Literal["architecture", "code_review", "disagreement"] = (
-                    "disagreement"
-                    if request.get("metadata", {}).get("unresolved_disagreement")
-                    else "code_review"
-                    if request.get("metadata", {}).get("code_review")
-                    or "review" in effective_objective(state).lower()
-                    else "architecture"
-                )
-                evidence = {
-                    "_paid_fallback_required": bool(
-                        request.get("metadata", {}).get("frontier_required") or "judge" in roles
-                    ),
-                    "objective": effective_objective(state),
-                    "constraints": state.acceptance_criteria,
-                    "reasoner_hypotheses": reasoner_contribution.hypotheses,
-                    "reasoner_recommendations": reasoner_contribution.recommended_actions,
-                    "relevant_evidence": {
-                        "changed_paths": request.get("metadata", {}).get("changed_paths", []),
-                        "diff": request.get("metadata", {}).get(
-                            "diff_summary", request.get("metadata", {}).get("relevant_diff", "")
-                        ),
-                        "tests": request.get("metadata", {}).get("validation_results", []),
-                        "tool_results": self.review_tool_results(state),
-                    },
-                    "specific_questions": request.get("metadata", {}).get("frontier_questions", []),
-                }
-                if self.frontier is None:
-                    self.store.event(
-                        state.session_id,
-                        "frontier_unavailable",
-                        {
-                            "failure_class": "FRONTIER_DISABLED",
-                            "required": bool(
-                                request.get("metadata", {}).get("frontier_required")
-                                or "judge" in roles
-                            ),
-                        },
-                    )
-                    frontier_degraded = True
-                    if request.get("metadata", {}).get("frontier_required") or "judge" in roles:
-                        raise FrontierRequiredUnavailable("required Frontier unavailable")
-                elif mode == "disagreement" and state.judge_verdict is not None:
-                    collaboration_context += "\nHeavy Judge verdict:\n" + json.dumps(
-                        redact(state.judge_verdict), ensure_ascii=False
-                    )
-                    self.store.event(
-                        state.session_id,
-                        "judge_adjudication_resumed",
-                        {"status": state.judge_status},
-                    )
-                elif (
-                    state.frontier_invocations >= self.frontier.config.max_invocations_per_task
-                    and not state.frontier_correction_pending_verification
-                ):
-                    self.store.event(
-                        state.session_id,
-                        "frontier_unavailable",
-                        {"failure_class": "FRONTIER_INVOCATION_LIMIT", "required": False},
-                    )
-                    frontier_degraded = True
-                else:
-                    if orchestration.parallelizable or not {
-                        "planner",
-                        "reviewer",
-                    }.intersection(roles):
-                        frontier_task = asyncio.create_task(
-                            self._frontier_collaborate(state, mode, evidence)
-                        )
-                        self.store.event(
-                            state.session_id,
-                            "frontier_collaboration_started",
-                            {
-                                "mode": mode,
-                                "parallel": orchestration.parallelizable,
-                                "provider": "codex_oauth",
-                                "model": self.frontier.config.model,
-                            },
-                        )
-                    else:
-                        frontier_pending = (mode, evidence)
         metadata = dict(request.get("metadata", {}))
         review_evidence_available = self.has_review_evidence(state, metadata)
         if (
-            not state.frontier_correction_required
+            state.runtime_mode != "fast"
+            and not state.frontier_correction_required
             and (
                 not progress_retry
                 or state.review_deferred
                 or (
                     state.implementation_evidence
                     and not any(
-                        artifact.get("role") == "reviewer"
-                        for artifact in state.agent_artifacts
+                        artifact.get("role") == "reviewer" for artifact in state.agent_artifacts
                     )
                 )
             )
             and needs_reviewer(
                 state,
-                tool_continuation
-                or state.review_deferred
-                or bool(state.implementation_evidence),
+                tool_continuation or state.review_deferred or bool(state.implementation_evidence),
                 review_evidence_available,
             )
         ):
@@ -2838,8 +2864,8 @@ class Controller:
                         "changed_paths": metadata.get("changed_paths", []),
                         "diff_summary": metadata.get("diff_summary", ""),
                         "validation_results": metadata.get("validation_results", []),
-                        "tool_results": self.review_tool_results(state),
-                        "tool_executions": self.review_tool_executions(state),
+                        "tool_results": review_tool_results(state),
+                        "tool_executions": review_tool_executions(state),
                     },
                 ),
                 ensure_ascii=False,
@@ -2856,47 +2882,14 @@ class Controller:
             if frontier_degraded:
                 state.derived_confidence = "low"
         if "planner" in roles and needs_planner(state) and "planner" in self.settings.models:
-            state.phase = Phase.PLANNING
-            planner_request = {
-                "model": self.settings.models["planner"].served_name,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": self.prompt_sandwich(
-                            "planner",
-                            state,
-                            "New or invalidated task",
-                            "Create dependency-ordered plan",
-                        ),
-                    }
-                ],
-                "max_tokens": self.settings.limits.planner_tokens,
-                "stream": False,
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "plan",
-                        "strict": True,
-                        "schema": PlannerPlan.model_json_schema(),
-                    },
-                },
-            }
-            self._record_decision(
-                "planner", state, {"type": "plan_request"}, "New or invalidated task"
-            )
-            self.store.event(state.session_id, "planner_invoked", {"role": "planner"})
-            planner_started = time.monotonic()
+            assert planner_request is not None
+            assert planner_started is not None
+            assert planner_task is not None
             planner: dict[str, Any] | None = None
             planner_routing: dict[str, Any] = {}
             parsed: dict[str, Any] = {}
             try:
-                self.admit_loop_action(state, "planner_calls")
-                planner, planner_routing = await self.complete_specialist(
-                    state,
-                    "planner",
-                    planner_request,
-                    mandatory=state.request_class == "high_risk_task",
-                )
+                planner, planner_routing = await planner_task
                 try:
                     parsed = PlannerPlan.model_validate(parse_json_content(planner)).model_dump()
                 except ValueError:
@@ -2914,6 +2907,7 @@ class Controller:
                     )
                     parsed = PlannerPlan.model_validate(parse_json_content(planner)).model_dump()
             except (httpx.HTTPError, StageTimeout, ValueError) as error:
+                graph_fail(planner_graph_attempt, "planner", error)
                 planner_error = error
                 self.record_provider_failure(state, "planner", error)
                 state.derived_confidence = "low"
@@ -2965,13 +2959,14 @@ class Controller:
                 state.agent_artifacts = state.agent_artifacts[-self.settings.limits.max_steps :]
                 self._sync_loop_criteria(state)
                 self.store.event(state.session_id, "plan_created", {"steps": len(state.plan)})
-                self.record_evidence(
+                planner_evidence_id = self.record_evidence(
                     state,
                     "model_assertion",
                     "planner",
                     parsed,
-                    generated_from=state.last_decision_id,
+                    generated_from=planner_decision_id,
                 )
+                graph_finish(planner_graph_attempt, "planner", planner_evidence_id)
         if pre_review_task is not None:
             try:
                 pre_review_result = await pre_review_task
@@ -2993,14 +2988,11 @@ class Controller:
                 collaboration_context += "\nLocal Reviewer contribution:\n" + json.dumps(
                     safe_reviewer["output"], ensure_ascii=False
                 )
-                material_review_issue = self.material_review_issue(pre_review_result)
-                review_assurance_needed = pre_review_result.get(
-                    "status"
-                ) == "approved" and (
+                material_review_issue = has_material_review_issue(pre_review_result)
+                review_assurance_needed = pre_review_result.get("status") == "approved" and (
                     state.frontier_correction_pending_verification
                     or (
-                        not pre_review_result.get("findings")
-                        and not state.frontier_review_verified
+                        not pre_review_result.get("findings") and not state.frontier_review_verified
                     )
                 )
                 if material_review_issue or review_assurance_needed:
@@ -3015,7 +3007,7 @@ class Controller:
                     )
                     if material_review_issue:
                         state.derived_confidence = "conflicted"
-                    if frontier_task is None and frontier_pending is None:
+                    if frontier_task is None:
                         if self.frontier is None:
                             self.store.event(
                                 state.session_id,
@@ -3048,8 +3040,8 @@ class Controller:
                             frontier_review_evidence = {
                                 "objective": effective_objective(state),
                                 "acceptance_criteria": state.acceptance_criteria,
-                                "changed_paths": request.get("metadata", {}).get(
-                                    "changed_paths", []
+                                "changed_paths": changed_paths_evidence(
+                                    state, request.get("metadata", {})
                                 ),
                                 "bounded_diff": request.get("metadata", {}).get(
                                     "diff_summary",
@@ -3058,13 +3050,14 @@ class Controller:
                                 "test_results": request.get("metadata", {}).get(
                                     "validation_results", []
                                 ),
-                                "tool_results": self.review_tool_results(state),
-                                "tool_executions": self.review_tool_executions(state),
+                                "tool_results": review_tool_results(state),
+                                "tool_executions": review_tool_executions(state),
                                 "local_reviewer_findings": pre_review_result,
                                 "known_limitations": request.get("metadata", {}).get(
                                     "known_limitations", []
                                 ),
                             }
+                            frontier_graph_attempt = graph_start(NodeType.FRONTIER_A)
                             frontier_task = asyncio.create_task(
                                 self._frontier_collaborate(
                                     state, "code_review", frontier_review_evidence
@@ -3079,32 +3072,15 @@ class Controller:
                                     "trigger": review_trigger,
                                 },
                             )
-        if frontier_pending is not None and self.frontier is not None:
-            mode, evidence = frontier_pending
-            evidence["planner_position"] = state.plan[-8:]
-            evidence["local_reviewer_findings"] = [
-                artifact
-                for artifact in state.agent_artifacts[-4:]
-                if artifact.get("role") == "reviewer"
-            ]
-            frontier_task = asyncio.create_task(self._frontier_collaborate(state, mode, evidence))
-            self.store.event(
-                state.session_id,
-                "frontier_collaboration_started",
-                {
-                    "mode": mode,
-                    "parallel": False,
-                    "provider": "codex_oauth",
-                    "model": self.frontier.config.model,
-                },
-            )
         if frontier_task is not None:
             assert self.frontier is not None
             try:
                 frontier_result = await frontier_task
-            except LoopAdmissionError:
+            except LoopAdmissionError as error:
+                graph_fail(frontier_graph_attempt, "frontier", error)
                 raise
-            except RuntimeError as error:
+            except Exception as error:
+                graph_fail(frontier_graph_attempt, "frontier", error)
                 self.record_provider_failure(state, "frontier", error)
                 self.store.event(
                     state.session_id,
@@ -3147,13 +3123,14 @@ class Controller:
                         "status": "completed",
                     },
                 )
-                self.record_evidence(
+                frontier_evidence_id = self.record_evidence(
                     state,
                     "external_expert_finding",
                     "frontier",
                     artifact,
                     generated_from=state.last_decision_id,
                 )
+                graph_finish(frontier_graph_attempt, "frontier", frontier_evidence_id)
                 self.store.event(
                     state.session_id,
                     "frontier_collaboration_completed",
@@ -3372,45 +3349,7 @@ class Controller:
         return body
 
     def has_review_evidence(self, state: SessionState, metadata: dict[str, Any]) -> bool:
-        completion_evidence = metadata.get("completion_evidence")
-        if (
-            (isinstance(completion_evidence, dict) and completion_evidence)
-            or metadata.get("changed_paths")
-            or metadata.get("diff_summary")
-            or metadata.get("validation_results")
-        ):
-            return True
-        for execution in reversed(state.tool_executions):
-            arguments = execution.get("normalized_arguments")
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except ValueError:
-                    arguments = {}
-            command = (
-                arguments.get("cmd") or arguments.get("command")
-                if isinstance(arguments, dict)
-                else None
-            )
-            if (
-                execution.get("exit_code") == 0
-                and isinstance(command, str)
-                and (
-                    re.search(
-                        r"(?:^|&&|\|\||;|\n|[\"'])\s*"
-                        r"(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]+\s+)*"
-                        r"(?:timeout\s+\d+(?:\.\d+)?[smh]?\s+)?"
-                        r"(?:uv run )?(?:python -m )?"
-                        r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
-                        command,
-                    )
-                    or re.search(r"(?:^|&&|\|\||;|\n|[\"'])\s*git\s+diff\b", command)
-                )
-            ):
-                return True
-            if self.tool_execution_changes_files(execution):
-                break
-        return False
+        return build_has_review_evidence(state, metadata)
 
     def requires_implementation_tool_action(
         self, state: SessionState, metadata: dict[str, Any]
@@ -3465,6 +3404,7 @@ class Controller:
             and not state.frontier_correction_pending_verification
             and (
                 state.review_status == "approved"
+                or (state.review_status == "failed" and not state.review_fail_closed)
                 or (
                     state.runtime_mode == "fast"
                     and "reviewer" not in state.roles_required
@@ -3533,125 +3473,12 @@ class Controller:
         return False
 
     @staticmethod
-    def review_tool_results(state: SessionState) -> list[dict[str, Any]]:
-        results = state.tool_results
-        return list(results) if len(results) <= 8 else [*results[:4], *results[-4:]]
-
-    @staticmethod
-    def review_tool_executions(state: SessionState) -> list[dict[str, Any]]:
-        return [
-            {
-                key: execution[key]
-                for key in (
-                    "tool_name",
-                    "normalized_arguments",
-                    "exit_code",
-                    "stdout_summary",
-                    "stderr_summary",
-                )
-                if key in execution
-            }
-            for execution in state.tool_executions[-6:]
-        ]
-
-    @staticmethod
-    def review_contract_evidence(state: SessionState) -> list[dict[str, str]]:
-        evidence: list[dict[str, str]] = []
-        seen: set[str] = set()
-        for node in reversed(state.evidence_nodes):
-            if node.get("kind") != "tool_observed_fact":
-                continue
-            payload = node.get("payload")
-            if not isinstance(payload, dict) or payload.get("exit_code") != 0:
-                continue
-            stdout = payload.get("stdout")
-            paths = payload.get("target_paths")
-            if not isinstance(stdout, str) or not isinstance(paths, list):
-                continue
-            for path in paths:
-                name = str(path).replace("\\", "/").rsplit("/", 1)[-1]
-                normalized = name.lower()
-                if normalized not in REVIEW_CONTRACT_DOCUMENTS or normalized in seen:
-                    continue
-                evidence.append({"document": name, "content": stdout[:4_000]})
-                seen.add(normalized)
-                if len(evidence) == 4:
-                    return list(reversed(evidence))
-        return list(reversed(evidence))
-
-    @staticmethod
     def tool_execution_changes_files(execution: dict[str, Any]) -> bool:
-        if execution.get("tool_name") in {
-            "apply_patch",
-            "patch",
-            "delete",
-            "edit_file",
-            "edit",
-            "write",
-            "write_file",
-            "delete_file",
-        }:
-            return True
-        effect = execution.get("filesystem_effect")
-        if isinstance(effect, dict) and any(
-            effect.get(key) for key in ("changed_paths", "created_paths", "deleted_paths")
-        ):
-            return True
-        arguments = execution.get("normalized_arguments")
-        if isinstance(arguments, str):
-            try:
-                arguments = json.loads(arguments)
-            except ValueError:
-                arguments = {}
-        command = (
-            arguments.get("cmd") or arguments.get("command")
-            if isinstance(arguments, dict)
-            else None
-        )
-        if not isinstance(command, str):
-            return False
-        direct_mutation = re.search(
-            r"(?:^|&&|\|\||;|\n)\s*(?:"
-            r"(?:cat|echo|printf)\b[^\n;]*(?<![\d>])(?:1?>|>>)|tee\b|"
-            r"sed\b[^\n;]*\s-i(?:\s|$)|perl\b[^\n;]*\s-(?:pi|ip)\b|"
-            r"apply_patch\b|"
-            r"touch\b|cp\b|mv\b|rm\b|truncate\b|install\b|"
-            r"git\s+(?:apply|checkout|restore|reset|clean)\b)",
-            command,
-        )
-        python_mutation = re.search(
-            r"(?:^|&&|\|\||;|\n)\s*python(?:3(?:\.\d+)?)?\b[\s\S]*"
-            r"(?:\.write_(?:text|bytes)\s*\(|"
-            r"\bopen\s*\([^,\n]+,\s*[\"'][wax](?:[bt+])?[\"'])",
-            command,
-        )
-        return bool(direct_mutation or python_mutation)
-
-    @staticmethod
-    def material_review_issue(result: dict[str, Any]) -> bool:
-        if result.get("status") == "rejected":
-            return True
-        findings = result.get("findings", [])
-        if not isinstance(findings, list):
-            return False
-        for finding in findings:
-            if isinstance(finding, dict) and str(finding.get("severity", "")).lower() in {
-                "critical",
-                "important",
-            }:
-                return True
-            if isinstance(finding, str) and finding.lower().startswith(("critical:", "important:")):
-                return True
-        return False
+        return execution_changes_files(execution)
 
     @staticmethod
     def material_frontier_review(result: dict[str, Any]) -> bool:
-        return bool(
-            result.get("verdict") in {"revise", "reject"}
-            or result.get("critical")
-            or result.get("important")
-            or result.get("missing_tests")
-        )
+        return has_material_frontier_review(result)
 
     def remote_judge_invocation_reasons(
         self,
@@ -3698,58 +3525,12 @@ class Controller:
     def review_observation(
         self, state: SessionState, response: dict[str, Any], metadata: dict[str, Any]
     ) -> str:
-        choice = (response.get("choices") or [{}])[0]
-        current_completion = metadata.get("completion_evidence")
-        evidence = {
-            "original_objective": effective_objective(state),
-            "acceptance_criteria": state.acceptance_criteria,
-            "changed_paths": list(
-                dict.fromkeys(
-                    [
-                        *metadata.get("changed_paths", []),
-                        *[
-                            path
-                            for item in state.implementation_evidence
-                            for path in item.get("target_paths", [])
-                        ],
-                    ]
-                )
-            ),
-            "diff_summary": metadata.get("diff_summary", ""),
-            "contract_evidence": self.review_contract_evidence(state),
-            "implementation_evidence": state.implementation_evidence,
-            "tool_results": self.review_tool_results(state),
-            "tool_executions": self.review_tool_executions(state),
-            "validation_results": metadata.get("validation_results", []),
-            "scope_evidence": state.approved_scope,
-            "completion_evidence": state.completion_evidence
-            | (current_completion if isinstance(current_completion, dict) else {}),
-            "known_failures": active_failures(state)[-4:],
-            "assistant_message": choice.get("message", {}),
-            "finish_reason": choice.get("finish_reason"),
-        }
-        bounded: dict[str, Any] = redact(evidence)
-        limit = self.settings.limits.max_review_evidence_characters
-        serialized = json.dumps(bounded, ensure_ascii=False, sort_keys=True)
-        marker = "...[truncated]"
-        while len(serialized) > limit:
-            key = max(
-                bounded,
-                key=lambda name: len(json.dumps(bounded[name], ensure_ascii=False, sort_keys=True)),
-            )
-            current = bounded[key]
-            source = (
-                current
-                if isinstance(current, str)
-                else json.dumps(current, ensure_ascii=False, sort_keys=True)
-            )
-            keep = max(0, len(source) - (len(serialized) - limit) - len(marker) - 2)
-            replacement = source[:keep] + marker
-            if bounded[key] == replacement:
-                raise ValueError("review evidence limit too small")
-            bounded[key] = replacement
-            serialized = json.dumps(bounded, ensure_ascii=False, sort_keys=True)
-        return serialized
+        return build_review_observation(
+            state,
+            response,
+            metadata,
+            self.settings.limits.max_review_evidence_characters,
+        )
 
     async def review(
         self,

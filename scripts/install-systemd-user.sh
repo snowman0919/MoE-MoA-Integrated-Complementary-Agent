@@ -12,11 +12,12 @@ if systemctl --user list-unit-files dgx-moa-agent.service --no-legend 2>/dev/nul
   rm -f "$HOME/.config/systemd/user/dgx-moa-agent.service"
 fi
 systemctl --user daemon-reload
-systemctl --user enable dgx-moa-resident.target dgx-moa-loopback.socket
+systemctl --user enable dgx-moa-resident.target dgx-moa-loopback.socket dgx-moa-lan.socket
 if $start; then
   scripts/stop-legacy-models.sh
   uv run python -m dgx_moa.profiles ready stopped >/dev/null
   scripts/switch-profile.sh resident
   systemctl --user start dgx-moa-loopback.socket
+  systemctl --user start dgx-moa-lan.socket
 fi
 scripts/systemd-status.sh

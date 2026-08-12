@@ -66,19 +66,13 @@ class ProgressOnlyResponse(Exception):
 def compatible_edit_call(
     name: str, raw_arguments: str, custom_tool_names: set[str] | None
 ) -> tuple[str, str]:
-    if name not in {"edit", "edit_file"} or "apply_patch" not in (
-        custom_tool_names or set()
-    ):
+    if name not in {"edit", "edit_file"} or "apply_patch" not in (custom_tool_names or set()):
         return name, raw_arguments
     try:
         arguments = json.loads(raw_arguments)
         path = arguments.get("file", arguments.get("path", arguments.get("file_path")))
-        old_text = arguments.get(
-            "old_text", arguments.get("old_string", arguments.get("old"))
-        )
-        new_text = arguments.get(
-            "new_text", arguments.get("new_string", arguments.get("new"))
-        )
+        old_text = arguments.get("old_text", arguments.get("old_string", arguments.get("old")))
+        new_text = arguments.get("new_text", arguments.get("new_string", arguments.get("new")))
         if (
             not isinstance(path, str)
             or not path
@@ -100,9 +94,7 @@ def compatible_edit_call(
             "*** End Patch",
         )
     )
-    return "apply_patch", json.dumps(
-        {"input": patch}, ensure_ascii=False, separators=(",", ":")
-    )
+    return "apply_patch", json.dumps({"input": patch}, ensure_ascii=False, separators=(",", ":"))
 
 
 def is_progress_only(text: str) -> bool:
@@ -221,11 +213,15 @@ def reported_usage(value: object) -> dict[str, int]:
     }
 
 
-def _token_detail(value: object, group: str, key: str) -> int:
+def _token_detail(value: object, group: str, key: str, *, missing: int | None = 0) -> int | None:
     if not isinstance(value, dict) or not isinstance(details := value.get(group), dict):
-        return 0
+        return missing
     token_count = details.get(key)
-    return token_count if type(token_count) is int and 0 <= token_count <= SQLITE_MAX_INTEGER else 0
+    return (
+        token_count
+        if type(token_count) is int and 0 <= token_count <= SQLITE_MAX_INTEGER
+        else missing
+    )
 
 
 @dataclass
@@ -334,7 +330,10 @@ async def forward_sse(
 
 
 async def keepalive_sse(
-    upstream: AsyncIterator[bytes], *, interval_seconds: float = 15
+    upstream: AsyncIterator[bytes],
+    *,
+    interval_seconds: float = 15,
+    heartbeat: bytes = b": keep-alive\n\n",
 ) -> AsyncGenerator[bytes, None]:
     """Keep an SSE connection active while its next real event is pending."""
     if interval_seconds <= 0:
@@ -345,7 +344,7 @@ async def keepalive_sse(
         while True:
             pending = pending or asyncio.ensure_future(anext(iterator))
             if not (await asyncio.wait((pending,), timeout=interval_seconds))[0]:
-                yield b": keep-alive\n\n"
+                yield heartbeat
                 continue
             try:
                 yield pending.result()
@@ -367,11 +366,9 @@ def response_usage(value: object) -> dict[str, object] | None:
         return None
     input_tokens = usage.get("prompt_tokens", 0)
     output_tokens = usage.get("completion_tokens", 0)
-    return {
+    cached_tokens = _token_detail(value, "prompt_tokens_details", "cached_tokens", missing=None)
+    converted: dict[str, object] = {
         "input_tokens": input_tokens,
-        "input_tokens_details": {
-            "cached_tokens": _token_detail(value, "prompt_tokens_details", "cached_tokens")
-        },
         "output_tokens": output_tokens,
         "output_tokens_details": {
             "reasoning_tokens": _token_detail(
@@ -380,6 +377,9 @@ def response_usage(value: object) -> dict[str, object] | None:
         },
         "total_tokens": usage.get("total_tokens", input_tokens + output_tokens),
     }
+    if cached_tokens is not None:
+        converted["input_tokens_details"] = {"cached_tokens": cached_tokens}
+    return converted
 
 
 async def completed_chat_sse(payload: dict[str, Any]) -> AsyncIterator[bytes]:
@@ -704,30 +704,15 @@ async def responses_sse(
                     or not isinstance(arguments.get("session_id"), int)
                     or (
                         isinstance(arguments.get("chars"), str)
-                        and (
-                            "\n" in arguments["chars"]
-                            or len(arguments["chars"]) > 256
-                        )
+                        and ("\n" in arguments["chars"] or len(arguments["chars"]) > 256)
                     )
                 ):
-                    if "exec_command" in (function_tool_names or set()):
-                        item["name"] = "exec_command"
-                        item["_arguments"] = json.dumps(
-                            {
-                                "cmd": (
-                                    "printf '%s\\n' 'No active process session; "
-                                    "use exec_command or apply_patch.'"
-                                )
-                            },
-                            separators=(",", ":"),
-                        )
-                    else:
-                        arguments["session_id"] = 0
-                        item["_arguments"] = json.dumps(
-                            arguments,
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        )
+                    arguments["session_id"] = 0
+                    item["_arguments"] = json.dumps(
+                        arguments,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
                     LOGGER.info(
                         "responses_invalid_session_id_suppressed session_id=%s",
                         _log_token(session_id),

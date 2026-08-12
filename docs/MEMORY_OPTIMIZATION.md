@@ -2,6 +2,11 @@
 
 Updated: 2026-07-20
 
+The 65K decision below is preserved as Phase 3 historical evidence. The current
+128K candidate and its physical superseding evidence are recorded in
+`docs/STATE.md` and `docs/VALIDATION.md`; do not use this document alone to
+construct the current Executor command.
+
 ## Decision
 
 Use exact full process stop/start for executor unload. It is both the selected

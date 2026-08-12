@@ -11,6 +11,8 @@ def test_required_systemd_units_exist() -> None:
         "dgx-moa-gateway.service",
         "dgx-moa-loopback.service",
         "dgx-moa-loopback.socket",
+        "dgx-moa-lan.service",
+        "dgx-moa-lan.socket",
         "dgx-moa-executor.service",
         "dgx-moa-planner.service",
         "dgx-moa-reviewer.service",
@@ -37,6 +39,18 @@ def test_loopback_socket_proxies_only_to_the_configured_gateway() -> None:
     assert "StartLimitBurst=10" in service
     assert "dgx-moa-*.socket" in installer
     assert "enable dgx-moa-resident.target dgx-moa-loopback.socket" in installer
+
+
+def test_lan_socket_proxies_only_to_the_authenticated_gateway() -> None:
+    socket = (SYSTEMD / "dgx-moa-lan.socket").read_text()
+    service = (SYSTEMD / "dgx-moa-lan.service").read_text()
+    installer = (ROOT / "scripts/install-systemd-user.sh").read_text()
+    assert "ListenStream=192.168.0.42:9000" in socket
+    assert "0.0.0.0" not in socket
+    assert "Requires=dgx-moa-gateway.service dgx-moa-lan.socket" in service
+    assert '"$DGX_MOA_BIND_HOST:$DGX_MOA_BIND_PORT"' in service
+    assert "systemd-socket-proxyd" in service
+    assert "dgx-moa-lan.socket" in installer
 
 
 def test_targets_and_services_are_mutually_exclusive() -> None:
@@ -67,6 +81,17 @@ def test_resident_target_requires_only_gateway_and_executor() -> None:
     assert "reasoner" not in requires
 
 
+def test_executor_uses_qualified_cuda_allocator() -> None:
+    executor = (SYSTEMD / "dgx-moa-executor.service").read_text()
+    assert "Environment=PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync" in executor
+    assert "Environment=VLLM_NVFP4_GEMM_BACKEND=flashinfer-b12x" in executor
+    assert "Environment=VLLM_ALLOW_LONG_MAX_MODEL_LEN=1" in executor
+    assert "MemoryHigh=12G" in executor
+    assert "MemoryMax=16G" in executor
+    assert "MemorySwapMax=4G" in executor
+    assert "OOMPolicy=stop" in executor
+
+
 def test_profile_scripts_wait_for_executor_and_verify_all_resident_roles_stop() -> None:
     wait = (ROOT / "scripts/wait-profile.sh").read_text()
     verify_stopped = (ROOT / "scripts/verify-profile-stopped.sh").read_text()
@@ -90,7 +115,7 @@ def test_unit_environment_and_hardening() -> None:
         assert "LockPersonality=true" in unit
         assert "RestrictSUIDSGID=true" in unit
         assert "Restart=on-failure" in unit
-        if "loopback" not in path.name:
+        if path.name not in {"dgx-moa-loopback.service", "dgx-moa-lan.service"}:
             assert "StartLimitIntervalSec=600" in unit
             assert "StartLimitBurst=3" in unit
 

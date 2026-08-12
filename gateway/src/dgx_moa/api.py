@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import os
 import re
+import sqlite3
 import subprocess
 import time
 import uuid
@@ -13,10 +15,20 @@ from contextlib import aclosing, asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 import httpx
 import uvicorn
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
@@ -36,6 +48,20 @@ from .controller import (
     pending_goal_prerequisites,
 )
 from .evolution import PromptRegistry
+from .execution_graph import (
+    EdgeType,
+    ExecutionGraphRuntime,
+    ExecutionGraphStore,
+    NodeType,
+    SchedulingSnapshot,
+    record_shadow_failure,
+)
+from .executor_scheduler import (
+    ExecutorAdmission,
+    ExecutorQueueFull,
+    ExecutorQueueTimeout,
+    ExecutorScheduler,
+)
 from .frontier import (
     CodexOAuthCollaboration,
     CodexOAuthProvider,
@@ -56,9 +82,9 @@ from .lifecycle import (
     SystemdLifecycleDriver,
     continuation_correlation,
 )
+from .live_dashboard import LiveDashboardHub
 from .metrics import RuntimeMetrics
 from .observation import (
-    DiscordProvider,
     ObservationBus,
     ObservationCommandRequest,
     ObservationCommandStore,
@@ -66,6 +92,7 @@ from .observation import (
     ObservationProvider,
     TelegramProvider,
 )
+from .overflow_executor import OpenCodeGoExecutorProvider, OverflowExecutorUnavailable
 from .policy import PolicyEngine
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
@@ -80,18 +107,23 @@ from .routing import (
     required_roles,
     resolve_runtime_mode,
     review_fails_closed,
+    select_executor_provider,
 )
+from .runtime_dashboard import RUNTIME_DASHBOARD
 from .runtime_status import memory_available as runtime_memory_available
 from .runtime_status import report as runtime_report
 from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest, text_content
 from .security import (
     ADMIN_SESSION_COOKIE,
     ADMIN_SESSION_SECONDS,
+    DASHBOARD_SESSION_COOKIE,
+    DASHBOARD_SESSION_SECONDS,
     ApiKeyRequest,
     ApiKeyStore,
     ApiKeyUpdate,
     admin_dependency,
     auth_dependency,
+    redact,
 )
 from .skills import SkillRegistry
 from .specialists import (
@@ -236,22 +268,21 @@ def _coerce_responses_input_messages(
                     if item_type == "function_call"
                     else json.dumps({"input": item.get("input", "")})
                 )
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": None,
-                        "tool_calls": [
-                            {
-                                "id": item["call_id"],
-                                "type": "function",
-                                "function": {
-                                    "name": item["name"],
-                                    "arguments": arguments,
-                                },
-                            }
-                        ],
-                    }
-                )
+                tool_call = {
+                    "id": item["call_id"],
+                    "type": "function",
+                    "function": {"name": item["name"], "arguments": arguments},
+                }
+                if (
+                    messages
+                    and messages[-1].get("role") == "assistant"
+                    and isinstance(messages[-1].get("tool_calls"), list)
+                ):
+                    messages[-1]["tool_calls"].append(tool_call)
+                else:
+                    messages.append(
+                        {"role": "assistant", "content": None, "tool_calls": [tool_call]}
+                    )
                 continue
             if item_type in {"function_call_output", "custom_tool_call_output"}:
                 output = item.get("output", "")
@@ -494,6 +525,7 @@ def create_app(
     lifecycle_clock: Callable[[], float] = time.time,
     lifecycle_sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     lifecycle_memory_probe: Callable[[], int] = runtime_memory_available,
+    overflow_executor: OpenCodeGoExecutorProvider | None = None,
 ) -> FastAPI:
     configured = settings or get_settings()
     api_keys = ApiKeyStore(
@@ -559,20 +591,43 @@ def create_app(
         app.state.settings = configured
         app.state.draining = False
         app.state.executor_admission_lock = asyncio.Lock()
+        scheduling = configured.executor_scheduling
+        app.state.executor_scheduler = ExecutorScheduler(
+            same_key_max_local_queue=scheduling.same_key_max_local_queue,
+            max_total_local_queue=scheduling.max_total_local_queue,
+            queue_timeout_seconds=scheduling.queue_timeout_seconds,
+        )
+        app.state.overflow_executor = overflow_executor
+        if scheduling.enabled and app.state.overflow_executor is None:
+            endpoint = os.path.expandvars(scheduling.flash_endpoint or "")
+            if not endpoint or "$" in endpoint:
+                raise ValueError("Executor Flash endpoint environment is unresolved")
+            app.state.overflow_executor = OpenCodeGoExecutorProvider(
+                endpoint=endpoint,
+                api_key_env=scheduling.flash_api_key_env,
+                model=scheduling.flash_model,
+                timeout_seconds=configured.limits.executor_total_timeout_seconds,
+            )
+        if scheduling.enabled:
+            try:
+                flash_available = await asyncio.wait_for(
+                    app.state.overflow_executor.available(), timeout=5
+                )
+            except TimeoutError:
+                flash_available = False
+            if not flash_available:
+                raise ValueError("enabled Executor scheduling requires available OpenCode Go Flash")
         app.state.api_keys = api_keys
         app.state.store = store
+        app.state.dashboard_live = (
+            LiveDashboardHub(store.session_owner) if configured.dashboard_enabled else None
+        )
+        if app.state.dashboard_live is not None:
+            store.subscribe_events(app.state.dashboard_live.publish)
         app.state.runtime_metrics = RuntimeMetrics()
         store.subscribe_events(app.state.runtime_metrics.observe_event)
         observation_providers: list[ObservationProvider] = []
         observation = configured.live_observation
-        if observation.enabled and observation.discord is not None:
-            observation_providers.append(
-                DiscordProvider(
-                    observation.discord.webhook_url.get_secret_value(),
-                    thread_id=observation.discord.thread_id,
-                    timeout=observation.request_timeout_seconds,
-                )
-            )
         if observation.enabled and observation.telegram is not None:
             observation_providers.append(
                 TelegramProvider(
@@ -690,6 +745,13 @@ def create_app(
             prompts=app.state.prompts,
             remote_judge=remote_judge,
         )
+        if (
+            app.state.dashboard_live is not None
+            and app.state.controller.execution_graph_store is not None
+        ):
+            app.state.controller.execution_graph_store.subscribe_events(
+                app.state.dashboard_live.publish_graph
+            )
         app.state.lifecycle_store = LifecycleStore(
             configured.state_db,
             configured.models,
@@ -1422,8 +1484,63 @@ def create_app(
             request.app.state.controller.terminate_loop(state, "CLIENT_CANCELLED")
         elif body.command == "approve":
             approval_role = controls.allowed_users[f"{body.provider}:{body.user_id}"]
+            approval_evidence_id = next(
+                (
+                    str(node["node_id"])
+                    for node in reversed(state.evidence_nodes)
+                    if node.get("kind") == "policy_decision"
+                    and node.get("payload", {}).get("decision_type") == "operator_approval"
+                    and node.get("payload", {}).get("approval_role") == approval_role
+                ),
+                None,
+            )
             if approval_role not in state.control_approvals:
                 state.control_approvals.append(approval_role)
+                approval_evidence_id = request.app.state.controller.record_evidence(
+                    state,
+                    "policy_decision",
+                    "operator",
+                    {
+                        "decision_type": "operator_approval",
+                        "approval_role": approval_role,
+                        "provider": body.provider,
+                    },
+                )
+            required_approvals = set(
+                state.policy_decisions[-1].get("approvals_required", [])
+                if state.policy_decisions
+                else []
+            )
+            if required_approvals and required_approvals.issubset(state.control_approvals):
+                if (
+                    state.engineering_loop is not None
+                    and state.engineering_loop.termination_reason == "PERMISSION_REQUIRED"
+                ):
+                    state.engineering_loop.termination_reason = None
+                    state.engineering_loop.progress_state = "progressing"
+                state.phase = Phase.REPLANNING
+                state.final_status = None
+                graph_store = request.app.state.controller.execution_graph_store
+                if graph_store is not None and state.execution_graph_id:
+                    try:
+                        runtime = graph_store.load_runtime(state.execution_graph_id)
+                        if approval_evidence_id is None:
+                            raise ValueError("operator approval has no Evidence node")
+                        if runtime.resume_approval(approval_evidence_id):
+                            state.execution_checkpoint_id = runtime.last_checkpoint_id
+                            request.app.state.store.event(
+                                state.session_id,
+                                "execution_graph_resumed",
+                                {
+                                    "graph_id": runtime.graph.graph_id,
+                                    "checkpoint_id": runtime.last_checkpoint_id,
+                                    "stage": "human_approval",
+                                },
+                            )
+                    except (RuntimeError, ValueError, sqlite3.Error) as error:
+                        record_shadow_failure(
+                            request.app.state.store, state.session_id, "human_approval", error
+                        )
         request.app.state.store.event(
             state.session_id,
             "observation_command_applied",
@@ -1685,7 +1802,6 @@ def create_app(
             overlays.update(
                 observer_events_sent_total=observation_bus.metrics["sent"],
                 observer_events_dropped_total=observation_bus.metrics["dropped"],
-                discord_errors_total=observation_bus.metrics["discord_errors"],
                 telegram_errors_total=observation_bus.metrics["telegram_errors"],
             )
         collector = request.app.state.training_collector
@@ -1860,6 +1976,12 @@ def create_app(
         token_usage: dict[str, int] = {}
         state: Any | None = None
         executor_started: float | None = None
+        execution_runtime: ExecutionGraphRuntime | None = None
+        execution_attempt_id: str | None = None
+        execution_evidence_ids: list[str] = []
+        execution_validated_evidence_ids: list[str] = []
+        execution_contradicted_evidence_ids: list[str] = []
+        execution_projection_attempted = False
         active_stage = "request"
 
         def record_request_timing(state: Any) -> None:
@@ -1951,6 +2073,8 @@ def create_app(
         else:
             state_session_id = session_id
         executor_remote = False
+        executor_flash = False
+        executor_admission: ExecutorAdmission | None = None
         executor_routing_reason = "local_ready"
         task_id = str(raw["metadata"].get("task_id") or "")
         request_class = classify_request(mode, raw["messages"], raw.get("tools"), raw["metadata"])
@@ -2095,6 +2219,120 @@ def create_app(
         )
         usage_started = True
 
+        def finish_execution_primary(
+            current: Any,
+            *,
+            outcome: EdgeType = EdgeType.ON_SUCCESS,
+            stage: str = "executor",
+        ) -> None:
+            nonlocal execution_attempt_id, execution_runtime
+            if execution_runtime is None or execution_attempt_id is None:
+                return
+            invocation: dict[str, Any] = next(
+                (
+                    item
+                    for item in reversed(current.agent_invocations)
+                    if item.get("role") == "executor"
+                ),
+                {},
+            )
+            invocation = {**invocation, "total_tokens": token_usage.get("total_tokens", 0)}
+            try:
+                execution_runtime.finish_observed_attempt(
+                    execution_attempt_id,
+                    invocation,
+                    outcome=outcome,
+                    generated_evidence_ids=tuple(execution_evidence_ids),
+                )
+            except (ValueError, sqlite3.Error) as error:
+                record_shadow_failure(request.app.state.store, state_session_id, stage, error)
+                execution_runtime = None
+            finally:
+                execution_attempt_id = None
+
+        def start_execution_role(node_type: NodeType) -> str | None:
+            if execution_runtime is None:
+                return None
+            try:
+                attempt = execution_runtime.start_node_type(node_type)
+                return attempt.attempt_id if attempt is not None else None
+            except (ValueError, sqlite3.Error) as error:
+                record_shadow_failure(
+                    request.app.state.store, state_session_id, node_type.value.lower(), error
+                )
+                return None
+
+        def finish_execution_role(
+            current: Any,
+            attempt_id: str | None,
+            role: str,
+            *,
+            approved: bool,
+            outcome: EdgeType = EdgeType.ON_SUCCESS,
+            stage: str | None = None,
+        ) -> None:
+            if execution_runtime is None or attempt_id is None:
+                return
+            try:
+                evidence_id = next(
+                    (
+                        str(node["node_id"])
+                        for node in reversed(current.evidence_nodes)
+                        if node.get("source") == role and node.get("node_id")
+                    ),
+                    None,
+                )
+                if evidence_id is None:
+                    raise ValueError(f"{role} attempt has no Evidence node")
+                invocation: dict[str, Any] = next(
+                    (
+                        item
+                        for item in reversed(current.agent_invocations)
+                        if item.get("role") == role
+                    ),
+                    {},
+                )
+                progress = (evidence_id,) if outcome == EdgeType.ON_FINDING else ()
+                decision = (
+                    (evidence_id,)
+                    if outcome in {EdgeType.ON_APPROVAL, EdgeType.ON_REJECTION}
+                    else ()
+                )
+                validated = tuple(execution_evidence_ids) if approved else ()
+                validated = (*validated, *progress, *decision)
+                contradicted = tuple(execution_evidence_ids) if not approved else ()
+                execution_runtime.finish_observed_attempt(
+                    attempt_id,
+                    invocation,
+                    outcome=outcome,
+                    generated_evidence_ids=(evidence_id,),
+                    progress_evidence_ids=progress,
+                    validated_evidence_ids=validated,
+                    contradicted_evidence_ids=contradicted,
+                )
+                target = (
+                    execution_validated_evidence_ids
+                    if approved
+                    else execution_contradicted_evidence_ids
+                )
+                target.extend(
+                    evidence_id
+                    for evidence_id in execution_evidence_ids
+                    if evidence_id not in target
+                )
+            except (ValueError, sqlite3.Error) as error:
+                record_shadow_failure(
+                    request.app.state.store, state_session_id, stage or role, error
+                )
+
+        def fail_execution_role(attempt_id: str | None, role: str, error: Exception) -> None:
+            if execution_runtime is None or attempt_id is None:
+                return
+            try:
+                execution_runtime.fail_role_attempt(attempt_id, role, error)
+            except (ValueError, sqlite3.Error) as graph_error:
+                record_shadow_failure(request.app.state.store, state_session_id, role, graph_error)
+
         def finalize_request(
             stage: str | None,
             status_value: RequestStatus,
@@ -2104,7 +2342,7 @@ def create_app(
             retryable_failure_class: RetryableFailureClass | None = None,
         ) -> None:
             nonlocal active_lease_ids, first_byte_at, state, stream_lease_ids
-            nonlocal terminal_finalized
+            nonlocal execution_attempt_id, execution_runtime, terminal_finalized
             if terminal_finalized:
                 return
             terminal_finalized = True
@@ -2133,6 +2371,47 @@ def create_app(
                         )
                     if downstream_started:
                         current.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                    if execution_runtime is not None:
+                        try:
+                            if status_value == "completed" and execution_attempt_id is not None:
+                                finish_execution_primary(current)
+                            elif status_value == "cancelled":
+                                execution_runtime.cancel()
+                            elif execution_attempt_id is not None:
+                                execution_runtime.fail_attempt(
+                                    execution_attempt_id,
+                                    failure_code=f"REQUEST_{status_value.upper()}",
+                                    failure_fingerprint=hashlib.sha256(
+                                        f"{stage}:{status_value}".encode()
+                                    ).hexdigest(),
+                                    retryable=False,
+                                )
+                            execution_runtime.finalize_ready(
+                                (
+                                    "completed"
+                                    if status_value == "completed"
+                                    and execution_validated_evidence_ids
+                                    and not execution_contradicted_evidence_ids
+                                    else "degraded"
+                                    if status_value == "completed"
+                                    else "cancelled"
+                                    if status_value == "cancelled"
+                                    else "failed"
+                                ),
+                                generated_evidence_ids=tuple(execution_evidence_ids),
+                                validated_evidence_ids=tuple(execution_validated_evidence_ids),
+                                contradicted_evidence_ids=tuple(
+                                    execution_contradicted_evidence_ids
+                                ),
+                            )
+                            current.execution_checkpoint_id = execution_runtime.last_checkpoint_id
+                        except (ValueError, sqlite3.Error) as error:
+                            record_shadow_failure(
+                                request.app.state.store, current.session_id, "finalize", error
+                            )
+                        finally:
+                            execution_runtime = None
+                            execution_attempt_id = None
                     request.app.state.controller.complete_loop_iteration(current, status_value)
                     record_request_timing(current)
                     request.app.state.store.event(
@@ -2177,6 +2456,8 @@ def create_app(
                 request.app.state.lifecycle_store.release_leases(
                     (*stream_lease_ids, *active_lease_ids)
                 )
+                if executor_admission is not None:
+                    request.app.state.executor_scheduler.release(usage_request_id)
                 active_lease_ids = ()
                 stream_lease_ids = ()
 
@@ -2203,13 +2484,54 @@ def create_app(
 
         ensured_roles = list(roles)
         try:
-            async with request.app.state.executor_admission_lock:
-                executor_remote = (
-                    request.app.state.lifecycle_store.get("executor").active_request_count > 0
-                    and request.app.state.frontier is not None
+            if configured.executor_scheduling.enabled:
+                executor_admission = await request.app.state.executor_scheduler.acquire(
+                    api_token_id,
+                    usage_request_id,
+                    risk="high" if request_class == "high_risk_task" else "medium",
+                    flash_available=request.app.state.overflow_executor is not None,
+                    on_queued=lambda queued: request.app.state.store.event(
+                        state_session_id,
+                        "executor_local_queued",
+                        {
+                            "request_id": usage_request_id,
+                            "api_key_id": queued.api_key_id,
+                            "lease_owner_api_key_id": queued.lease_owner_api_key_id,
+                            "queue_position": queued.queue_position,
+                            "round_robin_epoch": queued.round_robin_epoch,
+                            "lease_state": queued.lease_state,
+                            "reason": queued.reason,
+                        },
+                    ),
                 )
-                if executor_remote:
-                    executor_routing_reason = "local_busy"
+                executor_flash = executor_admission.selected_executor == "opencode_go"
+                executor_remote = executor_flash
+                executor_routing_reason = executor_admission.reason
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_scheduled",
+                    {
+                        "request_id": usage_request_id,
+                        "api_key_id": executor_admission.api_key_id,
+                        "selected_executor": executor_admission.selected_executor,
+                        "lease_owner_api_key_id": executor_admission.lease_owner_api_key_id,
+                        "queue_position": executor_admission.queue_position,
+                        "round_robin_epoch": executor_admission.round_robin_epoch,
+                        "lease_state": executor_admission.lease_state,
+                        "reason": executor_admission.reason,
+                    },
+                )
+            else:
+                async with request.app.state.executor_admission_lock:
+                    executor_provider, executor_routing_reason = select_executor_provider(
+                        frontier_available=request.app.state.frontier is not None,
+                        local_busy=(
+                            request.app.state.lifecycle_store.get("executor").active_request_count
+                            > 0
+                        ),
+                    )
+                    executor_remote = executor_provider == "frontier"
+            async with request.app.state.executor_admission_lock:
                 initial_lease_roles = tuple(
                     role
                     for role in roles
@@ -2228,6 +2550,15 @@ def create_app(
                         require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
                     )
                 )
+        except (ExecutorQueueFull, ExecutorQueueTimeout) as error:
+            finalize_request("executor_admission", "failed")
+            return error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                str(error),
+                "executor_admission_error",
+                "executor_queue_unavailable",
+                headers={"Retry-After": "30"},
+            )
         except LifecycleNotReadyError as error:
             record = error.record
             if record.state == "failed":
@@ -2334,6 +2665,96 @@ def create_app(
             )
             active_lease_ids = (*active_lease_ids, *(lease.lease_id for lease in leases))
 
+        def project_request_graph(*, tools_requested: bool) -> ExecutionGraphRuntime | None:
+            nonlocal execution_projection_attempted
+            execution_projection_attempted = True
+            assert state is not None
+            graph_store = request.app.state.controller.execution_graph_store
+            if graph_store is not None and state.execution_graph_id:
+                try:
+                    resumed = graph_store.load_runtime(state.execution_graph_id)
+                    if resumed.approval_continuable():
+                        request.app.state.store.event(
+                            state_session_id,
+                            "execution_graph_resumed",
+                            {
+                                "graph_id": resumed.graph.graph_id,
+                                "checkpoint_id": resumed.last_checkpoint_id,
+                                "stage": "approved_request",
+                            },
+                        )
+                        request.app.state.store.save(state)
+                        return cast(ExecutionGraphRuntime, resumed)
+                except (RuntimeError, ValueError, sqlite3.Error) as error:
+                    record_shadow_failure(
+                        request.app.state.store, state_session_id, "approval_resume", error
+                    )
+            if (
+                graph_store is not None
+                and state.execution_graph_id
+                and has_matching_tool_result(raw["messages"])
+            ):
+                try:
+                    resumed = graph_store.load_runtime(state.execution_graph_id)
+                    tool_evidence_id = next(
+                        (
+                            str(node["node_id"])
+                            for node in reversed(state.evidence_nodes)
+                            if node.get("source") == "tool" and node.get("node_id")
+                        ),
+                        None,
+                    )
+                    if tool_evidence_id is None:
+                        raise ValueError("tool continuation has no Evidence node")
+                    if resumed.resume_tool_result(tool_evidence_id, state.tool_executions[-1]):
+                        state.execution_checkpoint_id = resumed.last_checkpoint_id
+                        request.app.state.store.event(
+                            state_session_id,
+                            "execution_graph_resumed",
+                            {
+                                "graph_id": resumed.graph.graph_id,
+                                "checkpoint_id": resumed.last_checkpoint_id,
+                                "stage": "tool_result",
+                            },
+                        )
+                        request.app.state.store.save(state)
+                        return cast(ExecutionGraphRuntime, resumed)
+                except (KeyError, RuntimeError, ValueError, sqlite3.Error) as error:
+                    record_shadow_failure(
+                        request.app.state.store, state_session_id, "resume", error
+                    )
+            return cast(
+                ExecutionGraphRuntime | None,
+                request.app.state.controller.project_execution_graph(
+                    state,
+                    raw["metadata"],
+                    executor_provider=(
+                        "opencode_go"
+                        if executor_flash
+                        else "codex_frontier"
+                        if executor_remote
+                        else "local_mistral"
+                    ),
+                    scheduling=(
+                        SchedulingSnapshot(
+                            selected_executor=executor_admission.selected_executor,
+                            lease_owner_api_key_id=executor_admission.lease_owner_api_key_id,
+                            queue_position=executor_admission.queue_position,
+                            round_robin_epoch=executor_admission.round_robin_epoch,
+                            readiness={executor_admission.selected_executor: True},
+                        )
+                        if executor_admission is not None
+                        else None
+                    ),
+                    tools_requested=tools_requested,
+                    validation_required=bool(
+                        raw["metadata"].get("validation_command")
+                        or raw["metadata"].get("executor_complete")
+                    ),
+                    deadline_seconds=configured.limits.executor_total_timeout_seconds,
+                ),
+            )
+
         try:
             continuation_owner = continuation_correlation(state_session_id)
             if recovered_tool_owner or has_matching_tool_result(raw["messages"]):
@@ -2411,6 +2832,31 @@ def create_app(
             state.roles_required = list(roles)
             state.review_fail_closed = review_fails_closed(request_class)
             request.app.state.controller.select_route(state, raw["metadata"])
+            if state.runtime_mode == "orchestrated":
+                policy_roles = tuple(
+                    request.app.state.controller.orchestration_policy(
+                        state, raw["metadata"]
+                    ).required_agents
+                )
+                lifecycle_policy_roles = tuple(
+                    role for role in policy_roles if role in {"planner", "reviewer", "judge"}
+                )
+                if lifecycle_policy_roles:
+                    await ensure_dynamic_roles(lifecycle_policy_roles)
+                roles = tuple(dict.fromkeys((*roles, *policy_roles)))
+                state.roles_required = list(roles)
+            execution_runtime = project_request_graph(tools_requested=bool(raw.get("tools")))
+            if execution_runtime is not None:
+                try:
+                    entry_node_id = execution_runtime.graph.entry_nodes[0]
+                    if entry_node_id in execution_runtime.ready_node_ids():
+                        classify_attempt = execution_runtime.start_attempt(entry_node_id)
+                        execution_runtime.finish_attempt(classify_attempt.attempt_id)
+                except (ValueError, sqlite3.Error) as error:
+                    record_shadow_failure(
+                        request.app.state.store, state_session_id, "classify", error
+                    )
+                    execution_runtime = None
             stream_judge_reasons = (
                 request.app.state.controller.remote_judge_invocation_reasons(state, raw["metadata"])
                 if body.stream
@@ -2446,17 +2892,27 @@ def create_app(
             async def remote_executor_complete(
                 executor_request: dict[str, Any], stage: str
             ) -> dict[str, Any]:
-                frontier_provider = request.app.state.frontier
-                if frontier_provider is None:
-                    raise FrontierRequiredUnavailable("remote Frontier fallback is unavailable")
                 scoped_request = {
                     **executor_request,
                     "_client_workspace_path": state.repository.get("workspace_path"),
                 }
-                response = await frontier_provider.execute(
-                    scoped_request,
-                    f"{usage_request_id}:{stage}",
-                )
+                if executor_flash:
+                    flash_provider = request.app.state.overflow_executor
+                    if flash_provider is None:
+                        raise OverflowExecutorUnavailable(
+                            "pinned Executor Flash provider is unavailable"
+                        )
+                    response = await flash_provider.execute(
+                        scoped_request, f"{usage_request_id}:{stage}"
+                    )
+                else:
+                    frontier_provider = request.app.state.frontier
+                    if frontier_provider is None:
+                        raise FrontierRequiredUnavailable("remote Frontier fallback is unavailable")
+                    response = await frontier_provider.execute(
+                        scoped_request,
+                        f"{usage_request_id}:{stage}",
+                    )
                 request.app.state.store.event(
                     state_session_id,
                     "executor_remote_completed",
@@ -2471,8 +2927,13 @@ def create_app(
             async def remote_executor_correction(
                 executor_request: dict[str, Any], stage: str
             ) -> dict[str, Any]:
+                if executor_flash and state.frontier_correction_required:
+                    raise OverflowExecutorUnavailable(
+                        "pinned Executor Flash cannot satisfy required Frontier correction"
+                    )
                 response = await remote_executor_complete(executor_request, stage)
-                if not state.frontier_correction_required:
+                tool_call_required = executor_request.get("tool_choice") == "required"
+                if not state.frontier_correction_required and not tool_call_required:
                     return response
                 message = (response.get("choices") or [{}])[0].get("message", {})
                 if message.get("tool_calls"):
@@ -2502,10 +2963,16 @@ def create_app(
                     {
                         "role": "user",
                         "content": (
-                            "A required code correction remains unresolved. The prior response "
-                            "did not call a tool and cannot complete this request. Call exactly "
+                            (
+                                "A required code correction remains unresolved. "
+                                if state.frontier_correction_required
+                                else "The client requires a tool call before this turn can finish. "
+                            )
+                            + "The prior response did not call a tool and cannot complete this "
+                            "request. Call exactly "
                             "one available client tool now to apply the concrete correction "
-                            "listed in the prior Frontier contribution. Do not repeat an "
+                            "or make the next bounded implementation or validation step. "
+                            "Do not repeat an "
                             "inspection or validation that already succeeded unless the prior "
                             "finding explicitly requires that evidence. Never invoke a tool name "
                             "as a shell command; when apply_patch is unavailable, write through "
@@ -2564,17 +3031,24 @@ def create_app(
                 )
                 return cast(dict[str, Any], response)
 
+            executor_provider, selected_reason = (
+                ("frontier" if executor_remote else "local", executor_routing_reason)
+                if configured.executor_scheduling.enabled
+                else select_executor_provider(
+                    "frontier" if executor_remote else "local",
+                    executor_routing_reason,
+                    frontier_available=request.app.state.frontier is not None,
+                    duplicate_failure=duplicate_failure_recovery,
+                    frontier_correction=state.frontier_correction_required,
+                )
+            )
             if (
-                not executor_remote
-                and request.app.state.frontier is not None
-                and (state.frontier_correction_required or duplicate_failure_recovery)
+                not configured.executor_scheduling.enabled
+                and executor_provider == "frontier"
+                and not executor_remote
             ):
                 executor_remote = True
-                executor_routing_reason = (
-                    "local_duplicate_failure"
-                    if duplicate_failure_recovery
-                    else "frontier_correction_required"
-                )
+                executor_routing_reason = selected_reason
                 executor_lease_id = str(
                     uuid.uuid5(uuid.UUID(usage_request_id), "active_request:executor")
                 )
@@ -2603,11 +3077,44 @@ def create_app(
                 roles,
                 ensure_dynamic_roles,
                 tool_continuation=tool_continuation,
-                executor_complete=remote_executor_complete if executor_remote else None,
                 reasoner_complete=(
                     remote_reasoner_complete if request.app.state.frontier is not None else None
                 ),
+                execution_runtime=execution_runtime,
             )
+            if execution_runtime is not None:
+                try:
+                    preparation_node = next(
+                        (
+                            node
+                            for node in execution_runtime.graph.nodes
+                            if node.node_type == NodeType.EXECUTOR and node.purpose == "evidence"
+                        ),
+                        None,
+                    )
+                    if (
+                        preparation_node is not None
+                        and preparation_node.node_id in execution_runtime.ready_node_ids()
+                    ):
+                        preparation_attempt = execution_runtime.start_attempt(
+                            preparation_node.node_id
+                        )
+                        execution_runtime.finish_attempt(
+                            preparation_attempt.attempt_id,
+                            artifact_hash=hashlib.sha256(
+                                json.dumps(
+                                    redact(prepared),
+                                    ensure_ascii=False,
+                                    sort_keys=True,
+                                    separators=(",", ":"),
+                                    default=str,
+                                ).encode()
+                            ).hexdigest(),
+                        )
+                except (ValueError, sqlite3.Error) as error:
+                    record_shadow_failure(
+                        request.app.state.store, state_session_id, "executor_prepare", error
+                    )
             context_fits = getattr(request.app.state.provider, "context_fits", None)
             context_exceeded = (
                 not executor_remote
@@ -2649,28 +3156,28 @@ def create_app(
                 and request.app.state.frontier is not None
                 and any(count >= 2 for count in state.failure_families.values())
             )
+            executor_provider, selected_reason = (
+                ("frontier" if executor_remote else "local", executor_routing_reason)
+                if configured.executor_scheduling.enabled
+                else select_executor_provider(
+                    "frontier" if executor_remote else "local",
+                    executor_routing_reason,
+                    frontier_available=request.app.state.frontier is not None,
+                    context_exceeded=context_exceeded,
+                    output_budget_exceeded=output_budget_exceeded,
+                    frontier_correction=frontier_correction,
+                    completion_stalled=completion_stalled,
+                    repeated_failure=repeated_failure,
+                    stalled=stalled,
+                )
+            )
             if (
-                context_exceeded
-                or output_budget_exceeded
-                or stalled
-                or completion_stalled
-                or frontier_correction
-                or repeated_failure
+                not configured.executor_scheduling.enabled
+                and executor_provider == "frontier"
+                and not executor_remote
             ):
                 executor_remote = True
-                executor_routing_reason = (
-                    "local_context_exceeded"
-                    if context_exceeded
-                    else "local_output_budget_exceeded"
-                    if output_budget_exceeded
-                    else "frontier_correction_required"
-                    if frontier_correction
-                    else "local_completion_stalled"
-                    if completion_stalled
-                    else "local_repeated_failure"
-                    if repeated_failure
-                    else "local_no_progress"
-                )
+                executor_routing_reason = selected_reason
                 executor_lease_id = str(
                     uuid.uuid5(uuid.UUID(usage_request_id), "active_request:executor")
                 )
@@ -2717,8 +3224,62 @@ def create_app(
                 stage_status["reviewer"] = (
                     "completed" if state.review_status in {"approved", "rejected"} else "failed"
                 )
+            if not execution_projection_attempted:
+                execution_runtime = project_request_graph(
+                    tools_requested=bool(prepared.get("tools"))
+                )
             active_stage = "executor_first_byte" if body.stream else "executor_total"
             executor_started = time.monotonic()
+            if execution_runtime is not None:
+                try:
+                    for control_type in (
+                        NodeType.CLASSIFY,
+                        NodeType.JOIN,
+                        NodeType.EXECUTOR_SELECT,
+                    ):
+                        control_node = next(
+                            (
+                                node
+                                for node in execution_runtime.graph.nodes
+                                if node.node_type == control_type
+                            ),
+                            None,
+                        )
+                        if (
+                            control_node is not None
+                            and control_node.node_id in execution_runtime.ready_node_ids()
+                        ):
+                            control_attempt = execution_runtime.start_attempt(control_node.node_id)
+                            execution_runtime.finish_attempt(control_attempt.attempt_id)
+                    primary_node = next(
+                        node
+                        for node in execution_runtime.graph.nodes
+                        if node.node_type == NodeType.EXECUTOR and node.purpose == "primary"
+                    )
+                    if primary_node.node_id in execution_runtime.ready_node_ids():
+                        execution_attempt_id = execution_runtime.start_attempt(
+                            primary_node.node_id,
+                            model=(
+                                configured.executor_scheduling.flash_model
+                                if executor_flash
+                                else request.app.state.frontier.config.model
+                                if executor_remote
+                                else configured.models["executor"].served_name
+                            ),
+                        ).attempt_id
+                    elif execution_runtime.graph.terminal_nodes[0] in (
+                        execution_runtime.ready_node_ids()
+                    ):
+                        execution_attempt_id = None
+                    else:
+                        execution_runtime = None
+                        execution_attempt_id = None
+                except (StopIteration, ValueError, sqlite3.Error) as error:
+                    record_shadow_failure(
+                        request.app.state.store, state_session_id, "activate", error
+                    )
+                    execution_runtime = None
+                    execution_attempt_id = None
             state.timings_ms["upstream_start"] = elapsed_ms(accepted)
             request.app.state.store.event(
                 state_session_id,
@@ -2726,9 +3287,17 @@ def create_app(
                 {
                     "role": "executor",
                     "phase": state.phase,
-                    "provider": "frontier" if executor_remote else "local",
+                    "provider": (
+                        "opencode_go"
+                        if executor_flash
+                        else "frontier"
+                        if executor_remote
+                        else "local"
+                    ),
                     "model": (
-                        request.app.state.frontier.config.model
+                        configured.executor_scheduling.flash_model
+                        if executor_flash
+                        else request.app.state.frontier.config.model
                         if executor_remote
                         else configured.models["executor"].served_name
                     ),
@@ -2753,7 +3322,7 @@ def create_app(
                                 state_session_id,
                                 "executor_remote_failed",
                                 {
-                                    "provider": "frontier",
+                                    "provider": "opencode_go" if executor_flash else "frontier",
                                     "failure_class": type(error).__name__,
                                     "failure_code": str(error)[:128],
                                     "routing_reason": executor_routing_reason,
@@ -2763,7 +3332,11 @@ def create_app(
                                 "error": {
                                     "message": "remote Executor fallback unavailable",
                                     "type": "backend_error",
-                                    "code": "frontier_required_unavailable",
+                                    "code": (
+                                        "executor_flash_unavailable"
+                                        if executor_flash
+                                        else "frontier_required_unavailable"
+                                    ),
                                 }
                             }
                             yield (
@@ -2801,7 +3374,7 @@ def create_app(
                 stream_cleaned = False
 
                 async def finish_stream() -> None:
-                    nonlocal stream_cleaned
+                    nonlocal execution_attempt_id, execution_runtime, stream_cleaned
                     async with stream_cleanup_lock:
                         if stream_cleaned:
                             return
@@ -2849,9 +3422,17 @@ def create_app(
                                 state,
                                 {
                                     "role": "executor",
-                                    "provider": "frontier" if executor_remote else "local",
+                                    "provider": (
+                                        "opencode_go"
+                                        if executor_flash
+                                        else "frontier"
+                                        if executor_remote
+                                        else "local"
+                                    ),
                                     "model": (
-                                        request.app.state.frontier.config.model
+                                        configured.executor_scheduling.flash_model
+                                        if executor_flash
+                                        else request.app.state.frontier.config.model
                                         if executor_remote
                                         else configured.models["executor"].served_name
                                     ),
@@ -2869,6 +3450,20 @@ def create_app(
                                 },
                                 account_loop_usage=False,
                             )
+                            if terminal:
+                                execution_evidence_ids.append(
+                                    request.app.state.controller.record_evidence(
+                                        state,
+                                        "final_synthesis",
+                                        "executor",
+                                        {
+                                            "finish_reasons": observation.finish_reasons,
+                                            "has_tool_calls": bool(observation.tool_call_ids),
+                                            "streaming": True,
+                                        },
+                                        generated_from=state.last_decision_id,
+                                    )
+                                )
                             if terminal and (
                                 "tool_calls" in observation.finish_reasons
                                 or observation.tool_call_ids
@@ -2902,6 +3497,29 @@ def create_app(
                                         + configured.lifecycle.continuation_lease_ttl_seconds
                                     ),
                                 )
+                                if execution_runtime is not None and any(
+                                    node.node_type == NodeType.TOOL
+                                    for node in execution_runtime.graph.nodes
+                                ):
+                                    try:
+                                        finish_execution_primary(state, outcome=EdgeType.ON_FINDING)
+                                        tool_execution_attempt = start_execution_role(NodeType.TOOL)
+                                        if tool_execution_attempt is None:
+                                            raise ValueError(
+                                                "compiled Graph has no ready TOOL node"
+                                            )
+                                        state.execution_checkpoint_id = (
+                                            execution_runtime.last_checkpoint_id
+                                        )
+                                    except (ValueError, sqlite3.Error) as error:
+                                        record_shadow_failure(
+                                            request.app.state.store,
+                                            state_session_id,
+                                            "stream_tool_wait",
+                                            error,
+                                        )
+                                        execution_runtime = None
+                                        execution_attempt_id = None
                             request.app.state.store.event(
                                 state_session_id,
                                 "assistant_stream_finished",
@@ -3065,16 +3683,18 @@ def create_app(
                     dict.fromkeys([*state.pending_tool_call_ids, *assistant_tool_call_ids])
                 )[-configured.limits.max_steps :]
                 state.last_tool_call = assistant_tool_calls[-1]
-            request.app.state.controller.record_evidence(
-                state,
-                "final_synthesis",
-                "executor",
-                {
-                    "finish_reason": response.get("choices", [{}])[0].get("finish_reason"),
-                    "has_tool_calls": bool(assistant_message.get("tool_calls")),
-                    "derived_confidence": state.derived_confidence,
-                },
-                generated_from=state.last_decision_id,
+            execution_evidence_ids.append(
+                request.app.state.controller.record_evidence(
+                    state,
+                    "final_synthesis",
+                    "executor",
+                    {
+                        "finish_reason": response.get("choices", [{}])[0].get("finish_reason"),
+                        "has_tool_calls": bool(assistant_message.get("tool_calls")),
+                        "derived_confidence": state.derived_confidence,
+                    },
+                    generated_from=state.last_decision_id,
+                )
             )
             if state.decisions:
                 state.decisions[-1]["structured_decision"] = assistant_message
@@ -3089,6 +3709,26 @@ def create_app(
             finish_reason = response.get("choices", [{}])[0].get("finish_reason")
             state.finish_reasons = [str(finish_reason)] if finish_reason else []
             state.truncated = finish_reason == "length"
+            graph_has_tool = bool(
+                execution_runtime is not None
+                and any(node.node_type == NodeType.TOOL for node in execution_runtime.graph.nodes)
+            )
+            if assistant_tool_calls and graph_has_tool:
+                try:
+                    finish_execution_primary(state, outcome=EdgeType.ON_FINDING)
+                    tool_execution_attempt = start_execution_role(NodeType.TOOL)
+                    if execution_runtime is not None and tool_execution_attempt is None:
+                        raise ValueError("compiled Graph has no ready TOOL node")
+                    if execution_runtime is not None:
+                        state.execution_checkpoint_id = execution_runtime.last_checkpoint_id
+                except (ValueError, sqlite3.Error) as error:
+                    record_shadow_failure(
+                        request.app.state.store, state_session_id, "tool_wait", error
+                    )
+                    execution_runtime = None
+                    execution_attempt_id = None
+            elif not state.truncated:
+                finish_execution_primary(state)
             judge_reasons = request.app.state.controller.remote_judge_invocation_reasons(
                 state, body.metadata, response
             )
@@ -3107,6 +3747,7 @@ def create_app(
                     state, response, body.metadata
                 )
                 active_stage = "reviewer"
+                reviewer_execution_attempt = start_execution_role(NodeType.REVIEWER)
                 try:
                     async with request.app.state.reviewer_evaluation_lock:
                         guard_transition_id = None
@@ -3122,7 +3763,7 @@ def create_app(
                                 expected_transition_id=guard_transition_id,
                             )
                         try:
-                            await request.app.state.controller.review(
+                            review_result = await request.app.state.controller.review(
                                 state,
                                 review_observation,
                                 guard_already_owned=guard_transition_id is not None,
@@ -3136,6 +3777,7 @@ def create_app(
                                     expected_transition_id=guard_transition_id,
                                 )
                 except (httpx.HTTPError, StageTimeout, ValueError) as error:
+                    fail_execution_role(reviewer_execution_attempt, "reviewer", error)
                     state.review_status = "failed"
                     stage_status["reviewer"] = (
                         "timed_out" if isinstance(error, StageTimeout) else "failed"
@@ -3154,6 +3796,12 @@ def create_app(
                             raise
                         raise ValueError(f"review failed: {error}") from error
                 else:
+                    finish_execution_role(
+                        state,
+                        reviewer_execution_attempt,
+                        "reviewer",
+                        approved=review_result.get("status") == "approved",
+                    )
                     stage_status["reviewer"] = "completed"
             if not state.truncated:
                 request.app.state.controller.apply_metadata(state, body.metadata)
@@ -3177,15 +3825,107 @@ def create_app(
                 observation = request.app.state.controller.review_observation(
                     state, response, body.metadata
                 )
-                verdict = await request.app.state.controller.judge(state, observation)
+                judge_execution_attempt = start_execution_role(NodeType.JUDGE)
+                try:
+                    verdict = await request.app.state.controller.judge(state, observation)
+                except Exception as error:
+                    fail_execution_role(judge_execution_attempt, "judge", error)
+                    raise
+                correction_verdict = str(verdict.get("verdict", "revise"))
+                judge_approved = correction_verdict in {"approve", "accept"}
+                judge_outcome = (
+                    EdgeType.ON_SUCCESS
+                    if judge_approved
+                    else EdgeType.ON_FINDING
+                    if correction_verdict in {"approve_with_edits", "revise", "retry_with_evidence"}
+                    else EdgeType.ON_REJECTION
+                )
+                finish_execution_role(
+                    state,
+                    judge_execution_attempt,
+                    "judge",
+                    approved=judge_approved,
+                    outcome=judge_outcome,
+                )
                 stage_status["judge"] = "completed"
-                if verdict.get("verdict") != "approve":
-                    correction_verdict = str(verdict.get("verdict", "revise"))
+                if not judge_approved:
                     if correction_verdict in {
                         "approve_with_edits",
                         "revise",
                         "retry_with_evidence",
                     }:
+                        frontier_b_output: dict[str, Any] | None = None
+                        frontier_b_attempt = start_execution_role(NodeType.FRONTIER_B)
+                        if frontier_b_attempt is not None:
+                            try:
+                                frontier_result = (
+                                    await request.app.state.controller._frontier_b_collaborate(
+                                        state,
+                                        {
+                                            "objective": state.objective,
+                                            "executor_position": assistant_message,
+                                            "reviewer_position": review_result,
+                                            "specific_disagreement": verdict,
+                                            "shared_evidence": state.evidence_nodes[-8:],
+                                        },
+                                    )
+                                )
+                                frontier_b_output = frontier_result.output
+                                artifact = frontier_result.model_dump()
+                                state.agent_artifacts.append(
+                                    request.app.state.controller.safe_payload(
+                                        state, {"role": "frontier", **artifact}
+                                    )
+                                )
+                                state.agent_artifacts = state.agent_artifacts[
+                                    -configured.limits.max_steps :
+                                ]
+                                request.app.state.controller.record_observed_invocation(
+                                    state,
+                                    {
+                                        "role": "frontier",
+                                        "provider": (
+                                            "openrouter"
+                                            if frontier_result.profile.startswith("openrouter:")
+                                            else "codex"
+                                        ),
+                                        "mode": "disagreement",
+                                        "latency_ms": frontier_result.latency_ms,
+                                        "prompt_tokens": frontier_result.prompt_tokens,
+                                        "completion_tokens": frontier_result.completion_tokens,
+                                        "total_tokens": frontier_result.total_tokens,
+                                        "cost_usd": frontier_result.cost_usd,
+                                        "profile": frontier_result.profile,
+                                        "status": "completed",
+                                    },
+                                )
+                                request.app.state.controller.record_evidence(
+                                    state,
+                                    "external_expert_finding",
+                                    "frontier",
+                                    artifact,
+                                    generated_from=state.last_decision_id,
+                                )
+                                finish_execution_role(
+                                    state,
+                                    frontier_b_attempt,
+                                    "frontier",
+                                    approved=True,
+                                    outcome=EdgeType.ON_FINDING,
+                                )
+                                request.app.state.store.event(
+                                    state_session_id,
+                                    "frontier_b_collaboration_completed",
+                                    {
+                                        "profile": frontier_result.profile,
+                                        "transport": frontier_result.transport,
+                                    },
+                                )
+                            except Exception as error:
+                                fail_execution_role(frontier_b_attempt, "frontier", error)
+                                raise FrontierRequiredUnavailable(
+                                    "required Frontier B unavailable"
+                                ) from error
                         correction_request = dict(prepared)
                         correction_request["stream"] = False
                         correction_request["messages"] = [
@@ -3201,6 +3941,7 @@ def create_app(
                                         {
                                             "findings": verdict.get("findings", []),
                                             "required_edits": verdict.get("required_edits", []),
+                                            "frontier_adjudication": frontier_b_output,
                                         },
                                         ensure_ascii=False,
                                         sort_keys=True,
@@ -3213,6 +3954,38 @@ def create_app(
                             "judge_correction_started",
                             {"verdict": correction_verdict},
                         )
+                        if execution_runtime is not None:
+                            try:
+                                primary_node = next(
+                                    node
+                                    for node in execution_runtime.graph.nodes
+                                    if node.node_type == NodeType.EXECUTOR
+                                    and node.purpose == "primary"
+                                )
+                                if primary_node.node_id not in (execution_runtime.ready_node_ids()):
+                                    raise ValueError("Judge correction edge is not ready")
+                                execution_evidence_ids.clear()
+                                execution_validated_evidence_ids.clear()
+                                execution_contradicted_evidence_ids.clear()
+                                execution_attempt_id = execution_runtime.start_attempt(
+                                    primary_node.node_id,
+                                    model=(
+                                        configured.executor_scheduling.flash_model
+                                        if executor_flash
+                                        else request.app.state.frontier.config.model
+                                        if executor_remote
+                                        else configured.models["executor"].served_name
+                                    ),
+                                ).attempt_id
+                            except (StopIteration, ValueError, sqlite3.Error) as error:
+                                record_shadow_failure(
+                                    request.app.state.store,
+                                    state_session_id,
+                                    "judge_correction",
+                                    error,
+                                )
+                                execution_runtime = None
+                                execution_attempt_id = None
                         active_stage = "executor_total"
                         correction_started = time.monotonic()
                         response = (
@@ -3242,21 +4015,25 @@ def create_app(
                         state.truncated = finish_reason == "length"
                         if finish_reason == "length" or assistant_message.get("tool_calls"):
                             raise JudgeCorrectionRequired(correction_verdict)
-                        request.app.state.controller.record_evidence(
-                            state,
-                            "final_synthesis",
-                            "executor",
-                            {
-                                "finish_reason": finish_reason,
-                                "has_tool_calls": False,
-                                "correction_applied": True,
-                            },
-                            generated_from=state.last_decision_id,
+                        execution_evidence_ids.append(
+                            request.app.state.controller.record_evidence(
+                                state,
+                                "final_synthesis",
+                                "executor",
+                                {
+                                    "finish_reason": finish_reason,
+                                    "has_tool_calls": False,
+                                    "correction_applied": True,
+                                },
+                                generated_from=state.last_decision_id,
+                            )
                         )
+                        finish_execution_primary(state, stage="judge_correction_executor")
                         active_stage = "reviewer"
                         corrected_observation = request.app.state.controller.review_observation(
                             state, response, body.metadata
                         )
+                        targeted_reviewer_attempt = start_execution_role(NodeType.REVIEWER)
                         targeted_review = await request.app.state.controller.review(
                             state, corrected_observation
                         )
@@ -3271,13 +4048,45 @@ def create_app(
                         recheck_needed = bool(
                             important_correction and verdict.get("recheck_required")
                         )
+                        finish_execution_role(
+                            state,
+                            targeted_reviewer_attempt,
+                            "reviewer",
+                            approved=True,
+                            outcome=(
+                                EdgeType.ON_SUCCESS if recheck_needed else EdgeType.ON_APPROVAL
+                            ),
+                            stage="judge_correction_reviewer",
+                        )
                         if recheck_needed:
                             active_stage = "judge"
+                            recheck_judge_attempt = start_execution_role(NodeType.JUDGE)
                             verdict = await request.app.state.controller.judge(
                                 state, corrected_observation
                             )
                             stage_status["judge"] = "completed"
-                            if verdict.get("verdict") != "approve":
+                            recheck_verdict = str(verdict.get("verdict", "revise"))
+                            recheck_approved = recheck_verdict in {"approve", "accept"}
+                            finish_execution_role(
+                                state,
+                                recheck_judge_attempt,
+                                "judge",
+                                approved=recheck_approved,
+                                outcome=(
+                                    EdgeType.ON_SUCCESS
+                                    if recheck_approved
+                                    else EdgeType.ON_FINDING
+                                    if recheck_verdict
+                                    in {
+                                        "approve_with_edits",
+                                        "revise",
+                                        "retry_with_evidence",
+                                    }
+                                    else EdgeType.ON_REJECTION
+                                ),
+                                stage="judge_correction_recheck",
+                            )
+                            if not recheck_approved:
                                 raise JudgeCorrectionRequired(
                                     str(verdict.get("verdict", correction_verdict))
                                 )
@@ -3341,6 +4150,34 @@ def create_app(
                 else "loop_new_evidence_required",
             )
         except PolicyBlocked as error:
+            if "approval" in str(error) and state is not None and execution_runtime is None:
+                execution_runtime = project_request_graph(tools_requested=bool(raw.get("tools")))
+                if execution_runtime is not None:
+                    try:
+                        for control_type in (NodeType.CLASSIFY, NodeType.POLICY_GATE):
+                            control_node = next(
+                                node
+                                for node in execution_runtime.graph.nodes
+                                if node.node_type == control_type
+                            )
+                            if control_node.node_id in execution_runtime.ready_node_ids():
+                                attempt = execution_runtime.start_attempt(control_node.node_id)
+                                execution_runtime.finish_attempt(attempt.attempt_id)
+                        approval_node = next(
+                            node
+                            for node in execution_runtime.graph.nodes
+                            if node.node_type == NodeType.HUMAN_APPROVAL
+                        )
+                        if approval_node.node_id in execution_runtime.ready_node_ids():
+                            execution_runtime.start_attempt(approval_node.node_id)
+                    except (StopIteration, ValueError, sqlite3.Error) as graph_error:
+                        record_shadow_failure(
+                            request.app.state.store,
+                            state_session_id,
+                            "human_approval_wait",
+                            graph_error,
+                        )
+                        execution_runtime = None
             finalize_request(active_stage, "failed", downstream_started=True)
             return error_response(
                 status.HTTP_403_FORBIDDEN,
@@ -3362,6 +4199,22 @@ def create_app(
                 str(error),
                 "frontier_unavailable",
                 "frontier_required_unavailable",
+                headers={"Retry-After": "30"},
+            )
+        except OverflowExecutorUnavailable as error:
+            if state is not None:
+                request.app.state.controller.terminate_loop(state, "PROVIDER_UNAVAILABLE")
+            finalize_request(
+                "executor_flash",
+                "failed",
+                downstream_started=True,
+                retryable_failure_class="backend_error",
+            )
+            return error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                str(error),
+                "executor_flash_unavailable",
+                "pinned_executor_provider_unavailable",
                 headers={"Retry-After": "30"},
             )
         except JudgeRequired as error:
@@ -3772,11 +4625,11 @@ def create_app(
                         )
                         if not initial_heartbeat_sent:
                             initial_heartbeat_sent = True
-                            yield b": keep-alive\n\n"
+                            yield b"event: ping\ndata: {}\n\n"
                         while not chat_task.done():
                             await asyncio.wait((chat_task,), timeout=15)
                             if not chat_task.done():
-                                yield b": keep-alive\n\n"
+                                yield b"event: ping\ndata: {}\n\n"
                         try:
                             chat_result = chat_task.result()
                         except HTTPException as error:
@@ -3838,9 +4691,10 @@ def create_app(
                                         require_tool_action=goal_requires_tool_action(
                                             response_state
                                         ),
-                                    )
+                                    ),
+                                    heartbeat=b"event: ping\ndata: {}\n\n",
                                 ):
-                                    if chunk.startswith(b":"):
+                                    if chunk.startswith((b":", b"event: ping\n")):
                                         yield chunk
                                     else:
                                         translated.append(chunk)
@@ -3862,22 +4716,25 @@ def create_app(
                                     "progress_only_response_retried",
                                     {"attempt": progress_only_retries},
                                 )
+                                retry_instruction = (
+                                    "The previous answer did not prove completion. A code block in "
+                                    "the answer does not modify the workspace. Call the required "
+                                    "tool to implement and validate. Return a final result only "
+                                    "after recorded change, test, and required review evidence "
+                                    "exists."
+                                    if goal_requires_tool_action(response_state)
+                                    else "The previous answer was only a progress update. The "
+                                    "required "
+                                    "implementation and validation evidence is already recorded. "
+                                    "Return the concrete final result now without another progress "
+                                    "update or redundant tool call."
+                                )
                                 current_body = current_body.model_copy(
                                     update={
                                         "messages": [
                                             *current_body.messages,
                                             ChatMessage(
-                                                role="developer",
-                                                content=(
-                                                    "The previous answer did not prove completion. "
-                                                    "A code block in the answer "
-                                                    "does not modify the workspace. "
-                                                    "Call the required tool "
-                                                    "to implement and validate. "
-                                                    "Return a final result only "
-                                                    "after recorded change, "
-                                                    "test, and required review evidence exists."
-                                                ),
+                                                role="developer", content=retry_instruction
                                             ),
                                         ],
                                         "metadata": {
@@ -3947,7 +4804,7 @@ def create_app(
                                 delay = min(15.0, retry_after)
                                 await asyncio.sleep(delay)
                                 retry_after -= delay
-                                yield b": keep-alive\n\n"
+                                yield b"event: ping\ndata: {}\n\n"
                             continue
                         async for chunk in responses_error_sse(
                             response_model,
@@ -4116,6 +4973,205 @@ def create_app(
     @app.get("/admin/api-keys", response_class=HTMLResponse)
     async def api_key_dashboard() -> HTMLResponse:
         return admin_html(API_KEY_DASHBOARD)
+
+    @app.get("/dashboard", response_class=HTMLResponse)
+    async def runtime_dashboard() -> HTMLResponse:
+        if not configured.dashboard_enabled:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "dashboard is disabled")
+        return admin_html(RUNTIME_DASHBOARD)
+
+    def dashboard_identity(request: Request) -> tuple[str, bool]:
+        if not configured.dashboard_enabled:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "dashboard is disabled")
+        token = request.cookies.get(DASHBOARD_SESSION_COOKIE, "")
+        api_key_id = request.app.state.api_keys.verify_dashboard_session(token) if token else None
+        if api_key_id is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid dashboard session")
+        return api_key_id, request.app.state.api_keys.is_admin(api_key_id)
+
+    @app.post("/v1/dashboard/session", dependencies=[Depends(auth)])
+    async def dashboard_session(request: Request) -> Response:
+        if not configured.dashboard_enabled:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "dashboard is disabled")
+        token = request.app.state.api_keys.create_dashboard_session(request.state.api_token_id)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        response.set_cookie(
+            DASHBOARD_SESSION_COOKIE,
+            token,
+            max_age=DASHBOARD_SESSION_SECONDS,
+            httponly=True,
+            secure=request.url.scheme == "https",
+            samesite="strict",
+        )
+        return response
+
+    @app.delete("/v1/dashboard/session")
+    async def dashboard_session_delete(request: Request) -> Response:
+        if token := request.cookies.get(DASHBOARD_SESSION_COOKIE):
+            request.app.state.api_keys.delete_dashboard_session(token)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        response.delete_cookie(DASHBOARD_SESSION_COOKIE, samesite="strict")
+        return response
+
+    @app.get("/v1/dashboard/me")
+    async def dashboard_me(request: Request) -> JSONResponse:
+        api_key_id, operator = dashboard_identity(request)
+        return key_response({"api_key_id": api_key_id, "operator": operator})
+
+    @app.get("/v1/dashboard/requests")
+    async def dashboard_requests(request: Request, limit: int = 100) -> JSONResponse:
+        api_key_id, operator = dashboard_identity(request)
+        if operator:
+            return key_response(
+                {
+                    "scope": "operator_aggregate",
+                    "usage": request.app.state.usage.api_token_dashboard(),
+                }
+            )
+        sessions = request.app.state.store.sessions(api_key_id, limit=limit)
+        return key_response(
+            {
+                "scope": "private",
+                "requests": [
+                    {
+                        "session_id": state.session_id,
+                        "task_id": state.task_id,
+                        "phase": state.phase,
+                        "request_class": state.request_class,
+                        "objective": state.objective,
+                        "final_status": state.final_status,
+                        "updated_at": state.updated_at,
+                    }
+                    for state in sessions
+                ],
+            }
+        )
+
+    def dashboard_graph_snapshot(state: SessionState) -> dict[str, Any] | None:
+        graph_store = cast(ExecutionGraphStore | None, app.state.controller.execution_graph_store)
+        if graph_store is None or state.execution_graph_id is None:
+            return None
+        try:
+            return graph_store.snapshot(state.execution_graph_id)
+        except (KeyError, ValueError, sqlite3.Error):
+            return None
+
+    @app.get("/v1/dashboard/snapshot")
+    async def dashboard_snapshot(request: Request, limit: int = 20) -> JSONResponse:
+        api_key_id, operator = dashboard_identity(request)
+        if operator:
+            graph_store = cast(
+                ExecutionGraphStore | None, app.state.controller.execution_graph_store
+            )
+            return key_response(
+                {
+                    "scope": "operator_aggregate",
+                    "execution_graphs": (
+                        graph_store.aggregate_snapshot()
+                        if graph_store is not None
+                        else {"graph_count": 0}
+                    ),
+                }
+            )
+        sessions = request.app.state.store.sessions(api_key_id, limit=max(1, min(limit, 100)))
+        return key_response(
+            {
+                "scope": "private",
+                "execution_graphs": [
+                    snapshot
+                    for state in sessions
+                    if (snapshot := dashboard_graph_snapshot(state)) is not None
+                ],
+            }
+        )
+
+    @app.get("/v1/dashboard/requests/{session_id}")
+    async def dashboard_request_detail(
+        session_id: str,
+        request: Request,
+        reason: str | None = None,
+    ) -> JSONResponse:
+        api_key_id, operator = dashboard_identity(request)
+        state = request.app.state.store.get(session_id)
+        if state is None or (not operator and state.api_token_id != api_key_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "request not found")
+        if operator and state.api_token_id != api_key_id:
+            audit_reason = (reason or "").strip()
+            if len(audit_reason) < 8 or len(audit_reason) > 256:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "operator raw view requires an 8-256 character audit reason",
+                )
+            request.app.state.store.event(
+                "dashboard-audit",
+                "dashboard_raw_view",
+                {
+                    "operator": api_key_id,
+                    "target_api_key_id": state.api_token_id,
+                    "target_session_id": session_id,
+                    "reason": redact(audit_reason),
+                },
+            )
+        return key_response(
+            redact(
+                {
+                    "state": state.model_dump(mode="json"),
+                    "events": request.app.state.store.events(session_id),
+                    "execution_graph": dashboard_graph_snapshot(state),
+                }
+            )
+        )
+
+    @app.websocket("/v1/dashboard/live")
+    async def dashboard_live(websocket: WebSocket) -> None:
+        if not configured.dashboard_enabled or websocket.app.state.dashboard_live is None:
+            await websocket.close(code=4404)
+            return
+        origin = websocket.headers.get("origin")
+        if origin and urlsplit(origin).netloc != websocket.headers.get("host"):
+            await websocket.close(code=4403)
+            return
+        token = websocket.cookies.get(DASHBOARD_SESSION_COOKIE, "")
+        api_key_id = websocket.app.state.api_keys.verify_dashboard_session(token)
+        if api_key_id is None:
+            await websocket.close(code=4401)
+            return
+        last_seq_text = websocket.query_params.get("last_seq")
+        if last_seq_text is None:
+            last_seq = None
+        elif last_seq_text.isdigit():
+            last_seq = int(last_seq_text)
+        else:
+            await websocket.close(code=4400)
+            return
+        await websocket.accept()
+        subscriber_id, queue = websocket.app.state.dashboard_live.subscribe(
+            api_key_id,
+            operator=websocket.app.state.api_keys.is_admin(api_key_id),
+            last_seq=last_seq,
+        )
+        try:
+            await websocket.send_json(
+                {
+                    "type": "connected",
+                    "api_key_id": api_key_id,
+                    "scope": (
+                        "operator_aggregate"
+                        if websocket.app.state.api_keys.is_admin(api_key_id)
+                        else "private"
+                    ),
+                }
+            )
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15)
+                except TimeoutError:
+                    event = {"type": "heartbeat"}
+                await websocket.send_json(event)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            websocket.app.state.dashboard_live.unsubscribe(subscriber_id)
 
     def key_response(payload: dict[str, Any]) -> JSONResponse:
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
@@ -4307,10 +5363,14 @@ def create_app(
     @app.get("/v1/admin/api-keys/{name}/reveal", dependencies=[Depends(admin_auth)])
     async def api_key_reveal(name: str, request: Request) -> JSONResponse:
         try:
-            record = request.app.state.api_keys.get(name)
+            request.app.state.api_keys.get(name)
         except KeyError as error:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "API key not found") from error
-        return key_response({"api_key": record["api_key"]})
+        key_event(request, "reveal_denied", name)
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            "API key plaintext is returned only once at creation or rotation",
+        )
 
     @app.get("/v1/admin/api-keys/{name}/usage", dependencies=[Depends(admin_auth)])
     async def api_key_usage(

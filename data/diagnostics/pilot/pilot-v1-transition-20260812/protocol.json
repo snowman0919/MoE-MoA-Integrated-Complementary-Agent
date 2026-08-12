@@ -1,0 +1,43 @@
+{
+  "protocol_epoch": "pilot-v1-transition-20260812",
+  "status": "running",
+  "policy_change": "Pilot-first minimum safe deployable gateway",
+  "starting_dev_commit": "f2c20a78d814ef9cd59424f372fa42d503874054",
+  "starting_main_commit": "396e0458f25977293281b953d2c804cf5b689970",
+  "parent_plan_epoch": "dynamic-moa-v3-20260808",
+  "parent_plan_sha256": "41e16b4f2fb8f442d8da3065ba53eacb317fc9a68333e63c02253784bcf1a4bd",
+  "preserves_frozen_epochs": true,
+  "current_state": "DEVELOPMENT",
+  "pilot_candidate": {
+    "backend": "vLLM native NVFP4 Candidate A",
+    "model_revision": "b1a9048590131d38491bd23a7c9f6ed0962f0358",
+    "context_length": 131072,
+    "max_num_seqs": 1,
+    "kv_cache_memory_bytes": 3400000000,
+    "cuda_graph": "FULL_DECODE_ONLY"
+  },
+  "deferred": {
+    "sglang": "DEFERRED_REJECTED_THIS_EPOCH",
+    "synthetic_client_matrix": "POST_PILOT_VALIDATION",
+    "blind_noninferiority": "POST_PILOT_VALIDATION",
+    "reasoner_ablation": "POST_PILOT_VALIDATION",
+    "long_horizon": "POST_PILOT_VALIDATION",
+    "final_branch_cleanup": "STABLE_GATE"
+  },
+  "first_gate": {
+    "name": "qualification_memory_containment",
+    "status": "passed",
+    "reason": "v64 global OOM killed unrelated processes, production gateway, and the user manager",
+    "acceptance": "hard-capped qualification cgroup is OOM-killed without health interruption or PID change in production gateway, Candidate A, or user systemd manager",
+    "evidence": "containment-result.json"
+  },
+  "pilot_runtime_contract": {
+    "status": "passed_isolated",
+    "evidence": "runtime-contract-result.json"
+  },
+  "static_validation": {
+    "status": "passed",
+    "evidence": "static-validation.json"
+  },
+  "next_gate": "produce a reviewed Pilot release revision, install the checked-in Candidate A limits/native defaults, rehearse exact rollback, then run the limited developer canary"
+}

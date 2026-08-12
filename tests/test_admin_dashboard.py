@@ -33,6 +33,7 @@ def test_admin_dashboard_runs_bounded_custom_provider_codex(
         }
     )
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DGX_MOA_ADMIN_CODEX_UNSANDBOXED", "true")
     calls: list[tuple[tuple[object, ...], dict[str, Any], bytes]] = []
 
     class Input:
@@ -184,9 +185,10 @@ def test_admin_dashboard_runs_bounded_custom_provider_codex(
     first_args, first_kwargs, first_input = calls[0]
     assert first_args[:2] == ("codex", "exec")
     assert 'model_providers.dgx_moa_admin.wire_api="responses"' in first_args
+    assert "model_context_window=131072" in first_args
     assert not any("model_supports_reasoning_summaries" in str(arg) for arg in first_args)
-    assert 'sandbox_mode="workspace-write"' in first_args
-    assert "sandbox_workspace_write.network_access=false" in first_args
+    assert 'sandbox_mode="danger-full-access"' in first_args
+    assert "sandbox_workspace_write.network_access=true" in first_args
     assert 'shell_environment_policy.inherit="core"' in first_args
     assert first_kwargs["cwd"] == workspace
     assert first_kwargs["env"]["DGX_MOA_ADMIN_CODEX_KEY"] not in {
