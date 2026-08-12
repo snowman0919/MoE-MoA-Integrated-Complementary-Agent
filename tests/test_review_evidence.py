@@ -1,4 +1,8 @@
-from dgx_moa.review_evidence import review_tool_results, tool_execution_changes_files
+from dgx_moa.review_evidence import (
+    is_successful_validation_execution,
+    review_tool_results,
+    tool_execution_changes_files,
+)
 from dgx_moa.state import SessionState
 
 
@@ -27,6 +31,18 @@ def test_tempfile_validation_is_not_a_source_change() -> None:
                 "command": "from tempfile import TemporaryDirectory\n"
                 "with TemporaryDirectory() as directory:\n"
                 "    path.write_text('{}')"
+            },
+        }
+    )
+
+
+def test_failed_validation_wrapper_is_not_review_evidence() -> None:
+    assert not is_successful_validation_execution(
+        {
+            "exit_code": 0,
+            "failure_class": "NONEXISTENT_PATH",
+            "normalized_arguments": {
+                "cmd": "timeout 120s python -m unittest discover -s tests -v"
             },
         }
     )

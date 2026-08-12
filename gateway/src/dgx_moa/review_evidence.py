@@ -119,14 +119,19 @@ def is_successful_validation_execution(execution: dict[str, Any]) -> bool:
         if isinstance(arguments, dict)
         else None
     )
-    return execution.get("exit_code") == 0 and isinstance(command, str) and bool(
-        re.search(
-            r"(?:^|&&|\|\||;|\n|[\"'])\s*"
-            r"(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]+\s+)*"
-            r"(?:timeout\s+\d+(?:\.\d+)?[smh]?\s+)?"
-            r"(?:uv run )?(?:python -m )?"
-            r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
-            command,
+    return (
+        execution.get("exit_code") == 0
+        and not execution.get("failure_class")
+        and isinstance(command, str)
+        and bool(
+            re.search(
+                r"(?:^|&&|\|\||;|\n|[\"'])\s*"
+                r"(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]+\s+)*"
+                r"(?:timeout\s+\d+(?:\.\d+)?[smh]?\s+)?"
+                r"(?:uv run )?(?:python -m )?"
+                r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
+                command,
+            )
         )
     )
 
