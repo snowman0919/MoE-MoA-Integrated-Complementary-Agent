@@ -173,6 +173,9 @@ IMPLEMENTATION_QUALITY_CONTRACT = (
     "explicitly disables them. Collection, sample, and selection counts may be zero when zero "
     "naturally means none; reject negative values. Do not invent a stronger boundary than the "
     "written contract. "
+    "Validation commands that can block on concurrency, subprocesses, network, or long-running "
+    "services must use a finite timeout appropriate to the task. A yielded or still-running "
+    "process is pending, not successful evidence; poll or cancel it before starting a duplicate. "
     "Do not claim completion merely because the supplied tests pass."
 )
 
