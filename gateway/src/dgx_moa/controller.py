@@ -2564,14 +2564,27 @@ class Controller:
                 if required:
                     raise FrontierRequiredUnavailable("required Frontier unavailable")
                 return
+            frontier_limit = self.frontier.config.max_invocations_per_task
+            review_slot_reserved = (
+                mode == "architecture" and "reviewer" in roles and frontier_limit > 1
+            )
+            if review_slot_reserved:
+                frontier_limit -= 1
             if (
-                state.frontier_invocations >= self.frontier.config.max_invocations_per_task
+                state.frontier_invocations >= frontier_limit
                 and not state.frontier_correction_pending_verification
             ):
                 self.store.event(
                     state.session_id,
                     "frontier_unavailable",
-                    {"failure_class": "FRONTIER_INVOCATION_LIMIT", "required": False},
+                    {
+                        "failure_class": (
+                            "FRONTIER_REVIEW_SLOT_RESERVED"
+                            if review_slot_reserved
+                            else "FRONTIER_INVOCATION_LIMIT"
+                        ),
+                        "required": False,
+                    },
                 )
                 frontier_degraded = True
                 return

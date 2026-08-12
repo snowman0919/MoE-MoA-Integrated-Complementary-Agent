@@ -651,6 +651,51 @@ async def test_optional_frontier_failure_does_not_fail_executor_turn(
 
 
 @pytest.mark.asyncio
+async def test_architecture_reserves_last_frontier_call_for_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class Frontier:
+        config = FrontierConfig(enabled=True, max_invocations_per_task=3)
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            raise AssertionError("reserved review slot was consumed by architecture")
+
+    store = StateStore(settings.state_db)
+    frontier = Frontier()
+    controller = Controller(settings, store, stub_provider, frontier)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="frontier-review-slot",
+        objective="Implement the bounded change",
+        runtime_mode="orchestrated",
+        request_class="explicit_orchestrated",
+        roles_required=["reasoner", "executor", "reviewer"],
+        frontier_invocations=2,
+    )
+
+    await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-orchestrated",
+            "messages": [{"role": "user", "content": state.objective}],
+            "metadata": {"architecture": True},
+        },
+        ("reasoner", "executor", "reviewer", "frontier"),
+    )
+
+    assert frontier.calls == 0
+    assert state.frontier_invocations == 2
+    assert any(
+        event["event_type"] == "frontier_unavailable"
+        and event["payload"]["failure_class"] == "FRONTIER_REVIEW_SLOT_RESERVED"
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("clean_approval", [False, True])
 async def test_local_review_escalates_to_frontier_code_review(
     settings, stub_provider: StubProvider, clean_approval: bool
