@@ -1519,6 +1519,25 @@ class Controller:
                         "verification": "pending",
                     },
                 )
+            elif (
+                state.frontier_correction_required
+                and not failed
+                and result["stdout"].strip()
+                and argument_paths(arguments)
+                and self.frontier_rejection_requests_evidence(state)
+            ):
+                state.frontier_correction_required = False
+                state.frontier_correction_pending_verification = True
+                state.review_status = "deferred"
+                state.review_deferred = True
+                self.store.event(
+                    state.session_id,
+                    "frontier_correction_applied",
+                    {
+                        "reason": "requested_evidence_completed_after_frontier_rejection",
+                        "verification": "pending",
+                    },
+                )
             elif changed_files and state.review_status == "approved":
                 state.review_status = "deferred"
                 state.review_deferred = True
@@ -3618,6 +3637,31 @@ class Controller:
                 isinstance(output, dict)
                 and not output.get("critical")
                 and output.get("missing_tests")
+            )
+        return False
+
+    @staticmethod
+    def frontier_rejection_requests_evidence(state: SessionState) -> bool:
+        markers = ("bounded_diff", "bounded diff", "bounded code evidence", "code evidence")
+        for artifact in reversed(state.agent_artifacts):
+            if artifact.get("role") != "frontier":
+                continue
+            output = artifact.get("output")
+            if (
+                not isinstance(output, dict)
+                or output.get("critical")
+                or output.get("missing_tests")
+            ):
+                return False
+            important = output.get("important")
+            return bool(
+                isinstance(important, list)
+                and important
+                and all(
+                    isinstance(finding, str)
+                    and any(marker in finding.lower() for marker in markers)
+                    for finding in important
+                )
             )
         return False
 

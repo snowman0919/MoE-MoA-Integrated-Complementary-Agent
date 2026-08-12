@@ -1596,12 +1596,7 @@ def test_frontier_missing_test_latch_accepts_fresh_validation(
                         "function": {
                             "name": "shell",
                             "arguments": json.dumps(
-                                {
-                                    "cmd": (
-                                        "timeout 120s python -m unittest "
-                                        "discover -s tests -v"
-                                    )
-                                }
+                                {"cmd": ("timeout 120s python -m unittest discover -s tests -v")}
                             ),
                         },
                     }
@@ -1620,8 +1615,7 @@ def test_frontier_missing_test_latch_accepts_fresh_validation(
     assert state.review_status == "deferred"
     assert any(
         event["event_type"] == "frontier_correction_applied"
-        and event["payload"]["reason"]
-        == "requested_validation_completed_after_frontier_rejection"
+        and event["payload"]["reason"] == "requested_validation_completed_after_frontier_rejection"
         for event in store.events(state.session_id)
     )
 
@@ -1638,6 +1632,81 @@ def test_frontier_missing_test_latch_accepts_fresh_validation(
         }
     )
     assert controller.frontier_rejection_requests_validation(state) is False
+
+
+def test_frontier_evidence_latch_accepts_bounded_file_inspection(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="frontier-missing-evidence",
+        review_status="rejected_frontier",
+        review_deferred=True,
+        frontier_correction_required=True,
+        agent_artifacts=[
+            {
+                "role": "frontier",
+                "output": {
+                    "verdict": "revise",
+                    "critical": [],
+                    "important": [
+                        "`bounded_diff` is empty, so the implementation cannot be inspected. "
+                        "Passing tests alone is insufficient code evidence for approval."
+                    ],
+                    "missing_tests": [],
+                },
+            }
+        ],
+    )
+
+    controller._observe(
+        state,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "inspect-after-frontier",
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "arguments": json.dumps({"cmd": "sed -n '1,220p' atomic_store.py"}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "inspect-after-frontier",
+                "content": '{"exit_code":0,"stdout":"class AtomicJSONStore:\\n    pass\\n"}',
+            },
+        ],
+    )
+
+    assert state.frontier_correction_required is False
+    assert state.frontier_correction_pending_verification is True
+    assert state.review_status == "deferred"
+    assert any(
+        event["event_type"] == "frontier_correction_applied"
+        and event["payload"]["reason"] == "requested_evidence_completed_after_frontier_rejection"
+        for event in store.events(state.session_id)
+    )
+
+    state.frontier_correction_required = True
+    state.frontier_correction_pending_verification = False
+    state.agent_artifacts.append(
+        {
+            "role": "frontier",
+            "output": {
+                "verdict": "reject",
+                "critical": ["The implementation is still incorrect."],
+                "important": ["The bounded diff also omits the required fix."],
+                "missing_tests": [],
+            },
+        }
+    )
+    assert controller.frontier_rejection_requests_evidence(state) is False
 
 
 def test_successful_output_can_describe_failures(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
