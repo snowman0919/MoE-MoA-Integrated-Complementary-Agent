@@ -2718,7 +2718,11 @@ def create_app(
                             },
                         )
                         request.app.state.store.save(state)
-                        return cast(ExecutionGraphRuntime, resumed)
+                        if not (
+                            new_failure_observed
+                            and any(role in roles for role in ("reasoner", "planner", "frontier"))
+                        ):
+                            return cast(ExecutionGraphRuntime, resumed)
                 except (KeyError, RuntimeError, ValueError, sqlite3.Error) as error:
                     record_shadow_failure(
                         request.app.state.store, state_session_id, "resume", error

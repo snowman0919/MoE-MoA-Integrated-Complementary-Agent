@@ -22,6 +22,7 @@ from dgx_moa.api import (
 )
 from dgx_moa.config import Settings
 from dgx_moa.controller import fingerprint
+from dgx_moa.execution_graph import NodeState, NodeType
 from dgx_moa.frontier import FrontierCollaborationResult
 from dgx_moa.lifecycle import (
     FakeLifecycleDriver,
@@ -7285,6 +7286,100 @@ def test_graph_shadow_sqlite_failure_preserves_legacy_role_tool_and_terminal_con
         for event in shadow_events
     )
     assert shadow_state is not None and shadow_state.execution_graph_id is None
+
+
+def test_graph_shadow_reprojects_failed_tool_before_collaborator_reentry(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    settings.execution_graph.mode = "shadow"
+    settings.frontier_enabled = False
+
+    async def complete(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role != "executor":
+            return await StubProvider.complete(stub_provider, role, model, request, **kwargs)
+        if any(message.get("role") == "tool" for message in request["messages"]):
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "failure observed"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"total_tokens": 2},
+            }
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-failed-check",
+                                "type": "function",
+                                "function": {"name": "shell", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"total_tokens": 2},
+        }
+
+    stub_provider.complete = complete  # type: ignore[method-assign]
+    headers = {
+        "Authorization": "Bearer test-secret",
+        "X-Session-ID": "graph-collaborator-tool-failure",
+    }
+    tools = [{"type": "function", "function": {"name": "shell", "parameters": {"type": "object"}}}]
+    with client_with_stub(settings, stub_provider) as client:
+        first = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "inspect the release"}],
+                "tools": tools,
+            },
+        )
+        assistant = first.json()["choices"][0]["message"]
+        first_state = client.app.state.store.get("graph-collaborator-tool-failure")
+        assert first_state is not None and first_state.execution_graph_id is not None
+        first_graph_id = first_state.execution_graph_id
+        second = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [
+                    {"role": "user", "content": "inspect the release"},
+                    assistant,
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-failed-check",
+                        "content": '{"stderr":"sandbox unavailable","exit_code":1}',
+                    },
+                ],
+                "tools": tools,
+            },
+        )
+        second_state = client.app.state.store.get("graph-collaborator-tool-failure")
+        assert second_state is not None and second_state.execution_graph_id is not None
+        graph_store = client.app.state.controller.execution_graph_store
+        assert graph_store is not None
+        first_attempts = graph_store.load_attempts(first_graph_id)
+        second_graph = graph_store.load_graph(second_state.execution_graph_id)
+        events = client.app.state.store.events("graph-collaborator-tool-failure")
+
+    assert first.status_code == second.status_code == 200
+    assert second_state.execution_graph_id != first_graph_id
+    assert any(
+        attempt.node_type == NodeType.TOOL and attempt.state == NodeState.FAILED
+        for attempt in first_attempts
+    )
+    assert all(node.node_type != NodeType.FRONTIER_A for node in second_graph.nodes)
+    assert not any(event["event_type"] == "execution_graph_shadow_failed" for event in events)
 
 
 def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def]

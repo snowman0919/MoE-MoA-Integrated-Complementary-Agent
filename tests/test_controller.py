@@ -88,6 +88,34 @@ def test_argument_paths_ignores_prose_slashes() -> None:
     ) == {"rate_limiter.py"}
 
 
+def test_graph_projection_omits_config_disabled_frontier(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings.execution_graph.mode = "shadow"
+    settings.frontier_enabled = False
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="disabled-frontier-graph",
+        objective="Inspect and verify the release",
+        request_class="explicit_orchestrated",
+        roles_required=["reasoner", "executor", "frontier"],
+    )
+    state.route = "standard"
+
+    runtime = controller.project_execution_graph(
+        state,
+        {},
+        executor_provider="local_mistral",
+        tools_requested=True,
+        validation_required=False,
+        deadline_seconds=60,
+    )
+
+    assert runtime is not None
+    assert any(node.node_type == NodeType.REASONER for node in runtime.graph.nodes)
+    assert all(node.node_type != NodeType.FRONTIER_A for node in runtime.graph.nodes)
+
+
 def test_invocation_usage_accumulates_calls_and_preserves_cache_unknown_vs_zero(
     settings, stub_provider: StubProvider, tmp_path
 ) -> None:  # type: ignore[no-untyped-def]

@@ -2046,7 +2046,7 @@ def project_execution_graph(
                 validation_required=validation_required,
                 reasoner_enabled="reasoner" in state.roles_required,
                 planner_enabled="planner" in state.roles_required,
-                frontier_enabled="frontier" in state.roles_required,
+                frontier_enabled=(settings.frontier_enabled and "frontier" in state.roles_required),
                 reviewer_enabled=(
                     "reviewer" in state.roles_required or risk in {"high", "critical"}
                 ),
