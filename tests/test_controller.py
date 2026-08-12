@@ -224,6 +224,15 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
     )
     assert codex["exit_code"] == 1
     assert codex["stdout"].endswith("FAILED (failures=1)")
+    running = normalize_tool_result(
+        {
+            "role": "tool",
+            "name": "exec_command",
+            "content": json.dumps({"output": "test started ...", "session_id": 123}),
+        }
+    )
+    assert running["exit_code"] == 1
+    assert running["session_id"] == 123
     failed_patch = normalize_tool_result(
         {
             "role": "tool",

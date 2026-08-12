@@ -445,6 +445,13 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
         }
         stdout = json.dumps(evidence, ensure_ascii=False, sort_keys=True) if evidence else ""
     stderr = parsed.get("stderr", parsed.get("error", ""))
+    running_session = parsed.get("session_id")
+    if (
+        isinstance(running_session, bool)
+        or not isinstance(running_session, int)
+        or running_session < 1
+    ):
+        running_session = None
     result = {
         "tool_name": str(
             parsed.get(
@@ -458,11 +465,15 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
         "exit_code": int(
             parsed["exit_code"]
             if parsed.get("exit_code") is not None
+            else 1
+            if running_session is not None
             else embedded_tool_exit_code(stdout)
         ),
         "duration_ms": int(parsed.get("duration_ms", 0)),
         "truncated": bool(parsed.get("truncated", False)),
     }
+    if running_session is not None:
+        result["session_id"] = running_session
     for key in ("changed_paths", "created_paths", "deleted_paths"):
         if isinstance(parsed.get(key), list):
             result[key] = [str(path) for path in parsed[key]]
