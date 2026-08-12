@@ -388,8 +388,10 @@ async def test_planner_and_frontier_are_concurrent_and_frontier_evidence_survive
 
         def __init__(self) -> None:
             self.started = asyncio.Event()
+            self.evidence = None
 
         async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            self.evidence = evidence
             self.started.set()
             await asyncio.wait_for(reasoner_started.wait(), timeout=1)
             await asyncio.sleep(0.01)
@@ -479,6 +481,7 @@ async def test_planner_and_frontier_are_concurrent_and_frontier_evidence_survive
         assert "Frontier contribution" in json.dumps(prepared["messages"])
 
     assert frontier.started.is_set()
+    assert frontier.evidence["relevant_evidence"]["implementation"] == []
     assert any(artifact.get("role") == "frontier" for artifact in state.agent_artifacts)
     completed_event = next(
         event

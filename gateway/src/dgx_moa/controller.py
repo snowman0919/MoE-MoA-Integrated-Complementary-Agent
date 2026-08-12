@@ -2559,6 +2559,7 @@ class Controller:
                 "relevant_evidence": {
                     "changed_paths": changed_paths,
                     "diff": metadata.get("diff_summary", metadata.get("relevant_diff", "")),
+                    "implementation": state.implementation_evidence[-1:],
                     "tests": metadata.get("validation_results", []),
                     "tool_results": review_tool_results(state),
                 },
