@@ -3355,6 +3355,20 @@ class Controller:
         self, state: SessionState, metadata: dict[str, Any]
     ) -> bool:
         objective = effective_objective(state).lower()
+        if any(
+            marker in objective
+            for marker in (
+                "do not edit",
+                "do not modify",
+                "don't edit",
+                "don't modify",
+                "read-only",
+                "read only",
+                "변경하지 마",
+                "수정하지 마",
+            )
+        ):
+            return False
         work = objective + "\n" + json.dumps(state.plan, ensure_ascii=False, sort_keys=True).lower()
         requests_change = any(
             marker in work

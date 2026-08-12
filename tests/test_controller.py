@@ -3156,6 +3156,13 @@ def test_implementation_completion_requires_change_validation_and_review(
     )
     assert controller.requires_implementation_tool_action(question, {}) is False
 
+    read_only_audit = SessionState(
+        session_id="read-only-audit",
+        objective="읽기 전용 감사다. 파일을 수정하지 마라.",
+        plan=[{"step": "저장소 파일을 확인하고 수정 여부를 판정한다."}],
+    )
+    assert controller.requires_implementation_tool_action(read_only_audit, {}) is False
+
 
 def test_frontier_missing_tests_block_approval(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
