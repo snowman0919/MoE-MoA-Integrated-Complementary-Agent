@@ -3174,6 +3174,12 @@ def test_implementation_completion_requires_change_validation_and_review(
     read_only_audit.tool_executions.append({"tool_name": "exec_command", "exit_code": 0})
     assert controller.requires_explicit_tool_evidence(read_only_audit) is False
 
+    scoped_change = SessionState(
+        session_id="scoped-change",
+        objective="Modify tests/test_controller.py. Do not modify any other file.",
+    )
+    assert controller.requires_implementation_tool_action(scoped_change, {}) is True
+
     unrelated = SessionState(
         session_id="request-scoped-tool-evidence",
         objective="기존 세션",

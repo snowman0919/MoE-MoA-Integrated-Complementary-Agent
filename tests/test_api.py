@@ -7753,7 +7753,9 @@ def test_responses_retries_code_block_without_workspace_change(
             headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
             json={
                 "model": "dgx-moa-agent",
-                "input": "이 저장소에 rate_limiter.py를 구현하고 테스트해.",
+                "input": (
+                    "이 저장소에 rate_limiter.py를 구현하고 테스트해. Do not modify any other file."
+                ),
                 "stream": True,
             },
         )
