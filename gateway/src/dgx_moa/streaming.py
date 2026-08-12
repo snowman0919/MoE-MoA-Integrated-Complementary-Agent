@@ -66,10 +66,34 @@ class ProgressOnlyResponse(Exception):
 def compatible_edit_call(
     name: str, raw_arguments: str, custom_tool_names: set[str] | None
 ) -> tuple[str, str]:
-    if name not in {"edit", "edit_file"} or "apply_patch" not in (custom_tool_names or set()):
+    if "apply_patch" not in (custom_tool_names or set()):
         return name, raw_arguments
     try:
         arguments = json.loads(raw_arguments)
+        if name == "write_stdin" and "chars" not in arguments:
+            path = arguments.get("path", arguments.get("file", arguments.get("file_path")))
+            content = arguments.get("content")
+            if (
+                not isinstance(path, str)
+                or not path
+                or "\n" in path
+                or not isinstance(content, str)
+            ):
+                raise TypeError
+            patch = "\n".join(
+                (
+                    "*** Begin Patch",
+                    f"*** Delete File: {path}",
+                    f"*** Add File: {path}",
+                    *(f"+{line}" for line in content.splitlines()),
+                    "*** End Patch",
+                )
+            )
+            return "apply_patch", json.dumps(
+                {"input": patch}, ensure_ascii=False, separators=(",", ":")
+            )
+        if name not in {"edit", "edit_file"}:
+            return name, raw_arguments
         path = arguments.get("file", arguments.get("path", arguments.get("file_path")))
         old_text = arguments.get("old_text", arguments.get("old_string", arguments.get("old")))
         new_text = arguments.get("new_text", arguments.get("new_string", arguments.get("new")))
