@@ -1264,3 +1264,10 @@ transient unit omitted `WorkingDirectory`; attempt 02 changed only that launch
 variable and passed. Production, Pilot attempt 12, and Candidate A remained
 HTTP 200; v107 services cleaned up successfully. A fresh post-recovery matrix
 is still required before blind non-inferiority.
+
+Hermes targeted epoch v108 then passed the identical webhook task in 343.912
+seconds with one native unittest call and one successful unittest result. All
+ten scoring checks passed, cleanup succeeded, and production, Pilot, and
+Candidate A again returned HTTP 200. Both failed v106 client families now have
+physical targeted recovery evidence at commit `60f7a236e`; a fresh full matrix
+may proceed without modifying the immutable v106 result.

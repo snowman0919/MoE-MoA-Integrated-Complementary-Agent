@@ -8216,3 +8216,11 @@ scoring checks passed. Attempt 01 preserved a pre-readiness
 `config/codex-frontier.yaml` `FileNotFoundError`; attempt 02 added only the
 transient `WorkingDirectory` and succeeded. Cleanup returned success, and
 production, Pilot, and Candidate A each returned HTTP 200.
+
+Hermes targeted epoch
+`mistral-128k-v108-hermes-scoped-validation-recovery-20260812` passed the same
+webhook cell in 343.912 seconds. Its evidence artifact records one unittest
+tool call and one successful unittest result; visible and hidden validation,
+source scope, Korean final, and all other scoring checks passed. Summary
+SHA-256 is `b26dc42b03ff499100e6ae1c8b11367bee23d5b36a1de53cd61580f0f4526ad9`.
+Cleanup succeeded and production, Pilot, and Candidate A returned HTTP 200.
