@@ -566,7 +566,7 @@ async def test_responses_sse_keeps_exec_command_inside_current_sandbox() -> None
 
 
 @pytest.mark.asyncio
-async def test_responses_sse_replaces_invented_write_stdin_session_id() -> None:
+async def test_responses_sse_rewrites_invented_write_stdin_session_id() -> None:
     async def upstream():  # type: ignore[no-untyped-def]
         yield (
             b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
@@ -595,8 +595,8 @@ async def test_responses_sse_replaces_invented_write_stdin_session_id() -> None:
         for event in events
         if event["type"] == "response.output_item.done" and event["output_index"] == 1
     )
-    assert output["item"]["name"] == "write_stdin"
-    assert json.loads(done["arguments"])["session_id"] == 0
+    assert output["item"]["name"] == "exec_command"
+    assert "No active process session" in json.loads(done["arguments"])["cmd"]
 
 
 @pytest.mark.asyncio

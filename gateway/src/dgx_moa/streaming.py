@@ -723,22 +723,30 @@ async def responses_sse(
                     arguments = json.loads(str(item["_arguments"]))
                 except ValueError:
                     arguments = None
-                if isinstance(arguments, dict) and (
-                    isinstance(arguments.get("session_id"), bool)
-                    or not isinstance(arguments.get("session_id"), int)
-                    or (
-                        isinstance(arguments.get("chars"), str)
-                        and ("\n" in arguments["chars"] or len(arguments["chars"]) > 256)
+                if (
+                    "exec_command" in (function_tool_names or set())
+                    and isinstance(arguments, dict)
+                    and (
+                        isinstance(arguments.get("session_id"), bool)
+                        or not isinstance(arguments.get("session_id"), int)
+                        or (
+                            isinstance(arguments.get("chars"), str)
+                            and ("\n" in arguments["chars"] or len(arguments["chars"]) > 256)
+                        )
                     )
                 ):
-                    arguments["session_id"] = 0
+                    item["name"] = "exec_command"
                     item["_arguments"] = json.dumps(
-                        arguments,
-                        ensure_ascii=False,
+                        {
+                            "cmd": (
+                                "printf '%s\\n' 'No active process session; "
+                                "use apply_patch or exec_command.'"
+                            )
+                        },
                         separators=(",", ":"),
                     )
                     LOGGER.info(
-                        "responses_invalid_session_id_suppressed session_id=%s",
+                        "responses_invalid_write_stdin_rewritten session_id=%s",
                         _log_token(session_id),
                     )
             if not item["_added"]:
