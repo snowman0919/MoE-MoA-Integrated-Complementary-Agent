@@ -119,3 +119,18 @@ defaults/restart, rollback rehearsal, and limited canary still open.
    같은 epoch에서 실행한다.
 4. blind evaluation, Reasoner ablation, long-horizon, dev release validation을 통과한 뒤에만
    PR/merge/deploy/canary/rollback/retirement/branch cleanup을 순서대로 수행한다.
+
+## Pilot delta — 2026-08-12
+
+- Production gateway PID `3107456` and Pilot attempt-10 PID `3704865` are
+  active with zero restarts; the Pilot runs release `ed9f3d943` under 1/2/0.5
+  GiB caps.
+- The exhausted TOOL-graph projection defect passed clean validation and
+  physical reprojection with zero post-fix shadow failures.
+- Explicit Codex catalog pinning exposes `apply_patch`, but compatibility and
+  primary repository-write probes left the isolated worktree unchanged. The
+  quality gate remains open.
+- vLLM native NVFP4 remains candidate A; SGLang candidate B v66/v98 evidence is
+  preserved for this epoch; MARLIN remains rollback only.
+- Goal status remains active `PILOT_ACTIVE`; neither terminal `blocked` nor
+  `complete` is authorized.

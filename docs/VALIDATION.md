@@ -8123,3 +8123,32 @@ worktree gate then passed Ruff check and format, strict mypy on 49 source files,
 checked-in release-candidate facts, not an
 installed production deployment. Remaining Pilot gates are reviewed revision,
 installed exact restart, rollback rehearsal, and limited developer canary.
+
+### Exhausted TOOL-graph reprojection and write canary — 2026-08-12
+
+Codex write attempt 01 never reached the Pilot because the client remained on
+`api.openai.com` and received 401. Attempt 02 reached `dgx-moa-fast`, issued ten
+tool results, and reproduced four `execution_graph_shadow_failed` events after
+the bounded TOOL repair edge was exhausted.
+
+Commit `ed9f3d943d8f3c8b6877293472cef2d6c6db4140` fixes the shared boundary:
+an exhausted resumed `ON_BUDGET` edge preserves the completed attempt, emits a
+`tool_cycle_budget_exhausted` reprojection, and compiles a new immutable Graph.
+The clean release gate passed Ruff check/format, strict mypy on 49 source files,
+and pytest `1062/1062`. After deployment, attempt 03 crossed the same boundary
+with two Graph compiles, four resumes, one reprojection, and zero shadow
+failures. Later probes also reprojected without a shadow failure. Test-only
+commit `eaaa4e0f5` adds a persistence round-trip and passed the focused 103
+controller tests plus Ruff.
+
+Codex write scoring now requires explicit `model_catalog_json` pinning and a
+durable `client_tools_available` event containing `apply_patch`. Both
+`dgx-moa-fast` and primary `dgx-moa` then advertised it, but neither completed
+the requested two-line change. The primary path tried two shell rewrites that
+returned `PATCH_MARKER_NOT_FOUND` and `AttributeError`; the isolated worktree
+remained clean. The repository-write gate is therefore `FAILED_OPEN`.
+
+Production gateway PID `3107456` and Pilot PID `3704865` remained active with
+zero restarts. This does not change the qualified vLLM native-NVFP4 candidate
+A, the v66/v98 SGLang candidate-B rejection for this exact epoch, or MARLIN's
+rollback-only status.

@@ -745,3 +745,15 @@ BLOCKED
 ```
 
 검증 가능한 다음 경로가 남아 있는 단일 실험 실패는 즉시 외부 자원 부족이나 영구 `BLOCKED`로 단정하지 않는다. 반대로 mandatory release gate가 실제로 충족되지 않았는데 `COMPLETE`를 선언하지 않는다.
+
+## 2026-08-12 Pilot checkpoint
+
+- `dgx-moa-gateway.service`: recovered, PID `3107456`, restart 0.
+- Candidate A: fixed vLLM Blackwell native NVFP4 path remains unchanged.
+- Candidate B: isolated SGLang v66/v98 evidence preserved; rejected only for
+  this pinned epoch. MARLIN remains compatibility rollback.
+- Pilot attempt 10: controller `ed9f3d943`, PID `3704865`, restart 0.
+- Exhausted TOOL Graph: root-cause fix and physical reprojection PASS.
+- Codex repository write: tool surface fixed, primary write still
+  `FAILED_OPEN` and requires a new recovery epoch.
+- Goal: active `PILOT_ACTIVE`; `blocked`/`complete` 금지.

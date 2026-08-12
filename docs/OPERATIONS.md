@@ -979,3 +979,21 @@ V104 recovered both Codex failures at `10/10` after preserving a request-free
 setup attempt that lacked `prepare`. Keep v104 transients stopped. Start only a
 new full-matrix epoch with Candidate A and baseline `xhigh` fixed; do not treat
 the two targeted passes as authorization for blind noninferiority.
+
+## Codex Pilot write-canary launcher contract
+
+Pin both the custom provider and `model_catalog_json` to the authenticated
+Pilot `/v1/models` artifact. A catalog merely copied under `CODEX_HOME` is not
+sufficient. Reject write scoring unless durable `client_tools_available`
+contains `apply_patch`.
+
+When a resumed Graph exhausts its `ON_BUDGET` TOOL repair edge, keep the repair
+bound, persist
+`execution_graph_shadow_reprojected(reason=tool_cycle_budget_exhausted)`, and
+compile a fresh immutable Graph. Do not resume the exhausted Graph or raise the
+budget to mask the projection defect.
+
+Candidate order remains explicit vLLM Blackwell-native NVFP4 candidate A,
+isolated SGLang native candidate B, then MARLIN compatibility rollback. V66 and
+v98 preserve the current SGLang physical failures; retry only a new supported
+registry/source combination in a separately named protocol epoch.

@@ -1191,3 +1191,30 @@ step. Codex rate-limiter passed `10/10` in 302.828 seconds and Codex
 atomic-store passed `10/10` in 386.212 seconds. Exact cleanup stopped the three
 v104 transients with zero restarts while Candidate A and production stayed
 active. The targeted recovery passes; another fresh 20-cell matrix is required.
+
+## Pilot write canary and Graph reprojection — 2026-08-12
+
+`dgx-moa-gateway.service` is recovered and remains `active/running` at PID
+`3107456` with zero restarts. Pilot attempt 10 runs controller
+`ed9f3d943d8f3c8b6877293472cef2d6c6db4140` at PID `3704865`, zero restarts,
+with the preserved 1/2/0.5 GiB cgroup limits.
+
+The Codex write canary reproduced an exhausted TOOL repair Graph. Release
+`ed9f3d943` now emits
+`execution_graph_shadow_reprojected(reason=tool_cycle_budget_exhausted)` and
+compiles a fresh immutable Graph without widening the repair bound. The clean
+gate passed Ruff, strict mypy on 49 source files, and pytest `1062/1062`;
+post-deploy physical reprojections recorded zero shadow failures.
+
+The Graph defect is closed, but the repository-write canary remains open. An
+explicit Codex `model_catalog_json` pin exposed `apply_patch`; nevertheless
+`dgx-moa-fast` repeated reads and primary `dgx-moa` attempted two unsuccessful
+shell rewrites before bounded cancellation. The isolated worktree did not
+change. This is a client/Executor quality failure, not a vLLM Candidate-A
+kernel, CUDA Graph, or memory failure.
+
+vLLM explicit native NVFP4 B12x remains production candidate A. SGLang native
+candidate B was isolated in v66 and v98 and rejected only for this pinned
+runtime's MLA/model-shape and API/tool semantic failures. MARLIN remains
+compatibility rollback; no result establishes it as generally optimal on
+Blackwell. The Goal remains active in `PILOT_ACTIVE`.
