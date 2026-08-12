@@ -3306,7 +3306,9 @@ class Controller:
                 {"reason": "change_validation_and_review_complete"},
             )
         elif available_tools and (
-            self.requires_explicit_tool_evidence(state)
+            self.requires_explicit_tool_evidence(
+                state, cast(list[dict[str, Any]], body.get("messages", []))
+            )
             or self.requires_implementation_tool_action(state, dict(request.get("metadata", {})))
         ):
             body["tool_choice"] = "required"
@@ -3350,9 +3352,31 @@ class Controller:
         return body
 
     @staticmethod
-    def requires_explicit_tool_evidence(state: SessionState) -> bool:
-        return "exec_command" in effective_objective(state) and not any(
-            execution.get("exit_code") == 0 for execution in state.tool_executions
+    def requires_explicit_tool_evidence(
+        state: SessionState, messages: list[dict[str, Any]] | None = None
+    ) -> bool:
+        instruction = next(
+            (
+                text_content(message.get("content"))
+                for message in reversed(messages or [])
+                if message.get("role") == "user"
+                and "exec_command" in text_content(message.get("content"))
+            ),
+            None,
+        )
+        if instruction is None and state.explicit_tool_instruction_hash is None:
+            objective = effective_objective(state)
+            instruction = objective if "exec_command" in objective else None
+        if instruction is not None:
+            instruction_hash = hashlib.sha256(instruction.encode()).hexdigest()
+            if instruction_hash != state.explicit_tool_instruction_hash:
+                state.explicit_tool_instruction_hash = instruction_hash
+                state.explicit_tool_evidence_cursor = len(state.tool_executions)
+        if state.explicit_tool_instruction_hash is None:
+            return False
+        return not any(
+            execution.get("exit_code") == 0
+            for execution in state.tool_executions[state.explicit_tool_evidence_cursor :]
         )
 
     def has_review_evidence(self, state: SessionState, metadata: dict[str, Any]) -> bool:

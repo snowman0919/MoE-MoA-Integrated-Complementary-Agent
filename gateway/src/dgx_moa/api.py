@@ -4607,7 +4607,13 @@ def create_app(
                             or request.app.state.controller.requires_implementation_tool_action(
                                 state, current_body.metadata
                             )
-                            or request.app.state.controller.requires_explicit_tool_evidence(state)
+                            or request.app.state.controller.requires_explicit_tool_evidence(
+                                state,
+                                [
+                                    message.model_dump(mode="json")
+                                    for message in current_body.messages
+                                ],
+                            )
                         )
                     )
 

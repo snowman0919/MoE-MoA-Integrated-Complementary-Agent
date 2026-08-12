@@ -129,6 +129,8 @@ class SessionState(BaseModel):
     policy_redact_fields: list[str] = Field(default_factory=list)
     policy_fail_closed_roles: list[str] = Field(default_factory=list)
     completion_evidence: dict[str, str] = Field(default_factory=dict)
+    explicit_tool_instruction_hash: str | None = None
+    explicit_tool_evidence_cursor: int = 0
     approved_scope: list[str] = Field(default_factory=list)
     last_tool_call: dict[str, Any] | None = None
     pending_tool_call_ids: list[str] = Field(default_factory=list)

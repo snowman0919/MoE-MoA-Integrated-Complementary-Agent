@@ -3166,6 +3166,23 @@ def test_implementation_completion_requires_change_validation_and_review(
     read_only_audit.tool_executions.append({"tool_name": "exec_command", "exit_code": 0})
     assert controller.requires_explicit_tool_evidence(read_only_audit) is False
 
+    unrelated = SessionState(
+        session_id="request-scoped-tool-evidence",
+        objective="기존 세션",
+        tool_executions=[{"tool_name": "shell", "exit_code": 0}],
+    )
+    instruction = [{"role": "user", "content": "exec_command로 새 상태를 확인하라."}]
+    assert controller.requires_explicit_tool_evidence(unrelated, instruction) is True
+    unrelated.tool_executions.append({"tool_name": "shell", "exit_code": 0})
+    assert controller.requires_explicit_tool_evidence(unrelated, instruction) is False
+    assert (
+        controller.requires_explicit_tool_evidence(
+            unrelated,
+            [{"role": "user", "content": "exec_command로 다른 상태를 확인하라."}],
+        )
+        is True
+    )
+
 
 def test_frontier_missing_tests_block_approval(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
