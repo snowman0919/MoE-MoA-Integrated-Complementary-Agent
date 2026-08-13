@@ -8795,3 +8795,14 @@ tokens and approved, while Executor remained `dgx-moa-executor`. Dashboard
 reports all seven roles available. Gateway restart count is zero. Ruff, format,
 strict mypy over 50 source files, focused tests `36 passed`, and the complete
 suite `1092 passed` all succeeded.
+
+Runtime release `269313420` closes the remaining explicit-disable mismatch.
+Focused API/scheduler tests prove `local_unavailable` selects OpenCode Go Flash
+for low/medium risk while high risk fails closed; the complete suite passed
+`1094`. After production deployment, an isolated call using the deployed
+scheduler and protected provider selected `opencode_go`, reason
+`local_unavailable`, model `deepseek-v4-flash`, and returned 17 public bytes
+with SHA-256
+`0ce5802a580738ec0a4d6d0e752cb5cfbcde384e8af8942a2af3cb7fc1bd6a34`.
+The production Executor was not stopped. A subsequent authenticated local
+canary returned HTTP 200; the gateway remained active with restart count zero.

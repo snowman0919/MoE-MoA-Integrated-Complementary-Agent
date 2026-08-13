@@ -1428,3 +1428,8 @@ snapshot reports all seven roles available and names Reviewer `glm-5.2` through
 `opencode_go`; Executor remains local Mistral. The same high-risk request
 recorded one successful GLM Reviewer invocation and one local Executor
 invocation, keeping the roles distinct.
+
+Runtime code `269313420` also restores the intended Executor fallback: a
+non-high-risk request selects DeepSeek V4 Flash when local Executor lifecycle
+is unavailable or explicitly disabled. High-risk work remains local-only and
+fails closed. The resident local Executor policy itself is unchanged.

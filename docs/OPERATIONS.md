@@ -1086,3 +1086,9 @@ iteration is explicitly closed as `BUDGET_EXHAUSTED`; late provider accounting
 cannot replace an existing terminal verdict. The measured rollback pair is now
 `90e838742` → `fd658a1e8`. Live observation remains disabled until its external
 credential is rotated; do not re-enable it from repository configuration.
+
+For enabled Executor scheduling, low/medium-risk admission uses
+`deepseek-v4-flash` when the local Executor is busy or its lifecycle state is
+unavailable after an explicit operator/automation disable. High/critical-risk
+admission never uses Flash and remains local-only fail-closed. This fallback
+does not authorize stopping the normally resident Executor.
