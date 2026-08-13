@@ -14,23 +14,22 @@ curl -fsS -H "Authorization: Bearer ${DGX_MOA_API_KEY}" \
   "${DGX_MOA_BASE_URL}/models"
 ```
 
-`GET /v1/models` returns the current aliases with `context_length: 65536`.
+`GET /v1/models` returns only the two production aliases with
+`context_length: 131072`.
 
 | Model alias | Gateway policy | Tool-loop owner |
 | --- | --- | --- |
-| `dgx-moa` | Default Reasoner + Executor core | Client, when tools are supplied |
+| `dgx-moa` | Reasoner + Executor core with runtime-selected optional roles | Client, when tools are supplied |
 | `dgx-moa-fast` | Explicit Executor-only compatibility path | Client, when tools are supplied |
-| `dgx-moa-agent` | Reasoner + Executor native agent turns | External agent client |
-| `dgx-moa-orchestrated` | Executor-directed dynamic Planner, Reviewer, Frontier, and Judge selection | Client executes native tool calls |
 
-`dgx-moa-fast` is always Executor-only. Other MoA profiles invoke the Reasoner;
-the default does not silently bypass it. In agent mode the gateway preserves
+`dgx-moa-fast` is always Executor-only. `dgx-moa` invokes the Reasoner and does
+not silently bypass it. The gateway preserves
 native OpenAI tool-call IDs, function names,
 and JSON arguments; the client executes each call and sends the assistant
 `tool_calls` message plus the matching `tool` result in its next request. The
 gateway does not run that tool loop for the client.
 
-Orchestrated mode always begins with Reasoner + Executor. The Executor returns a
+The primary mode always begins with Reasoner + Executor. The Executor returns a
 structured routing decision; deterministic safety policy may require Planner,
 Reviewer, Frontier, or Heavy Judge. A low-risk optional review failure preserves
 valid evidence and lowers confidence; a required Frontier/review failure fails
@@ -108,11 +107,11 @@ OpenCode uses the same direct agent contract:
         "apiKey": "{env:DGX_MOA_API_KEY}"
       },
       "models": {
-        "dgx-moa-agent": {"name": "DGX MoA Agent"}
+        "dgx-moa": {"name": "DGX MoA"}
       }
     }
   },
-  "model": "dgx-moa/dgx-moa-agent"
+  "model": "dgx-moa/dgx-moa"
 }
 ```
 

@@ -7,7 +7,8 @@ completion validation, and mutually exclusive resident/judge profiles.
 
 ## Acceptance
 
-- Expose only `dgx-moa-agent` through authenticated OpenAI-compatible HTTP.
+- Expose only `dgx-moa` and the Executor-only `dgx-moa-fast` compatibility path
+  through authenticated OpenAI-compatible HTTP.
 - Bind model servers to loopback and expose only the authenticated gateway on
   tailnet and local-LAN TCP.
 - Keep at least 10 GiB unified-memory headroom.

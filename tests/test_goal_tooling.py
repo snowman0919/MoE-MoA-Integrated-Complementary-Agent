@@ -199,8 +199,10 @@ def test_lifecycle_docs_link_canonical_contract_and_keep_evidence_pending() -> N
 def test_api_client_mode_documentation() -> None:
     api_modes = Path("docs/API_CLIENT_MODES.md").read_text()
     hermes = Path("docs/HERMES_AGENT.md").read_text()
-    for alias in ("dgx-moa", "dgx-moa-fast", "dgx-moa-agent", "dgx-moa-orchestrated"):
+    for alias in ("dgx-moa", "dgx-moa-fast"):
         assert alias in api_modes
+    for retired_alias in ("dgx-moa-agent", "dgx-moa-orchestrated", "dgx-moa-chat"):
+        assert retired_alias not in api_modes
     assert "http://100.125.239.72:9000/v1" in hermes
     assert "DGX_MOA_API_KEY" in hermes
     assert "127.0.0.1:9000" not in hermes
@@ -221,11 +223,11 @@ def test_hermes_documentation_matches_physical_config() -> None:
     yaml_block = hermes.split("```yaml\n", 1)[1].split("\n```", 1)[0]
     assert yaml.safe_load(yaml_block) == {
         "model": {
-            "default": "dgx-moa-agent",
+            "default": "dgx-moa",
             "provider": "custom",
             "base_url": "http://100.125.239.72:9000/v1",
             "api_key": "${DGX_MOA_API_KEY}",
-            "context_length": 65536,
+            "context_length": 131072,
             "max_tokens": 16384,
         },
         "platform_toolsets": {"cli": ["file"]},
@@ -238,7 +240,7 @@ def test_hermes_documentation_matches_physical_config() -> None:
 
 def test_opencode_validation_uses_standard_agent_requests() -> None:
     harness = Path("scripts/validate-opencode-loop.sh").read_text()
-    assert harness.count('"model":"dgx-moa-agent"') == 2
+    assert harness.count('"model":"dgx-moa"') == 2
     assert '"metadata":' not in harness
 
 

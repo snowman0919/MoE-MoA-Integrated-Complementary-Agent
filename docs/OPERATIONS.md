@@ -20,11 +20,9 @@ that a global user-session OOM can kill the gateway and user manager. The
 physical containment record is
 `data/diagnostics/pilot/pilot-v1-transition-20260812/containment-result.json`.
 
-The primary model alias is `dgx-moa`; it requires the loopback Ollama Reasoner
-and local Executor. `dgx-moa-fast` is the explicit degraded/low-latency
-Executor-only alias. Do not silently reroute a failed default Reasoner request
-to fast mode. `dgx-moa-agent` keeps the Reasoner + Executor core while OpenCode
-or Hermes owns native tool execution. See `MOA_ORCHESTRATION.md`.
+The primary model alias is `dgx-moa`; it uses the external Qwythos Reasoner and
+local Executor. `dgx-moa-fast` is the explicit Executor-only compatibility
+alias. Do not silently reroute a failed default Reasoner request to fast mode.
 
 `dgx-moa-fast` must remain Executor-only even when a continuation contains
 implementation, changed-file, validation, or tool-result evidence. Audit
@@ -628,7 +626,7 @@ sudo ufw allow from 192.168.0.0/24 to 192.168.0.42 port 9000 proto tcp \
 Set `DGX_MOA_API_KEY` on the client, then copy
 `config/opencode.example.json` into the OpenCode configuration directory.
 Configuration is identical on macOS and Linux; only environment setup differs.
-The live validation harness explicitly selects `dgx-moa-agent` for both its
+The live validation harness explicitly selects `dgx-moa` for both its
 tool-continuation and streaming requests. It keeps the request body
 OpenAI-compatible and sends validation provenance in the existing headers.
 
@@ -653,9 +651,9 @@ unless `DGX_MOA_ADMIN_API_ENABLED=true`.
 
 ## API clients
 
-Use `/v1/models` to discover `dgx-moa`, `dgx-moa-fast`, `dgx-moa-agent`, and
-`dgx-moa-orchestrated`. Direct external agents should select `dgx-moa-agent` and
-own the native tool loop. Select `dgx-moa-fast` only for an intentional
+Use `/v1/models` to discover `dgx-moa` and `dgx-moa-fast`. Direct external
+agents should select `dgx-moa` and own the native tool loop. Select
+`dgx-moa-fast` only for an intentional
 Executor-only request. Standard OpenAI request fields are sufficient; project
 metadata and provenance headers are optional.
 

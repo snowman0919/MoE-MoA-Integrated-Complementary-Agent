@@ -101,7 +101,7 @@ from .remote_judge import JudgeProviderError, OpenCodeGoJudgeProvider
 from .replay import ReplayEngine, ReplayRequest
 from .routing import (
     COMPATIBILITY_MODEL_ALIASES,
-    MODEL_MODES,
+    PUBLIC_MODEL_ALIASES,
     ReasonerMode,
     classify_request,
     optional_roles,
@@ -1878,7 +1878,12 @@ def create_app(
 
     @app.get("/v1/models", dependencies=[Depends(auth)])
     async def models() -> dict[str, Any]:
-        aliases = list(MODEL_MODES)
+        aliases = list(PUBLIC_MODEL_ALIASES)
+        context_length = configured.models["executor"].context_length
+        descriptions = {
+            "dgx-moa": "Reasoner + Executor Dynamic MoA model.",
+            "dgx-moa-fast": "Executor-only compatibility model.",
+        }
         return {
             "object": "list",
             "data": [
@@ -1887,7 +1892,7 @@ def create_app(
                     "object": "model",
                     "created": 0,
                     "owned_by": "local",
-                    "context_length": 65_536,
+                    "context_length": context_length,
                 }
                 for alias in aliases
             ],
@@ -1895,7 +1900,7 @@ def create_app(
                 {
                     "slug": alias,
                     "display_name": alias,
-                    "description": "Local Executor-directed Dynamic MoA model.",
+                    "description": descriptions[alias],
                     "default_reasoning_level": None,
                     "supported_reasoning_levels": [],
                     "shell_type": "shell_command",
@@ -1928,9 +1933,9 @@ def create_app(
                     "truncation_policy": {"mode": "tokens", "limit": 10_000},
                     "supports_parallel_tool_calls": True,
                     "supports_image_detail_original": False,
-                    "context_window": 65_536,
-                    "max_context_window": 65_536,
-                    "comp_hash": "dgx-moa-65536-v1",
+                    "context_window": context_length,
+                    "max_context_window": context_length,
+                    "comp_hash": f"dgx-moa-{context_length}-v1",
                     "effective_context_window_percent": 95,
                     "experimental_supported_tools": [],
                     "input_modalities": ["text"],
