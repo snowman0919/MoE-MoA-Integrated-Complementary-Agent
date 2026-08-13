@@ -31,6 +31,7 @@ from fastapi import (
 )
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .admin_codex import AdminCodexRequest, AdminCodexRunner
 from .admin_dashboard import ADMIN_DASHBOARD
@@ -239,6 +240,30 @@ def error_response(
         status_code=status_code,
         headers=headers,
     )
+
+
+class DrainMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        root = scope.get("app")
+        if (
+            scope["type"] == "http"
+            and getattr(getattr(root, "state", None), "draining", False)
+            and scope.get("method") == "POST"
+            and scope.get("path") in {"/v1/chat/completions", "/v1/responses"}
+        ):
+            response = error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "gateway is draining for a safe restart",
+                "server_error",
+                "gateway_draining",
+                headers={"Retry-After": "2"},
+            )
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
 
 
 def title_request_index(messages: list[dict[str, Any]]) -> int | None:
@@ -1099,22 +1124,7 @@ def create_app(
             await app.state.lifecycle.close()
 
     app = FastAPI(title="DGX MoA Agent", version="2.0.0", lifespan=lifespan)
-
-    @app.middleware("http")
-    async def reject_new_work_while_draining(request: Request, call_next):  # type: ignore[no-untyped-def]
-        if (
-            getattr(request.app.state, "draining", False)
-            and request.method == "POST"
-            and request.url.path in {"/v1/chat/completions", "/v1/responses"}
-        ):
-            return error_response(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "gateway is draining for a safe restart",
-                "server_error",
-                "gateway_draining",
-                headers={"Retry-After": "2"},
-            )
-        return await call_next(request)
+    app.add_middleware(DrainMiddleware)
 
     @app.exception_handler(HTTPException)
     async def handle_http_exception(request: Request, error: HTTPException) -> JSONResponse:
