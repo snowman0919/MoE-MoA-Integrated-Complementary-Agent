@@ -199,9 +199,7 @@ def has_internal_protocol_leak(text: str) -> bool:
     return bool(re.search(r"</?(?:function|tool|assistant|response)[_:-]", prose, re.IGNORECASE))
 
 
-def has_read_only_evaluation_mutation(
-    tool_calls: dict[int, dict[str, object]], objective: str
-) -> bool:
+def is_read_only_evaluation(objective: str) -> bool:
     normalized = objective.lower()
     evaluation = any(
         marker in normalized for marker in ("evaluate", "audit", "review", "평가", "감사", "검토")
@@ -225,7 +223,36 @@ def has_read_only_evaluation_mutation(
             normalized,
         )
     )
-    if not evaluation or requested_change:
+    return evaluation and not requested_change
+
+
+def normalize_evaluation_inventory_call(
+    tool_calls: dict[int, dict[str, object]], objective: str
+) -> None:
+    if not is_read_only_evaluation(objective) or len(tool_calls) != 1:
+        return
+    call = next(iter(tool_calls.values()))
+    if call.get("name") != "exec_command":
+        return
+    try:
+        arguments = json.loads(str(call.get("_arguments") or "{}"))
+        words = shlex.split(str(arguments.get("cmd") or ""))
+    except (TypeError, ValueError):
+        return
+    if not words or words[0].rsplit("/", 1)[-1] != "ls":
+        return
+    targets = [word for word in words[1:] if not word.startswith("-")]
+    if targets:
+        return
+    workspace = str(arguments.get("workdir") or ".")
+    arguments["cmd"] = f"git -C {shlex.quote(workspace)} ls-files"
+    call["_arguments"] = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+
+
+def has_read_only_evaluation_mutation(
+    tool_calls: dict[int, dict[str, object]], objective: str
+) -> bool:
+    if not is_read_only_evaluation(objective):
         return False
     for call in tool_calls.values():
         if str(call.get("name")) in {"apply_patch", "write_stdin", "edit", "edit_file"}:
@@ -315,6 +342,13 @@ def tool_progress_text(tool_calls: dict[int, dict[str, object]], progress_langua
                 if progress_language == "ko"
                 else f"Inspecting {target}'s file structure to identify the actual "
                 "evaluation scope."
+            )
+        if action == "git" and "ls-files" in words:
+            return (
+                "추적 파일 전체 목록으로 구현·테스트·빌드 구성의 평가 범위를 확정합니다."
+                if progress_language == "ko"
+                else "Using the complete tracked-file inventory to identify implementation, "
+                "tests, and build configuration."
             )
         if action in {"cat", "sed", "head", "tail"}:
             return (
@@ -729,6 +763,7 @@ async def responses_sse(
                         item["_arguments"] = str(item["_arguments"]) + arguments
         if not terminal_seen:
             raise ValueError("upstream stream ended before terminal marker")
+        normalize_evaluation_inventory_call(tool_calls, objective)
         if batch_goal_prerequisite_read(tool_calls, goal_prerequisites):
             LOGGER.info(
                 "responses_goal_prerequisites_batched session_id=%s count=%d",
@@ -754,6 +789,7 @@ async def responses_sse(
             if (
                 not text.strip()
                 or is_progress_only(text)
+                or has_korean_script_leak(text, progress_language, objective)
                 or (progress_language == "ko" and not re.search("[가-힣]", text))
             ):
                 text = tool_progress_text(tool_calls, progress_language)

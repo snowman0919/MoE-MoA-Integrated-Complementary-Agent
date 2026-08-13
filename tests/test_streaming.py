@@ -290,7 +290,7 @@ async def test_responses_sse_allows_read_during_read_only_evaluation() -> None:
                                 "function": {
                                     "name": "exec_command",
                                     "arguments": json.dumps(
-                                        {"cmd": "git -C rust-mcu-ide ls-files"}
+                                        {"cmd": "ls -la", "workdir": "/tmp/rust-mcu-ide"}
                                     ),
                                 },
                             }
@@ -311,7 +311,51 @@ async def test_responses_sse_allows_read_during_read_only_evaluation() -> None:
             objective="rust-mcu-ide 플랫폼을 확인하고 평가해봐",
         )
     ]
-    assert b"response.completed" in b"".join(chunks)
+    response = b"".join(chunks)
+    assert b"response.completed" in response
+    assert b"git -C /tmp/rust-mcu-ide ls-files" in response
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_replaces_mixed_language_tool_commentary() -> None:
+    async def upstream():
+        payload = {
+            "choices": [
+                {
+                    "delta": {
+                        "content": "цкітельность sandbox 제약을 확인합니다.",
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-1",
+                                "function": {
+                                    "name": "exec_command",
+                                    "arguments": json.dumps(
+                                        {"cmd": "git -C rust-mcu-ide ls-files"}
+                                    ),
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    chunks = [
+        chunk
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa",
+            progress_language="ko",
+            objective="rust-mcu-ide 플랫폼을 확인하고 평가해봐",
+        )
+    ]
+    response = b"".join(chunks)
+    assert "цкітельность".encode() not in response
+    assert "추적 파일 전체 목록".encode() in response
 
 
 @pytest.mark.asyncio
