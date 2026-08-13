@@ -270,6 +270,66 @@ def tool_call_fingerprint(call: dict[str, object]) -> str:
     )
 
 
+def batch_workspace_read(
+    tool_calls: dict[int, dict[str, object]], inventory_paths: tuple[str, ...]
+) -> bool:
+    if len(tool_calls) != 1 or not inventory_paths:
+        return False
+    call = next(iter(tool_calls.values()))
+    if call.get("name") != "exec_command":
+        return False
+    try:
+        arguments = json.loads(str(call.get("_arguments") or "{}"))
+        command = str(arguments.get("cmd") or "")
+        words = shlex.split(command)
+    except (TypeError, ValueError):
+        return False
+    if not words or any(marker in command for marker in ("&&", ";", "|", "\n")):
+        return False
+    if words[0].rsplit("/", 1)[-1] not in {"cat", "sed", "head", "tail"}:
+        return False
+    target = words[-1]
+    current = next(
+        (path for path in inventory_paths if target == path or target.endswith("/" + path)),
+        None,
+    )
+    if current is None:
+        return False
+    root = target[: -len(current)].rstrip("/")
+    relevant = tuple(
+        path
+        for path in inventory_paths
+        if path != current
+        and (
+            path.endswith(
+                (
+                    ".c",
+                    ".cc",
+                    ".cpp",
+                    ".go",
+                    ".h",
+                    ".java",
+                    ".js",
+                    ".jsx",
+                    ".py",
+                    ".rs",
+                    ".sh",
+                    ".ts",
+                    ".tsx",
+                )
+            )
+            or path.rsplit("/", 1)[-1].lower()
+            in {"cargo.toml", "justfile", "makefile", "package.json", "pyproject.toml"}
+        )
+    )[:7]
+    if not relevant:
+        return False
+    additions = [f"{root}/{path}" if root else path for path in relevant]
+    arguments["cmd"] = command + " " + " ".join(shlex.quote(path) for path in additions)
+    call["_arguments"] = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+    return True
+
+
 def has_read_only_evaluation_mutation(
     tool_calls: dict[int, dict[str, object]], objective: str
 ) -> bool:
@@ -433,7 +493,9 @@ def substantive_tool_progress(
         return tool_progress_text(tool_calls, progress_language)
     if "git" in command and "ls-files" in command:
         return tool_progress_text(tool_calls, progress_language)
-    if "\n" in command or "&&" in command or ";" in command:
+    if ("\n" in command or "&&" in command or ";" in command) and re.search(
+        r"(?:^|&&|;|\n)\s*(?:cat|sed|head|tail)\b", command
+    ):
         return tool_progress_text(tool_calls, progress_language)
     return ""
 
@@ -696,6 +758,7 @@ async def responses_sse(
     objective: str = "",
     successful_tool_fingerprints: frozenset[str] = frozenset(),
     workspace_inventory_complete: bool = False,
+    workspace_inventory_paths: tuple[str, ...] = (),
 ) -> AsyncGenerator[bytes, None]:
     """Translate Chat Completions SSE into Responses text and function-call events."""
     response_id = f"resp_{uuid.uuid4().hex}"
@@ -832,6 +895,12 @@ async def responses_sse(
         if not terminal_seen:
             raise ValueError("upstream stream ended before terminal marker")
         normalize_workspace_inventory_call(tool_calls, objective)
+        if batch_workspace_read(tool_calls, workspace_inventory_paths):
+            LOGGER.info(
+                "responses_workspace_reads_batched session_id=%s count=%d",
+                _log_token(session_id),
+                len(workspace_inventory_paths),
+            )
         if tool_calls and any(
             tool_call_fingerprint(call) in successful_tool_fingerprints
             for call in tool_calls.values()

@@ -4907,6 +4907,13 @@ def create_app(
                                                 response_state
                                             )
                                         ),
+                                        workspace_inventory_paths=(
+                                            request.app.state.controller.workspace_inventory_paths(
+                                                response_state
+                                            )
+                                            if response_state
+                                            else ()
+                                        ),
                                     ),
                                     heartbeat=b"event: ping\ndata: {}\n\n",
                                 ):
@@ -5073,6 +5080,13 @@ def create_app(
                                     and request.app.state.controller.workspace_inventories(
                                         response_state
                                     )
+                                ),
+                                workspace_inventory_paths=(
+                                    request.app.state.controller.workspace_inventory_paths(
+                                        response_state
+                                    )
+                                    if response_state
+                                    else ()
                                 ),
                             ):
                                 yield chunk
