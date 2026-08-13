@@ -8898,3 +8898,29 @@ Final session `qwythos-direct-final-20260813` durably records
 `Qwythos-v2-9B:Q4`, zero retry/unavailable/fallback events, and exact
 `QWYTHOS_DIRECT_OK`. The authenticated gateway remains active with restart
 count zero.
+
+### Executor synthesis recovery — 2026-08-13
+
+The repeated Codex session `9061b378-b096-4b19-8caf-348fc67f0a8b` confirmed
+that Qwythos completed directly without fallback, but final synthesis received
+a 120,186-token Executor prompt and returned only two completion tokens,
+`arab`, with `finish_reason=stop`. The Responses translator accurately carried
+those bytes; the failure was duplicated harness context in both the direct
+message history and Runtime projection, followed by acceptance of a degenerate
+near-context-limit completion.
+
+Production release `bc56beb` deduplicates system, developer, and user messages
+semantically while ignoring transient Responses IDs, applies the same rule to
+role projections, and retries an unrequested four-token-or-shorter completion
+when input usage is at least 85% of the physical Executor context. Explicitly
+requested short outputs remain valid. The failed snapshot now contains four
+direct messages rather than 16 and an 80,315-byte Executor projection rather
+than 233,520 bytes. Ruff and focused tests passed `81`; the complete suite
+passed `1103`.
+
+Production replay `executor-tool-recovery-20260813` used the original 16 Codex
+inputs. The first turn used 37,804 prompt tokens and emitted a proper
+`exec_command` function call. Its tool-result continuation used 27,694 prompt
+tokens and 36 completion tokens, returned one final message with an 88-character
+Korean explanation, and emitted no further tool call. The gateway remained
+active with restart count zero.
