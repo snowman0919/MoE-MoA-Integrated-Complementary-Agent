@@ -3916,7 +3916,7 @@ class Controller:
             marker in effective_objective(state).lower()
             for marker in ("detailed", "comprehensive", "in depth", "상세", "종합", "심층")
         )
-        if evaluation_request and not detailed_evaluation:
+        if workspace_request and (not evaluation_request or not detailed_evaluation):
             body["max_tokens"] = min(int(body.get("max_tokens") or 2_048), 2_048)
         implementation_complete = self.implementation_completion_ready(
             state, dict(request.get("metadata", {}))

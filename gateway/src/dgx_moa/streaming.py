@@ -239,24 +239,49 @@ def is_read_only_evaluation(objective: str) -> bool:
 def normalize_workspace_inventory_call(
     tool_calls: dict[int, dict[str, object]], objective: str
 ) -> None:
-    if not is_workspace_objective(objective) or len(tool_calls) != 1:
+    if not is_workspace_objective(objective):
         return
-    call = next(iter(tool_calls.values()))
-    if call.get("name") != "exec_command":
-        return
-    try:
-        arguments = json.loads(str(call.get("_arguments") or "{}"))
-        words = shlex.split(str(arguments.get("cmd") or ""))
-    except (TypeError, ValueError):
-        return
-    if not words or words[0].rsplit("/", 1)[-1] != "ls":
-        return
-    targets = [word for word in words[1:] if not word.startswith("-")]
-    if len(targets) > 1:
-        return
-    workspace = targets[0] if targets else str(arguments.get("workdir") or ".")
-    arguments["cmd"] = f"git -C {shlex.quote(workspace)} ls-files"
-    call["_arguments"] = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+    parsed: dict[int, tuple[dict[str, object], list[str]]] = {}
+    for index, call in tool_calls.items():
+        if call.get("name") != "exec_command":
+            continue
+        try:
+            arguments = json.loads(str(call.get("_arguments") or "{}"))
+            words = shlex.split(str(arguments.get("cmd") or ""))
+        except (TypeError, ValueError):
+            continue
+        if words:
+            parsed[index] = (arguments, words)
+    full = {
+        index
+        for index, (_, words) in parsed.items()
+        if (words[0].rsplit("/", 1)[-1] == "rg" and "--files" in words)
+        or (words[0].rsplit("/", 1)[-1] == "git" and "ls-files" in words)
+    }
+    bare = [
+        index
+        for index, (_, words) in parsed.items()
+        if words[0].rsplit("/", 1)[-1] == "ls"
+        and len([word for word in words[1:] if not word.startswith("-")]) <= 1
+    ]
+    if full:
+        for index in bare:
+            tool_calls.pop(index)
+    elif bare:
+        keep = bare[0]
+        arguments, words = parsed[keep]
+        targets = [word for word in words[1:] if not word.startswith("-")]
+        workspace = targets[0] if targets else str(arguments.get("workdir") or ".")
+        arguments["cmd"] = f"git -C {shlex.quote(workspace)} ls-files"
+        tool_calls[keep]["_arguments"] = json.dumps(
+            arguments, ensure_ascii=False, separators=(",", ":")
+        )
+        for index in bare[1:]:
+            tool_calls.pop(index)
+    if tool_calls:
+        calls = list(tool_calls.values())
+        tool_calls.clear()
+        tool_calls.update(enumerate(calls))
 
 
 def tool_call_fingerprint(call: dict[str, object]) -> str:
@@ -498,6 +523,19 @@ def substantive_tool_progress(
     ):
         return tool_progress_text(tool_calls, progress_language)
     return ""
+
+
+def is_repetitive_response(text: str) -> bool:
+    words = re.findall(r"[\w가-힣]+", text.casefold())
+    if len(words) < 120:
+        return False
+    counts: dict[tuple[str, str, str], int] = {}
+    for index in range(len(words) - 2):
+        phrase = (words[index], words[index + 1], words[index + 2])
+        counts[phrase] = counts.get(phrase, 0) + 1
+        if counts[phrase] >= 6:
+            return True
+    return False
 
 
 def batch_goal_prerequisite_read(
@@ -858,6 +896,8 @@ async def responses_sse(
                     buffered_text_chars += len(content)
                     if buffered_text_chars > MAX_BUFFERED_RESPONSE_CHARS:
                         raise ValueError("upstream response exceeds buffer limit")
+                    if buffered_text_chars > 1_024 and is_repetitive_response("".join(text_parts)):
+                        raise ProgressOnlyResponse("invalid_output")
                 for tool_delta in delta.get("tool_calls") or []:
                     index = int(tool_delta.get("index", 0))
                     function = tool_delta.get("function") or {}

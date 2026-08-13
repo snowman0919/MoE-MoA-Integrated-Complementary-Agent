@@ -12,6 +12,7 @@ from dgx_moa.streaming import (
     StreamObservation,
     forward_sse,
     is_progress_only,
+    is_repetitive_response,
     keepalive_sse,
     reported_usage,
     response_usage,
@@ -352,6 +353,57 @@ async def test_responses_sse_normalizes_inventory_for_general_workspace_task() -
         ]
     )
     assert b"git -C . ls-files" in response
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_deduplicates_inventory_in_one_response() -> None:
+    async def upstream():
+        payload = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-ls",
+                                "function": {
+                                    "name": "exec_command",
+                                    "arguments": json.dumps({"cmd": "ls -la"}),
+                                },
+                            },
+                            {
+                                "index": 1,
+                                "id": "call-rg",
+                                "function": {
+                                    "name": "exec_command",
+                                    "arguments": json.dumps({"cmd": "rg --files -u"}),
+                                },
+                            },
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+        yield f"data: {json.dumps(payload)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    response = b"".join(
+        [
+            chunk
+            async for chunk in responses_sse(
+                upstream(), "dgx-moa", objective="이 프로젝트 파일을 수정해"
+            )
+        ]
+    )
+    events = [
+        json.loads(line[6:]) for line in response.decode().splitlines() if line.startswith("data: ")
+    ]
+    assert (
+        sum(event.get("type") == "response.function_call_arguments.done" for event in events) == 1
+    )
+    assert b"rg --files -u" in response
+    assert b"ls -la" not in response
 
 
 @pytest.mark.asyncio
@@ -925,6 +977,11 @@ def test_substantive_tool_progress_suppresses_single_validation_command() -> Non
         }
     }
     assert substantive_tool_progress(calls, "ko") == ""
+
+
+def test_repetitive_response_detects_runaway_final_synthesis() -> None:
+    assert is_repetitive_response("All requirements met and tests pass. " * 30)
+    assert not is_repetitive_response("짧고 구체적인 최종 답변입니다.")
 
 
 @pytest.mark.asyncio
