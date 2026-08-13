@@ -465,21 +465,18 @@ async def test_planner_and_frontier_are_concurrent_and_frontier_evidence_survive
     classify = runtime.start_attempt(runtime.graph.entry_nodes[0])
     runtime.finish_attempt(classify.attempt_id)
 
+    prepared = await controller.prepare_executor(
+        state,
+        request,
+        ("reasoner", "planner", "executor", "reviewer"),
+        execution_runtime=runtime,
+    )
     if planner_fails:
-        with pytest.raises(httpx.ConnectError, match="planner offline"):
-            await controller.prepare_executor(
-                state,
-                request,
-                ("reasoner", "planner", "executor", "reviewer"),
-                execution_runtime=runtime,
-            )
-    else:
-        prepared = await controller.prepare_executor(
-            state,
-            request,
-            ("reasoner", "planner", "executor", "reviewer"),
-            execution_runtime=runtime,
+        assert state.derived_confidence == "low"
+        assert any(
+            event["event_type"] == "planner_degraded" for event in store.events(state.session_id)
         )
+    else:
         assert "recommended_architecture" in json.dumps(prepared["messages"])
 
     assert frontier.started.is_set()
@@ -2891,6 +2888,31 @@ async def test_optional_planner_failure_degrades_without_failing_executor(
     )
 
     assert stub_provider.calls == ["planner", "planner"]
+    assert state.plan == []
+    assert state.observability_status == "degraded"
+    assert any(
+        event["event_type"] == "planner_degraded" for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_optional_planner_transport_failure_degrades_without_failing_executor(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    async def unavailable_planner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "planner":
+            raise httpx.ConnectError("planner unavailable")
+        return await StubProvider().complete(role, model, request, **kwargs)
+
+    stub_provider.complete = unavailable_planner  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session("degraded-plan-transport", [{"role": "user", "content": "task"}])
+
+    await controller.prepare_executor(
+        state, {"model": "dgx-moa-agent", "messages": []}, ("planner", "executor")
+    )
+
     assert state.plan == []
     assert state.observability_status == "degraded"
     assert any(
