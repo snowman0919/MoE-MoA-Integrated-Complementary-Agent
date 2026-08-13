@@ -93,6 +93,51 @@ def test_progress_only_detection_preserves_concrete_results(text: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_responses_sse_retries_context_starved_tiny_output() -> None:
+    async def upstream():
+        payload = {
+            "choices": [{"delta": {"content": "arab"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 120186, "completion_tokens": 2, "total_tokens": 120188},
+        }
+        yield f"data: {json.dumps(payload)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    with pytest.raises(ProgressOnlyResponse):
+        _ = [
+            chunk
+            async for chunk in responses_sse(
+                upstream(),
+                "dgx-moa",
+                context_length=131072,
+                objective="플랫폼을 확인하고 평가해봐",
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_preserves_requested_short_output_near_context_limit() -> None:
+    async def upstream():
+        payload = {
+            "choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 120186, "completion_tokens": 2, "total_tokens": 120188},
+        }
+        yield f"data: {json.dumps(payload)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    chunks = [
+        chunk
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa",
+            context_length=131072,
+            objective="Reply with OK",
+        )
+    ]
+
+    assert b'"text":"OK"' in b"".join(chunks)
+
+
+@pytest.mark.asyncio
 async def test_responses_sse_requires_tool_when_goal_has_no_implementation_evidence() -> None:
     async def upstream():
         yield (
