@@ -69,6 +69,7 @@ def test_codex_command_uses_explicit_model_catalog(tmp_path: Path) -> None:
 
     assert 'model_catalog_json="/state/model-catalog.json"' in command
     assert "model_context_window=131072" in command
+    assert 'model="dgx-moa"' in command
 
 
 def test_codex_catalog_is_pinned_from_authenticated_gateway(tmp_path: Path) -> None:
@@ -85,7 +86,7 @@ def test_codex_catalog_is_pinned_from_authenticated_gateway(tmp_path: Path) -> N
                 {
                     "models": [
                         {
-                            "slug": "dgx-moa-orchestrated",
+                            "slug": "dgx-moa",
                             "tool_mode": "direct",
                             "context_window": 131072,
                         }
@@ -150,22 +151,15 @@ def test_docker_command_has_stable_unique_name(tmp_path: Path) -> None:
     assert state_mount.startswith("/")
 
 
-def test_hermes_profile_is_pinned_to_isolated_gateway(tmp_path: Path) -> None:
+def test_hermes_profile_contains_only_isolated_gateway(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
-    path.write_text(
-        "custom_providers:\n"
-        "  - name: dgx-moa-agent\n"
-        "    base_url: http://production.invalid:9000/v1\n"
-        "    api_key: old-key\n"
-        "    model: dgx-moa-agent\n"
-    )
-
-    GLOBALS["pin_hermes_gateway"](path, "http://127.0.0.1:19300", "canary-key")
+    GLOBALS["write_hermes_gateway"](path, "http://127.0.0.1:19300", "canary-key")
 
     updated = path.read_text()
     assert "base_url: http://127.0.0.1:19300/v1" in updated
     assert "api_key: canary-key" in updated
-    assert "old-key" not in updated
+    assert "model: dgx-moa" in updated
+    assert "production.invalid" not in updated
 
 
 def test_timed_out_docker_run_removes_exact_container(tmp_path: Path) -> None:

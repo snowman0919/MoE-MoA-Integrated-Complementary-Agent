@@ -9,7 +9,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -936,10 +935,10 @@ def prepare_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str,
                             "X-Dirty-State": "clean",
                         },
                     },
-                    "models": {"dgx-moa-agent": {"name": "DGX MoA Agent"}},
+                    "models": {"dgx-moa": {"name": "DGX MoA"}},
                 }
             },
-            "model": "dgx-moa/dgx-moa-agent",
+            "model": "dgx-moa/dgx-moa",
             "permission": {
                 "*": "deny",
                 "bash": "allow",
@@ -970,26 +969,14 @@ def filtered_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     return environment
 
 
-def pin_hermes_gateway(path: Path, gateway: str, api_key: str) -> None:
-    pattern = re.compile(r"(?ms)^  - name: dgx-moa-agent\n.*?(?=^  - name:|\Z)")
-    matches = list(pattern.finditer(path.read_text()))
-    if len(matches) != 1:
-        raise RuntimeError("Hermes dgx-moa-agent provider is missing or duplicated")
-    match = matches[0]
-    block, url_count = re.subn(
-        r"(?m)(^    base_url: )[^\n]+$",
-        lambda value: value.group(1) + gateway.rstrip("/") + "/v1",
-        match.group(),
+def write_hermes_gateway(path: Path, gateway: str, api_key: str) -> None:
+    path.write_text(
+        "custom_providers:\n"
+        "  - name: dgx-moa-agent\n"
+        f"    base_url: {gateway.rstrip('/')}/v1\n"
+        f"    api_key: {api_key}\n"
+        "    model: dgx-moa\n"
     )
-    block, key_count = re.subn(
-        r"(?m)(^    api_key: )[^\n]+$",
-        lambda value: value.group(1) + api_key,
-        block,
-    )
-    if url_count != 1 or key_count != 1:
-        raise RuntimeError("Hermes dgx-moa-agent URL or key is missing or duplicated")
-    text = path.read_text()
-    path.write_text(text[: match.start()] + block + text[match.end() :])
 
 
 def run_process(
@@ -1112,7 +1099,7 @@ def codex_moa_command(args: argparse.Namespace, workspace: Path, task: Task) -> 
         "--strict-config",
         "--ignore-user-config",
         "-c",
-        'model="dgx-moa-orchestrated"',
+        'model="dgx-moa"',
         "-c",
         "model_context_window=131072",
         "-c",
@@ -1147,9 +1134,9 @@ def write_codex_model_catalog(gateway: str, key: str, path: Path) -> None:
         payload = json.loads(response.read())
     models = payload.get("models")
     if not isinstance(models, list) or not any(
-        isinstance(model, dict) and model.get("slug") == "dgx-moa-orchestrated" for model in models
+        isinstance(model, dict) and model.get("slug") == "dgx-moa" for model in models
     ):
-        raise RuntimeError("gateway model catalog is missing dgx-moa-orchestrated")
+        raise RuntimeError("gateway model catalog is missing dgx-moa")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.write_text(json.dumps({"models": models}, indent=2) + "\n")
     path.chmod(0o600)
@@ -1228,7 +1215,7 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             "--dir",
             str(workspace),
             "--model",
-            "dgx-moa/dgx-moa-agent",
+            "dgx-moa/dgx-moa",
             prompt(task),
         ]
         command = (
@@ -1322,11 +1309,8 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             raise RuntimeError("DGX_MOA_OPENCODE_KEY is required")
         hermes_home = args.output_root / args.run_id / "profiles" / f"hermes-{task.slug}"
         hermes_home.mkdir(parents=True, exist_ok=True)
-        shutil.copy2("/home/kotori9/.hermes/config.yaml", hermes_home / "config.yaml")
-        shutil.copy2("/home/kotori9/.hermes/.env", hermes_home / ".env")
-        pin_hermes_gateway(hermes_home / "config.yaml", args.gateway, key)
+        write_hermes_gateway(hermes_home / "config.yaml", args.gateway, key)
         (hermes_home / "config.yaml").chmod(0o600)
-        (hermes_home / ".env").chmod(0o600)
         usage_path = (
             Path("/state/usage.json") if args.runtime == "docker" else evidence / "usage.json"
         )
@@ -1341,7 +1325,7 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             "--provider",
             "custom:dgx-moa-agent",
             "--model",
-            "dgx-moa-orchestrated",
+            "dgx-moa",
             "--pass-session-id",
         ]
         command = (
