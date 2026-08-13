@@ -9019,3 +9019,6 @@ Kimi Judge, resident Executor, Executor Flash, and Codex OAuth fallback roles.
 An authenticated historical sample retained its raw rows while the chart filter
 excluded `dgx-moa-executor-candidate` and the retired Reviewer use of
 `deepseek-v4-flash`. The gateway was active and bound to `0.0.0.0:9000`.
+An authenticated live canary then created a one-day general key, received its
+plaintext once, used it successfully against `/v1/models` (`200`), and removed
+it through revoke/delete (`200`/`204`); the temporary key count returned to zero.
