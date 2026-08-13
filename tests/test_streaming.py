@@ -188,6 +188,30 @@ async def test_responses_sse_allows_foreign_script_inside_code() -> None:
 
 
 @pytest.mark.asyncio
+async def test_responses_sse_allows_foreign_text_explicitly_requested() -> None:
+    async def upstream():
+        payload = {
+            "choices": [
+                {"delta": {"content": "요청한 단어는 включен입니다."}, "finish_reason": "stop"}
+            ]
+        }
+        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    chunks = [
+        chunk
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa",
+            progress_language="ko",
+            objective="включен을 포함해 답해",
+        )
+    ]
+
+    assert b"response.completed" in b"".join(chunks)
+
+
+@pytest.mark.asyncio
 async def test_responses_sse_retries_truncated_or_internal_output() -> None:
     async def upstream(text: str, finish_reason: str):
         payload = {"choices": [{"delta": {"content": text}, "finish_reason": finish_reason}]}
