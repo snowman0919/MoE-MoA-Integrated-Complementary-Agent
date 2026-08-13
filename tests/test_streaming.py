@@ -323,7 +323,10 @@ async def test_responses_sse_replaces_mixed_language_tool_commentary() -> None:
             "choices": [
                 {
                     "delta": {
-                        "content": "цкітельность sandbox 제약을 확인합니다.",
+                        "content": (
+                            "평가를 마쳤습니다. INNER_THINKING: schema-halt "
+                            "<|tool_call_begin|>AgentFinish<|tool_call_end|>"
+                        ),
                         "tool_calls": [
                             {
                                 "index": 0,
@@ -354,8 +357,47 @@ async def test_responses_sse_replaces_mixed_language_tool_commentary() -> None:
         )
     ]
     response = b"".join(chunks)
-    assert "цкітельность".encode() not in response
+    assert b"INNER_THINKING" not in response
+    assert b"tool_call_begin" not in response
     assert "추적 파일 전체 목록".encode() in response
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_rejects_printing_final_as_evaluation_tool() -> None:
+    async def upstream():
+        payload = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-1",
+                                "function": {
+                                    "name": "exec_command",
+                                    "arguments": json.dumps(
+                                        {"cmd": "bash -lc \"printf '%s\\n' 'final verdict'\""}
+                                    ),
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+        yield f"data: {json.dumps(payload)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    with pytest.raises(ProgressOnlyResponse, match="invalid_output"):
+        _ = [
+            chunk
+            async for chunk in responses_sse(
+                upstream(),
+                "dgx-moa",
+                objective="rust-mcu-ide 플랫폼을 확인하고 평가해봐",
+            )
+        ]
 
 
 @pytest.mark.asyncio
