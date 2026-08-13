@@ -9073,3 +9073,32 @@ through `gpt-5.6-sol`, recorded routing reason
 low/medium-risk route. Frontier failure remains typed fail-closed. Focused
 routing and remote-failure tests passed `3`; Ruff and strict API mypy passed,
 and the full suite passed `1139`. No production mutation was performed.
+
+### Batched general workspace execution — 2026-08-14
+
+General repository work now normalizes bare or filtered file discovery to one
+tracked-file inventory, batches independent source/test reads named by that
+inventory, suppresses Executor `update_plan` duplication unless planning was
+explicitly requested, and rejects an exact successful inspection repeated
+before a file change. Single-command tool UI narration is empty unless it adds
+batch or prerequisite context. Existing Python tests replace ad hoc inline
+assert scripts, while repeated three-word synthesis phrases are stopped after
+six occurrences and routed through the existing quality fallback.
+
+The final full suite passed `1145`. Production commits through `c6df9d2` were
+deployed to the fixed gateway. Official Codex CLI thread
+`019ffbf9-009f-7de1-856d-5f8857738a8c`, gateway session
+`ed851517-0c35-42f2-99ed-359eb941ff33`, completed the synthetic `add` bug fix
+with exactly four successful tool executions: one `git ls-files` inventory,
+one compound `app.py` plus `test_app.py` read, one `apply_patch`, and one
+`python -m pytest -q` run (`1 passed`). It emitted `turn.completed`; the trace
+contains no response retry, remote Executor selection, or aborted stream.
+Planner and Reviewer completed normally, including one bounded Frontier
+collaboration artifact; this was not an Executor fallback.
+
+The final service process was PID `235390`, active with `NRestarts=0`, bound to
+`0.0.0.0:9000`. `/v1/models` returned `401` without authentication and `200`
+with the production bearer credential. One intermediate manual restart hit the
+configured systemd start-rate limit after repeated deployment restarts; the
+rate-limit latch was reset, and the same checked-in service then started and
+passed the checks above.
