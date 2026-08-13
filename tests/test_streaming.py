@@ -14,6 +14,7 @@ from dgx_moa.streaming import (
     is_progress_only,
     is_repetitive_response,
     keepalive_sse,
+    normalize_workspace_inventory_call,
     normalize_workspace_validation_call,
     reported_usage,
     response_usage,
@@ -996,6 +997,24 @@ def test_workspace_validation_uses_existing_python_tests() -> None:
     }
     assert normalize_workspace_validation_call(calls, ("app.py", "test_app.py"))
     assert json.loads(str(calls[0]["_arguments"]))["cmd"] == "python -m pytest -q"
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "find . -type f -name '*.py' | sort",
+        "rg --files -g '*.py'",
+    ),
+)
+def test_workspace_inventory_replaces_filtered_file_search(command: str) -> None:
+    calls = {
+        0: {
+            "name": "exec_command",
+            "_arguments": json.dumps({"cmd": command}),
+        }
+    }
+    normalize_workspace_inventory_call(calls, "이 프로젝트 파일을 수정해")
+    assert json.loads(str(calls[0]["_arguments"]))["cmd"] == "git -C . ls-files"
 
 
 @pytest.mark.asyncio
