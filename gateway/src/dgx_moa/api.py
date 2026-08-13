@@ -4894,6 +4894,19 @@ def create_app(
                                         objective=(
                                             response_state.objective if response_state else ""
                                         ),
+                                        successful_tool_fingerprints=(
+                                            request.app.state.controller.successful_inspection_fingerprints(
+                                                response_state
+                                            )
+                                            if response_state
+                                            else frozenset()
+                                        ),
+                                        workspace_inventory_complete=bool(
+                                            response_state
+                                            and request.app.state.controller.workspace_inventories(
+                                                response_state
+                                            )
+                                        ),
                                     ),
                                     heartbeat=b"event: ping\ndata: {}\n\n",
                                 ):
@@ -4919,6 +4932,7 @@ def create_app(
                                     "language_mismatch",
                                     "truncated_response",
                                     "unsafe_tool_call",
+                                    "duplicate_tool_call",
                                 }
                                 if quality_retry:
                                     request.state.responses_quality_retry_reason = (
@@ -4960,6 +4974,14 @@ def create_app(
                                         "install anything, stash or clean changes, or delete data. "
                                         "Use only non-mutating inspection commands, or return the "
                                         "evidence-based final evaluation if inspection is complete."
+                                    )
+                                elif retry_error.reason == "duplicate_tool_call":
+                                    retry_instruction = (
+                                        "The previous tool call repeats a successful inspection "
+                                        "already recorded since the latest file change. Do not "
+                                        "run it "
+                                        "again. Batch any remaining independent reads in one call, "
+                                        "then implement, validate, or return the final result."
                                     )
                                 elif goal_requires_tool_action(response_state):
                                     retry_instruction = (
@@ -5039,6 +5061,19 @@ def create_app(
                                 require_tool_action=goal_requires_tool_action(response_state),
                                 context_length=configured.models["executor"].context_length,
                                 objective=response_state.objective if response_state else "",
+                                successful_tool_fingerprints=(
+                                    request.app.state.controller.successful_inspection_fingerprints(
+                                        response_state
+                                    )
+                                    if response_state
+                                    else frozenset()
+                                ),
+                                workspace_inventory_complete=bool(
+                                    response_state
+                                    and request.app.state.controller.workspace_inventories(
+                                        response_state
+                                    )
+                                ),
                             ):
                                 yield chunk
                             return

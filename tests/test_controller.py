@@ -3864,6 +3864,32 @@ def test_repeated_successful_inspection_marks_executor_stalled(
     assert controller.executor_stalled(invalid_process) is True
 
 
+def test_successful_inspection_fingerprints_reset_after_change(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="successful-inspection-fingerprints",
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "cat app.py"},
+                "argument_fingerprint": "before-change",
+                "exit_code": 0,
+            },
+            {"tool_name": "apply_patch", "exit_code": 0},
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "cat tests/test_app.py"},
+                "argument_fingerprint": "after-change",
+                "exit_code": 0,
+            },
+        ],
+    )
+
+    assert controller.successful_inspection_fingerprints(state) == frozenset({"after-change"})
+
+
 @pytest.mark.asyncio
 async def test_completed_implementation_is_told_to_return_final(
     settings, stub_provider: StubProvider
