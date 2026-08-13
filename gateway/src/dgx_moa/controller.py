@@ -1153,7 +1153,7 @@ class Controller:
         external_cost_usd: object = None,
     ) -> None:
         loop = state.engineering_loop
-        if loop is None:
+        if loop is None or loop.termination_reason is not None:
             return
         values = (
             ("tokens", total_tokens),

@@ -1239,6 +1239,21 @@ def test_client_cancelled_loop_resumes_but_operator_termination_does_not(
     assert not_resumed.engineering_loop.termination_reason == "CLIENT_CANCELLED"
 
 
+def test_terminal_loop_ignores_late_provider_usage(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    settings.loop_engineering.enabled = True
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = controller.session("terminal-usage", [{"role": "user", "content": "review"}])
+    controller.select_route(state, {})
+    controller.terminate_loop(state, "JUDGE_REJECTED")
+    assert state.engineering_loop is not None
+    remaining = state.engineering_loop.remaining_budget.tokens
+
+    controller.record_loop_usage(state, total_tokens=100)
+
+    assert state.engineering_loop.remaining_budget.tokens == remaining
+    assert state.engineering_loop.termination_reason == "JUDGE_REJECTED"
+
+
 @pytest.mark.asyncio
 async def test_new_user_evidence_resumes_no_progress_loop(
     settings, stub_provider: StubProvider
