@@ -3860,6 +3860,7 @@ class Controller:
             or state.objective.lstrip().lower().startswith("/goal ")
             or "goal-objective.md" in state.objective
         )
+        workspace_request = is_workspace_objective(effective_objective(state))
         tools = body.get("tools")
         if isinstance(tools, list) and not goal_request:
             goal_tools = {"create_goal", "get_goal", "update_goal"}
@@ -3877,6 +3878,17 @@ class Controller:
                     "tool_temporarily_unavailable",
                     {"tools": sorted(goal_tools), "reason": "non_goal_request"},
                 )
+        objective = effective_objective(state).lower()
+        if (
+            isinstance(body.get("tools"), list)
+            and workspace_request
+            and not re.search(r"\b(?:plan|planning|design)\b|(?:계획|설계)", objective)
+        ):
+            body["tools"] = [
+                tool
+                for tool in body["tools"]
+                if str(tool.get("name") or tool.get("function", {}).get("name")) != "update_plan"
+            ]
         available_tools = tuple(
             sorted(
                 {
@@ -3897,7 +3909,6 @@ class Controller:
         evaluation_request = self.is_codebase_evaluation(state)
         evaluation_evidence_pending = self.requires_codebase_evaluation_evidence(state)
         evaluation_complete = evaluation_request and not evaluation_evidence_pending
-        workspace_request = is_workspace_objective(effective_objective(state))
         workspace_inventory_complete = bool(self.workspace_inventories(state))
         workspace_inspection_complete = self.workspace_inspection_complete(state)
         evaluation_inventory_complete = workspace_inventory_complete
@@ -4153,6 +4164,17 @@ class Controller:
                 )
             )
         ]
+
+    @classmethod
+    def workspace_inventory_paths(cls, state: SessionState) -> tuple[str, ...]:
+        inventories = cls.workspace_inventories(state)
+        if not inventories:
+            return ()
+        return tuple(
+            line.strip()
+            for line in str(inventories[-1].get("stdout_summary", "")).splitlines()
+            if line.strip()
+        )
 
     @classmethod
     def requires_codebase_evaluation_evidence(cls, state: SessionState) -> bool:

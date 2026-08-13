@@ -16,6 +16,7 @@ from dgx_moa.streaming import (
     reported_usage,
     response_usage,
     responses_sse,
+    substantive_tool_progress,
     tool_call_fingerprint,
     tool_progress_text,
 )
@@ -390,6 +391,47 @@ async def test_responses_sse_rejects_repeated_successful_inspection() -> None:
                 successful_tool_fingerprints=frozenset({prior}),
             )
         ]
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_batches_workspace_reads_from_inventory() -> None:
+    async def upstream():
+        payload = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-read",
+                                "function": {
+                                    "name": "exec_command",
+                                    "arguments": json.dumps(
+                                        {"cmd": "sed -n '1,200p' /tmp/project/app.py"}
+                                    ),
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+        yield f"data: {json.dumps(payload)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    response = b"".join(
+        [
+            chunk
+            async for chunk in responses_sse(
+                upstream(),
+                "dgx-moa",
+                workspace_inventory_paths=("app.py", "test_app.py", "README.md"),
+            )
+        ]
+    )
+    assert b"/tmp/project/test_app.py" in response
+    assert b"README.md" not in response
 
 
 @pytest.mark.asyncio
@@ -873,6 +915,16 @@ def test_tool_progress_text_describes_immediate_purpose(
 ) -> None:
     calls = {0: {"_arguments": json.dumps(arguments, ensure_ascii=False)}}
     assert tool_progress_text(calls, "ko") == expected
+
+
+def test_substantive_tool_progress_suppresses_single_validation_command() -> None:
+    calls = {
+        0: {
+            "name": "exec_command",
+            "_arguments": json.dumps({"cmd": "cd /tmp/project && python -m pytest -q"}),
+        }
+    }
+    assert substantive_tool_progress(calls, "ko") == ""
 
 
 @pytest.mark.asyncio

@@ -3949,7 +3949,8 @@ async def test_incomplete_implementation_requires_a_tool_action(
             {
                 "type": "function",
                 "function": {"name": "exec_command", "parameters": {}},
-            }
+            },
+            {"type": "function", "function": {"name": "update_plan", "parameters": {}}},
         ],
         "tool_choice": "auto",
     }
@@ -3957,6 +3958,7 @@ async def test_incomplete_implementation_requires_a_tool_action(
     prepared = await controller.prepare_executor(state, request, ("executor",))
 
     assert prepared["tool_choice"] == "required"
+    assert [tool["function"]["name"] for tool in prepared["tools"]] == ["exec_command"]
     assert any(
         event["event_type"] == "implementation_tool_action_required"
         for event in store.events(state.session_id)
