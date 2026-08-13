@@ -4918,6 +4918,7 @@ def create_app(
                                     "invalid_output",
                                     "language_mismatch",
                                     "truncated_response",
+                                    "unsafe_tool_call",
                                 }
                                 if quality_retry:
                                     request.state.responses_quality_retry_reason = (
@@ -4951,6 +4952,14 @@ def create_app(
                                         "The previous answer leaked an internal protocol marker. "
                                         "Return only the concise user-facing final answer without "
                                         "XML-like tags, function responses, or provider metadata."
+                                    )
+                                elif retry_error.reason == "unsafe_tool_call":
+                                    retry_instruction = (
+                                        "This is a read-only evaluation. The previous tool call "
+                                        "would mutate user state. Do not create files or projects, "
+                                        "install anything, stash or clean changes, or delete data. "
+                                        "Use only non-mutating inspection commands, or return the "
+                                        "evidence-based final evaluation if inspection is complete."
                                     )
                                 elif goal_requires_tool_action(response_state):
                                     retry_instruction = (

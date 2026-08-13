@@ -3641,6 +3641,42 @@ def test_implementation_completion_requires_change_validation_and_review(
     )
     assert controller.requires_codebase_evaluation_evidence(traversed_evaluation) is False
 
+    compound_evaluation = SessionState(
+        session_id="compound-evaluation",
+        objective=workspace_evaluation.objective,
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "git -C /tmp/rust-mcu-ide ls-files"},
+                "stdout_summary": (
+                    "README.md\ninstall.sh\nnew-project.sh\nsetup.sh\n"
+                    ".github/workflows/bump-version.yml"
+                ),
+                "exit_code": 0,
+            },
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {
+                    "cmd": (
+                        "cd /tmp/rust-mcu-ide && set -e\n"
+                        "sed -n '1,200p' install.sh new-project.sh setup.sh\n"
+                        "sed -n '1,160p' .github/workflows/bump-version.yml"
+                    )
+                },
+                "exit_code": 0,
+            },
+        ],
+    )
+    assert controller.requires_codebase_evaluation_evidence(compound_evaluation) is False
+    compound_evaluation.tool_executions.append(
+        {
+            "tool_name": "exec_command",
+            "normalized_arguments": {"cmd": "./mcu-ide version > version.out"},
+            "exit_code": 0,
+        }
+    )
+    assert controller.implementation_completion_ready(compound_evaluation, {}) is False
+
     documentation_only = SessionState(
         session_id="documentation-only",
         objective="Evaluate this platform codebase.",
@@ -3936,6 +3972,38 @@ async def test_codebase_evaluation_requires_deep_evidence(
     assert "do not substitute ls" in prepared["messages"][0]["content"]
     assert prepared["max_tokens"] == 2_048
     assert [tool["function"]["name"] for tool in prepared["tools"]] == ["exec_command"]
+
+    state.tool_executions.extend(
+        [
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "git -C rust-mcu-ide ls-files"},
+                "stdout_summary": "new-project.sh\n.github/workflows/bump-version.yml",
+                "exit_code": 0,
+            },
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {
+                    "cmd": (
+                        "cd rust-mcu-ide && sed -n '1,200p' new-project.sh\n"
+                        "sed -n '1,160p' .github/workflows/bump-version.yml"
+                    )
+                },
+                "exit_code": 0,
+            },
+        ]
+    )
+    completed = await controller.prepare_executor(
+        state, request, ("executor",), tool_continuation=True
+    )
+
+    assert "tools" not in completed
+    assert "tool_choice" not in completed
+    assert "evaluation evidence is complete" in completed["messages"][0]["content"]
+    assert any(
+        event["event_type"] == "completed_evaluation_tools_suppressed"
+        for event in controller.store.events(state.session_id)
+    )
 
 
 @pytest.mark.asyncio

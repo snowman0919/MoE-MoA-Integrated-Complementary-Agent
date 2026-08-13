@@ -199,6 +199,52 @@ def has_internal_protocol_leak(text: str) -> bool:
     return bool(re.search(r"</?(?:function|tool|assistant|response)[_:-]", prose, re.IGNORECASE))
 
 
+def has_read_only_evaluation_mutation(
+    tool_calls: dict[int, dict[str, object]], objective: str
+) -> bool:
+    normalized = objective.lower()
+    evaluation = any(
+        marker in normalized for marker in ("evaluate", "audit", "review", "평가", "감사", "검토")
+    ) and any(
+        marker in normalized
+        for marker in (
+            "codebase",
+            "repository",
+            "project",
+            "platform",
+            "코드베이스",
+            "저장소",
+            "프로젝트",
+            "플랫폼",
+        )
+    )
+    requested_change = bool(
+        re.search(r"\b(?:implement|modify|fix|create|write|add|refactor)\b", normalized)
+        or re.search(
+            r"(?:구현|수정|변경|고쳐|생성|만들)(?:해|하|하여|하고|해서|하세요|해줘|해라)",
+            normalized,
+        )
+    )
+    if not evaluation or requested_change:
+        return False
+    for call in tool_calls.values():
+        if str(call.get("name")) in {"apply_patch", "write_stdin", "edit", "edit_file"}:
+            return True
+        try:
+            arguments = json.loads(str(call.get("_arguments") or "{}"))
+        except ValueError:
+            continue
+        command = str(arguments.get("cmd") or arguments.get("command") or "")
+        if re.search(
+            r"(?:^|&&|\|\||;|\n)\s*(?:rm\b|mv\b|cp\b|touch\b|mkdir\b|"
+            r"(?:brew|pip|pip3|cargo)\s+install\b|git\s+(?:stash|reset|clean|checkout|"
+            r"switch|add|commit)\b|\./\S+\s+(?:new|install|setup)\b)",
+            command,
+        ) or re.search(r"(?:^|\s)(?:\d*)>(?![>&])\s*(?!/dev/null(?:\s|$))", command):
+            return True
+    return False
+
+
 def _log_token(value: str) -> str:
     return "".join(character if character.isprintable() else "?" for character in value)[:256]
 
@@ -692,6 +738,8 @@ async def responses_sse(
         text = "".join(text_parts)
         if "length" in finish_reasons:
             raise ProgressOnlyResponse("truncated_response")
+        if tool_calls and has_read_only_evaluation_mutation(tool_calls, objective):
+            raise ProgressOnlyResponse("unsafe_tool_call")
         if not tool_calls and has_internal_protocol_leak(text):
             raise ProgressOnlyResponse("invalid_output")
         if not tool_calls and has_korean_script_leak(text, progress_language, objective):

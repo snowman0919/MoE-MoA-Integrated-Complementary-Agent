@@ -230,6 +230,91 @@ async def test_responses_sse_retries_truncated_or_internal_output() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git stash push --include-untracked",
+        "rm -rf hello-esp32",
+        "./mcu-ide new hello-esp32",
+        "./mcu-ide version > version.out",
+    ],
+)
+async def test_responses_sse_rejects_mutation_during_read_only_evaluation(
+    command: str,
+) -> None:
+    async def upstream():
+        payload = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-1",
+                                "function": {
+                                    "name": "exec_command",
+                                    "arguments": json.dumps({"cmd": command}),
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+        yield f"data: {json.dumps(payload)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    with pytest.raises(ProgressOnlyResponse, match="unsafe_tool_call"):
+        _ = [
+            chunk
+            async for chunk in responses_sse(
+                upstream(),
+                "dgx-moa",
+                objective="rust-mcu-ide 플랫폼을 확인하고 평가해봐",
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_allows_read_during_read_only_evaluation() -> None:
+    async def upstream():
+        payload = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-1",
+                                "function": {
+                                    "name": "exec_command",
+                                    "arguments": json.dumps(
+                                        {"cmd": "git -C rust-mcu-ide ls-files"}
+                                    ),
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+        yield f"data: {json.dumps(payload)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    chunks = [
+        chunk
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa",
+            objective="rust-mcu-ide 플랫폼을 확인하고 평가해봐",
+        )
+    ]
+    assert b"response.completed" in b"".join(chunks)
+
+
+@pytest.mark.asyncio
 async def test_responses_sse_requires_tool_when_goal_has_no_implementation_evidence() -> None:
     async def upstream():
         yield (
