@@ -1422,3 +1422,9 @@ Reviewer is OpenCode Go `glm-5.2`. DeepSeek V4 Flash is Executor-only overflow
 or fallback when the local Executor is busy or explicitly disabled by the
 operator; it is not Reviewer. This mapping supersedes older experimental and
 Pilot prose that names a DeepSeek model as Reviewer.
+
+Runtime code `a1ea6d7b2` is deployed with that mapping. A fresh Dashboard
+snapshot reports all seven roles available and names Reviewer `glm-5.2` through
+`opencode_go`; Executor remains local Mistral. The same high-risk request
+recorded one successful GLM Reviewer invocation and one local Executor
+invocation, keeping the roles distinct.

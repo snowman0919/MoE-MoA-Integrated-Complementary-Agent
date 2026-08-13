@@ -8776,3 +8776,22 @@ DeepSeek V4 Flash as Executor-only overflow/fallback. The production override,
 checked-in defaults, and active-validation contract were corrected together.
 Older DeepSeek Reviewer measurements remain historical observations and are not
 current topology authority.
+
+The first full gateway request selected `glm-5.2` correctly but failed closed
+after two `invalid_structured_output` results. A content-free parameter matrix
+identified the root cause: `thinking.disabled`, `reasoning_effort=low`, no
+control, and `enable_thinking=false` all returned empty public content with only
+reasoning output; `reasoning_effort=none` returned public JSON. Runtime release
+`a1ea6d7b2` applies only that GLM Reviewer correction.
+
+The fresh five-role structured artifact at production
+`data/run/role-validation.json` has SHA-256
+`8a7dae0bc1eb7b97e2a57999e91ca59240293ba494e5485e08d0cf72bb7e2773` and
+passes Planner `deepseek-v4-pro`, Reviewer `glm-5.2`, Judge `kimi-k3`, Frontier
+A, and Frontier B. Authenticated session
+`prod-reviewer-glm-public-final-20260813` returned HTTP 200; its durable state
+records Reviewer `glm-5.2`/OpenCode Go completed in 1,275.51 ms with 2,791/10
+tokens and approved, while Executor remained `dgx-moa-executor`. Dashboard
+reports all seven roles available. Gateway restart count is zero. Ruff, format,
+strict mypy over 50 source files, focused tests `36 passed`, and the complete
+suite `1092 passed` all succeeded.

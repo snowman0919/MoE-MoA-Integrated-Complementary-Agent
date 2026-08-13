@@ -17,6 +17,10 @@ local Executor is busy or explicitly unavailable. The separate Kimi K3
 dispatch; race-to-first is disabled and local and remote partial outputs are
 never combined.
 
+The GLM Reviewer request adapter removes legacy `thinking` controls and sends
+`reasoning_effort=none`. OpenCode Go otherwise returns reasoning-only output
+with empty public content, which is not a valid Reviewer artifact.
+
 The default 60-second local preference margin keeps a READY, healthy local
 Planner or Reviewer selected. Cold, loading, busy, degraded, or materially
 queued specialists route immediately to their remote fallback while one local
