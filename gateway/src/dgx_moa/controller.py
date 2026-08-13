@@ -2380,7 +2380,11 @@ class Controller:
             "unfiltered file inventory, then inspect representative implementation source and "
             "available tests or build configuration. README statements are claims, not proof. "
             "If the inventory contains only documentation, say that implementation is unverified "
-            "and do not positively rate claimed functionality."
+            "and do not positively rate claimed functionality. Unless the user explicitly asks "
+            "for a detailed report, keep the final evaluation below 1,200 characters and cover "
+            "only verified implementation, documented-but-unverified claims, observed defects, "
+            "and the verdict. Do not add speculative limitations, future plans, thanks, offers "
+            "for more work, a second English summary, or internal response tags."
             if role == "executor"
             else ""
         )
@@ -3813,6 +3817,28 @@ class Controller:
                             "reason": "mcp_server_unavailable",
                         },
                     )
+        goal_request = bool(
+            state.resolved_objective
+            or state.objective.lstrip().lower().startswith("/goal ")
+            or "goal-objective.md" in state.objective
+        )
+        tools = body.get("tools")
+        if isinstance(tools, list) and not goal_request:
+            goal_tools = {"create_goal", "get_goal", "update_goal"}
+            body["tools"] = [
+                tool
+                for tool in tools
+                if not (
+                    isinstance(tool, dict)
+                    and str(tool.get("name") or tool.get("function", {}).get("name")) in goal_tools
+                )
+            ]
+            if len(body["tools"]) != len(tools):
+                self.store.event(
+                    state.session_id,
+                    "tool_temporarily_unavailable",
+                    {"tools": sorted(goal_tools), "reason": "non_goal_request"},
+                )
         available_tools = tuple(
             sorted(
                 {
@@ -3830,7 +3856,14 @@ class Controller:
                 {"tools": list(available_tools)},
             )
         messages = compress_messages(body["messages"], self.settings.limits)
+        evaluation_request = self.is_codebase_evaluation(state)
         evaluation_evidence_pending = self.requires_codebase_evaluation_evidence(state)
+        detailed_evaluation = any(
+            marker in effective_objective(state).lower()
+            for marker in ("detailed", "comprehensive", "in depth", "상세", "종합", "심층")
+        )
+        if evaluation_request and not detailed_evaluation:
+            body["max_tokens"] = min(int(body.get("max_tokens") or 2_048), 2_048)
         implementation_complete = self.implementation_completion_ready(
             state, dict(request.get("metadata", {}))
         )
@@ -3965,9 +3998,9 @@ class Controller:
         )
 
     @staticmethod
-    def requires_codebase_evaluation_evidence(state: SessionState) -> bool:
+    def is_codebase_evaluation(state: SessionState) -> bool:
         objective = effective_objective(state).lower()
-        if not (
+        return bool(
             any(
                 marker in objective
                 for marker in (
@@ -3995,7 +4028,11 @@ class Controller:
                     "플랫폼",
                 )
             )
-        ):
+        )
+
+    @staticmethod
+    def requires_codebase_evaluation_evidence(state: SessionState) -> bool:
+        if not Controller.is_codebase_evaluation(state):
             return False
 
         def command(execution: dict[str, Any]) -> str:

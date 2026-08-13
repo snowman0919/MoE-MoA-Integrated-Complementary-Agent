@@ -7838,7 +7838,70 @@ def test_responses_retries_mixed_script_in_korean_prose(  # type: ignore[no-unty
     assert "프로젝트存在 확인" not in response.text
     assert "프로젝트 존재를 확인했습니다." in response.text
     assert any(event["event_type"] == "language_mismatch_response_retried" for event in events)
-    assert "Korean prose only" in stub_provider.requests[-1]["messages"][-1]["content"]
+    assert (
+        "concise Korean final answer only" in stub_provider.requests[-1]["messages"][-1]["content"]
+    )
+
+
+def test_responses_quality_retry_routes_to_frontier(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    frontier_config = settings.state_db.parent / "quality-retry-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    controlled = settings.model_copy(
+        update={"frontier_enabled": True, "frontier_config": frontier_config}
+    )
+    app = create_app(controlled)
+    local_calls = 0
+
+    async def local_stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal local_calls
+        local_calls += 1
+
+        async def chunks():  # type: ignore[no-untyped-def]
+            payload = {
+                "choices": [{"delta": {"content": "프로젝트存在 확인"}, "finish_reason": "stop"}]
+            }
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    async def remote_execute(
+        _request: dict[str, object], _correlation_id: str
+    ) -> dict[str, object]:
+        return {
+            "id": "chatcmpl-quality-retry",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "프로젝트를 확인했습니다."},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 8},
+            "model": "gpt-5.6-sol",
+            "provider_provenance": {"provider": "codex-oauth", "cost_usd": None},
+        }
+
+    stub_provider.stream = local_stream  # type: ignore[method-assign]
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        response = client.post(
+            "/v1/responses",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "quality-retry-frontier",
+            },
+            json={"model": "dgx-moa-fast", "input": "프로젝트를 확인해", "stream": True},
+        )
+        events = app.state.store.events("quality-retry-frontier")
+
+    assert local_calls == 1
+    assert "프로젝트를 확인했습니다." in response.text
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
+    assert selected["payload"]["routing_reason"] == "local_language_mismatch"
 
 
 def test_responses_progress_retry_does_not_request_redundant_tool_after_evidence(
