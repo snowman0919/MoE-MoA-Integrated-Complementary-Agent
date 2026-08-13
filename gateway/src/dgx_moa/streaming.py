@@ -173,11 +173,12 @@ def has_korean_script_leak(text: str, progress_language: str, objective: str) ->
         return False
     prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     prose = re.sub(r"`[^`\n]*`", "", prose)
-    if re.search(
+    foreign_pattern = (
         r"[\u0370-\u052f\u0530-\u058f\u0590-\u08ff\u0900-\u097f"
-        r"\u0e00-\u0e7f\u10a0-\u10ff\u3040-\u30ff]",
-        prose,
-    ):
+        r"\u0e00-\u0e7f\u10a0-\u10ff\u3040-\u30ff]"
+    )
+    allowed_foreign = set(re.findall(foreign_pattern, objective))
+    if any(character not in allowed_foreign for character in re.findall(foreign_pattern, prose)):
         return True
     allowed_han = set(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", objective))
     if any(
