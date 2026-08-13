@@ -312,7 +312,7 @@ class SpecialistRoutingConfig(BaseModel):
     models: dict[str, str] = Field(
         default_factory=lambda: {
             "planner": "deepseek-v4-pro",
-            "reviewer": "deepseek-v4-pro",
+            "reviewer": "glm-5.2",
         }
     )
     timeout_seconds: float = Field(default=120, gt=0, le=600)
@@ -346,6 +346,8 @@ class SpecialistRoutingConfig(BaseModel):
         required_roles = {"planner", "reviewer"}
         if set(self.models) != required_roles:
             raise ValueError("specialist models must define planner and reviewer")
+        if self.enabled and self.models["reviewer"] != "glm-5.2":
+            raise ValueError("enabled Reviewer must use OpenCode Go glm-5.2")
         if set(self.local_latency_seconds) != required_roles:
             raise ValueError("local latency estimates must define planner and reviewer")
         if set(self.remote_latency_seconds) != required_roles:

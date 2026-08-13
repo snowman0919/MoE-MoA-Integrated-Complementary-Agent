@@ -42,7 +42,7 @@ gateway:
     provider: disabled
     endpoint: https://opencode.ai/zen/go
     api_key_env: OPENCODE_GO_API_KEY
-    models: {planner: deepseek-v4-pro, reviewer: deepseek-v4-pro}
+    models: {planner: deepseek-v4-pro, reviewer: glm-5.2}
     timeout_seconds: 120
     local_latency_seconds: {planner: 30, reviewer: 45}
     remote_latency_seconds: {planner: 25, reviewer: 5}

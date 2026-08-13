@@ -280,12 +280,11 @@ and `OPENCODE_GO_API_KEY` outside Git, use only bounded sanitized synthetic
 evidence, and do not enable production until the physical matrix passes. See
 `docs/REMOTE_JUDGE.md` and `docs/SPECIALIST_ROUTING.md`.
 
-The Dynamic MoA v3 candidate maps Planner and Reviewer to the physically
-validated OpenCode Go model recorded in current `STATE.md`/`VALIDATION.md`, and
-Judge to `kimi-k3`. The rejected GLM Reviewer and early truncated Kimi attempts
-remain historical evidence; never treat hidden `reasoning_content` as a role
-artifact. Keep the checked-in candidate roles disabled pending broader release
-gates.
+The production mapping is Planner `deepseek-v4-pro`, Reviewer `glm-5.2`, and
+Judge `kimi-k3` through OpenCode Go. DeepSeek V4 Flash belongs only to Executor
+overflow/fallback scheduling and must never be configured as Reviewer. Earlier
+GLM and DeepSeek Reviewer probes remain historical evidence; never treat hidden
+`reasoning_content` as a role artifact.
 After approval, write the retry to a durable sanitized checkpoint rather than
 terminal-only output:
 

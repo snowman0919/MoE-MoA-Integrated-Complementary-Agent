@@ -9,8 +9,10 @@ call while a singleflight local warm-up runs independently when needed. The
 warmed role is eligible only for later calls. Explicit local-only policy may
 queue behind a healthy busy specialist.
 
-The measured remote cold-start model is `deepseek-v4-pro` for both Planner and
-Reviewer. It does not replace the local models. The separate Kimi K3
+The production role mapping is OpenCode Go `deepseek-v4-pro` for Planner and
+`glm-5.2` for Reviewer. DeepSeek V4 Flash is not a specialist model: it is the
+Executor-only overflow/fallback selected by the API-key scheduler when the
+local Executor is busy or explicitly unavailable. The separate Kimi K3
 `JudgeProvider` is never used as their fallback. Provider choice is pinned after
 dispatch; race-to-first is disabled and local and remote partial outputs are
 never combined.
@@ -24,7 +26,7 @@ Checked-in defaults are disabled. Enable with a protected runtime environment:
 
 ```text
 OPENCODE_GO_API_KEY=<operator-owned secret>
-DGX_MOA_SPECIALIST_ROUTING={"enabled":true,"provider":"opencode_go","endpoint":"https://opencode.ai/zen/go","api_key_env":"OPENCODE_GO_API_KEY","models":{"planner":"deepseek-v4-pro","reviewer":"deepseek-v4-pro"}}
+DGX_MOA_SPECIALIST_ROUTING={"enabled":true,"provider":"opencode_go","endpoint":"https://opencode.ai/zen/go","api_key_env":"OPENCODE_GO_API_KEY","models":{"planner":"deepseek-v4-pro","reviewer":"glm-5.2"}}
 ```
 
 Never commit the key or copy `opencode_api` into deployment artifacts. Local
@@ -55,7 +57,6 @@ status, latency, usage, and failure class; prompts and raw provider output are
 not persisted. The 2026-07-22 live checks, full automated suite, ordinary
 cold-role remote-routing test, independent singleflight warm-up, subsequent-call
 local eligibility, and rollback verification passed; production routing is
-enabled from its protected environment. GLM 5.2 remained reasoning-only across
-the bounded v3 retry gate. The measured DeepSeek V4 Pro replacement passed both
-approval and failed-test rejection; the checked-in routing gate remains
-disabled pending the remaining production gates.
+enabled from its protected environment. Earlier GLM reasoning-only probes and
+the temporary DeepSeek Reviewer substitutions are retained as historical
+evidence, but they do not define the current role contract.

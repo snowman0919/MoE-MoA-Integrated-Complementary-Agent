@@ -1415,3 +1415,10 @@ listens on loopback `127.0.0.1:19301`; Reasoner remains external at
 `100.90.167.128`. The seven-role Static Graph Skeleton plus runtime-created
 request subgraph was exercised by a final authenticated high-risk request.
 Post-Pilot beta/stable, training, weekly, and retention gates remain deferred.
+
+## Authoritative role correction — 2026-08-13
+
+Reviewer is OpenCode Go `glm-5.2`. DeepSeek V4 Flash is Executor-only overflow
+or fallback when the local Executor is busy or explicitly disabled by the
+operator; it is not Reviewer. This mapping supersedes older experimental and
+Pilot prose that names a DeepSeek model as Reviewer.

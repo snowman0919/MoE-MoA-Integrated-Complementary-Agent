@@ -8768,3 +8768,11 @@ The final deployed-code canary additionally persisted
 `blocked/BUDGET_EXHAUSTED` after completed iteration 1. Frontier A completed in
 21,458.606 ms and Reviewer/Judge each approved once; the HTTP request itself
 returned 200. Gateway restart count remained zero.
+
+### Reviewer/Flash role correction — 2026-08-13
+
+Operator clarification establishes Reviewer as OpenCode Go `glm-5.2` and
+DeepSeek V4 Flash as Executor-only overflow/fallback. The production override,
+checked-in defaults, and active-validation contract were corrected together.
+Older DeepSeek Reviewer measurements remain historical observations and are not
+current topology authority.
