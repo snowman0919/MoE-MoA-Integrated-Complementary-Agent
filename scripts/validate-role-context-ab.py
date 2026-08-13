@@ -126,6 +126,51 @@ async def validate(config: Path, frontier_config: Path, output: Path) -> None:
         target_attempt_id="reviewer-a001",
         causal_parent_attempt_ids=("executor-a001", "test-a001"),
     )
+    repaired_snapshot = build_runtime_evidence_snapshot(
+        request_id="role-context-ab-auth-callback-repair",
+        objective=snapshot.objective,
+        request_inputs=snapshot.request_inputs,
+        request_constraints=("Do not weaken authentication or expose credentials.",),
+        acceptance_criteria=(
+            "Use hmac.compare_digest for state comparison.",
+            "Reject mismatched state before token exchange.",
+            "The failing security test must pass before approval.",
+        ),
+        runtime_evidence=(
+            runtime_evidence_item(
+                "corrected-diff",
+                "diff",
+                {
+                    "path": "auth/callback.py",
+                    "added": (
+                        "if not hmac.compare_digest(supplied_state, expected_state): reject() "
+                        "# before token exchange"
+                    ),
+                },
+                source_attempt_id="executor-a002",
+            ),
+            runtime_evidence_item(
+                "security-test-passed",
+                "test",
+                {"status": "passed", "summary": "timing-safe state rejection passed"},
+                source_attempt_id="test-a002",
+                parent_evidence_ids=("corrected-diff",),
+            ),
+        ),
+        graph_id="graph-role-context-ab",
+    )
+    repaired_direct = project_role_context(
+        repaired_snapshot,
+        "reviewer",
+        stage="review",
+        target_attempt_id="reviewer-a002",
+        causal_parent_attempt_ids=("executor-a002", "test-a002"),
+    )
+    repaired_legacy = {
+        "objective": snapshot.objective,
+        "executor_summary": "The security defect is fixed and all tests now pass.",
+        "executor_completion_claim": "ready for approval",
+    }
     cases: dict[str, dict[str, Any]] = {}
 
     async def specialist_case(
@@ -133,6 +178,8 @@ async def validate(config: Path, frontier_config: Path, output: Path) -> None:
         provider: RemotePlannerProvider | RemoteReviewerProvider,
         schema: type[PlannerPlan] | type[ReviewResult],
         package: Any,
+        *,
+        known_violation: bool = False,
     ) -> Any:
         started = time.monotonic()
         totals = {key: 0 for key in ("prompt_tokens", "completion_tokens", "total_tokens")}
@@ -161,7 +208,7 @@ async def validate(config: Path, frontier_config: Path, output: Path) -> None:
         }
         if isinstance(parsed, ReviewResult):
             cases[label]["status"] = parsed.status
-            cases[label]["false_approval"] = parsed.status == "approved"
+            cases[label]["false_approval"] = known_violation and parsed.status == "approved"
             cases[label]["critical_finding_recall"] = any(
                 finding.severity in {"important", "critical"}
                 and any(marker in json.dumps(finding.model_dump()).lower() for marker in MARKERS)
@@ -173,9 +220,17 @@ async def validate(config: Path, frontier_config: Path, output: Path) -> None:
     await specialist_case(
         "planner_direct", planner, PlannerPlan, direct_planner.model_dump(mode="json")
     )
-    await specialist_case("reviewer_legacy", reviewer, ReviewResult, legacy)
+    await specialist_case("reviewer_legacy", reviewer, ReviewResult, legacy, known_violation=True)
     await specialist_case(
-        "reviewer_direct", reviewer, ReviewResult, direct_reviewer.model_dump(mode="json")
+        "reviewer_direct",
+        reviewer,
+        ReviewResult,
+        direct_reviewer.model_dump(mode="json"),
+        known_violation=True,
+    )
+    await specialist_case("reviewer_repair_legacy", reviewer, ReviewResult, repaired_legacy)
+    await specialist_case(
+        "reviewer_repair_direct", reviewer, ReviewResult, repaired_direct.model_dump(mode="json")
     )
 
     frontier = CodexOAuthCollaboration(
@@ -211,8 +266,8 @@ async def validate(config: Path, frontier_config: Path, output: Path) -> None:
     def missed(name: str) -> int:
         return sum(not found for found in cases[name]["marker_recall"].values())
 
-    payload = {
-        "schema_version": "role-context-ab-v1",
+    payload: dict[str, Any] = {
+        "schema_version": "role-context-ab-v4",
         "measured_at": datetime.now(UTC).isoformat(),
         "status": "passed",
         "snapshot_id": snapshot.snapshot_id,
@@ -244,14 +299,36 @@ async def validate(config: Path, frontier_config: Path, output: Path) -> None:
                 )
                 for variant in ("legacy", "direct")
             },
-            "repair_iterations": "not_measured_in_specialist_only_pair",
-            "verified_completion": "not_measured_in_specialist_only_pair",
+            "repair_iterations": {"legacy": 1, "direct": 1},
+            "completion_approval": {
+                variant: cases[f"reviewer_repair_{variant}"]["status"] == "approved"
+                for variant in ("legacy", "direct")
+            },
+            "verified_completion": {
+                "legacy": False,
+                "direct": cases["reviewer_repair_direct"]["status"] == "approved",
+            },
         },
     }
+    comparison = payload["comparison"]
+    assert isinstance(comparison, dict)
+    qualified = (
+        comparison["planner_plan_correction"]["direct"]
+        > comparison["planner_plan_correction"]["legacy"]
+        and comparison["reviewer_critical_finding_recall"]["direct"]
+        and comparison["missed_acceptance_criteria"]["direct"]
+        < comparison["missed_acceptance_criteria"]["legacy"]
+        and not comparison["false_approval"]["direct"]
+        and comparison["verified_completion"]["direct"]
+    )
+    payload["qualification_passed"] = qualified
+    payload["status"] = "passed" if qualified else "failed"
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     temporary.replace(output)
+    if not qualified:
+        raise SystemExit(1)
 
 
 def main() -> None:
