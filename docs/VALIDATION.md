@@ -8850,3 +8850,11 @@ context from that runtime configuration and exposes only the production
 remain accepted only for existing continuation compatibility and are not
 discoverable. Ruff, format, focused catalog tests `17 passed`, and the complete
 suite `1097 passed` succeeded before deployment.
+After production deployment, authenticated `https://aipi.kotori9.dev/v1/models`
+returned exactly `dgx-moa` and `dgx-moa-fast`, each with context 131,072 and
+`comp_hash=dgx-moa-131072-v1`; the retired public aliases returned no matches.
+The loopback vLLM model endpoint independently reported
+`dgx-moa-executor/max_model_len=131072`. Public Responses session
+`prod-canonical-model-catalog-20260813` returned exact `CANONICAL_MODEL_OK` and
+terminal `response.completed` using `model=dgx-moa`. Gateway restart count was
+zero.
