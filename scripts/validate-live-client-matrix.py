@@ -112,8 +112,9 @@ def start_gateway(
             "bind_port": port,
             "auth_enabled": True,
             "api_key": None,
-            "api_keys": {"operator" if frontier_enabled else "physical": secret},
-            "admin_api_enabled": frontier_enabled,
+            "api_keys": {"operator": secret},
+            "admin_api_enabled": True,
+            "admin_token_ids": ("operator",),
             "state_db": root / "runtime/state.db",
             "run_dir": root / "runtime",
             "runtime_channel": "dev",
@@ -123,6 +124,22 @@ def start_gateway(
             "execution_graph": execution_graph,
             "lifecycle_mode": "disabled",
             "lifecycle_unit_map": {},
+            "loop_engineering": base.loop_engineering.model_copy(update={"enabled": False}),
+            "runtime_skills": base.runtime_skills.model_copy(update={"enabled": False}),
+            "runtime_knowledge": base.runtime_knowledge.model_copy(update={"enabled": False}),
+            "runtime_evolution": base.runtime_evolution.model_copy(update={"enabled": False}),
+            "remote_judge": base.remote_judge.model_copy(
+                update={"enabled": False, "provider": "disabled"}
+            ),
+            "specialist_routing": base.specialist_routing.model_copy(
+                update={"enabled": False, "provider": "disabled"}
+            ),
+            "declarative_policy": base.declarative_policy.model_copy(update={"enabled": False}),
+            "executor_scheduling": base.executor_scheduling.model_copy(update={"enabled": False}),
+            "dashboard_enabled": False,
+            "live_observation": base.live_observation.model_copy(update={"enabled": False}),
+            "training_data": base.training_data.model_copy(update={"enabled": False}),
+            "weekly_jobs": base.weekly_jobs.model_copy(update={"enabled": False}),
             "models": models,
         }
     )
@@ -187,12 +204,30 @@ def main() -> None:
         return
 
     before = git_fingerprint(PRODUCTION)
-    secret = secrets.token_urlsafe(32)
+    operator_secret = secrets.token_urlsafe(32)
     base_url = f"http://127.0.0.1:{args.port}"
-    headers = {"Authorization": f"Bearer {secret}"}
-    server, thread = start_gateway(root, args.port, secret, args.executor_base_url)
+    operator_headers = {"Authorization": f"Bearer {operator_secret}"}
+    server, thread = start_gateway(root, args.port, operator_secret, args.executor_base_url)
     results: dict[str, object] = {}
+    client_keys: dict[str, str] = {}
+    key_lifecycle: dict[str, dict[str, object]] = {}
     try:
+        for name in ("raw", "codex", "opencode", "hermes"):
+            response = httpx.post(
+                f"{base_url}/v1/admin/api-keys",
+                headers=operator_headers,
+                json={
+                    "name": f"evaluation-{name}",
+                    "kind": "evaluation",
+                    "expires_in_minutes": 5,
+                    "request_limit": 8,
+                },
+                timeout=10,
+            )
+            response.raise_for_status()
+            client_keys[name] = response.json()["api_key"]
+            key_lifecycle[name] = {"issued": True, "revoked": False, "rejected_after_revoke": False}
+        headers = {"Authorization": f"Bearer {client_keys['raw']}"}
         generic = httpx.post(
             f"{base_url}/v1/chat/completions",
             headers=headers,
@@ -240,7 +275,7 @@ def main() -> None:
             'env_key = "DGX_MOA_API_KEY"\n'
             'wire_api = "responses"\n'
         )
-        codex_env = client_env(root / "codex/environment", secret)
+        codex_env = client_env(root / "codex/environment", client_keys["codex"])
         codex_env["CODEX_HOME"] = str(codex_home)
         codex = run(
             [
@@ -302,7 +337,7 @@ def main() -> None:
                 "Reply exactly OPENCODE_CLIENT_OK and do not call tools.",
             ],
             cwd=opencode_work,
-            env=client_env(root / "opencode/environment", secret),
+            env=client_env(root / "opencode/environment", client_keys["opencode"]),
         )
         results["opencode"] = {
             "exit_code": opencode.returncode,
@@ -322,7 +357,7 @@ def main() -> None:
             "  context_length: 131072\n"
             "  max_tokens: 128\n"
         )
-        hermes_env = client_env(root / "hermes/environment", secret)
+        hermes_env = client_env(root / "hermes/environment", client_keys["hermes"])
         hermes_env["HERMES_HOME"] = str(hermes_home)
         hermes = run(
             [
@@ -341,6 +376,22 @@ def main() -> None:
             "marker_seen": hermes.stdout.strip() == "HERMES_CLIENT_OK",
         }
     finally:
+        for name, key in client_keys.items():
+            revoked = httpx.post(
+                f"{base_url}/v1/admin/api-keys/evaluation-{name}/revoke",
+                headers=operator_headers,
+                timeout=10,
+            )
+            rejected = httpx.get(
+                f"{base_url}/v1/models",
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=10,
+            )
+            key_lifecycle[name].update(
+                revoked=revoked.status_code == 200,
+                rejected_after_revoke=rejected.status_code == 401,
+            )
+        results["temporary_api_keys"] = key_lifecycle
         server.should_exit = True
         thread.join(timeout=30)
 
@@ -356,6 +407,11 @@ def main() -> None:
         )
         and results.get("generic") == {"status_code": 200, "valid_json": True}
         and results.get("primary") == {"status_code": 200, "valid_json": True}
+        and set(key_lifecycle) == {"raw", "codex", "opencode", "hermes"}
+        and all(
+            row == {"issued": True, "revoked": True, "rejected_after_revoke": True}
+            for row in key_lifecycle.values()
+        )
         and any(
             row["role"] == "executor" and int(row["invocation_count"]) >= 6 for row in rate_rows
         )

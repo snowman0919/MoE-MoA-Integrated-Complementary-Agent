@@ -129,8 +129,11 @@ def test_baseline_reasoning_effort_has_bounded_override(monkeypatch: pytest.Monk
 
 def test_frontier_validation_gateway_enables_operator_admin_path() -> None:
     source = VALIDATION_SCRIPT.read_text()
-    assert '"api_keys": {"operator" if frontier_enabled else "physical": secret}' in source
-    assert '"admin_api_enabled": frontier_enabled' in source
+    assert '"api_keys": {"operator": secret}' in source
+    assert '"admin_api_enabled": True' in source
+    assert '"kind": "evaluation"' in source
+    assert '"expires_in_minutes": 5' in source
+    assert "rejected_after_revoke=rejected.status_code == 401" in source
 
 
 def test_docker_command_has_stable_unique_name(tmp_path: Path) -> None:

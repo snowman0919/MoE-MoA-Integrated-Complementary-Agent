@@ -9142,3 +9142,14 @@ key API에는 5분 이상 short-TTL `evaluation` kind와 Chat/Responses/model-li
 schema JSON을 강제한다. Candidate 결과는 Ruff/format/schema/workflow PASS, strict mypy
 `51` source PASS, full pytest `1146` PASS다. 이 증거는 isolated source validation이며 아직
 배포·실 client matrix·canary·rollback 승인이 아니므로 상태는 `IN_PROGRESS`다.
+
+같은 candidate source를 isolated SQLite와 loopback `127.0.0.1:19001` gateway로
+실행하고 기존 live-client smoke harness를 재사용했다. Raw Chat과 primary `dgx-moa`,
+Codex Responses, OpenCode, Hermes가 모두 성공했고 Executor invocation `6`, Reasoner
+invocation `1`이 기록됐다. 네 client는 각각 다른 5분 evaluation key를 사용했다.
+모든 key는 DB에 plaintext 길이 `0`, hash 길이 `64`로 저장됐고 종료 전에 revoke된 뒤
+각각 `/v1/models` `401`을 반환했다. Candidate DB의 Executor projection/invocation
+`6/6`, Reasoner `1/1` 모두 snapshot/projection/rendered prompt bytes와
+`provider_prompt_tokens`를 기록했다. `19001` listener와 raw client artifact는 제거됐고
+production checkout/hash와 `:9000` health는 변하지 않았다. 이 batch는 protocol/key
+lifecycle smoke이며 아직 3~5개 coding-task batch 결과가 아니다.
