@@ -343,6 +343,18 @@ def _coerce_responses_input_messages(
     raise TypeError("invalid responses input type")
 
 
+def _response_language(messages: list[dict[str, Any]]) -> str:
+    objective = next(
+        (
+            text_content(message.get("content"))
+            for message in reversed(messages)
+            if message.get("role") == "user"
+        ),
+        "",
+    )
+    return "ko" if any("\uac00" <= character <= "\ud7a3" for character in objective) else "en"
+
+
 def _coerce_responses_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
     if not tools:
         return None
@@ -4674,16 +4686,7 @@ def create_app(
             for tool in body.tools or []
             if tool.get("type") == "custom" and tool.get("name")
         }
-        progress_language = (
-            "ko"
-            if any(
-                "\uac00" <= character <= "\ud7a3"
-                for message in messages
-                if message.get("role") == "user"
-                for character in text_content(message.get("content"))
-            )
-            else "en"
-        )
+        progress_language = _response_language(messages)
         response_model = COMPATIBILITY_MODEL_ALIASES.get(body.model, body.model)
 
         tool_choice = body.tool_choice
@@ -4780,6 +4783,9 @@ def create_app(
                                     message.model_dump(mode="json")
                                     for message in current_body.messages
                                 ],
+                            )
+                            or request.app.state.controller.requires_codebase_evaluation_evidence(
+                                state
                             )
                         )
                     )

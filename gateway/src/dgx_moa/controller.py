@@ -2366,9 +2366,21 @@ class Controller:
             "When work remains, call the required tool in the same response; never return only a "
             "progress marker. Once recorded file changes, successful validation, and every "
             "required review are complete, return the final response immediately without more "
-            "inspection or validation calls. Do not expose hidden reasoning. Never request "
+            "inspection or validation calls. Keep all client-visible progress commentary across "
+            "the task to five to seven short lines; use tool calls instead of narrating commands. "
+            "This does not limit a detailed final report explicitly requested by the user. Do not "
+            "expose hidden reasoning. Never request "
             "elevated permissions or install missing system dependencies; use available tools or "
             "report the blocker."
+            if role == "executor"
+            else ""
+        )
+        evaluation_constraint = (
+            "For a codebase, repository, project, or platform evaluation, first obtain an "
+            "unfiltered file inventory, then inspect representative implementation source and "
+            "available tests or build configuration. README statements are claims, not proof. "
+            "If the inventory contains only documentation, say that implementation is unverified "
+            "and do not positively rate claimed functionality."
             if role == "executor"
             else ""
         )
@@ -2390,12 +2402,13 @@ class Controller:
             else ""
         )
         language_constraint = (
-            "Reason internally in English. Reply in the natural language of the user's actual "
-            "objective; when a wrapper points to an objective file, use the language of that "
-            "file rather than the wrapper. If objective language is Korean, output only Korean "
-            "for prose. No code blocks, identifiers, or JSON should switch language. Do not "
-            "mix languages. Do not use Chinese unless the user explicitly requested Chinese in "
-            "the objective."
+            "Keep internal reasoning in English regardless of the output language. Reply in the "
+            "language of the user's actual objective, using the current user objective; when a "
+            "wrapper points to an "
+            "objective file, use the language of that file rather than the wrapper. Do not apply "
+            "a global Korean-language rule. If the objective language is Korean, use only Korean "
+            "for prose; preserve code, identifiers, and JSON exactly. Do not mix prose languages "
+            "or use Chinese unless the current objective explicitly requests it."
             if role in {"executor", "planner", "reviewer"}
             else ""
         )
@@ -2436,6 +2449,8 @@ class Controller:
                 + tool_batching
                 + " "
                 + progress_constraint
+                + " "
+                + evaluation_constraint
                 + " "
                 + quality_constraint
                 + " "
@@ -3832,6 +3847,7 @@ class Controller:
                 state, cast(list[dict[str, Any]], body.get("messages", []))
             )
             or self.requires_implementation_tool_action(state, dict(request.get("metadata", {})))
+            or self.requires_codebase_evaluation_evidence(state)
         ):
             body["tool_choice"] = "required"
             self.store.event(
@@ -3923,11 +3939,7 @@ class Controller:
             instruction = (
                 objective
                 if "exec_command" in objective
-                or (
-                    state.runtime_mode != "fast"
-                    and requests_inspection
-                    and targets_workspace
-                )
+                or (state.runtime_mode != "fast" and requests_inspection and targets_workspace)
                 else None
             )
         if instruction is not None:
@@ -3940,6 +3952,120 @@ class Controller:
         return not any(
             execution.get("exit_code") == 0
             for execution in state.tool_executions[state.explicit_tool_evidence_cursor :]
+        )
+
+    @staticmethod
+    def requires_codebase_evaluation_evidence(state: SessionState) -> bool:
+        objective = effective_objective(state).lower()
+        if not (
+            any(
+                marker in objective
+                for marker in (
+                    "evaluate",
+                    "audit",
+                    "analyze",
+                    "review",
+                    "평가",
+                    "감사",
+                    "분석",
+                    "검토",
+                )
+            )
+            and any(
+                marker in objective
+                for marker in (
+                    "codebase",
+                    "repository",
+                    "repo",
+                    "project",
+                    "platform",
+                    "코드베이스",
+                    "저장소",
+                    "프로젝트",
+                    "플랫폼",
+                )
+            )
+        ):
+            return False
+
+        def command(execution: dict[str, Any]) -> str:
+            arguments = execution.get("normalized_arguments", {})
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except ValueError:
+                    return arguments.lower()
+            return str(arguments.get("cmd", "") if isinstance(arguments, dict) else "").lower()
+
+        successful = [item for item in state.tool_executions if item.get("exit_code") == 0]
+        inventories = [
+            item
+            for item in successful
+            if "|" not in command(item)
+            and " --glob" not in command(item)
+            and " -g " not in command(item)
+            and (
+                "rg --files" in command(item)
+                or "git ls-files" in command(item)
+                or (
+                    "find " in command(item)
+                    and "-type f" in command(item)
+                    and "-name" not in command(item)
+                )
+            )
+        ]
+        if not inventories:
+            return True
+
+        inventory = inventories[-1]
+        summary = str(inventory.get("stdout_summary", ""))
+        paths = [line.strip().lower() for line in summary.splitlines() if line.strip()]
+        source_paths = [
+            path
+            for path in paths
+            if path.endswith((".rs", ".c", ".cc", ".cpp", ".h", ".py", ".js", ".ts", ".sh"))
+            and "/test" not in path
+            and not path.startswith("test")
+        ]
+        verification_paths = [
+            path
+            for path in paths
+            if "/test" in path
+            or path.startswith("test")
+            or path.rsplit("/", 1)[-1]
+            in {
+                "cargo.toml",
+                "justfile",
+                "makefile",
+                "flake.nix",
+                "pyproject.toml",
+                "package.json",
+            }
+            or ".github/workflows/" in path
+        ]
+        if not source_paths and not verification_paths:
+            return bool(
+                inventory.get("truncated")
+                or int(inventory.get("stdout_bytes", 0)) > len(summary.encode())
+            )
+
+        inventory_index = successful.index(inventory)
+        reads = [
+            command(item)
+            for item in successful[inventory_index + 1 :]
+            if command(item).lstrip().startswith(("cat ", "sed ", "head ", "tail ", "rg ", "awk "))
+        ]
+
+        def inspected(candidates: list[str]) -> bool:
+            return any(
+                candidate in read or candidate.rsplit("/", 1)[-1] in read
+                for read in reads
+                for candidate in candidates
+            )
+
+        return bool(
+            (source_paths and not inspected(source_paths))
+            or (verification_paths and not inspected(verification_paths))
         )
 
     def has_review_evidence(self, state: SessionState, metadata: dict[str, Any]) -> bool:

@@ -3556,10 +3556,72 @@ def test_implementation_completion_requires_change_validation_and_review(
         objective="rust-mcu-ide 플랫폼을 확인하고 평가해봐",
     )
     assert controller.requires_explicit_tool_evidence(workspace_evaluation) is True
-    workspace_evaluation.tool_executions.append(
-        {"tool_name": "exec_command", "exit_code": 0}
-    )
+    workspace_evaluation.tool_executions.append({"tool_name": "exec_command", "exit_code": 0})
     assert controller.requires_explicit_tool_evidence(workspace_evaluation) is False
+    assert controller.requires_codebase_evaluation_evidence(workspace_evaluation) is True
+    workspace_evaluation.tool_executions.extend(
+        [
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "find rust-mcu-ide -type f -name '*.md'"},
+                "stdout_summary": "rust-mcu-ide/README.md",
+                "exit_code": 0,
+            },
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "cat rust-mcu-ide/README.md"},
+                "stdout_summary": "# rust-mcu-ide",
+                "exit_code": 0,
+            },
+        ]
+    )
+    assert controller.requires_codebase_evaluation_evidence(workspace_evaluation) is True
+    workspace_evaluation.tool_executions.append(
+        {
+            "tool_name": "exec_command",
+            "normalized_arguments": {"cmd": "rg --files rust-mcu-ide"},
+            "stdout_summary": (
+                "rust-mcu-ide/README.md\nrust-mcu-ide/src/main.rs\n"
+                "rust-mcu-ide/Cargo.toml\nrust-mcu-ide/tests/cli.rs"
+            ),
+            "exit_code": 0,
+        }
+    )
+    assert controller.requires_codebase_evaluation_evidence(workspace_evaluation) is True
+    workspace_evaluation.tool_executions.append(
+        {
+            "tool_name": "exec_command",
+            "normalized_arguments": {"cmd": "sed -n '1,240p' rust-mcu-ide/src/main.rs"},
+            "exit_code": 0,
+        }
+    )
+    assert controller.requires_codebase_evaluation_evidence(workspace_evaluation) is True
+    workspace_evaluation.tool_executions.append(
+        {
+            "tool_name": "exec_command",
+            "normalized_arguments": {
+                "cmd": "sed -n '1,240p' rust-mcu-ide/Cargo.toml rust-mcu-ide/tests/cli.rs"
+            },
+            "exit_code": 0,
+        }
+    )
+    assert controller.requires_codebase_evaluation_evidence(workspace_evaluation) is False
+
+    documentation_only = SessionState(
+        session_id="documentation-only",
+        objective="Evaluate this platform codebase.",
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "rg --files"},
+                "stdout_summary": "README.md\ndocs/design.md",
+                "exit_code": 0,
+            }
+        ],
+    )
+    assert controller.requires_codebase_evaluation_evidence(documentation_only) is False
+    documentation_only.tool_executions[0].update({"stdout_bytes": 2_000, "truncated": False})
+    assert controller.requires_codebase_evaluation_evidence(documentation_only) is True
 
     general_question = SessionState(
         session_id="general-question",
