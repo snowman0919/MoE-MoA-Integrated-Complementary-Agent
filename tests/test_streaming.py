@@ -289,9 +289,7 @@ async def test_responses_sse_allows_read_during_read_only_evaluation() -> None:
                                 "id": "call-1",
                                 "function": {
                                     "name": "exec_command",
-                                    "arguments": json.dumps(
-                                        {"cmd": "ls -la", "workdir": "/tmp/rust-mcu-ide"}
-                                    ),
+                                    "arguments": json.dumps({"cmd": "ls -la /tmp/rust-mcu-ide"}),
                                 },
                             }
                         ]

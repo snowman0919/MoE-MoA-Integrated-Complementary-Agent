@@ -3973,6 +3973,27 @@ async def test_codebase_evaluation_requires_deep_evidence(
     assert prepared["max_tokens"] == 2_048
     assert [tool["function"]["name"] for tool in prepared["tools"]] == ["exec_command"]
 
+    inventory_only = SessionState(
+        session_id="evaluation-inventory-only",
+        objective=state.objective,
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "git -C rust-mcu-ide ls-files"},
+                "stdout_summary": "new-project.sh\ntests/cli.sh",
+                "exit_code": 0,
+            }
+        ],
+    )
+    inventory_prepared = await controller.prepare_executor(
+        inventory_only, request, ("executor",), tool_continuation=True
+    )
+    assert "inventory is already recorded" in inventory_prepared["messages"][0]["content"]
+    assert (
+        "Do not list, search, or reread documentation"
+        in inventory_prepared["messages"][0]["content"]
+    )
+
     state.tool_executions.extend(
         [
             {
