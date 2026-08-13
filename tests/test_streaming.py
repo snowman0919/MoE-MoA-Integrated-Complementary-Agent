@@ -955,6 +955,10 @@ async def test_responses_sse_maps_local_mcp_file_to_exec_command() -> None:
             "저장소 지침과 필수 운영 문서를 확인합니다.",
         ),
         (
+            {"cmd": "cat app.py"},
+            "app.py의 실제 내용을 읽어 구현과 테스트 근거를 확인합니다.",
+        ),
+        (
             {"cmd": "find /tmp/rust-mcu-ide -type f | sort"},
             "/tmp/rust-mcu-ide의 파일 구조를 확인해 실제 평가 대상을 정합니다.",
         ),
