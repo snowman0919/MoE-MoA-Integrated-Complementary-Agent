@@ -64,6 +64,7 @@ class OpenCodeGoExecutorProvider:
             if not key.startswith("_") and key != "metadata"
         }
         body.update({"model": self.model, "stream": False})
+        body["max_tokens"] = max(int(body.get("max_tokens", 0) or 0), 1_024)
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 async with managed_http_client(timeout=None, transport=self.transport) as client:
@@ -83,6 +84,12 @@ class OpenCodeGoExecutorProvider:
         if not isinstance(raw_payload, dict):
             raise OverflowExecutorUnavailable("Executor Flash returned a non-object response")
         payload = cast(dict[str, Any], raw_payload)
+        choices = payload.get("choices")
+        message = choices[0].get("message") if isinstance(choices, list) and choices else None
+        if not isinstance(message, dict) or not (
+            message.get("content") or message.get("tool_calls")
+        ):
+            raise OverflowExecutorUnavailable("Executor Flash returned no public output")
         payload["provider_provenance"] = {
             "provider": "opencode_go",
             "model": self.model,

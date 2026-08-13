@@ -63,6 +63,7 @@ async def test_opencode_go_executor_preserves_native_tools_and_strips_private_fi
     assert captured["model"] == "deepseek-v4-flash"
     assert captured["tool_choice"] == "auto"
     assert captured["parallel_tool_calls"] is True
+    assert captured["max_tokens"] == 1024
     assert "metadata" not in captured and "_client_workspace_path" not in captured
     assert result["provider_provenance"]["provider"] == "opencode_go"
 
@@ -85,3 +86,30 @@ async def test_opencode_go_executor_treats_region_opt_in_as_unavailable(
 
     with pytest.raises(OverflowExecutorUnavailable, match="region opt-in"):
         await provider.execute({"messages": []}, "request-1")
+
+
+@pytest.mark.asyncio
+async def test_opencode_go_executor_rejects_hidden_reasoning_without_public_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENCODE_GO_API_KEY", "synthetic")
+    provider = OpenCodeGoExecutorProvider(
+        endpoint="https://opencode.invalid",
+        api_key_env="OPENCODE_GO_API_KEY",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {"content": "", "reasoning_content": "hidden"},
+                            "finish_reason": "length",
+                        }
+                    ]
+                },
+            )
+        ),
+    )
+
+    with pytest.raises(OverflowExecutorUnavailable, match="no public output"):
+        await provider.execute({"messages": [], "max_tokens": 128}, "request-1")
