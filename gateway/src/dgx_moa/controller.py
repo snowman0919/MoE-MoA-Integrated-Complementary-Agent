@@ -3862,6 +3862,7 @@ class Controller:
         evaluation_request = self.is_codebase_evaluation(state)
         evaluation_evidence_pending = self.requires_codebase_evaluation_evidence(state)
         evaluation_complete = evaluation_request and not evaluation_evidence_pending
+        evaluation_inventory_complete = bool(self.codebase_evaluation_inventories(state))
         detailed_evaluation = any(
             marker in effective_objective(state).lower()
             for marker in ("detailed", "comprehensive", "in depth", "상세", "종합", "심층")
@@ -3930,8 +3931,15 @@ class Controller:
                                 "evidence, "
                                 "read representative implementation source and available tests or "
                                 "build configuration."
-                                if evaluation_evidence_pending
-                                else "Take one useful step"
+                                if evaluation_evidence_pending and not evaluation_inventory_complete
+                                else (
+                                    "The complete file inventory is already recorded. In one "
+                                    "bounded exec_command now read representative implementation "
+                                    "source plus available tests or build configuration named in "
+                                    "that inventory. Do not list, search, or reread documentation."
+                                    if evaluation_evidence_pending
+                                    else "Take one useful step"
+                                )
                             )
                         )
                     ),
@@ -4047,46 +4055,53 @@ class Controller:
         )
 
     @staticmethod
-    def requires_codebase_evaluation_evidence(state: SessionState) -> bool:
-        if not Controller.is_codebase_evaluation(state):
-            return False
+    def tool_execution_command(execution: dict[str, Any]) -> str:
+        arguments = execution.get("normalized_arguments", {})
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                return arguments.lower()
+        return str(arguments.get("cmd", "") if isinstance(arguments, dict) else "").lower()
 
-        def command(execution: dict[str, Any]) -> str:
-            arguments = execution.get("normalized_arguments", {})
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except ValueError:
-                    return arguments.lower()
-            return str(arguments.get("cmd", "") if isinstance(arguments, dict) else "").lower()
-
+    @classmethod
+    def codebase_evaluation_inventories(cls, state: SessionState) -> list[dict[str, Any]]:
         successful = [item for item in state.tool_executions if item.get("exit_code") == 0]
-        inventories = [
+        return [
             item
             for item in successful
-            if "|" not in command(item)
-            and " --glob" not in command(item)
-            and " -g " not in command(item)
+            if "|" not in cls.tool_execution_command(item)
+            and " --glob" not in cls.tool_execution_command(item)
+            and " -g " not in cls.tool_execution_command(item)
             and (
-                "rg --files" in command(item)
+                "rg --files" in cls.tool_execution_command(item)
                 or bool(
                     re.search(
                         r"(?:^|&&|;|\n)\s*git(?:\s+-c\s+\S+)?\s+ls-files\b",
-                        command(item),
+                        cls.tool_execution_command(item),
                     )
                 )
                 or (
-                    command(item).strip().startswith("ls ")
-                    and len(command(item).split()) > 2
-                    and command(item).split()[-1] not in {".", "./"}
+                    cls.tool_execution_command(item).strip().startswith("ls ")
+                    and len(cls.tool_execution_command(item).split()) > 2
+                    and cls.tool_execution_command(item).split()[-1] not in {".", "./"}
                 )
                 or (
-                    "find " in command(item)
-                    and "-type f" in command(item)
-                    and "-name" not in command(item)
+                    "find " in cls.tool_execution_command(item)
+                    and "-type f" in cls.tool_execution_command(item)
+                    and "-name" not in cls.tool_execution_command(item)
                 )
             )
         ]
+
+    @classmethod
+    def requires_codebase_evaluation_evidence(cls, state: SessionState) -> bool:
+        if not cls.is_codebase_evaluation(state):
+            return False
+
+        command = cls.tool_execution_command
+        successful = [item for item in state.tool_executions if item.get("exit_code") == 0]
+        inventories = cls.codebase_evaluation_inventories(state)
         if not inventories:
             return True
 

@@ -251,9 +251,9 @@ def normalize_evaluation_inventory_call(
     if not words or words[0].rsplit("/", 1)[-1] != "ls":
         return
     targets = [word for word in words[1:] if not word.startswith("-")]
-    if targets:
+    if len(targets) > 1:
         return
-    workspace = str(arguments.get("workdir") or ".")
+    workspace = targets[0] if targets else str(arguments.get("workdir") or ".")
     arguments["cmd"] = f"git -C {shlex.quote(workspace)} ls-files"
     call["_arguments"] = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
 
