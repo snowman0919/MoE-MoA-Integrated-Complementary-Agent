@@ -8995,3 +8995,13 @@ verification evidence, with `finish_reason=stop`, a 613-character Korean
 assessment, one direct Qwythos Reasoner completion, and no language retry or
 Frontier fallback. The gateway remained bound to `0.0.0.0:9000`, active with
 restart count zero.
+
+The progress-length requirement was subsequently clarified as a quality rule,
+not a total-output cap. Production releases `5bce20a` and `563dc3e` remove the
+Responses translator's generic per-command placeholder, preserve substantive
+model commentary, and otherwise derive a concrete description from the actual
+tool and target. The complete suite passed `1111`. Authenticated streaming
+session `substantive-progress-canary-v2-20260813` called `ls -la` and emitted
+`현재 작업 디렉터리의 파일 구조를 확인해 실제 평가 대상을 정합니다.` before the
+function call; the rejected generic sentence did not appear. The request ended
+with `response.completed`; the gateway remained active with restart count zero.
