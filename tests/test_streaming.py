@@ -137,6 +137,47 @@ async def test_responses_sse_preserves_requested_short_output_near_context_limit
     assert b'"text":"OK"' in b"".join(chunks)
 
 
+@pytest.mark.parametrize("text", ["프로젝트存在 확인", "存在しないとき는 종료합니다."])
+@pytest.mark.asyncio
+async def test_responses_sse_retries_chinese_or_japanese_in_korean_prose(text: str) -> None:
+    async def upstream():
+        payload = {"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]}
+        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    with pytest.raises(ProgressOnlyResponse, match="language_mismatch"):
+        _ = [
+            chunk
+            async for chunk in responses_sse(
+                upstream(), "dgx-moa", progress_language="ko", objective="프로젝트 확인"
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_allows_foreign_script_inside_code() -> None:
+    async def upstream():
+        payload = {
+            "choices": [
+                {
+                    "delta": {"content": "확인 결과입니다.\n```text\n存在しない\n```"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    chunks = [
+        chunk
+        async for chunk in responses_sse(
+            upstream(), "dgx-moa", progress_language="ko", objective="프로젝트 확인"
+        )
+    ]
+
+    assert b"response.completed" in b"".join(chunks)
+
+
 @pytest.mark.asyncio
 async def test_responses_sse_requires_tool_when_goal_has_no_implementation_evidence() -> None:
     async def upstream():

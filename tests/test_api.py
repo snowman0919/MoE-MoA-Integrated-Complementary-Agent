@@ -7790,6 +7790,43 @@ def test_responses_retries_progress_only_stop(  # type: ignore[no-untyped-def]
     assert stub_provider.requests[-1]["messages"][-1]["role"] == "developer"
 
 
+def test_responses_retries_mixed_script_in_korean_prose(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider
+) -> None:
+    calls = 0
+
+    async def stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        stub_provider.requests.append(request)
+        text = "프로젝트存在 확인" if calls == 1 else "프로젝트 존재를 확인했습니다."
+
+        async def chunks():  # type: ignore[no-untyped-def]
+            payload = {"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]}
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    stub_provider.stream = stream  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "responses-language-retry",
+            },
+            json={"model": "dgx-moa-fast", "input": "프로젝트를 확인해", "stream": True},
+        )
+        events = client.app.state.store.events("responses-language-retry")
+
+    assert calls == 2
+    assert "프로젝트存在 확인" not in response.text
+    assert "프로젝트 존재를 확인했습니다." in response.text
+    assert any(event["event_type"] == "language_mismatch_response_retried" for event in events)
+    assert "Korean prose only" in stub_provider.requests[-1]["messages"][-1]["content"]
+
+
 def test_responses_progress_retry_does_not_request_redundant_tool_after_evidence(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

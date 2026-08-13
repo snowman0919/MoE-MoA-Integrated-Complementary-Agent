@@ -62,6 +62,10 @@ ENGLISH_PROGRESS_PREFIXES = (
 class ProgressOnlyResponse(Exception):
     """The model stopped after emitting only a progress marker."""
 
+    def __init__(self, reason: str = "progress_only") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
 
 def compatible_edit_call(
     name: str, raw_arguments: str, custom_tool_names: set[str] | None
@@ -161,6 +165,20 @@ def is_context_starved_response(
         and output_tokens <= 4
         and len(stripped) <= 64
         and (not stripped or stripped.casefold() not in objective.casefold())
+    )
+
+
+def has_korean_script_leak(text: str, progress_language: str, objective: str) -> bool:
+    if progress_language != "ko":
+        return False
+    prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    prose = re.sub(r"`[^`\n]*`", "", prose)
+    if re.search(r"[\u3040-\u30ff]", prose):
+        return True
+    allowed_han = set(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", objective))
+    return any(
+        character not in allowed_han
+        for character in re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", prose)
     )
 
 
@@ -605,6 +623,8 @@ async def responses_sse(
                 len(goal_prerequisites),
             )
         text = "".join(text_parts)
+        if not tool_calls and has_korean_script_leak(text, progress_language, objective):
+            raise ProgressOnlyResponse("language_mismatch")
         if not tool_calls and (
             require_tool_action
             or is_progress_only(text)
