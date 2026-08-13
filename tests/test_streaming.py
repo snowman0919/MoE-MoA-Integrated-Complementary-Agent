@@ -566,7 +566,7 @@ async def test_responses_sse_keeps_exec_command_inside_current_sandbox() -> None
 
 
 @pytest.mark.asyncio
-async def test_responses_sse_rewrites_invented_write_stdin_session_id() -> None:
+async def test_responses_sse_replaces_invented_write_stdin_session_id() -> None:
     async def upstream():  # type: ignore[no-untyped-def]
         yield (
             b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
@@ -595,43 +595,8 @@ async def test_responses_sse_rewrites_invented_write_stdin_session_id() -> None:
         for event in events
         if event["type"] == "response.output_item.done" and event["output_index"] == 1
     )
-    assert output["item"]["name"] == "exec_command"
-    assert "No active process session" in json.loads(done["arguments"])["cmd"]
-
-
-@pytest.mark.asyncio
-async def test_responses_sse_converts_write_stdin_file_schema_to_patch() -> None:
-    async def upstream():  # type: ignore[no-untyped-def]
-        yield (
-            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
-            b'"id":"call-write","function":{"name":"write_stdin",'
-            b'"arguments":"{\\"path\\":\\"rate_limiter.py\\",'
-            b'\\"content\\":\\"import time\\\\n\\"}"}}]},'
-            b'"finish_reason":"tool_calls"}]}\n\n'
-        )
-        yield b"data: [DONE]\n\n"
-
-    events = [
-        json.loads(line[6:])
-        async for chunk in responses_sse(
-            upstream(),
-            "dgx-moa-agent",
-            custom_tool_names={"apply_patch"},
-            function_tool_names={"write_stdin"},
-        )
-        for line in chunk.decode().splitlines()
-        if line.startswith("data: ")
-    ]
-
-    output = next(
-        event
-        for event in events
-        if event["type"] == "response.output_item.done" and event["output_index"] == 1
-    )
-    assert output["item"]["name"] == "apply_patch"
-    assert "*** Delete File: rate_limiter.py" in output["item"]["input"]
-    assert "*** Add File: rate_limiter.py" in output["item"]["input"]
-    assert "+import time" in output["item"]["input"]
+    assert output["item"]["name"] == "write_stdin"
+    assert json.loads(done["arguments"])["session_id"] == 0
 
 
 @pytest.mark.asyncio
@@ -783,7 +748,8 @@ async def test_first_event_is_forwarded_before_upstream_completion() -> None:
 async def test_split_delimiters_and_crlf_are_framed_byte_exactly() -> None:
     first = b"data: first\r\n\r\n"
     second = b"data: second\n\n"
-    upstream = chunks(first[:13], first[13:-1], first[-1:] + second[:-1], second[-1:])
+    done = b"data: [DONE]\n\n"
+    upstream = chunks(first[:13], first[13:-1], first[-1:] + second[:-1], second[-1:] + done)
 
     forwarded = [
         event
@@ -792,7 +758,7 @@ async def test_split_delimiters_and_crlf_are_framed_byte_exactly() -> None:
         )
     ]
 
-    assert forwarded == [first, second, b"data: [DONE]\n\n"]
+    assert forwarded == [first, second, done]
 
 
 @pytest.mark.asyncio
@@ -866,16 +832,17 @@ async def test_first_done_stops_before_later_upstream_error_and_closes_it() -> N
 
 
 @pytest.mark.asyncio
-async def test_missing_done_is_synthesized_on_clean_eof() -> None:
+async def test_missing_done_is_rejected_on_clean_eof() -> None:
     content = b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
     observation = StreamObservation(max_capture_bytes=1000)
 
-    forwarded = [
-        event async for event in forward_sse(chunks(content), observation, max_event_bytes=1000)
-    ]
+    forwarded = []
+    with pytest.raises(ValueError, match="before terminal marker"):
+        async for event in forward_sse(chunks(content), observation, max_event_bytes=1000):
+            forwarded.append(event)
 
-    assert forwarded == [content, b"data: [DONE]\n\n"]
-    assert observation.done_seen
+    assert forwarded == [content]
+    assert not observation.done_seen
 
 
 @pytest.mark.asyncio
@@ -887,12 +854,14 @@ async def test_native_tool_call_delta_bytes_are_preserved_exactly() -> None:
     )
     observation = StreamObservation(max_capture_bytes=1000)
 
-    forwarded = [
-        event
+    forwarded = []
+    with pytest.raises(ValueError, match="before terminal marker"):
         async for event in forward_sse(
-            chunks(tool_event[:31], tool_event[31:]), observation, max_event_bytes=1000
-        )
-    ]
+            chunks(tool_event[:31], tool_event[31:]),
+            observation,
+            max_event_bytes=1000,
+        ):
+            forwarded.append(event)
 
     assert forwarded[0] == tool_event
     assert bytes(observation.captured).startswith(tool_event)
@@ -908,10 +877,11 @@ async def test_observation_capture_is_truncated_at_bound() -> None:
     second = b"data: second\n\n"
     observation = StreamObservation(max_capture_bytes=17)
 
-    _ = [
-        event
-        async for event in forward_sse(chunks(first, second), observation, max_event_bytes=1000)
-    ]
+    with pytest.raises(ValueError, match="before terminal marker"):
+        _ = [
+            event
+            async for event in forward_sse(chunks(first, second), observation, max_event_bytes=1000)
+        ]
 
     assert bytes(observation.captured) == (first + second)[:17]
 
@@ -925,7 +895,10 @@ async def test_observation_extracts_only_reported_token_counts() -> None:
     )
     observation = StreamObservation(max_capture_bytes=1_000)
 
-    _ = [chunk async for chunk in forward_sse(chunks(event), observation, max_event_bytes=1_000)]
+    with pytest.raises(ValueError, match="before terminal marker"):
+        _ = [
+            chunk async for chunk in forward_sse(chunks(event), observation, max_event_bytes=1_000)
+        ]
 
     assert observation.usage == {
         "prompt_tokens": 2,

@@ -7,7 +7,7 @@ from collections import OrderedDict
 from typing import Any, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .http_client import managed_http_client
 from .security import redact
@@ -15,9 +15,13 @@ from .training import sanitize
 
 
 class JudgeEvidencePackage(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal["1.0"] = "1.0"
+    snapshot_id: str | None = None
+    snapshot_hash: str | None = None
+    projection_id: str | None = None
+    projection_hash: str | None = None
     request_id: str
     objective: str
     request_constraints: list[str] = Field(default_factory=list)
@@ -37,8 +41,20 @@ class JudgeEvidencePackage(BaseModel):
     retrieved_knowledge: list[Any] = Field(default_factory=list)
     specific_judgment_question: str = "Is this result ready for final delivery?"
 
+    @model_validator(mode="after")
+    def bounded(self) -> JudgeEvidencePackage:
+        if len(self.model_dump_json().encode()) > 1_000_000:
+            raise ValueError("Judge evidence package exceeds 1000000 bytes")
+        return self
+
     def sanitized(self) -> JudgeEvidencePackage:
         cleaned = sanitize(redact(self.model_dump(mode="json"))).value
+        cleaned.update(
+            {
+                key: getattr(self, key)
+                for key in ("snapshot_id", "snapshot_hash", "projection_id", "projection_hash")
+            }
+        )
         return JudgeEvidencePackage.model_validate(cleaned)
 
 

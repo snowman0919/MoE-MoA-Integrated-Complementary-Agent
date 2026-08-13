@@ -85,7 +85,7 @@ class LiveDashboardHub:
 
     def subscribe(
         self, api_key_id: str, *, operator: bool, last_seq: int | None = None
-    ) -> tuple[str, asyncio.Queue[dict[str, Any]]]:
+    ) -> tuple[str, asyncio.Queue[dict[str, Any]], int]:
         subscriber_id = uuid.uuid4().hex
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(self.queue_size)
         with self._lock:
@@ -106,7 +106,7 @@ class LiveDashboardHub:
             else:
                 for event in pending:
                     queue.put_nowait(event)
-        return subscriber_id, queue
+        return subscriber_id, queue, current
 
     def unsubscribe(self, subscriber_id: str) -> None:
         with self._lock:

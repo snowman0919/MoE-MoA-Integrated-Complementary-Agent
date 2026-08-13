@@ -3,7 +3,7 @@ model_root: /home/kotori9/models/dgx-moa
 
 gateway:
   model_name: dgx-moa
-  bind_host: 127.0.0.1
+  bind_host: 0.0.0.0
   bind_port: 9000
   state_db: data/state/gateway.db
   run_dir: data/run
@@ -224,7 +224,7 @@ models:
     repository: mistralai/Mistral-Small-4-119B-2603-NVFP4
     revision: b1a9048590131d38491bd23a7c9f6ed0962f0358
     classification: official
-    base_url: http://127.0.0.1:8101
+    base_url: http://127.0.0.1:19301
     served_name: dgx-moa-executor
     destination: /home/kotori9/models/.hf-cache/models--mistralai--Mistral-Small-4-119B-2603-NVFP4/snapshots/b1a9048590131d38491bd23a7c9f6ed0962f0358
     context_length: 131072
@@ -277,11 +277,11 @@ models:
     repository: ollama/Qwythos-v2-9B
     revision: Q4
     classification: external
-    base_url: http://100.90.167.128:11434
+    base_url: http://127.0.0.1:11435
     served_name: Qwythos-v2-9B:Q4
     destination: /home/kotori9/models/dgx-moa/reasoner
     provider: ollama
-    lifecycle_control: external
+    lifecycle_control: systemd
     ollama_keep_alive: -1
     context_length: 65536
     max_num_seqs: 1

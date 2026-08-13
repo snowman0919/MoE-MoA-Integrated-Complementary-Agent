@@ -26,7 +26,7 @@ canary인 `PILOT_ACTIVE` 순서다. 이 절은 아래의 completion-first releas
 충돌할 때 우선하며, 동결 계획·hash·과거 성공/실패를 수정하거나 삭제하지 않는다.
 
 단계는 `DEVELOPMENT -> PILOT_READY -> PILOT_ACTIVE -> PRODUCTION_BETA -> STABLE`이다.
-현재 단계는 `DEVELOPMENT`다. `BLOCKED`는 같은 막힘이 반복되고 안전한 검증 경로가
+현재 단계는 `PILOT_ACTIVE`다. `BLOCKED`는 같은 막힘이 반복되고 안전한 검증 경로가
 모두 소진된 경우에만 사용한다.
 
 `PILOT_READY`의 최소 계약은 다음과 같다.
@@ -134,6 +134,12 @@ Executor는 다음을 단독 소유한다.
 - specialist 의견의 수용 또는 거부
 - 최종 synthesis와 client-visible response
 
+Executor는 원본 evidence의 소유자나 다른 역할의 context 중계자가 아니다. Runtime이
+원본 입력, 관측된 tool/diff/test/failure evidence와 provenance를 소유하고, 각 역할은
+Executor의 출력이 아니라 동일한 Runtime snapshot에서 직접 만든 read-only projection을
+받는다. Executor의 draft와 판단은 다른 evidence와 구분된 하나의 model contribution일
+뿐이며, 다른 역할의 원본 context를 대체할 수 없다.
+
 ### 3.2 Reasoner
 
 ```text
@@ -202,7 +208,7 @@ Judge 사용 조건:
 ```text
 Role: Frontier A
 Model: gpt-5.6-sol
-Reasoning effort: high
+Reasoning effort: xhigh
 Frequency: high
 ```
 
@@ -256,6 +262,39 @@ Flash는 다음에는 사용할 수 없다.
 - destructive migration approval
 - model retirement approval
 
+### 3.9 Runtime-owned evidence space와 독립 context
+
+Runtime은 request별 canonical evidence snapshot을 모델 호출 전에 생성하고 durable하게
+식별한다. Snapshot은 redaction을 통과한 다음 범주를 분리해 보존한다.
+
+- 원본 user objective와 acceptance criteria
+- repository/runtime policy와 요청 metadata
+- Runtime이 직접 관측한 tool, diff, test, build, failure evidence
+- Evidence node와 source/trust/provenance
+- 역할별 model contribution과 아직 검증되지 않은 claim
+
+Reasoner, Planner, Frontier A의 fan-out은 같은 `snapshot_id`를 공유하되 각 역할의
+allowlist로 만든 서로 다른 immutable projection을 동시에 받는다. Reviewer, Judge,
+Frontier B도 평가 시점에 생성된 같은 canonical snapshot 계열에서 직접 projection을
+받으며, Executor draft는 별도 contribution field로만 참조한다. 한 역할의 출력이 다른
+역할의 원본 evidence를 덮어쓰거나, Runtime이 임의로 role-to-role hidden transcript를
+전달해서는 안 된다.
+
+각 invocation은 최소한 다음 provenance를 남긴다.
+
+```text
+snapshot_id
+snapshot_hash
+projection_id
+role
+included_categories
+source_evidence_ids
+created_at
+```
+
+Dashboard는 snapshot lineage, 역할별 projection 범주와 독립 judgment를 표시하되 raw
+credential, hidden reasoning 또는 redaction 전 payload는 표시하지 않는다.
+
 ---
 
 ## 4. 현재 물리 검증 상태
@@ -296,15 +335,22 @@ Flash는 다음에는 사용할 수 없다.
 
 이 결과를 전체 matrix 또는 비열등성 결과로 확대 해석하지 않는다. v105의 추가
 quality cell은 결과를 보존한 채 `POST_PILOT_VALIDATION`으로 일시 중단했다. 현재 다음
-gate는 reviewed Pilot release revision, checked-in cgroup/native launch defaults의 설치
-및 exact restart, rollback rehearsal과 제한된 developer canary다.
+gate는 제한된 developer 실사용 telemetry의 반복 표본과 failure-family 우선 개선이다.
 
 ### 아직 완료되지 않은 Pilot gate
 
-- reviewed Pilot release revision
-- checked-in Candidate A memory/native defaults 설치와 exact restart
-- rollback rehearsal
-- developer-key-only limited canary와 recovery
+- single developer key의 bounded real-use telemetry review
+
+release revision `40fddc0b2e05520117fdfc93d4247528ebe86406`, tailnet `:19000` single-key deployment, exact
+restart, rollback/redeploy, Chat/Responses/stream/tool continuation, high-risk
+403과 DeepSeek V4 Flash 최소 completion은 통과했다. 첫 Codex 실사용 실패에서
+Graph re-entry, read-only 분류, false-completion 세 failure family를 순서대로 고쳤고,
+Codex/OpenCode/Hermes의 evidence-backed read-only audit가 모두 exit 0으로 통과했다.
+추가 Codex review의 schema 위반과 기각된 finding은 보존했고, 독립적으로 발견한
+session-wide tool evidence 오염은 instruction hash/cursor로 수정했다. 같은 session에서
+과거 `noop` 성공 뒤 새 `exec_command`가 다시 요구되는 물리 canary와 Codex canary 05가
+통과했다. 이는 bounded real-use 표본이며 장기 품질 결론은 아니다. 표준 `8101` Candidate A service
+설치와 persistent production topology는 `PRODUCTION_BETA` 전 post-Pilot hardening이다.
 
 다음 항목은 여전히 필요하지만 Pilot 선행조건이 아니라 post-Pilot 또는 `STABLE` gate다.
 
@@ -339,9 +385,10 @@ Request
 
 ```text
 Request classification
-  ├─ Planner
-  ├─ Frontier A
-  └─ Executor read-only evidence gathering
+  └─ Runtime canonical evidence snapshot
+       ├─ Planner role projection
+       ├─ Frontier A role projection
+       └─ Executor read-only evidence projection
         |
         v
 Context join
@@ -360,10 +407,11 @@ Reviewer when justified
 
 ```text
 Request classification
-  ├─ optional Reasoner
-  ├─ Planner
-  ├─ Frontier A
-  └─ Executor read-only inspection
+  └─ Runtime canonical evidence snapshot
+       ├─ optional Reasoner role projection
+       ├─ Planner role projection
+       ├─ Frontier A role projection
+       └─ Executor read-only evidence projection
         |
         v
 Evidence join
@@ -407,6 +455,11 @@ Executor final
 ```
 
 독립 역할은 가능한 한 병렬 실행한다. Qwythos와 remote roles는 병렬화할 수 있으나, Qwythos와 Mistral의 동시 local inference는 실제 자원 경합 결과로 결정한다.
+
+병렬성은 task 생성 시각만으로 판정하지 않는다. 각 role invocation이 동일한
+canonical `snapshot_id`와 자신의 `projection_id`를 가지고, 다른 role의 출력을
+필수 입력으로 삼지 않은 채 독립적으로 시작해야 한다. fan-in은 모든 contribution을
+provenance와 함께 Executor에 전달하는 Runtime 작업이다.
 
 ---
 
@@ -750,15 +803,14 @@ BLOCKED
 
 - `dgx-moa-gateway.service`: recovered, PID `3107456`, restart 0.
 - Candidate A: fixed vLLM Blackwell native NVFP4 path remains unchanged.
-- Candidate B: isolated SGLang v66/v98 evidence preserved; rejected only for
-  this pinned epoch. MARLIN remains compatibility rollback.
+- Candidate B: isolated SGLang native v66/v98 evidence preserved; rejected only
+  for the pinned epoch, with MARLIN retained as compatibility rollback.
 - Pilot attempt 10: controller `ed9f3d943`, PID `3704865`, restart 0.
 - Exhausted TOOL Graph: root-cause fix and physical reprojection PASS.
-- Codex repository write: tool surface fixed, primary write still
-  `FAILED_OPEN` and requires a new recovery epoch.
+- Codex repository write: catalog/tool surface fixed, actual primary write still
+  `FAILED_OPEN`; next client-quality recovery must use a new epoch.
 - Goal: active `PILOT_ACTIVE`; `blocked`/`complete` 금지.
 
-Primary Codex repository-write epoch 04 now passes at controller `2a3afdce8`
-with an exact two-line diff, `103 passed`, Reviewer approval, and zero Graph
-shadow failures. Pilot attempt 12 is active. Resume the interrupted
-client-quality sequence only in a fresh epoch; later gates remain ordered.
+Primary Codex repository-write epoch 04 passes at `2a3afdce8` with an exact
+two-line diff, `103 passed`, Reviewer approval, and zero Graph shadow failures.
+Pilot attempt 12 is active. Resume client quality only in a fresh epoch.

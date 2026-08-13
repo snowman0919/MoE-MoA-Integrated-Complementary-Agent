@@ -23,13 +23,12 @@ not a replacement for administrator authentication.
   automatically under HTTPS; the reviewed deployment currently uses encrypted
   tailnet transport without Tailscale HTTPS.
 - Role-model endpoints bind to loopback. The authenticated gateway is the sole
-  inference ingress and is reachable through the configured tailnet and LAN
-  addresses.
-- Direct tailnet TCP and the LAN-only socket proxy are the ingress paths;
-  Tailscale Serve and Funnel are not used.
+  inference ingress and binds `0.0.0.0:9000` for loopback, tailnet, and LAN
+  clients.
+- Direct authenticated TCP is the ingress path; Tailscale Serve and Funnel are
+  not used.
 - Tailnet ACLs protect tailnet transport. Gateway bearer authentication is
-  mandatory on both tailnet and LAN transport. Host firewall rules must scope
-  LAN ingress to the local subnet and gateway address.
+  mandatory on every interface. Host firewall rules define external reachability.
 - API key lives only in untracked `.env` and client environment variables.
 - Authentication compares tokens in constant time.
 - Trace export recursively redacts token, password, secret, and API-key fields.

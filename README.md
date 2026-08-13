@@ -2,7 +2,7 @@
 
 OpenAI-compatible, Executor-directed dynamic Mixture-of-Agents gateway. OpenCode
 and other clients connect to one authenticated tailnet or LAN endpoint. The primary
-`dgx-moa` path always combines an external Ollama Reasoner with the local 80B
+`dgx-moa` path always combines a loopback-only Ollama Reasoner with the local
 Executor. The Executor owns routing, native tool calls, and final synthesis; it
 adds Planner, Reviewer, Codex OAuth Frontier collaboration, or the mutually
 exclusive Heavy Judge only when the task and evidence require them.
@@ -23,11 +23,10 @@ Production is the human-reviewed `main` branch deployed at
 isolated `auto/<layer>/<proposal-id>` worktrees created from `dev` and driven by
 the stable `main` runtime.
 
-Direct tailnet access uses `http://<DGX_TAILSCALE_IP>:9000/v1`; LAN clients use
-`http://192.168.0.42:9000/v1`. Keep
-`DGX_MOA_BIND_HOST="$(tailscale ip -4 | head -n1)"` in `.env.local` after
-resolving it in the shell; the LAN listener is a systemd socket proxy to that
-same authenticated gateway. Tailscale Serve and Funnel are not required.
+The authenticated gateway binds `0.0.0.0:9000`, so tailnet clients use
+`http://<DGX_TAILSCALE_IP>:9000/v1`, LAN clients use the host LAN address, and
+local clients use `http://127.0.0.1:9000/v1`. Role-model inference endpoints
+remain loopback-only. Tailscale Serve and Funnel are not required.
 
 See `docs/API_CLIENT_MODES.md` for the model aliases, standard request and SSE
 contracts, typed errors, curl/OpenAI SDK/OpenCode examples, and output limits.
@@ -35,7 +34,7 @@ See `docs/HERMES_AGENT.md` for the environment-only Hermes configuration.
 
 The production `main` runtime implements the MoA contracts and role-aware
 request statistics. Its lifecycle policy keeps the 65,536-token
-Executor resident and keeps the external Ollama Reasoner persistently available;
+Executor resident and keeps the separately started loopback Ollama Reasoner available;
 Planner and Reviewer may unload after bounded role-local idle periods. With
 specialist routing disabled, a cold managed local role returns retryable `503`
 state, generation, weight progress, overall progress, and ETA fields while one

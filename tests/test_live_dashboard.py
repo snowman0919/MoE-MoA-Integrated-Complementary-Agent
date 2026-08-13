@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 from dgx_moa.api import create_app
@@ -22,9 +23,9 @@ from fastapi.testclient import TestClient
 async def test_live_dashboard_isolates_keys_and_redacts_operator_stream() -> None:
     owners = {"session-a": "key-a", "session-b": "key-b"}
     hub = LiveDashboardHub(owners.get, queue_size=1)
-    _, own = hub.subscribe("key-a", operator=False)
-    _, other = hub.subscribe("key-b", operator=False)
-    subscriber_id, operator = hub.subscribe("operator", operator=True)
+    _, own, _ = hub.subscribe("key-a", operator=False)
+    _, other, _ = hub.subscribe("key-b", operator=False)
+    subscriber_id, operator, _ = hub.subscribe("operator", operator=True)
 
     hub.publish(
         "session-a",
@@ -70,14 +71,14 @@ async def test_live_dashboard_replays_bounded_graph_events_or_requires_resync() 
             f"2026-08-08T00:00:0{index}+00:00",
         )
 
-    _, replay = hub.subscribe("key-a", operator=False, last_seq=1)
+    _, replay, _ = hub.subscribe("key-a", operator=False, last_seq=1)
     assert [replay.get_nowait()["seq"], replay.get_nowait()["seq"]] == [2, 3]
-    _, stale = hub.subscribe("key-a", operator=False, last_seq=0)
+    _, stale, _ = hub.subscribe("key-a", operator=False, last_seq=0)
     assert stale.get_nowait() == {"type": "RESYNC_REQUIRED"}
-    _, ahead = hub.subscribe("key-a", operator=False, last_seq=99)
+    _, ahead, _ = hub.subscribe("key-a", operator=False, last_seq=99)
     assert ahead.get_nowait() == {"type": "RESYNC_REQUIRED"}
 
-    _, operator = hub.subscribe("operator", operator=True, last_seq=2)
+    _, operator, _ = hub.subscribe("operator", operator=True, last_seq=2)
     operator_event = operator.get_nowait()
     assert operator_event["seq"] == 3
     assert "graph_id" not in operator_event and "request_id" not in operator_event
@@ -105,7 +106,22 @@ def graph_request() -> GraphCompileInput:
 
 def test_dashboard_websocket_uses_cookie_scope_and_operator_aggregate(
     settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    telemetry = {
+        "measured_at": "2026-08-12T00:00:00+00:00",
+        "retention": {
+            "minimum_days": 90,
+            "automatic_purge": False,
+            "basis": "durable_store_without_automatic_deletion",
+        },
+        "hosts": {"gb10": {"status": "available"}, "mathcat": {"status": "available"}},
+    }
+    frontier_config = settings.state_db.parent / "frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nreasoning_effort: xhigh\nprimary_profile: primary\n"
+    )
+    monkeypatch.setattr("dgx_moa.api.dashboard_telemetry", lambda: telemetry)
     controlled = Settings.model_validate(
         settings.model_dump()
         | {
@@ -117,10 +133,15 @@ def test_dashboard_websocket_uses_cookie_scope_and_operator_aggregate(
             },
             "admin_token_ids": ["operator"],
             "dashboard_enabled": True,
+            "frontier_enabled": True,
+            "frontier_config": frontier_config,
             "execution_graph": {"mode": "shadow"},
         }
     )
     app = create_app(controlled)
+    with TestClient(app) as insecure_client:
+        response = insecure_client.get("/dashboard")
+        assert response.status_code == 200
     with TestClient(app, base_url="https://testserver") as client:
         page = client.get("/dashboard")
         assert page.status_code == 200
@@ -128,9 +149,22 @@ def test_dashboard_websocket_uses_cookie_scope_and_operator_aggregate(
             menu in page.text
             for menu in ("LIVE", "REQUESTS", "MODELS", "SYSTEM", "INCIDENTS", "EVALUATION", "AUDIT")
         )
+        assert all(
+            inspector in page.text
+            for inspector in ("SUMMARY", "PROMPT", "OUTPUT", "EVIDENCE", "EXECUTION", "LOGS")
+        )
+        assert "Audited cross-key request inspector" in page.text
+        assert "innerHTML" not in page.text
         assert "new WebSocket" in page.text and "textContent" in page.text
         assert "last_seq" in page.text and "RESYNC_REQUIRED" in page.text
-        assert "/v1/dashboard/snapshot" in page.text and "data-node-id" in page.text
+        assert "/v1/dashboard/snapshot" in page.text and "dataset.nodeId" in page.text
+        assert "Static Graph Skeleton" in page.text
+        assert "runtime-created request subgraph" in page.text
+        assert "availability_basis" in page.text
+        assert "Runtime-owned canonical evidence" in page.text
+        assert "role_context_projections" in page.text
+        assert "independent_judgments" in page.text
+        assert "final_output" in page.text
 
         session = client.post(
             "/v1/dashboard/session",
@@ -143,9 +177,10 @@ def test_dashboard_websocket_uses_cookie_scope_and_operator_aggregate(
             "api_key_id": "key-a",
             "operator": False,
         }
+        assert client.get("/v1/dashboard/runtime").json() == telemetry
         cookie = f"{DASHBOARD_SESSION_COOKIE}={client.cookies[DASHBOARD_SESSION_COOKIE]}"
         with client.websocket_connect(
-            "/v1/dashboard/live", headers={"cookie": cookie}
+            "wss://testserver/v1/dashboard/live", headers={"cookie": cookie}
         ) as websocket:
             assert websocket.receive_json()["scope"] == "private"
             graph_store = app.state.controller.execution_graph_store
@@ -185,11 +220,44 @@ def test_dashboard_websocket_uses_cookie_scope_and_operator_aggregate(
         assert snapshot["scope"] == "private"
         assert snapshot["execution_graphs"][0]["graph"]["graph_id"] == runtime.graph.graph_id
         assert snapshot["execution_graphs"][0]["attempts"][0]["attempt_id"] == attempt.attempt_id
+        assert [item["role"] for item in snapshot["topology"]["roles"]] == [
+            "Reasoner",
+            "Planner",
+            "Frontier A",
+            "Executor",
+            "Reviewer",
+            "Judge",
+            "Frontier B",
+        ]
+        frontier_a = snapshot["topology"]["roles"][2]
+        assert frontier_a["model"] == "gpt-5.6-sol"
+        assert frontier_a["reasoning_effort"] == "xhigh"
+        assert snapshot["topology"]["graph"] == {
+            "mode": "shadow",
+            "structure": "static_skeleton+runtime_created_request_subgraph",
+            "static_templates": [
+                "simple-v1",
+                "engineering-v1",
+                "complex-v1",
+                "critical-v1",
+            ],
+            "runtime_authority": "deterministic_execution_graph_compiler",
+            "runtime_mutation": False,
+        }
         detail = client.get("/v1/dashboard/requests/session-a").json()
         assert detail["execution_graph"]["checkpoint"]["graph_id"] == runtime.graph.graph_id
         app.state.store.save(SessionState(session_id="session-b", api_token_id="key-b"))
         listing = client.get("/v1/dashboard/requests").json()
         assert listing["scope"] == "private"
+        assert listing["usage"] == {
+            "summary": [],
+            "tasks": [],
+            "models": [],
+            "daily": [],
+            "daily_models": [],
+            "fallback_summary": [],
+            "fallbacks": [],
+        }
         assert [item["session_id"] for item in listing["requests"]] == ["session-a"]
         assert client.get("/v1/dashboard/requests/session-a").status_code == 200
         assert client.get("/v1/dashboard/requests/session-b").status_code == 404
@@ -201,7 +269,7 @@ def test_dashboard_websocket_uses_cookie_scope_and_operator_aggregate(
         )
         cookie = f"{DASHBOARD_SESSION_COOKIE}={client.cookies[DASHBOARD_SESSION_COOKIE]}"
         with client.websocket_connect(
-            "/v1/dashboard/live", headers={"cookie": cookie}
+            "wss://testserver/v1/dashboard/live", headers={"cookie": cookie}
         ) as websocket:
             assert websocket.receive_json()["scope"] == "operator_aggregate"
             runtime.finish_attempt(attempt.attempt_id, latency_ms=4.0, cost_usd=0.01)
@@ -225,6 +293,7 @@ def test_dashboard_websocket_uses_cookie_scope_and_operator_aggregate(
         assert aggregate["scope"] == "operator_aggregate"
         assert "requests" not in aggregate
         graph_aggregate = client.get("/v1/dashboard/snapshot").json()
+        assert len(graph_aggregate["topology"]["roles"]) == 7
         assert graph_aggregate["execution_graphs"] == {
             "graph_count": 1,
             "templates": {"simple-v1": 1},
@@ -233,9 +302,9 @@ def test_dashboard_websocket_uses_cookie_scope_and_operator_aggregate(
             "pending_nodes": len(runtime.graph.nodes) - 1,
         }
         assert client.get("/v1/dashboard/requests/session-a").status_code == 400
-        detail = client.get(
+        detail = client.post(
             "/v1/dashboard/requests/session-a",
-            params={"reason": "incident secret=do-not-store"},
+            json={"reason": "incident secret=do-not-store"},
         )
         assert detail.status_code == 200
         audit = app.state.store.events("dashboard-audit")
@@ -244,7 +313,7 @@ def test_dashboard_websocket_uses_cookie_scope_and_operator_aggregate(
         with (
             pytest.raises(WebSocketDisconnect) as rejected,
             client.websocket_connect(
-                "/v1/dashboard/live",
+                "wss://testserver/v1/dashboard/live",
                 headers={"origin": "https://evil.invalid", "cookie": cookie},
             ),
         ):
@@ -255,3 +324,82 @@ def test_dashboard_websocket_uses_cookie_scope_and_operator_aggregate(
 def test_dashboard_is_disabled_by_default(settings: Settings) -> None:
     with TestClient(create_app(settings)) as client:
         assert client.get("/dashboard").status_code == 404
+
+
+def test_dashboard_projects_stream_output_and_terminal_status(
+    settings: Settings, stub_provider: Any
+) -> None:
+    controlled = settings.model_copy(update={"dashboard_enabled": True})
+    app = create_app(controlled)
+    with TestClient(app, base_url="https://testserver") as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "dashboard-output",
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "Return ok"}],
+                "stream": True,
+            },
+        ) as response:
+            assert response.status_code == 200
+            assert b'"content":"ok"' in response.read()
+
+        session = client.post(
+            "/v1/dashboard/session",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        assert session.status_code == 204
+        detail = client.get("/v1/dashboard/requests/dashboard-output").json()
+
+        async def final_complete(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "final answer"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+
+        stub_provider.complete = final_complete
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "dashboard-final-output",
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "Return a final answer"}],
+            },
+        )
+        assert response.status_code == 200
+        final_detail = client.get("/v1/dashboard/requests/dashboard-final-output").json()
+
+    assert detail["state"]["current_draft"] == "ok"
+    assert detail["state"]["final_output"] == "ok"
+    assert detail["state"]["client_response_status"] == "completed"
+    assert detail["state"]["final_status"] is None
+    output_events = [
+        item for item in detail["events"] if item["event_type"] == "assistant_output_delta"
+    ]
+    assert output_events == [
+        {
+            "event_type": "assistant_output_delta",
+            "payload": {"role": "executor", "delta": "ok"},
+            "created_at": output_events[0]["created_at"],
+        }
+    ]
+    assert final_detail["state"]["final_output"] == "final answer"
+    assert final_detail["state"]["client_response_status"] == "completed"
+    assert [
+        item["payload"]
+        for item in final_detail["events"]
+        if item["event_type"] == "assistant_output"
+    ] == [{"role": "executor", "output": "final answer"}]

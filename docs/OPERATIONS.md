@@ -20,7 +20,7 @@ that a global user-session OOM can kill the gateway and user manager. The
 physical containment record is
 `data/diagnostics/pilot/pilot-v1-transition-20260812/containment-result.json`.
 
-The primary model alias is `dgx-moa`; it requires the external Ollama Reasoner
+The primary model alias is `dgx-moa`; it requires the loopback Ollama Reasoner
 and local Executor. `dgx-moa-fast` is the explicit degraded/low-latency
 Executor-only alias. Do not silently reroute a failed default Reasoner request
 to fast mode. `dgx-moa-agent` keeps the Reasoner + Executor core while OpenCode
@@ -121,13 +121,50 @@ journalctl --user -u dgx-moa-gateway.service -f
 scripts/healthcheck.sh
 ```
 
-Gateway binds the configured tailnet address on port `9000`.
-`dgx-moa-loopback.socket` exposes `127.0.0.1:9000` through the systemd socket
-proxy, and `dgx-moa-lan.socket` exposes `192.168.0.42:9000` to the local LAN,
-to that same authenticated gateway. Neither proxy binds `0.0.0.0`. Local model
-servers bind only ports `8101`, `8102`, `8103`, and `8110` on loopback. The
-configured Ollama Reasoner is an external dependency and must remain protected
-by its own network boundary; this gateway does not expose or proxy its native
+### Limited Pilot endpoint
+
+The active `PILOT_ACTIVE` canary is release
+`2a3afdce826b7fbc4e5cf3d682085b427ebcfa22`, transient unit
+`dgx-moa-pilot-v1-release-attempt12.service`, and authenticated tailnet endpoint
+`http://100.125.239.72:19000`. It has exactly one key ID, `pilot`. The key value
+is not in Git or unit metadata; systemd receives it through `LoadCredential`
+from the mode-0600 volatile file
+`/run/user/1000/dgx-moa/pilot-v1/pilot_api_key`. Do not print, copy into shell
+history, or move that value into a repository file.
+
+The Pilot gateway is capped at 1 GiB high, 2 GiB max, and 512 MiB swap max. It
+uses the preserved Candidate A listener on loopback 19301, durable state at
+`~/.local/share/dgx-moa/pilot-v1/state.db`, shadow ExecutionGraph, DeepSeek V4
+Flash overflow availability, and the `pilot-v1` destructive-operation approval
+policy. Runtime Skills, Knowledge, Evolution, training, weekly jobs, remote
+Judge, and observation controls remain disabled.
+
+Exact Pilot rollback is scoped to the transient gateway:
+
+```bash
+systemctl --user stop dgx-moa-pilot-v1-release-attempt12.service
+curl --connect-timeout 1 http://100.125.239.72:19000/healthz  # must fail closed
+scripts/healthcheck.sh                                         # production stays healthy
+```
+
+Stopping this unit does not stop Candidate A or the production gateway. Because
+the unit uses `--collect`, it is removed after stop; redeploy from the frozen
+release command/artifact rather than assuming `systemctl start` can resurrect
+the collected name. The physical stop/redeploy record and all launch failures
+are in `pilot-active-result.json`.
+
+Explicit client instructions that name a tool require successful evidence from
+that instruction, not merely from the same session. The gateway persists a hash
+of the latest explicit instruction and the tool-execution cursor observed when
+it arrived. A continuation of the same instruction may reuse its post-cursor
+success; a changed instruction resets the cursor and requires fresh evidence.
+Do not manually clear these fields during recovery: they are part of durable
+false-completion prevention.
+
+Gateway binds `0.0.0.0:9000` directly. Tailnet, LAN, and loopback clients reach
+that single authenticated listener without systemd socket proxies. Local model
+servers bind only ports `19301`, `8102`, `8103`, `8110`, and Ollama Reasoner
+port `11435` on loopback. The gateway does not expose or proxy any native role
 API.
 
 ```bash
@@ -272,11 +309,13 @@ scheduling disabled because the broader full-matrix, evaluation, release, and
 promotion gates remain open.
 
 The live Runtime Dashboard is separately controlled by
-`gateway.dashboard_enabled` / `DGX_MOA_DASHBOARD_ENABLED` and remains false.
-Enabling it requires an isolated HTTPS/WSS gate, same-key/cross-key isolation,
+`gateway.dashboard_enabled` / `DGX_MOA_DASHBOARD_ENABLED`; the checked-in safe
+default remains false. The 2026-08-13 validation overlay enables the feature
+on the authenticated `0.0.0.0:9000` gateway. Enabling it requires same-key/cross-key isolation,
 operator aggregate redaction, audited raw-view reason, reconnect/gap recovery,
-and inference-independence checks. Never pass API keys in a WebSocket URL; the
-browser must exchange a bearer credential for the HttpOnly dashboard cookie.
+and inference-independence checks. HTTPS/WSS remains preferred when an approved
+ingress exists. Never pass API keys in a WebSocket URL; the browser must exchange
+a bearer credential for the HttpOnly dashboard cookie.
 
 When both Dashboard and Execution Graph shadow mode are enabled in an isolated
 development runtime, `GET /v1/dashboard/snapshot` returns persisted graph,
@@ -532,10 +571,9 @@ numbers are evidence, not an instruction to act on production units.
 The local resident target requires `dgx-moa-gateway.service` and
 `dgx-moa-executor.service`. Planner and Reviewer remain optional and retain
 `PartOf=dgx-moa-resident.target`, so stopping resident cleans up either role if
-started separately. The external Ollama Reasoner is not a member of the local
-target and must be healthy for default product readiness. Existing stop
-verification still checks the legacy local Reasoner unit/port as cleanup along
-with Executor/Planner/Reviewer; it never targets the external Ollama service.
+started separately. The loopback Ollama Reasoner is also started separately and
+must be healthy for default product readiness; stop verification checks its
+`11435` listener together with Executor, Planner, and Reviewer.
 
 The reviewed target and exact adaptive unit map are installed in production;
 safe checked-in lifecycle defaults remain disabled. Do not change the installed
@@ -575,10 +613,9 @@ scripts/switch-profile.sh status
 
 ## Network ingress
 
-Set `DGX_MOA_BIND_HOST` to the resolved tailnet IPv4 address. Never use
-Tailscale Serve or Funnel. The LAN proxy listens only on `192.168.0.42:9000`;
-gateway bearer authentication remains mandatory on both paths. If the host LAN
-address changes, update `dgx-moa-lan.socket` before reinstalling the units.
+Set `DGX_MOA_BIND_HOST=0.0.0.0`. Never use Tailscale Serve or Funnel. Gateway
+bearer authentication remains mandatory on every interface; role-model servers
+remain loopback-only. Scope external reachability with the host firewall.
 On hosts using UFW with inbound deny, admit only the local subnet and gateway
 address:
 
@@ -925,6 +962,21 @@ of observed metrics; Graph code does not infer missing usage. All shadow
 persistence exceptions must use `record_shadow_failure()` so the stage and
 exception class retain one fail-soft event contract.
 
+For a failed TOOL result in an orchestrated session, finish and persist the
+old Graph's TOOL attempt first. If that failure causes Reasoner, Planner, or
+Frontier re-entry, compile a new Graph for the new orchestration iteration;
+never start a completed collaborator node in the resumed Graph. Compile
+Frontier nodes only when both the role is requested and `frontier_enabled` is
+true. Audit a recovery with two `execution_graph_shadow_compiled` events, one
+failed TOOL attempt, and zero `execution_graph_shadow_failed` events.
+
+Explicit read-only intent (`read-only`, `do not modify`, `수정하지 말*`, or
+`변경하지 말*`) must not enter the implementation change/validation/review
+gate. When that objective explicitly names `exec_command`, however, require one
+successful client tool result before accepting final output. This prevents both
+the repeated-inspection loop and a prompt-echo false completion without forcing
+file mutation or redundant reads.
+
 Orchestrated role selection is Runtime Policy-owned. Do not expect or configure
 an Executor `orchestration_decision` model call. Planner is selected for
 unclear explicit-orchestrated, multi-file, recovery, escalation, or high-risk
@@ -982,25 +1034,27 @@ the two targeted passes as authorization for blind noninferiority.
 
 ## Codex Pilot write-canary launcher contract
 
-Pin both the custom provider and `model_catalog_json` to the authenticated
-Pilot `/v1/models` artifact. A catalog merely copied under `CODEX_HOME` is not
-sufficient. Reject write scoring unless durable `client_tools_available`
-contains `apply_patch`.
+For a Codex write canary, pin both the custom provider and
+`model_catalog_json` to the model catalog fetched from the authenticated Pilot
+`/v1/models` endpoint. A catalog copied under `CODEX_HOME` is not sufficient.
+Reject the run before scoring if the durable `client_tools_available` event
+does not include `apply_patch`; otherwise a read-only tool surface can be
+misclassified as Executor write quality. Preserve the failed client logs and
+start a new attempt rather than editing an earlier artifact.
 
-When a resumed Graph exhausts its `ON_BUDGET` TOOL repair edge, keep the repair
-bound, persist
+When a resumed Graph reports an exhausted `ON_BUDGET` TOOL repair edge, keep
+the two-repair bound, persist
 `execution_graph_shadow_reprojected(reason=tool_cycle_budget_exhausted)`, and
-compile a fresh immutable Graph. Do not resume the exhausted Graph or raise the
-budget to mask the projection defect.
+compile a new immutable Graph. Do not resume the exhausted Graph and do not
+raise the repair budget to mask the projection error.
 
-Candidate order remains explicit vLLM Blackwell-native NVFP4 candidate A,
+Candidate ordering remains: explicit vLLM Blackwell-native NVFP4 candidate A,
 isolated SGLang native candidate B, then MARLIN compatibility rollback. V66 and
-v98 preserve the current SGLang physical failures; retry only a new supported
-registry/source combination in a separately named protocol epoch.
+v98 are the preserved SGLang physical epochs for the current pinned runtime;
+do not rerun backend-name permutations without a new supported registry/source
+combination and a separately named protocol epoch.
 
-An `apply_patch verification failed:` tool payload without an explicit numeric
-exit code is failure evidence, never a successful filesystem effect. Also do
-not interpret `Do not modify any other file` as global read-only intent: it is
-a scope restriction on an otherwise explicit write task. Before accepting a
-Codex write completion, require a successful change-capable tool execution,
-successful validation after that change, and the configured review result.
+Treat `apply_patch verification failed:` without an explicit numeric exit code
+as failure evidence. Do not treat `Do not modify any other file` as global
+read-only intent; it scopes an explicit write. Accept completion only after a
+successful change-capable tool, post-change validation, and configured review.

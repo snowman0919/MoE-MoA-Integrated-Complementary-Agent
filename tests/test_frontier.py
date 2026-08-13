@@ -474,9 +474,10 @@ def test_frontier_task_scope_and_candidate_gate() -> None:
 
 def test_frontier_config(tmp_path) -> None:  # type: ignore[no-untyped-def]
     config = tmp_path / "frontier.yaml"
-    config.write_text("model: gpt-5.6-sol\nreasoning_effort: high\n")
+    config.write_text("model: gpt-5.6-sol\nreasoning_effort: xhigh\n")
     assert load_frontier_config(config).model == "gpt-5.6-sol"
     command = codex_command("primary", config, tmp_path, "gpt-5.6-sol", "high", config)
+    assert load_frontier_config(config).reasoning_effort == "xhigh"
     assert 'model_reasoning_effort="high"' in command
     assert command[command.index("--model") + 1] == "gpt-5.6-sol"
     assert "--ask-for-approval" not in command
@@ -1183,28 +1184,6 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
     assert "parallel_tool_calls" not in sent["json"]
     assert "minimum" not in json.dumps(sent["json"]["response_format"])
     assert "synthetic-openrouter-key" not in json.dumps(sent["json"])
-
-
-@pytest.mark.asyncio
-async def test_executor_preserves_oauth_failure_without_openrouter_key(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:  # type: ignore[no-untyped-def]
-    async def oauth_context_failure(command, **kwargs):  # type: ignore[no-untyped-def]
-        return subprocess.CompletedProcess(command, 1, stdout="", stderr="context window exceeded")
-
-    monkeypatch.setattr("dgx_moa.frontier.run_codex_exec", oauth_context_failure)
-    runner = CodexOAuthCollaboration(
-        FrontierConfig(
-            enabled=True,
-            collaboration_retries=0,
-            openrouter_fallback_enabled=True,
-        ),
-        tmp_path / "run",
-        tmp_path,
-    )
-
-    with pytest.raises(RuntimeError, match="FRONTIER_CONTEXT_LIMIT"):
-        await runner.execute({"messages": [{"role": "user", "content": "x"}]}, "request")
 
 
 @pytest.mark.asyncio

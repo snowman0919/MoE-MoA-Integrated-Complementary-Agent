@@ -11,7 +11,7 @@
 | Role | Repository | Pinned revision | Upstream bytes | Local state | Decision |
 | --- | --- | --- | ---: | --- | --- |
 | Executor | `mistralai/Mistral-Small-4-119B-2603-NVFP4` | `b1a9048590131d38491bd23a7c9f6ed0962f0358` | `70846528432` | canonical cache verified 23/23; vLLM load failed global OOM | retain evidence; no deploy or same-profile retry |
-| Reasoner | remote Ollama `Qwythos-v2-9B:Q4` | remote runtime | `7680305397` VRAM measured | `http://100.90.167.128:11434` | retain external; no HF pull |
+| Reasoner | Ollama `Qwythos-v2-9B:Q4` | Q4 manifest | `6825527040` copied blob bytes | `http://127.0.0.1:11435` | exact local copy; loopback-only service |
 
 Mistral repository는 2026-08-08 Hugging Face metadata로 revision/license를 검증했다.
 `config.json`이 없는 Mistral consolidated layout이므로 backend는 이름만으로 지원

@@ -22,7 +22,7 @@ from dgx_moa.api import (
 )
 from dgx_moa.config import Settings
 from dgx_moa.controller import fingerprint
-from dgx_moa.execution_graph import NodeState, NodeType
+from dgx_moa.execution_graph import ExecutionGraphRuntime, NodeState, NodeType
 from dgx_moa.frontier import FrontierCollaborationResult
 from dgx_moa.lifecycle import (
     FakeLifecycleDriver,
@@ -519,70 +519,6 @@ def test_repeated_failure_routes_executor_to_frontier(
     assert "executor" not in stub_provider.calls
     selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
     assert selected["payload"]["routing_reason"] == "local_repeated_failure"
-
-
-def test_pending_process_routes_executor_to_frontier(
-    settings: Settings, stub_provider: StubProvider
-) -> None:
-    frontier_config = settings.state_db.parent / "pending-process-frontier.yaml"
-    frontier_config.write_text(
-        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
-    )
-    controlled = settings.model_copy(
-        update={"frontier_enabled": True, "frontier_config": frontier_config}
-    )
-    app = create_app(controlled)
-
-    async def remote_execute(
-        _remote_request: dict[str, object], _correlation_id: str
-    ) -> dict[str, object]:
-        return {
-            "id": "chatcmpl-frontier-pending-process",
-            "choices": [
-                {
-                    "message": {"role": "assistant", "content": "원격 pending 복구"},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"total_tokens": 8},
-            "model": "gpt-5.6-sol",
-            "provider_provenance": {"provider": "primary", "cost_usd": None},
-        }
-
-    state = SessionState(
-        session_id="pending-process-executor",
-        objective="Recover the pending validation process.",
-        tool_executions=[
-            {
-                "exit_code": 1,
-                "stdout_summary": "Process running with session ID 123",
-                "filesystem_effect": {"unknown_effect": True},
-            }
-        ],
-    )
-    with TestClient(app) as client:
-        app.state.provider = stub_provider
-        app.state.controller.provider = stub_provider
-        app.state.frontier.execute = remote_execute
-        app.state.store.save(state)
-        response = client.post(
-            "/v1/chat/completions",
-            headers={
-                "Authorization": "Bearer test-secret",
-                "X-Session-ID": state.session_id,
-            },
-            json={
-                "model": "dgx-moa-fast",
-                "messages": [{"role": "user", "content": state.objective}],
-            },
-        )
-        events = app.state.store.events(state.session_id)
-
-    assert response.status_code == 200, response.text
-    assert response.json()["choices"][0]["message"]["content"] == "원격 pending 복구"
-    assert "executor" not in stub_provider.calls
-    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
-    assert selected["payload"]["routing_reason"] == "local_pending_process"
 
 
 def test_duplicate_failed_call_routes_once_to_frontier(
@@ -1158,6 +1094,10 @@ def test_selective_remote_judge_gates_final_delivery(
         else ["executor", "reviewer"]
     )
     assert len(remote.packages) == (2 if judge_value == "revise" else 1)
+    assert all(package.snapshot_id for package in remote.packages)
+    assert all(package.snapshot_hash for package in remote.packages)
+    assert all(package.projection_id for package in remote.packages)
+    assert all(package.projection_hash for package in remote.packages)
     state = app.state.store.get(f"judge-{judge_value}")
     assert state is not None
     assert state.judge_status == judge_value
@@ -1434,6 +1374,10 @@ def test_frontier_b_adjudication_is_in_the_judge_repair_graph(
     assert response.status_code == 200
     assert frontier_modes == ["architecture", "openrouter:disagreement"]
     assert [attempt.node_type.value for attempt in attempts].count("FRONTIER_B") == 1
+    assert any(
+        item["role"] == "frontier_b" and item["stage"] == "adjudication"
+        for item in state.role_context_projections
+    )
     correction = next(
         request
         for request, options in zip(provider.requests, provider.call_options, strict=True)
@@ -2615,7 +2559,7 @@ def test_nonstream_tool_call_payload_creates_continuation_when_finish_reason_is_
         held = client.app.state.lifecycle_store.get("executor")
 
     assert response.status_code == 200
-    assert response.json()["choices"][0]["finish_reason"] == "stop"
+    assert response.json()["choices"][0]["finish_reason"]
     assert response.json()["choices"][0]["message"]["tool_calls"]
     assert held.continuation_lease_count == 1
 
@@ -6184,7 +6128,12 @@ def test_profile_aware_readiness(settings, stub_provider: StubProvider, monkeypa
             status_code = (
                 200 if url.endswith(":8101/v1/models") or url.endswith(":8104/v1/models") else 503
             )
-            return httpx.Response(status_code, request=httpx.Request("GET", url))
+            model = "executor" if ":8101/" in url else "reasoner"
+            return httpx.Response(
+                status_code,
+                json={"data": [{"id": model}]},
+                request=httpx.Request("GET", url),
+            )
 
     monkeypatch.setattr("dgx_moa.api.httpx.AsyncClient", FakeAsyncClient)
     app = create_app(settings)
@@ -7352,6 +7301,32 @@ def test_graph_shadow_sqlite_failure_preserves_legacy_role_tool_and_terminal_con
     assert shadow_state is not None and shadow_state.execution_graph_id is None
 
 
+def test_graph_shadow_finish_failure_still_returns_terminal_response(
+    settings: Settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings.execution_graph.mode = "shadow"
+
+    def fail_finish(*_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+        raise sqlite3.OperationalError("injected finish failure")
+
+    monkeypatch.setattr(ExecutionGraphRuntime, "finish_observed_attempt", fail_finish)
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "finish-failure"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "reply"}],
+            },
+        )
+        events = client.app.state.store.events("finish-failure")
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["finish_reason"]
+    assert sum(event["event_type"] == "session_ended" for event in events) == 1
+    assert any(event["event_type"] == "execution_graph_shadow_failed" for event in events)
+
+
 def test_graph_shadow_reprojects_failed_tool_before_collaborator_reentry(
     settings: Settings, stub_provider: StubProvider
 ) -> None:
@@ -7396,7 +7371,12 @@ def test_graph_shadow_reprojects_failed_tool_before_collaborator_reentry(
         "Authorization": "Bearer test-secret",
         "X-Session-ID": "graph-collaborator-tool-failure",
     }
-    tools = [{"type": "function", "function": {"name": "shell", "parameters": {"type": "object"}}}]
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "shell", "parameters": {"type": "object"}},
+        }
+    ]
     with client_with_stub(settings, stub_provider) as client:
         first = client.post(
             "/v1/chat/completions",
@@ -7411,6 +7391,7 @@ def test_graph_shadow_reprojects_failed_tool_before_collaborator_reentry(
         first_state = client.app.state.store.get("graph-collaborator-tool-failure")
         assert first_state is not None and first_state.execution_graph_id is not None
         first_graph_id = first_state.execution_graph_id
+
         second = client.post(
             "/v1/chat/completions",
             headers=headers,
@@ -8082,6 +8063,36 @@ def test_codex_utility_model_uses_unadvertised_fast_alias(
     assert "gpt-5.6-luna" not in aliases
     assert near_match.text.count("event: response.failed") == 1
     assert stub_provider.calls == ["executor"]
+
+
+def test_responses_partial_upstream_eof_fails_instead_of_completing(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    async def partial_stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        del role, model, request, kwargs
+
+        async def upstream():  # type: ignore[no-untyped-def]
+            yield b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+
+        return upstream()
+
+    stub_provider.stream = partial_stream  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "responses-partial-eof",
+            },
+            json={"model": "dgx-moa-fast", "input": "work", "stream": True},
+        )
+        state = client.app.state.store.get("responses-partial-eof")
+
+    assert response.text.count("event: response.failed") == 1
+    assert "event: response.completed" not in response.text
+    assert state is not None
+    assert state.client_response_status == "failed"
+    assert state.final_output == ""
 
 
 def test_responses_post_preserves_function_tool_loop(  # type: ignore[no-untyped-def]

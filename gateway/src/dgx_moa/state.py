@@ -129,6 +129,12 @@ class SessionState(BaseModel):
     policy_redact_fields: list[str] = Field(default_factory=list)
     policy_fail_closed_roles: list[str] = Field(default_factory=list)
     completion_evidence: dict[str, str] = Field(default_factory=dict)
+    current_draft: str = ""
+    final_output: str = ""
+    role_context_projections: list[dict[str, Any]] = Field(default_factory=list)
+    canonical_evidence_snapshot_id: str | None = None
+    canonical_evidence_snapshot_hash: str | None = None
+    canonical_evidence_snapshot: dict[str, Any] | None = None
     explicit_tool_instruction_hash: str | None = None
     explicit_tool_evidence_cursor: int = 0
     approved_scope: list[str] = Field(default_factory=list)
@@ -157,6 +163,7 @@ class SessionState(BaseModel):
     repository_training_policy: Literal[
         "training_allowed", "internal_only", "training_denied", "unknown"
     ] = "unknown"
+    client_response_status: Literal["completed", "failed", "timed_out", "cancelled"] | None = None
     final_status: FinalStatus | None = None
     control_state: Literal["running", "paused", "terminated"] = "running"
     control_approvals: list[str] = Field(default_factory=list)

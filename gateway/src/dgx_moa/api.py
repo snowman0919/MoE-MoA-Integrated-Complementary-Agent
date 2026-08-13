@@ -110,6 +110,7 @@ from .routing import (
     select_executor_provider,
 )
 from .runtime_dashboard import RUNTIME_DASHBOARD
+from .runtime_status import dashboard_telemetry, role_validation
 from .runtime_status import memory_available as runtime_memory_available
 from .runtime_status import report as runtime_report
 from .schemas import ChatMessage, ChatRequest, ProfileResponse, ResponsesRequest, text_content
@@ -213,6 +214,16 @@ def ollama_model_ready(response: httpx.Response, model: Any) -> bool:
         and item["context_length"] >= model.context_length
         for item in models
     )
+
+
+def openai_model_ready(response: httpx.Response, model: Any) -> bool:
+    if response.status_code != 200:
+        return False
+    try:
+        models = response.json().get("data", [])
+    except (ValueError, AttributeError):
+        return False
+    return any(isinstance(item, dict) and item.get("id") == model.served_name for item in models)
 
 
 def error_response(
@@ -583,6 +594,32 @@ def create_app(
             else response.status_code == 200
         )
 
+    async def local_model_readiness() -> dict[str, bool]:
+        roles = tuple(configured.models)
+        statuses = dict.fromkeys(roles, False)
+        try:
+            async with managed_http_client(timeout=2) as client:
+                results = await asyncio.gather(
+                    *(
+                        client.get(
+                            f"{model.base_url.rstrip('/')}/api/ps"
+                            if model.provider == "ollama"
+                            else f"{model.base_url.rstrip('/')}/v1/models"
+                        )
+                        for model in configured.models.values()
+                    ),
+                    return_exceptions=True,
+                )
+        except (httpx.HTTPError, KeyError):
+            return statuses
+        for (role, model), result in zip(configured.models.items(), results, strict=True):
+            statuses[role] = isinstance(result, httpx.Response) and (
+                ollama_model_ready(result, model)
+                if model.provider == "ollama"
+                else openai_model_ready(result, model)
+            )
+        return statuses
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         store = StateStore(configured.state_db)
@@ -590,6 +627,8 @@ def create_app(
         project_root = Path(os.getenv("DGX_MOA_PROJECT_ROOT", ".")).resolve()
         app.state.settings = configured
         app.state.draining = False
+        app.state.dashboard_telemetry_lock = asyncio.Lock()
+        app.state.dashboard_telemetry_sample = None
         app.state.executor_admission_lock = asyncio.Lock()
         scheduling = configured.executor_scheduling
         app.state.executor_scheduler = ExecutorScheduler(
@@ -1371,29 +1410,10 @@ def create_app(
                 },
                 status_code=503,
             )
-        service_status = {role: "stopped" for role in configured.models}
-        try:
-            async with managed_http_client(timeout=2) as client:
-                results = await asyncio.gather(
-                    *(
-                        client.get(
-                            f"{model.base_url.rstrip('/')}/api/ps"
-                            if model.provider == "ollama"
-                            else f"{model.base_url.rstrip('/')}/v1/models"
-                        )
-                        for model in configured.models.values()
-                    ),
-                    return_exceptions=True,
-                )
-            for (role, model), result in zip(configured.models.items(), results, strict=True):
-                if isinstance(result, httpx.Response) and (
-                    ollama_model_ready(result, model)
-                    if model.provider == "ollama"
-                    else result.status_code == 200
-                ):
-                    service_status[role] = "ready"
-        except KeyError:
-            pass
+        service_status = {
+            role: "ready" if ready else "stopped"
+            for role, ready in (await local_model_readiness()).items()
+        }
         if any(service_status.get(role) != "ready" for role in roles):
             return JSONResponse(
                 {
@@ -2356,6 +2376,7 @@ def create_app(
                     if state is None:
                         current.timings_ms = {"accepted": 0.0}
                         state = current
+                    current.client_response_status = status_value
                     if status_value == "cancelled":
                         current.final_status = "cancelled"
                         request.app.state.controller.terminate_loop(current, "CLIENT_CANCELLED")
@@ -2372,13 +2393,14 @@ def create_app(
                     if downstream_started:
                         current.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
                     if execution_runtime is not None:
+                        runtime = execution_runtime
                         try:
                             if status_value == "completed" and execution_attempt_id is not None:
                                 finish_execution_primary(current)
                             elif status_value == "cancelled":
-                                execution_runtime.cancel()
+                                runtime.cancel()
                             elif execution_attempt_id is not None:
-                                execution_runtime.fail_attempt(
+                                runtime.fail_attempt(
                                     execution_attempt_id,
                                     failure_code=f"REQUEST_{status_value.upper()}",
                                     failure_fingerprint=hashlib.sha256(
@@ -2386,7 +2408,7 @@ def create_app(
                                     ).hexdigest(),
                                     retryable=False,
                                 )
-                            execution_runtime.finalize_ready(
+                            runtime.finalize_ready(
                                 (
                                     "completed"
                                     if status_value == "completed"
@@ -2404,7 +2426,7 @@ def create_app(
                                     execution_contradicted_evidence_ids
                                 ),
                             )
-                            current.execution_checkpoint_id = execution_runtime.last_checkpoint_id
+                            current.execution_checkpoint_id = runtime.last_checkpoint_id
                         except (ValueError, sqlite3.Error) as error:
                             record_shadow_failure(
                                 request.app.state.store, current.session_id, "finalize", error
@@ -3179,15 +3201,6 @@ def create_app(
                 and request.app.state.frontier is not None
                 and any(count >= 2 for count in state.failure_families.values())
             )
-            pending_process = (
-                not executor_remote
-                and request.app.state.frontier is not None
-                and any(
-                    "Process running with session ID "
-                    in str(execution.get("stdout_summary", ""))
-                    for execution in state.tool_executions[-1:]
-                )
-            )
             executor_provider, selected_reason = (
                 ("frontier" if executor_remote else "local", executor_routing_reason)
                 if configured.executor_scheduling.enabled
@@ -3199,7 +3212,6 @@ def create_app(
                     output_budget_exceeded=output_budget_exceeded,
                     frontier_correction=frontier_correction,
                     completion_stalled=completion_stalled,
-                    pending_process=pending_process,
                     repeated_failure=repeated_failure,
                     stalled=stalled,
                 )
@@ -3484,6 +3496,7 @@ def create_app(
                                 account_loop_usage=False,
                             )
                             if terminal:
+                                state.final_output = "".join(observation.assistant_content)
                                 execution_evidence_ids.append(
                                     request.app.state.controller.record_evidence(
                                         state,
@@ -3588,6 +3601,7 @@ def create_app(
                     nonlocal first_byte_at, loop_admission_failed, stream_completed
                     admitted_tool_calls = 0
                     accounted_total_tokens = 0
+                    published_output_characters = 0
                     forwarder = forward_sse(
                         upstream,
                         observation,
@@ -3630,6 +3644,17 @@ def create_app(
                                 if "first_downstream_byte" not in state.timings_ms:
                                     state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
                                     first_byte_at = time.time()
+                                draft = "".join(observation.assistant_content)
+                                if len(draft) > published_output_characters:
+                                    delta = draft[published_output_characters:]
+                                    published_output_characters = len(draft)
+                                    state.current_draft = draft
+                                    request.app.state.store.save(state)
+                                    request.app.state.store.event(
+                                        state_session_id,
+                                        "assistant_output_delta",
+                                        {"role": "executor", "delta": delta},
+                                    )
                                 yield chunk
                         stream_completed = not remote_failure
                     except LoopAdmissionError:
@@ -3800,6 +3825,7 @@ def create_app(
                                 state,
                                 review_observation,
                                 guard_already_owned=guard_transition_id is not None,
+                                target_attempt_id=reviewer_execution_attempt,
                             )
                         finally:
                             if guard_transition_id is not None:
@@ -3860,7 +3886,9 @@ def create_app(
                 )
                 judge_execution_attempt = start_execution_role(NodeType.JUDGE)
                 try:
-                    verdict = await request.app.state.controller.judge(state, observation)
+                    verdict = await request.app.state.controller.judge(
+                        state, observation, target_attempt_id=judge_execution_attempt
+                    )
                 except Exception as error:
                     fail_execution_role(judge_execution_attempt, "judge", error)
                     raise
@@ -3891,15 +3919,27 @@ def create_app(
                         frontier_b_attempt = start_execution_role(NodeType.FRONTIER_B)
                         if frontier_b_attempt is not None:
                             try:
+                                frontier_b_projection = (
+                                    request.app.state.controller.independent_runtime_projection(
+                                        state,
+                                        "frontier_b",
+                                        "adjudication",
+                                        executor_payload=assistant_message,
+                                        target_attempt_id=frontier_b_attempt,
+                                    )
+                                )
                                 frontier_result = (
                                     await request.app.state.controller._frontier_b_collaborate(
                                         state,
                                         {
-                                            "objective": state.objective,
-                                            "executor_position": assistant_message,
-                                            "reviewer_position": review_result,
-                                            "specific_disagreement": verdict,
-                                            "shared_evidence": state.evidence_nodes[-8:],
+                                            "objective": frontier_b_projection.objective,
+                                            "shared_evidence": frontier_b_projection.model_dump(
+                                                mode="json"
+                                            ),
+                                            "specific_disagreement": (
+                                                "Adjudicate the disagreement represented by the "
+                                                "included Judge contribution."
+                                            ),
                                         },
                                     )
                                 )
@@ -4068,7 +4108,9 @@ def create_app(
                         )
                         targeted_reviewer_attempt = start_execution_role(NodeType.REVIEWER)
                         targeted_review = await request.app.state.controller.review(
-                            state, corrected_observation
+                            state,
+                            corrected_observation,
+                            target_attempt_id=targeted_reviewer_attempt,
                         )
                         stage_status["reviewer"] = "completed"
                         if targeted_review.get("status") != "approved":
@@ -4095,7 +4137,9 @@ def create_app(
                             active_stage = "judge"
                             recheck_judge_attempt = start_execution_role(NodeType.JUDGE)
                             verdict = await request.app.state.controller.judge(
-                                state, corrected_observation
+                                state,
+                                corrected_observation,
+                                target_attempt_id=recheck_judge_attempt,
                             )
                             stage_status["judge"] = "completed"
                             recheck_verdict = str(verdict.get("verdict", "revise"))
@@ -4133,6 +4177,15 @@ def create_app(
                         )
                     else:
                         raise JudgeCorrectionRequired(correction_verdict)
+            assistant_content = assistant_message.get("content")
+            if isinstance(assistant_content, str):
+                state.current_draft = assistant_content
+                state.final_output = assistant_content
+                request.app.state.store.event(
+                    state_session_id,
+                    "assistant_output",
+                    {"role": "executor", "output": assistant_content},
+                )
             state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
             first_byte_at = time.time()
             request.app.state.store.event(
@@ -5072,6 +5125,7 @@ def create_app(
         return key_response(
             {
                 "scope": "private",
+                "usage": request.app.state.usage.api_token_dashboard(name=api_key_id),
                 "requests": [
                     {
                         "session_id": state.session_id,
@@ -5079,6 +5133,7 @@ def create_app(
                         "phase": state.phase,
                         "request_class": state.request_class,
                         "objective": state.objective,
+                        "client_response_status": state.client_response_status,
                         "final_status": state.final_status,
                         "updated_at": state.updated_at,
                     }
@@ -5096,9 +5151,179 @@ def create_app(
         except (KeyError, ValueError, sqlite3.Error):
             return None
 
+    async def dashboard_topology() -> dict[str, Any]:
+        local_ready = await local_model_readiness()
+        specialist = configured.specialist_routing
+        frontier = app.state.frontier_config
+        expected_remote_models = {
+            "Planner": specialist.models.get("planner", ""),
+            "Reviewer": specialist.models.get("reviewer", ""),
+            "Judge": configured.remote_judge.model,
+            "Frontier A": frontier.model if frontier else "",
+            "Frontier B": frontier.openrouter_model if frontier else "",
+        }
+        validated = role_validation(
+            configured.run_dir / "role-validation.json", expected_remote_models
+        )
+
+        def validated_fields(label: str) -> dict[str, Any]:
+            record = validated.get(label)
+            return (
+                {
+                    "available": True,
+                    "state": "ready",
+                    "availability_basis": record["basis"],
+                    "validated_at": record.get("measured_at"),
+                }
+                if record
+                else {}
+            )
+
+        def local_role(label: str, role: str) -> dict[str, Any]:
+            model = configured.models.get(role)
+            ready = local_ready.get(role, False)
+            external = bool(model and model.lifecycle_control == "external")
+            return {
+                "role": label,
+                "model": model.repository if model else None,
+                "served_name": model.served_name if model else None,
+                "provider": (
+                    f"external_{model.provider}"
+                    if external and model is not None
+                    else f"local_gb10_{model.provider}"
+                    if model
+                    else "unconfigured"
+                ),
+                "enabled": model is not None,
+                "available": ready,
+                "state": "ready" if ready else "stopped" if model else "unconfigured",
+                "availability_basis": (
+                    "external_model_probe"
+                    if external
+                    else "loopback_model_probe"
+                    if model
+                    else "configuration"
+                ),
+            }
+
+        def specialist_role(label: str, role: str) -> dict[str, Any]:
+            if app.state.specialists is None:
+                return local_role(label, role)
+            return {
+                "role": label,
+                "model": specialist.models.get(role),
+                "served_name": specialist.models.get(role),
+                "provider": specialist.provider,
+                "enabled": True,
+                "available": None,
+                "state": "configured_unprobed",
+                "availability_basis": "provider_config_only",
+                **validated_fields(label),
+            }
+
+        judge_model = configured.models.get("judge")
+        roles = [
+            local_role("Reasoner", "reasoner"),
+            specialist_role("Planner", "planner"),
+            {
+                "role": "Frontier A",
+                "model": frontier.model if frontier else None,
+                "served_name": frontier.model if frontier else None,
+                "provider": frontier.provider if frontier else "codex_oauth",
+                "reasoning_effort": frontier.reasoning_effort if frontier else None,
+                "enabled": bool(frontier and frontier.enabled and app.state.frontier is not None),
+                "available": None,
+                "state": (
+                    "configured_unprobed"
+                    if frontier and frontier.enabled and app.state.frontier is not None
+                    else "disabled"
+                ),
+                "availability_basis": "codex_oauth_config_only",
+                **validated_fields("Frontier A"),
+            },
+            local_role("Executor", "executor"),
+            specialist_role("Reviewer", "reviewer"),
+            {
+                "role": "Judge",
+                "model": (
+                    configured.remote_judge.model
+                    if app.state.remote_judge is not None
+                    else judge_model.repository
+                    if judge_model
+                    else None
+                ),
+                "served_name": (
+                    configured.remote_judge.model
+                    if app.state.remote_judge is not None
+                    else judge_model.served_name
+                    if judge_model
+                    else None
+                ),
+                "provider": (
+                    configured.remote_judge.provider
+                    if app.state.remote_judge is not None
+                    else "local_gb10"
+                ),
+                "enabled": app.state.remote_judge is not None or "judge" in configured.models,
+                "available": (
+                    app.state.remote_judge_available
+                    if app.state.remote_judge is not None
+                    else local_ready.get("judge", False)
+                ),
+                "state": (
+                    "ready"
+                    if app.state.remote_judge_available is True or local_ready.get("judge", False)
+                    else "unavailable"
+                    if app.state.remote_judge is not None
+                    else "stopped"
+                    if "judge" in configured.models
+                    else "disabled"
+                ),
+                "availability_basis": (
+                    "startup_provider_probe"
+                    if app.state.remote_judge is not None
+                    else "loopback_model_probe"
+                ),
+                **validated_fields("Judge"),
+            },
+            {
+                "role": "Frontier B",
+                "model": frontier.openrouter_model if frontier else None,
+                "served_name": frontier.openrouter_model if frontier else None,
+                "provider": "openrouter",
+                "enabled": bool(
+                    frontier and frontier.enabled and frontier.openrouter_fallback_enabled
+                ),
+                "available": None,
+                "state": (
+                    "configured_unprobed"
+                    if frontier and frontier.enabled and frontier.openrouter_fallback_enabled
+                    else "disabled"
+                ),
+                "availability_basis": "provider_config_only",
+                **validated_fields("Frontier B"),
+            },
+        ]
+        return {
+            "roles": roles,
+            "graph": {
+                "mode": configured.execution_graph.mode,
+                "structure": "static_skeleton+runtime_created_request_subgraph",
+                "static_templates": [
+                    "simple-v1",
+                    "engineering-v1",
+                    "complex-v1",
+                    "critical-v1",
+                ],
+                "runtime_authority": "deterministic_execution_graph_compiler",
+                "runtime_mutation": False,
+            },
+        }
+
     @app.get("/v1/dashboard/snapshot")
     async def dashboard_snapshot(request: Request, limit: int = 20) -> JSONResponse:
         api_key_id, operator = dashboard_identity(request)
+        topology = await dashboard_topology()
         if operator:
             graph_store = cast(
                 ExecutionGraphStore | None, app.state.controller.execution_graph_store
@@ -5111,6 +5336,7 @@ def create_app(
                         if graph_store is not None
                         else {"graph_count": 0}
                     ),
+                    "topology": topology,
                 }
             )
         sessions = request.app.state.store.sessions(api_key_id, limit=max(1, min(limit, 100)))
@@ -5122,20 +5348,36 @@ def create_app(
                     for state in sessions
                     if (snapshot := dashboard_graph_snapshot(state)) is not None
                 ],
+                "topology": topology,
             }
         )
 
+    @app.get("/v1/dashboard/runtime")
+    async def dashboard_runtime(request: Request) -> JSONResponse:
+        dashboard_identity(request)
+        async with request.app.state.dashboard_telemetry_lock:
+            sample = request.app.state.dashboard_telemetry_sample
+            if sample is None or time.monotonic() - sample[0] >= 5:
+                sample = (time.monotonic(), await asyncio.to_thread(dashboard_telemetry))
+                request.app.state.dashboard_telemetry_sample = sample
+        return key_response(sample[1])
+
     @app.get("/v1/dashboard/requests/{session_id}")
+    @app.post("/v1/dashboard/requests/{session_id}")
     async def dashboard_request_detail(
         session_id: str,
         request: Request,
-        reason: str | None = None,
     ) -> JSONResponse:
         api_key_id, operator = dashboard_identity(request)
         state = request.app.state.store.get(session_id)
         if state is None or (not operator and state.api_token_id != api_key_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "request not found")
         if operator and state.api_token_id != api_key_id:
+            try:
+                body = await request.json() if request.method == "POST" else {}
+            except (TypeError, ValueError):
+                body = {}
+            reason = body.get("reason") if isinstance(body, dict) else None
             audit_reason = (reason or "").strip()
             if len(audit_reason) < 8 or len(audit_reason) > 256:
                 raise HTTPException(
@@ -5185,7 +5427,7 @@ def create_app(
             await websocket.close(code=4400)
             return
         await websocket.accept()
-        subscriber_id, queue = websocket.app.state.dashboard_live.subscribe(
+        subscriber_id, queue, current_seq = websocket.app.state.dashboard_live.subscribe(
             api_key_id,
             operator=websocket.app.state.api_keys.is_admin(api_key_id),
             last_seq=last_seq,
@@ -5200,6 +5442,7 @@ def create_app(
                         if websocket.app.state.api_keys.is_admin(api_key_id)
                         else "private"
                     ),
+                    "current_seq": current_seq,
                 }
             )
             while True:
@@ -5208,7 +5451,7 @@ def create_app(
                 except TimeoutError:
                     event = {"type": "heartbeat"}
                 await websocket.send_json(event)
-        except (WebSocketDisconnect, RuntimeError):
+        except (WebSocketDisconnect, RuntimeError, asyncio.CancelledError):
             pass
         finally:
             websocket.app.state.dashboard_live.unsubscribe(subscriber_id)
@@ -5321,6 +5564,7 @@ def create_app(
             {
                 "enabled": True,
                 "model": frontier_config.model,
+                "reasoning_effort": frontier_config.reasoning_effort,
                 "profiles": [
                     profile_status(profile, root) if root is not None else profile_status(profile)
                     for profile in profiles

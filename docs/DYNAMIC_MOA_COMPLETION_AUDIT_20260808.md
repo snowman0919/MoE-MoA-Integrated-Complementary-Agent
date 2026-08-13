@@ -31,8 +31,10 @@ containment and the authenticated Chat/Responses/stream/tool/continuation,
 durable Graph, high-risk fail-closed, restart, and recovery contract passed.
 The audit's old Executor `BLOCKED`, deployment ordering, and readiness snapshot
 are historical for the 2026-08-08 completion rubric, not current runtime facts.
-The Goal remains active in `DEVELOPMENT`, with release revision, installed
-defaults/restart, rollback rehearsal, and limited canary still open.
+The Goal remains active in `PILOT_ACTIVE`. Clean release candidate `1384c319`,
+the single-key tailnet canary, protocol/tool/Flash gates, exact restart,
+rollback, and redeploy passed. Bounded real-use telemetry remains open;
+standardized port-8101 installation is post-Pilot hardening before beta.
 
 ## 42-section requirement audit
 
@@ -122,21 +124,23 @@ defaults/restart, rollback rehearsal, and limited canary still open.
 
 ## Pilot delta — 2026-08-12
 
-- Production gateway PID `3107456` and Pilot attempt-10 PID `3704865` are
-  active with zero restarts; the Pilot runs release `ed9f3d943` under 1/2/0.5
-  GiB caps.
-- The exhausted TOOL-graph projection defect passed clean validation and
-  physical reprojection with zero post-fix shadow failures.
-- Explicit Codex catalog pinning exposes `apply_patch`, but compatibility and
-  primary repository-write probes left the isolated worktree unchanged. The
-  quality gate remains open.
-- vLLM native NVFP4 remains candidate A; SGLang candidate B v66/v98 evidence is
-  preserved for this epoch; MARLIN remains rollback only.
-- Goal status remains active `PILOT_ACTIVE`; neither terminal `blocked` nor
-  `complete` is authorized.
+- Production gateway recovery is physically confirmed: PID `3107456`, zero
+  restarts, authenticated `/healthz` HTTP 200. Pilot attempt 10 runs isolated at
+  release `ed9f3d943`, PID `3704865`, zero restarts, under 1/2/0.5 GiB caps.
+- The exhausted TOOL-graph projection defect is fixed at the shared API
+  boundary. Clean validation passed Ruff, strict mypy on 49 source files, and
+  pytest `1062/1062`; post-fix physical probes reprojected with zero Graph
+  shadow failures.
+- Codex catalog pinning now exposes `apply_patch`, but both compatibility and
+  primary repository-write probes failed to change the isolated worktree. That
+  quality gate remains open and prevents promotion beyond the bounded Pilot.
+- vLLM native NVFP4 remains candidate A. SGLang native candidate B was isolated
+  and exhausted in v66/v98 for this pinned runtime; MARLIN remains rollback.
+  No backend result is generalized beyond its measured epoch.
+- Goal status remains active `PILOT_ACTIVE`; no completion or blocked terminal
+  state is authorized while client-quality and later gates remain verifiable.
 
-Primary Codex write recovery now passes in epoch 04 at controller
-`2a3afdce8`: an exact two-line diff, `103 passed`, Reviewer approval, and zero
-Graph shadow failures. Epochs 02 and 03 preserve the two false-completion root
-causes. The next allowed gate is a fresh post-recovery client-quality matrix;
-blind, ablation, and later gates remain unopened.
+Primary Codex write recovery passes in epoch 04 at `2a3afdce8`: exact two-line
+diff, `103 passed`, Reviewer approval, and zero Graph shadow failures. Epochs 02
+and 03 preserve the false-completion causes. A fresh client-quality matrix is
+next; blind and later gates remain unopened.

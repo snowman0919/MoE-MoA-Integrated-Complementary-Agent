@@ -152,7 +152,7 @@ class FrontierConfig(BaseModel):
     ] = "configuration_disabled"
     protocol: Literal["codex-app-server-jsonrpc", "codex-exec-jsonl"] = "codex-exec-jsonl"
     model: str = "gpt-5.6-sol"
-    reasoning_effort: Literal["high"] = "high"
+    reasoning_effort: Literal["high", "xhigh"] = "high"
     max_invocations_per_task: int = 4
     max_recursive_cycles: int = 3
     primary_profile: str = "default"
@@ -1023,15 +1023,6 @@ class CodexOAuthCollaboration:
             8,
         )
 
-    def _openrouter_available(self) -> bool:
-        if os.getenv(self.config.openrouter_api_key_env, "").strip():
-            return True
-        path = self.config.openrouter_api_key_file
-        try:
-            return bool(path and path.stat().st_size and not path.stat().st_mode & 0o077)
-        except OSError:
-            return False
-
     async def _run(
         self,
         mode: Literal["architecture", "code_review", "disagreement", "executor"],
@@ -1050,11 +1041,7 @@ class CodexOAuthCollaboration:
         now = time.monotonic()
         if self.opened_at is not None:
             if now - self.opened_at < self.config.circuit_cooldown_seconds:
-                if (
-                    paid_fallback_required
-                    and self.config.openrouter_fallback_enabled
-                    and self._openrouter_available()
-                ):
+                if paid_fallback_required and self.config.openrouter_fallback_enabled:
                     return self._openrouter(
                         mode,
                         external_evidence,
@@ -1075,11 +1062,7 @@ class CodexOAuthCollaboration:
             )
             categories = ["executor_request"]
             if len(evidence_json) > self.config.max_executor_evidence_characters:
-                if (
-                    paid_fallback_required
-                    and self.config.openrouter_fallback_enabled
-                    and self._openrouter_available()
-                ):
+                if paid_fallback_required and self.config.openrouter_fallback_enabled:
                     return self._openrouter(
                         mode,
                         external_evidence,
@@ -1229,7 +1212,6 @@ class CodexOAuthCollaboration:
                 if (
                     paid_fallback_required
                     and self.config.openrouter_fallback_enabled
-                    and self._openrouter_available()
                     and final_failure in PAID_FALLBACK_FAILURES
                 ):
                     return self._openrouter(

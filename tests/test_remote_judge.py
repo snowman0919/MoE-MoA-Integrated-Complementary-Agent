@@ -15,6 +15,7 @@ from dgx_moa.remote_judge import (
     RemoteJudgeVerdict,
 )
 from dgx_moa.state import SessionState, StateStore
+from pydantic import ValidationError
 
 
 def verdict(verdict: str = "approve") -> dict[str, object]:
@@ -172,6 +173,15 @@ def test_remote_verdict_requires_every_criterion() -> None:
     del payload["criteria"]["safety"]  # type: ignore[index]
     with pytest.raises(ValueError):
         RemoteJudgeVerdict.model_validate(payload)
+
+
+def test_judge_package_rejects_aggregate_payload_above_byte_ceiling() -> None:
+    with pytest.raises(ValidationError, match="exceeds 1000000 bytes"):
+        JudgeEvidencePackage(
+            request_id="oversized",
+            objective="bounded",
+            tool_evidence=[{"output": "x" * 400_000} for _ in range(3)],
+        )
 
 
 def test_selective_judge_policy_covers_risk_and_skips_tool_turns(settings, stub_provider) -> None:
