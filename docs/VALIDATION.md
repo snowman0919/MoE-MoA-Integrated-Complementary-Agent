@@ -8949,3 +8949,20 @@ the `rust-mcu-ide` directory, the continuation emitted a second
 `exec_command` for a bounded file listing inside that directory instead of
 claiming it was unavailable. Durable events record two `tool_calls` finishes,
 and the gateway remained active with restart count zero.
+
+### Korean mixed-script output recovery — 2026-08-13
+
+The same failed workspace response mixed unrequested Han characters and
+Japanese kana into Korean prose despite the prompt-level Korean-only contract.
+Production release `9d4045b` adds a Responses terminal validator: for a Korean
+objective, unrequested Han, hiragana, or katakana outside fenced and inline
+code causes the buffered answer to be discarded and retried up to the existing
+bounded retry limit. The retry has a dedicated Korean-only instruction and
+durable `language_mismatch_response_retried` event. Foreign script explicitly
+present in the objective or required inside code remains allowed.
+
+Ruff and focused API/streaming tests passed `308`; the complete suite passed
+`1107`. Production session `korean-script-validation-20260813` ended with
+`response.completed`; its Korean two-sentence answer contained zero Han,
+hiragana, or katakana characters outside code. The gateway remained active
+with restart count zero.
