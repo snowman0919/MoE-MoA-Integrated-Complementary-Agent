@@ -188,10 +188,13 @@ def _log_token(value: str) -> str:
 
 def tool_progress_text(tool_calls: dict[int, dict[str, object]], progress_language: str) -> str:
     if len(tool_calls) > 1:
+        names = sorted({str(item.get("name") or "tool") for item in tool_calls.values()})
         return (
-            "필요한 증거를 한 번에 확인합니다."
+            f"독립적인 도구 호출 {len(tool_calls)}개({', '.join(names)})를 함께 실행해 "
+            "이번 단계의 근거를 모읍니다."
             if progress_language == "ko"
-            else "Checking the required evidence together."
+            else f"Running {len(tool_calls)} independent {', '.join(names)} calls together "
+            "to collect this phase's evidence."
         )
     first_tool = tool_calls[min(tool_calls)]
     try:
@@ -212,6 +215,25 @@ def tool_progress_text(tool_calls: dict[int, dict[str, object]], progress_langua
                 if progress_language == "ko"
                 else "Reading the repository instructions and required operational documents."
             )
+        try:
+            words = shlex.split(command)
+        except ValueError:
+            words = command.split()
+        action = words[0].rsplit("/", 1)[-1] if words else "command"
+        target = next((word for word in reversed(words[1:]) if not word.startswith("-")), ".")
+        if action in {"ls", "find", "rg"}:
+            return (
+                f"{target}의 파일 구조를 확인해 실제 평가 대상을 정합니다."
+                if progress_language == "ko"
+                else f"Inspecting {target}'s file structure to identify the actual "
+                "evaluation scope."
+            )
+        if action in {"cat", "sed", "head", "tail"}:
+            return (
+                f"{target}의 실제 내용을 읽어 문서의 주장과 구현 증거를 대조합니다."
+                if progress_language == "ko"
+                else f"Reading {target} to compare documented claims with implementation evidence."
+            )
     justification = arguments.get("justification") if isinstance(arguments, dict) else None
     if (
         isinstance(justification, str)
@@ -220,10 +242,11 @@ def tool_progress_text(tool_calls: dict[int, dict[str, object]], progress_langua
         and (progress_language != "ko" or re.search("[가-힣]", justification))
     ):
         return justification.strip()
+    name = str(first_tool.get("name") or "tool")
     return (
-        "다음 작업에 필요한 증거를 확인합니다."
+        f"{name} 실행 결과를 이번 단계의 판정 근거로 사용합니다."
         if progress_language == "ko"
-        else "Checking evidence needed for the next step."
+        else f"Using the {name} result as evidence for this phase's decision."
     )
 
 
@@ -632,7 +655,12 @@ async def responses_sse(
         ):
             raise ProgressOnlyResponse
         if tool_calls:
-            text = tool_progress_text(tool_calls, progress_language)
+            if (
+                not text.strip()
+                or is_progress_only(text)
+                or (progress_language == "ko" and not re.search("[가-힣]", text))
+            ):
+                text = tool_progress_text(tool_calls, progress_language)
             text_parts = [text]
         for content in text_parts:
             yield event(
