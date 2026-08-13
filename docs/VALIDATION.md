@@ -8924,3 +8924,28 @@ inputs. The first turn used 37,804 prompt tokens and emitted a proper
 tokens and 36 completion tokens, returned one final message with an 88-character
 Korean explanation, and emitted no further tool call. The gateway remained
 active with restart count zero.
+
+### Client workspace inspection recovery — 2026-08-13
+
+Codex session `667a0b4f-f231-460a-bba7-fb2e8b5a8dfb` carried the client cwd
+`/Users/choiyunhyuk/Documents/Playground` inside its environment context and
+advertised `exec_command`, but emitted a Bash code block rather than a function
+call. No filesystem access was attempted; the gateway's repository identity
+remained `external-api` because Codex did not send the optional workspace
+header. Client-owned tool execution does not require that path to exist on the
+gateway host.
+
+Production release `85b5361` requires tool evidence for `dgx-moa` workspace,
+project, repository, platform, directory, or folder inspection/evaluation
+requests until one successful client tool result exists. General questions and
+the Executor-only `dgx-moa-fast` compatibility path retain `tool_choice=auto`.
+Ruff and focused controller/API/streaming tests passed `416`; the complete suite
+passed `1103`.
+
+Production session `workspace-tool-required-20260813` replayed the actual Codex
+inputs. The first response emitted an `exec_command` function call for
+`ls -la /Users/choiyunhyuk/Documents/Playground`. After a tool result showing
+the `rust-mcu-ide` directory, the continuation emitted a second
+`exec_command` for a bounded file listing inside that directory instead of
+claiming it was unavailable. Durable events record two `tool_calls` finishes,
+and the gateway remained active with restart count zero.
