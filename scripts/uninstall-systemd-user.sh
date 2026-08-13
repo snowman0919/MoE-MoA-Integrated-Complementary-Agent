@@ -6,7 +6,7 @@ systemctl --user stop dgx-moa.target dgx-moa-resident.target dgx-moa-judge.targe
   dgx-moa-loopback.socket dgx-moa-loopback.service \
   dgx-moa-lan.socket dgx-moa-lan.service \
   dgx-moa-gateway.service dgx-moa-executor.service dgx-moa-planner.service \
-  dgx-moa-reviewer.service dgx-moa-reasoner.service dgx-moa-judge.service 2>/dev/null || true
+  dgx-moa-reviewer.service dgx-moa-judge.service 2>/dev/null || true
 systemctl --user disable dgx-moa-resident.target dgx-moa-loopback.socket \
   dgx-moa-lan.socket 2>/dev/null || true
 for unit in systemd/dgx-moa-*.service systemd/dgx-moa-*.socket systemd/dgx-moa*.target; do

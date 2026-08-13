@@ -8706,3 +8706,19 @@ After all corrections, the complete repository suite passed `1078/1078` in
 37.03 seconds with only the existing Starlette TestClient deprecation warning.
 Ruff, format check, strict mypy over 50 source files, shell syntax, systemd unit
 verification, the frozen-plan checksum, and `git diff --check` also passed.
+
+### Production Frontier spawn-path correction — 2026-08-13
+
+Three authenticated production requests recorded
+`FRONTIER_PROCESS_SPAWN_FAILED`. The running gateway process had no
+`/home/kotori9/.local/bin` entry in `PATH`; reproducing that exact environment
+raised `FileNotFoundError: [Errno 2]` for `codex`. The gateway unit now includes
+the installed Codex directory in its explicit service `PATH`.
+
+After unit verification, deployment, and a clean gateway restart, `/readyz`
+returned HTTP 200. An authenticated Frontier-required
+`dgx-moa-orchestrated` request returned HTTP 200 and recorded
+`frontier_collaboration_completed` for `gpt-5.6-sol` through the `primary`
+Codex OAuth profile: 15,663 prompt tokens, 702 completion tokens, and measured
+Frontier latency 24,886.194 ms. The request recorded no
+`FRONTIER_PROCESS_SPAWN_FAILED` event.

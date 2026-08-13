@@ -12,7 +12,6 @@ def test_required_systemd_units_exist() -> None:
         "dgx-moa-executor.service",
         "dgx-moa-planner.service",
         "dgx-moa-reviewer.service",
-        "dgx-moa-reasoner.service",
         "dgx-moa-judge.service",
         "dgx-moa-resident.target",
         "dgx-moa-judge.target",
@@ -40,7 +39,7 @@ def test_targets_and_services_are_mutually_exclusive() -> None:
     judge = (SYSTEMD / "dgx-moa-judge.service").read_text()
     assert "Conflicts=dgx-moa-judge.target" in resident
     assert "Conflicts=dgx-moa-resident.target" in judge_target
-    for role in ("executor", "planner", "reviewer", "reasoner"):
+    for role in ("executor", "planner", "reviewer"):
         service = (SYSTEMD / f"dgx-moa-{role}.service").read_text()
         assert "Conflicts=dgx-moa-judge.service dgx-moa-judge.target" in service
         assert f"dgx-moa-{role}.service" in judge
@@ -50,7 +49,6 @@ def test_targets_and_services_are_mutually_exclusive() -> None:
         assert "After=dgx-moa-executor.service" in service
         assert executor_wait in service
     assert "wait-model.sh reviewer" not in (SYSTEMD / "dgx-moa-planner.service").read_text()
-    assert "After=dgx-moa-planner.service" in (SYSTEMD / "dgx-moa-reasoner.service").read_text()
 
 
 def test_resident_target_requires_only_gateway_and_executor() -> None:
@@ -73,24 +71,14 @@ def test_executor_uses_qualified_cuda_allocator() -> None:
     assert "OOMPolicy=stop" in executor
 
 
-def test_reasoner_ollama_is_loopback_only_and_memory_bounded() -> None:
-    reasoner = (SYSTEMD / "dgx-moa-reasoner.service").read_text()
-    assert "Environment=OLLAMA_HOST=127.0.0.1:11435" in reasoner
-    assert "Environment=OLLAMA_CONTEXT_LENGTH=65536" in reasoner
-    assert "Environment=OLLAMA_NOPRUNE=true" in reasoner
-    assert "MemoryHigh=12G" in reasoner
-    assert "MemoryMax=16G" in reasoner
-    assert "MemorySwapMax=4G" in reasoner
-    assert "OOMPolicy=stop" in reasoner
-
-
 def test_profile_scripts_wait_for_executor_and_verify_all_resident_roles_stop() -> None:
     wait = (ROOT / "scripts/wait-profile.sh").read_text()
     verify_stopped = (ROOT / "scripts/verify-profile-stopped.sh").read_text()
 
-    assert "resident) ports=(19301); minimum=5368709120 ;;" in wait
+    assert "services=(executor planner reviewer)" in wait
+    assert "ports=(19301)" in wait
     assert (
-        "resident) services=(executor planner reviewer reasoner); ports=(19301 8102 8103 11435) ;;"
+        "resident) services=(executor planner reviewer); ports=(19301 8102 8103) ;;"
     ) in verify_stopped
 
 

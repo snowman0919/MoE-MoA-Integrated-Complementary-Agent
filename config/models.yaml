@@ -277,11 +277,11 @@ models:
     repository: ollama/Qwythos-v2-9B
     revision: Q4
     classification: external
-    base_url: http://127.0.0.1:11435
+    base_url: http://100.90.167.128:11434
     served_name: Qwythos-v2-9B:Q4
     destination: /home/kotori9/models/dgx-moa/reasoner
     provider: ollama
-    lifecycle_control: systemd
+    lifecycle_control: external
     ollama_keep_alive: -1
     context_length: 65536
     max_num_seqs: 1

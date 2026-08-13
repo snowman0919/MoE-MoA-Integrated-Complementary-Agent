@@ -273,6 +273,10 @@ Runtime은 request별 canonical evidence snapshot을 모델 호출 전에 생성
 - Evidence node와 source/trust/provenance
 - 역할별 model contribution과 아직 검증되지 않은 claim
 
+증거 평면은 한 요청당 하나의 canonical space로 통일되며, 운영 기준의 핵심 역할은
+7개(Reasoner, Planner, Executor, Reviewer, Judge, Frontier A, Frontier B)다. Overflow/Fallback
+Executor는 동적 대체 경로로서 동일 핵심 증거 공간의 7개 역할에 추가되지 않는다.
+
 Reasoner, Planner, Frontier A의 fan-out은 같은 `snapshot_id`를 공유하되 각 역할의
 allowlist로 만든 서로 다른 immutable projection을 동시에 받는다. Reviewer, Judge,
 Frontier B도 평가 시점에 생성된 같은 canonical snapshot 계열에서 직접 projection을
@@ -466,6 +470,8 @@ provenance와 함께 Executor에 전달하는 Runtime 작업이다.
 ## 6. ExecutionGraph
 
 Runtime Policy가 허용된 node와 conditional edge template에서 request별 ExecutionGraph를 결정론적으로 컴파일한다.
+템플릿은 정적 skeleton로 고정되며, 실제 실행은 런타임에서 요청 context/리스크/스케줄링
+스냅샷에 따라 request-created subgraph를 생성한다.
 
 Node 종류:
 

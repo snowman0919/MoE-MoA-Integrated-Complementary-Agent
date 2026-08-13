@@ -2,7 +2,7 @@
 Description=DGX MoA Mistral heavy judge
 PartOf=dgx-moa-judge.target
 Before=dgx-moa-judge.target
-Conflicts=dgx-moa-executor.service dgx-moa-planner.service dgx-moa-reviewer.service dgx-moa-reasoner.service dgx-moa-resident.target
+Conflicts=dgx-moa-executor.service dgx-moa-planner.service dgx-moa-reviewer.service dgx-moa-resident.target
 StartLimitIntervalSec=600
 StartLimitBurst=3
 

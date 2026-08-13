@@ -452,7 +452,7 @@ DGX_MOA_BIND_HOST=127.0.0.1
 DGX_MOA_BIND_PORT=19000
 DGX_MOA_LIFECYCLE_MODE=adaptive
 DGX_MOA_LIFECYCLE_POLL_SECONDS=30
-DGX_MOA_LIFECYCLE_UNIT_MAP='{"executor":"dgx-moa-dev-executor.service","planner":"dgx-moa-dev-planner.service","reviewer":"dgx-moa-dev-reviewer.service","reasoner":"dgx-moa-dev-reasoner.service"}'
+DGX_MOA_LIFECYCLE_UNIT_MAP='{"executor":"dgx-moa-dev-executor.service","planner":"dgx-moa-dev-planner.service","reviewer":"dgx-moa-dev-reviewer.service"}'
 ```
 
 `DGX_MOA_CONFIG` selects the development YAML. Set the isolated run directory
