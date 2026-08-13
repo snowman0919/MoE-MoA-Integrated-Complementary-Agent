@@ -241,6 +241,41 @@ def fingerprint(call: dict[str, Any]) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
+def is_workspace_objective(objective: str) -> bool:
+    normalized = objective.lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "codebase",
+            "repository",
+            "repo",
+            "project",
+            "platform",
+            "workspace",
+            "directory",
+            "folder",
+            "file",
+            "코드베이스",
+            "저장소",
+            "프로젝트",
+            "플랫폼",
+            "작업 디렉터리",
+            "폴더",
+            "파일",
+        )
+    ) and bool(
+        re.search(
+            r"\b(?:inspect|evaluate|audit|review|analyze|check|verify|implement|modify|fix|"
+            r"create|write|add|refactor)\b",
+            normalized,
+        )
+        or re.search(
+            r"(?:확인|평가|감사|검토|분석|점검|검증|구현|수정|변경|고쳐|생성|추가)",
+            normalized,
+        )
+    )
+
+
 def failure_family(observation: str) -> str:
     first = next(
         (
@@ -3862,7 +3897,10 @@ class Controller:
         evaluation_request = self.is_codebase_evaluation(state)
         evaluation_evidence_pending = self.requires_codebase_evaluation_evidence(state)
         evaluation_complete = evaluation_request and not evaluation_evidence_pending
-        evaluation_inventory_complete = bool(self.codebase_evaluation_inventories(state))
+        workspace_request = is_workspace_objective(effective_objective(state))
+        workspace_inventory_complete = bool(self.workspace_inventories(state))
+        workspace_inspection_complete = self.workspace_inspection_complete(state)
+        evaluation_inventory_complete = workspace_inventory_complete
         detailed_evaluation = any(
             marker in effective_objective(state).lower()
             for marker in ("detailed", "comprehensive", "in depth", "상세", "종합", "심층")
@@ -3903,6 +3941,24 @@ class Controller:
                 "implementation_tool_action_required",
                 {"reason": "change_validation_or_review_incomplete"},
             )
+        if not workspace_inventory_complete:
+            workspace_next_step = (
+                "Call exec_command now and obtain one complete tracked-file inventory with "
+                "`git -C TARGET ls-files` or `rg --files TARGET`; do not substitute a bare ls or "
+                "README read."
+            )
+        elif not workspace_inspection_complete:
+            workspace_next_step = (
+                "Use the recorded inventory and batch all independent source, test, and build-file "
+                "reads needed for the next decision into one bounded command. Do not list the "
+                "workspace again."
+            )
+        else:
+            workspace_next_step = (
+                "Use the recorded evidence now: implement and validate the requested change, or "
+                "return the result if no change was requested. Do not perform more broad "
+                "inspection."
+            )
         messages.insert(
             0,
             {
@@ -3938,7 +3994,11 @@ class Controller:
                                     "source plus available tests or build configuration named in "
                                     "that inventory. Do not list, search, or reread documentation."
                                     if evaluation_evidence_pending
-                                    else "Take one useful step"
+                                    else (
+                                        workspace_next_step
+                                        if workspace_request
+                                        else "Take one useful step"
+                                    )
                                 )
                             )
                         )
@@ -4065,7 +4125,7 @@ class Controller:
         return str(arguments.get("cmd", "") if isinstance(arguments, dict) else "").lower()
 
     @classmethod
-    def codebase_evaluation_inventories(cls, state: SessionState) -> list[dict[str, Any]]:
+    def workspace_inventories(cls, state: SessionState) -> list[dict[str, Any]]:
         successful = [item for item in state.tool_executions if item.get("exit_code") == 0]
         return [
             item
@@ -4101,7 +4161,7 @@ class Controller:
 
         command = cls.tool_execution_command
         successful = [item for item in state.tool_executions if item.get("exit_code") == 0]
-        inventories = cls.codebase_evaluation_inventories(state)
+        inventories = cls.workspace_inventories(state)
         if not inventories:
             return True
 
@@ -4162,6 +4222,21 @@ class Controller:
         return bool(
             (source_paths and not inspected(source_paths))
             or (verification_paths and not inspected(verification_paths))
+        )
+
+    @classmethod
+    def workspace_inspection_complete(cls, state: SessionState) -> bool:
+        successful = [item for item in state.tool_executions if item.get("exit_code") == 0]
+        inventories = cls.workspace_inventories(state)
+        if not inventories:
+            return False
+        inventory_index = successful.index(inventories[0])
+        return any(
+            re.search(
+                r"(?:^|&&|;|\n)\s*(?:cat|sed|head|tail|rg|grep|awk)\b",
+                cls.tool_execution_command(item),
+            )
+            for item in successful[inventory_index + 1 :]
         )
 
     def has_review_evidence(self, state: SessionState, metadata: dict[str, Any]) -> bool:
@@ -4318,6 +4393,27 @@ class Controller:
                 if counts[target] >= 3:
                     return True
         return False
+
+    def successful_inspection_fingerprints(self, state: SessionState) -> frozenset[str]:
+        """Successful exact reads since the latest file change."""
+        fingerprints: set[str] = set()
+        for execution in reversed(state.tool_executions):
+            if execution.get("exit_code") != 0:
+                continue
+            if self.tool_execution_changes_files(execution):
+                break
+            command = self.tool_execution_command(execution)
+            tool_name = str(execution.get("tool_name", ""))
+            if not re.search(
+                r"(?:^|&&|\|\||;|\n)\s*(?:cat|head|tail|ls|find|rg|grep|sed\s+-n|"
+                r"git(?:\s+-c\s+\S+)?\s+ls-files)\b",
+                command,
+            ) and tool_name not in {"read", "read_file", "list", "glob", "grep", "search_files"}:
+                continue
+            value = execution.get("argument_fingerprint")
+            if isinstance(value, str) and value:
+                fingerprints.add(value)
+        return frozenset(fingerprints)
 
     @staticmethod
     def tool_execution_changes_files(execution: dict[str, Any]) -> bool:

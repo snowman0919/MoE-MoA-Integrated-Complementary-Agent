@@ -16,6 +16,7 @@ from dgx_moa.streaming import (
     reported_usage,
     response_usage,
     responses_sse,
+    tool_call_fingerprint,
     tool_progress_text,
 )
 from dgx_moa.usage import SQLITE_MAX_INTEGER
@@ -312,6 +313,83 @@ async def test_responses_sse_allows_read_during_read_only_evaluation() -> None:
     response = b"".join(chunks)
     assert b"response.completed" in response
     assert b"git -C /tmp/rust-mcu-ide ls-files" in response
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_normalizes_inventory_for_general_workspace_task() -> None:
+    async def upstream():
+        payload = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-1",
+                                "function": {
+                                    "name": "exec_command",
+                                    "arguments": json.dumps({"cmd": "ls -la"}),
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+        yield f"data: {json.dumps(payload)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    response = b"".join(
+        [
+            chunk
+            async for chunk in responses_sse(
+                upstream(),
+                "dgx-moa",
+                objective="이 프로젝트 파일의 버그를 수정해",
+            )
+        ]
+    )
+    assert b"git -C . ls-files" in response
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_rejects_repeated_successful_inspection() -> None:
+    arguments = json.dumps({"cmd": "cat app.py"})
+
+    async def upstream():
+        payload = {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-2",
+                                "function": {
+                                    "name": "exec_command",
+                                    "arguments": arguments,
+                                },
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+        yield f"data: {json.dumps(payload)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    prior = tool_call_fingerprint({"name": "exec_command", "_arguments": arguments})
+    with pytest.raises(ProgressOnlyResponse, match="duplicate_tool_call"):
+        _ = [
+            chunk
+            async for chunk in responses_sse(
+                upstream(),
+                "dgx-moa",
+                successful_tool_fingerprints=frozenset({prior}),
+            )
+        ]
 
 
 @pytest.mark.asyncio
@@ -621,9 +699,10 @@ async def test_responses_sse_preserves_tool_progress_and_terminates_failures(cap
         for line in chunk.decode().splitlines()
         if line.startswith("data: ")
     ]
-    assert any(
-        event.get("delta") == "exec_command 실행 결과를 이번 단계의 판정 근거로 사용합니다."
+    assert not any(
+        event.get("delta")
         for event in tool_events
+        if event.get("type") == "response.output_text.delta"
     )
     assert all(
         event.get("delta") != "다음 작업에 필요한 증거를 확인합니다." for event in tool_events
@@ -762,12 +841,7 @@ async def test_responses_sse_maps_local_mcp_file_to_exec_command() -> None:
     )
 
     assert added["item"]["name"] == "exec_command"
-    progress_index = next(
-        index
-        for index, event in enumerate(events)
-        if event.get("delta") == "read_mcp_resource 실행 결과를 이번 단계의 판정 근거로 사용합니다."
-    )
-    assert progress_index < events.index(added)
+    assert not any(event.get("delta") for event in events[: events.index(added)])
     assert json.loads(done["arguments"]) == {"cmd": "cat -- '/Users/test/goal objective.md'"}
     assert all(event.get("item", {}).get("name") != "read_mcp_resource" for event in events)
 

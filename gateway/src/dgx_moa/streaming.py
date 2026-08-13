@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from .controller import fingerprint, is_workspace_objective
 from .usage import SQLITE_MAX_INTEGER
 
 LOGGER = logging.getLogger(__name__)
@@ -235,10 +236,10 @@ def is_read_only_evaluation(objective: str) -> bool:
     return evaluation and not requested_change
 
 
-def normalize_evaluation_inventory_call(
+def normalize_workspace_inventory_call(
     tool_calls: dict[int, dict[str, object]], objective: str
 ) -> None:
-    if not is_read_only_evaluation(objective) or len(tool_calls) != 1:
+    if not is_workspace_objective(objective) or len(tool_calls) != 1:
         return
     call = next(iter(tool_calls.values()))
     if call.get("name") != "exec_command":
@@ -256,6 +257,17 @@ def normalize_evaluation_inventory_call(
     workspace = targets[0] if targets else str(arguments.get("workdir") or ".")
     arguments["cmd"] = f"git -C {shlex.quote(workspace)} ls-files"
     call["_arguments"] = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+
+
+def tool_call_fingerprint(call: dict[str, object]) -> str:
+    return fingerprint(
+        {
+            "function": {
+                "name": str(call.get("name") or ""),
+                "arguments": str(call.get("_arguments") or ""),
+            }
+        }
+    )
 
 
 def has_read_only_evaluation_mutation(
@@ -402,6 +414,28 @@ def tool_progress_text(tool_calls: dict[int, dict[str, object]], progress_langua
         if progress_language == "ko"
         else f"Using the {name} result as evidence for this phase's decision."
     )
+
+
+def substantive_tool_progress(
+    tool_calls: dict[int, dict[str, object]], progress_language: str
+) -> str:
+    if len(tool_calls) > 1:
+        return tool_progress_text(tool_calls, progress_language)
+    call = next(iter(tool_calls.values()))
+    try:
+        arguments = json.loads(str(call.get("_arguments") or "{}"))
+    except ValueError:
+        return ""
+    command = arguments.get("cmd") if isinstance(arguments, dict) else None
+    if not isinstance(command, str):
+        return ""
+    if any(marker in command for marker in ("goal-objective", "AGENTS.md", "docs/STATE.md")):
+        return tool_progress_text(tool_calls, progress_language)
+    if "git" in command and "ls-files" in command:
+        return tool_progress_text(tool_calls, progress_language)
+    if "\n" in command or "&&" in command or ";" in command:
+        return tool_progress_text(tool_calls, progress_language)
+    return ""
 
 
 def batch_goal_prerequisite_read(
@@ -660,6 +694,8 @@ async def responses_sse(
     require_tool_action: bool = False,
     context_length: int | None = None,
     objective: str = "",
+    successful_tool_fingerprints: frozenset[str] = frozenset(),
+    workspace_inventory_complete: bool = False,
 ) -> AsyncGenerator[bytes, None]:
     """Translate Chat Completions SSE into Responses text and function-call events."""
     response_id = f"resp_{uuid.uuid4().hex}"
@@ -795,7 +831,21 @@ async def responses_sse(
                         item["_arguments"] = str(item["_arguments"]) + arguments
         if not terminal_seen:
             raise ValueError("upstream stream ended before terminal marker")
-        normalize_evaluation_inventory_call(tool_calls, objective)
+        normalize_workspace_inventory_call(tool_calls, objective)
+        if tool_calls and any(
+            tool_call_fingerprint(call) in successful_tool_fingerprints
+            for call in tool_calls.values()
+        ):
+            raise ProgressOnlyResponse("duplicate_tool_call")
+        if workspace_inventory_complete and any(
+            call.get("name") == "exec_command"
+            and (
+                "ls-files" in str(call.get("_arguments") or "")
+                or "rg --files" in str(call.get("_arguments") or "")
+            )
+            for call in tool_calls.values()
+        ):
+            raise ProgressOnlyResponse("duplicate_tool_call")
         if batch_goal_prerequisite_read(tool_calls, goal_prerequisites):
             LOGGER.info(
                 "responses_goal_prerequisites_batched session_id=%s count=%d",
@@ -827,7 +877,7 @@ async def responses_sse(
                 or has_internal_protocol_leak(text)
                 or (progress_language == "ko" and not re.search("[가-힣]", text))
             ):
-                text = tool_progress_text(tool_calls, progress_language)
+                text = substantive_tool_progress(tool_calls, progress_language)
             text_parts = [text]
         for content in text_parts:
             yield event(
