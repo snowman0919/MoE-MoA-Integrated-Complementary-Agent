@@ -2018,6 +2018,7 @@ def create_app(
         execution_contradicted_evidence_ids: list[str] = []
         execution_projection_attempted = False
         active_stage = "request"
+        disconnect_watcher: asyncio.Task[None] | None = None
 
         def record_request_timing(state: Any) -> None:
             nonlocal timing_recorded
@@ -2490,6 +2491,8 @@ def create_app(
                         role_failures=degraded_roles,
                     )
             finally:
+                if disconnect_watcher is not None:
+                    disconnect_watcher.cancel()
                 request.app.state.lifecycle_store.release_leases(
                     (*stream_lease_ids, *active_lease_ids)
                 )
@@ -2497,6 +2500,21 @@ def create_app(
                     request.app.state.executor_scheduler.release(usage_request_id)
                 active_lease_ids = ()
                 stream_lease_ids = ()
+
+        if not body.stream:
+            owner_task = asyncio.current_task()
+
+            async def cancel_on_disconnect() -> None:
+                while not terminal_finalized:
+                    if await request.is_disconnected():
+                        if owner_task is not None:
+                            owner_task.cancel()
+                        return
+                    await asyncio.sleep(0.1)
+
+            disconnect_watcher = asyncio.create_task(
+                cancel_on_disconnect(), name=f"client-disconnect-{usage_request_id}"
+            )
 
         if loading_record is not None:
             finalize_request(

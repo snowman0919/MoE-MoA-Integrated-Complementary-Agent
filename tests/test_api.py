@@ -2221,6 +2221,58 @@ async def test_nonstream_cancellation_releases_active_lease(
 
 
 @pytest.mark.asyncio
+async def test_nonstream_disconnect_cancels_work_and_releases_active_lease(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    entered = asyncio.Event()
+    disconnected = asyncio.Event()
+
+    async def blocked(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        entered.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def receive() -> dict[str, str]:
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    stub_provider.complete = blocked  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        endpoint = chat_endpoint(app)
+        pending = asyncio.create_task(
+            endpoint(
+                ChatRequest(
+                    model="dgx-moa-fast",
+                    messages=[{"role": "user", "content": "work"}],
+                ),
+                Request({"type": "http", "app": app}, receive),
+                x_session_id="disconnected-nonstream",
+                x_runtime_channel=None,
+                x_trace_origin=None,
+                x_task_id=None,
+                x_workspace_path=None,
+                x_workspace_id=None,
+                x_repository_branch=None,
+                x_repository_commit=None,
+                x_dirty_state=None,
+            )
+        )
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        assert app.state.lifecycle_store.get("executor").active_request_count == 1
+
+        disconnected.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(pending, timeout=1)
+
+        assert app.state.lifecycle_store.get("executor").active_request_count == 0
+        assert_usage(app, "cancelled")
+        assert_terminal_evidence(settings, app.state.store, "disconnected-nonstream", "cancelled")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [False, True])
 async def test_reviewer_evaluation_guard_is_scoped_to_the_real_review_call(
     settings,
