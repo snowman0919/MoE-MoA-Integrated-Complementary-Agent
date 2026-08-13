@@ -557,6 +557,10 @@ async def test_responses_sse_maps_local_mcp_file_to_exec_command() -> None:
     [
         ({"cmd": "pwd", "justification": "작업 공간을 확인합니다."}, "작업 공간을 확인합니다."),
         (
+            {"cmd": "ls -la"},
+            "현재 작업 디렉터리의 파일 구조를 확인해 실제 평가 대상을 정합니다.",
+        ),
+        (
             {"cmd": "cat AGENTS.md docs/STATE.md docs/OPERATIONS.md"},
             "저장소 지침과 필수 운영 문서를 확인합니다.",
         ),

@@ -222,6 +222,13 @@ def tool_progress_text(tool_calls: dict[int, dict[str, object]], progress_langua
         action = words[0].rsplit("/", 1)[-1] if words else "command"
         target = next((word for word in reversed(words[1:]) if not word.startswith("-")), ".")
         if action in {"ls", "find", "rg"}:
+            target = (
+                "현재 작업 디렉터리"
+                if progress_language == "ko" and target in {".", "./"}
+                else "the current workspace"
+                if target in {".", "./"}
+                else target
+            )
             return (
                 f"{target}의 파일 구조를 확인해 실제 평가 대상을 정합니다."
                 if progress_language == "ko"
