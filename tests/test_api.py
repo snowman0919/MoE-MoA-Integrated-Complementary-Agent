@@ -3447,6 +3447,91 @@ def test_disabled_local_executor_routes_low_risk_request_to_flash(
     assert stub_provider.calls == []
 
 
+def test_disabled_local_executor_routes_high_risk_request_to_frontier(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    frontier_config = settings.state_db.parent / "disabled-executor-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "frontier_enabled": True,
+            "frontier_config": frontier_config,
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            },
+        }
+    )
+
+    class Flash:
+        async def available(self) -> bool:
+            return True
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=FakeLifecycleDriver({"executor": "inactive"}),
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
+        overflow_executor=Flash(),  # type: ignore[arg-type]
+    )
+
+    async def remote_execute(request, correlation_id):  # type: ignore[no-untyped-def]
+        del request, correlation_id
+        return {
+            "model": "gpt-5.6-sol",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "FRONTIER_FALLBACK_OK"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 1},
+            "provider_provenance": {"provider": "primary"},
+        }
+
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        generation = app.state.lifecycle_store.get("executor").generation
+        for index in range(3):
+            app.state.lifecycle_store.record_failure(
+                "executor",
+                "operator_disabled",
+                f"operator_disabled_{index}",
+                generation,
+                failure_limit=3,
+                failure_window_seconds=900,
+            )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "high-risk-frontier-fallback",
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "secure change"}],
+                "metadata": {"authentication": True},
+            },
+        )
+        events = app.state.store.events("high-risk-frontier-fallback")
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "FRONTIER_FALLBACK_OK"
+    assert stub_provider.calls == []
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
+    assert selected["payload"] == {
+        "provider": "frontier",
+        "routing_reason": "local_unavailable_high_risk",
+    }
+
+
 def test_observe_lifecycle_records_state_without_blocking_or_controlling(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -5856,6 +5941,9 @@ def test_auth_disabled_allows_inference_headers_or_none(
         ("POST", "/admin/profile/judge"),
         ("POST", "/admin/profile/restore"),
         ("GET", "/v1/admin/runtime-status"),
+        ("GET", "/v1/admin/executor"),
+        ("POST", "/v1/admin/executor/on"),
+        ("POST", "/v1/admin/executor/off"),
         ("POST", "/v1/admin/observation/nonces"),
         ("POST", "/v1/admin/observation/commands"),
         ("GET", "/v1/admin/training/candidates/missing"),
