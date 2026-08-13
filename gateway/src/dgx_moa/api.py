@@ -5658,23 +5658,54 @@ def create_app(
 
     @app.get("/v1/admin/api-keys", dependencies=[Depends(admin_auth)])
     async def api_key_list(request: Request) -> JSONResponse:
+        local_roles = ("reasoner", "executor", "planner", "reviewer", "judge")
         model_catalog = [
             {
                 "role": role,
                 "served_name": configured.models[role].served_name,
                 "repository": configured.models[role].repository,
             }
-            for role in ("executor", "planner", "reviewer")
+            for role in local_roles
             if role in configured.models
         ]
-        frontier_config = request.app.state.frontier_config
-        if frontier_config is not None:
+        if request.app.state.specialists is not None:
+            model_catalog = [
+                item for item in model_catalog if item["role"] not in {"planner", "reviewer"}
+            ]
+            model_catalog.extend(
+                {
+                    "role": role,
+                    "served_name": configured.specialist_routing.models[role],
+                    "repository": "OpenCode Go",
+                }
+                for role in ("planner", "reviewer")
+            )
+        if request.app.state.remote_judge is not None:
+            model_catalog = [item for item in model_catalog if item["role"] != "judge"]
             model_catalog.append(
                 {
-                    "role": "frontier",
+                    "role": "judge",
+                    "served_name": configured.remote_judge.model,
+                    "repository": "OpenCode Go",
+                }
+            )
+        if configured.executor_scheduling.enabled:
+            model_catalog.append(
+                {
+                    "role": "executor",
+                    "served_name": configured.executor_scheduling.flash_model,
+                    "repository": "OpenCode Go fallback",
+                }
+            )
+        frontier_config = request.app.state.frontier_config
+        if frontier_config is not None:
+            model_catalog.extend(
+                {
+                    "role": role,
                     "served_name": frontier_config.model,
                     "repository": "Codex OAuth",
                 }
+                for role in ("reasoner", "frontier", "executor")
             )
         return key_response(
             {
