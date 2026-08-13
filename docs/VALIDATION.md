@@ -9183,3 +9183,36 @@ production listener/state는 변경하지 않았다. 다음 replay는 launcher �
 process에만 물리 검증 대상 OpenCode Planner/Reviewer credential을 제공하고 client Docker에는
 core environment와 client별 evaluation key만 전달한다. Production DB, `.env`, Hermes
 credential은 mount하거나 전달하지 않는다.
+
+Codex coding batch v3는 새 isolated DB와 loopback `127.0.0.1:19002` gateway에서
+`--specialists-enabled`를 명시해 v2의 failed task를 replay했다. Evaluation key는 models
+`200`, admin/metrics `403` 경계를 통과했다. Client Docker는 pinned image와 Git/ripgrep,
+Codex binary, workspace/state만 mount했고 `DGX_MOA_API_KEY`만 전달받았다. Production DB와
+provider credential은 전달하거나 mount하지 않았다.
+
+`rate-limiter` client는 `1091.024`초 뒤 exit `0`과 Korean terminal을 반환했고 공개 unit
+test, source-only change, test immutability와 tool evidence를 통과했다. 그러나 hidden validator는
+생성 코드의 `float.is_finite()`에서 `AttributeError`로 실패했다. Client log에는 두 번의
+`stream disconnected before completion` reconnect가 남아 `no_bad_terminal=false`였다.
+따라서 deterministic verdict는 `failed`다. 다음 unseen task는 시작하지 않았다.
+
+v2의 Reviewer availability hypothesis 자체는 통과했다. OpenCode Go Reviewer는 remote provider로
+invocation `21`건을 모두 completed했고 review cycle `12`, structured retry `9`를 기록했다.
+하지만 같은 diff에서 rejection과 progress retry `10`, stream abort `11`이 반복됐고 hidden defect는
+수정되지 않았다. Raw remote review output은 Git에 기록하지 않았다. 현재 분류는 생성 결함
+`MODEL_CAPABILITY`, review→correction 비수렴 `LOOP_CONVERGENCE/TOOL_SEMANTICS` 후보다. 아직
+한 task/client의 증거이므로 Runtime 수정은 보류하고 별도 client/task 재현 기준을 유지한다.
+
+이 epoch의 물리 Role Context 집계는 다음과 같다. Executor projection `31`건은 snapshot
+`11093..48055` bytes, projection `11860..49580`, rendered prompt `19796..57852`, provider
+prompt tokens 합계 `233476` (`6718..18139`)다. Reasoner `7`건은 각각
+`10289..40361`, `10953..42357`, `14315..46119`, 합계 `58362` (`3440..13287`)다.
+Reviewer projection `12`건은 각각 `61020..75394`, `54080..63098`,
+`60755..69868`; provider invocation `21`건의 prompt token 합계는 `245064`
+(`3913..18662`)다. 모든 projection은 objective/original input/request constraint와 해당 시점의
+tool/failure evidence를 포함했고 dropped evidence는 `0`이었다.
+
+Evaluation key는 종료 전에 revoke `200`, 이후 models `401`을 반환했다. Isolated DB record는
+kind `evaluation`, plaintext length `0`, hash length `64`, revoked true이고 DB/WAL에서 raw key가
+검출되지 않았다. Gateway exit는 `0`, port `19002`와 container는 해제됐고 production health는
+`200`, production checkout은 clean `main@59bcb54e5`를 유지했다.
