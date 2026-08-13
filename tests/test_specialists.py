@@ -400,4 +400,6 @@ async def test_opencode_specialist_uses_role_model_and_drops_tools(
         transport=httpx.MockTransport(respond),
     )
     await reviewer.complete({"messages": [], "thinking": {"type": "enabled"}}, timeout_seconds=5)
-    assert json.loads(requests[1].content)["thinking"] == {"type": "disabled"}
+    reviewer_body = json.loads(requests[1].content)
+    assert "thinking" not in reviewer_body
+    assert reviewer_body["reasoning_effort"] == "none"
