@@ -3205,8 +3205,7 @@ def create_app(
                 not executor_remote
                 and request.app.state.frontier is not None
                 and any(
-                    "Process running with session ID "
-                    in str(execution.get("stdout_summary", ""))
+                    "Process running with session ID " in str(execution.get("stdout_summary", ""))
                     for execution in state.tool_executions[-1:]
                 )
             )

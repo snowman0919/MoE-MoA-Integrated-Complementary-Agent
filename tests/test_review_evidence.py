@@ -41,8 +41,6 @@ def test_failed_validation_wrapper_is_not_review_evidence() -> None:
         {
             "exit_code": 0,
             "failure_class": "NONEXISTENT_PATH",
-            "normalized_arguments": {
-                "cmd": "timeout 120s python -m unittest discover -s tests -v"
-            },
+            "normalized_arguments": {"cmd": "timeout 120s python -m unittest discover -s tests -v"},
         }
     )

@@ -115,9 +115,7 @@ def is_successful_validation_execution(execution: dict[str, Any]) -> bool:
         except ValueError:
             arguments = {}
     command = (
-        arguments.get("cmd") or arguments.get("command")
-        if isinstance(arguments, dict)
-        else None
+        arguments.get("cmd") or arguments.get("command") if isinstance(arguments, dict) else None
     )
     return (
         execution.get("exit_code") == 0
