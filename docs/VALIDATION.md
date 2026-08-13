@@ -8829,3 +8829,10 @@ busy, timeout, and provider-unavailable failures across the configured
 unavailable, ordinary orchestration continues with available roles at low
 derived confidence; only an explicit policy `frontier_required=true` remains
 fail-closed. Ruff and format checks passed, and the full suite passed `1096`.
+
+The first public post-deploy canary then exposed an independent Planner HTTP
+failure: the older controller degraded optional malformed Planner output but
+still propagated optional transport and timeout failures. That shared boundary
+now degrades every optional Planner failure, records `planner_degraded`, and
+continues to the Executor; high-risk mandatory Planner requests remain
+fail-closed. Focused API tests passed `7`, and the complete suite passed `1097`.

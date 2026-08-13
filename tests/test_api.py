@@ -5181,18 +5181,30 @@ def test_stage_timeout_returns_exact_typed_error(
                 "metadata": metadata,
             },
         )
-        trace = assert_terminal_evidence(settings, client.app.state.store, session_id, "timed_out")
-        usage = assert_usage(client.app, "timed_out")
+        expected_status = "completed" if stage == "planner" else "timed_out"
+        trace = assert_terminal_evidence(
+            settings, client.app.state.store, session_id, expected_status
+        )
+        usage = assert_usage(client.app, expected_status)
 
-    assert response.status_code == 504
-    assert response.json()["error"] == {
-        "message": f"{stage} timed out",
-        "type": "timeout_error",
-        "code": f"{stage}_timeout",
-        "param": None,
-    }
-    assert trace["final_status"] == "failed"
-    assert usage.retryable_failure_class == f"{stage}_timeout"
+    if stage == "planner":
+        assert response.status_code == 200
+        assert trace["final_status"] == "degraded"
+        assert usage.retryable_failure_class is None
+        assert any(
+            event["event_type"] == "planner_degraded"
+            for event in client.app.state.store.events(session_id)
+        )
+    else:
+        assert response.status_code == 504
+        assert response.json()["error"] == {
+            "message": f"{stage} timed out",
+            "type": "timeout_error",
+            "code": f"{stage}_timeout",
+            "param": None,
+        }
+        assert trace["final_status"] == "failed"
+        assert usage.retryable_failure_class == f"{stage}_timeout"
 
 
 def test_orchestrated_assistant_answer_without_evidence_skips_review(
