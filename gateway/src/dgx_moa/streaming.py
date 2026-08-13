@@ -255,14 +255,27 @@ def normalize_workspace_inventory_call(
     full = {
         index
         for index, (_, words) in parsed.items()
-        if (words[0].rsplit("/", 1)[-1] == "rg" and "--files" in words)
+        if (
+            words[0].rsplit("/", 1)[-1] == "rg"
+            and "--files" in words
+            and "--glob" not in words
+            and "-g" not in words
+        )
         or (words[0].rsplit("/", 1)[-1] == "git" and "ls-files" in words)
     }
     bare = [
         index
         for index, (_, words) in parsed.items()
-        if words[0].rsplit("/", 1)[-1] == "ls"
-        and len([word for word in words[1:] if not word.startswith("-")]) <= 1
+        if (
+            words[0].rsplit("/", 1)[-1] == "ls"
+            and len([word for word in words[1:] if not word.startswith("-")]) <= 1
+        )
+        or (words[0].rsplit("/", 1)[-1] == "find" and "-type" in words and "f" in words)
+        or (
+            words[0].rsplit("/", 1)[-1] == "rg"
+            and "--files" in words
+            and ("--glob" in words or "-g" in words)
+        )
     ]
     if full:
         for index in bare:
@@ -271,7 +284,11 @@ def normalize_workspace_inventory_call(
         keep = bare[0]
         arguments, words = parsed[keep]
         targets = [word for word in words[1:] if not word.startswith("-")]
-        workspace = targets[0] if targets else str(arguments.get("workdir") or ".")
+        workspace = (
+            targets[0]
+            if words[0].rsplit("/", 1)[-1] == "ls" and targets
+            else str(arguments.get("workdir") or ".")
+        )
         arguments["cmd"] = f"git -C {shlex.quote(workspace)} ls-files"
         tool_calls[keep]["_arguments"] = json.dumps(
             arguments, ensure_ascii=False, separators=(",", ":")
