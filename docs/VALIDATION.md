@@ -8836,3 +8836,7 @@ still propagated optional transport and timeout failures. That shared boundary
 now degrades every optional Planner failure, records `planner_degraded`, and
 continues to the Executor; high-risk mandatory Planner requests remain
 fail-closed. Focused API tests passed `7`, and the complete suite passed `1097`.
+Production release `f28f879` then returned exact `PUBLIC_HARNESS_OK` through
+`https://aipi.kotori9.dev/v1/responses` with terminal `response.completed` for
+session `prod-public-harness-final-v2-20260813`. The gateway remained active
+with restart count zero.
