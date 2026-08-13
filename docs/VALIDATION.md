@@ -9153,3 +9153,18 @@ invocation `1`이 기록됐다. 네 client는 각각 다른 5분 evaluation key�
 `provider_prompt_tokens`를 기록했다. `19001` listener와 raw client artifact는 제거됐고
 production checkout/hash와 `:9000` health는 변하지 않았다. 이 batch는 protocol/key
 lifecycle smoke이며 아직 3~5개 coding-task batch 결과가 아니다.
+
+Codex coding batch v1의 첫 `rate-limiter` task는 Runtime verdict 전에 중단했다.
+Docker image `python:3.11-slim`에 `git`과 `rg`가 없어 required inventory call이
+반복해서 exit `127`이 됐고 recovery 중 잘못된 workspace 철자까지 생성됐다. 분류는
+`HARNESS`; 다른 네 task는 시작하지 않았다. Interrupt 뒤 exact child/container를
+종료했고, gateway가 먼저 내려가 admin revoke를 수행할 수 없어서 stopped isolated DB의
+hash-only key를 직접 revoke했다. Production listener/state에는 접근하지 않았다.
+
+수정 hypothesis는 "fixture가 명시한 Git/ripgrep tool contract를 제공하면 같은 task가
+정상 inventory→source/test→implementation→validator 경로로 진행한다"다. 새 image를
+빌드하거나 내려받지 않고 기존 local quality image
+`sha256:324178f308d1fd4385a0ab8b3f5a9d1ba68f831afc7139f249eade9dfaf385b5`
+를 pin했다. 이 image의 Git `2.47.3`을 확인했고 pinned Codex ripgrep `15.2.0` binary를
+read-only `/tools/rg`로 mount했다. 다음 epoch는 새 fixture hash/run ID에서 failed task를
+먼저 replay한다.

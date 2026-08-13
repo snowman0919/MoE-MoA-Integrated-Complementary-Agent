@@ -23,10 +23,11 @@ from typing import Any
 HARNESSES = ("baseline", "opencode", "codex", "hermes")
 CORE_ENV = ("HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "SHELL", "TERM", "USER")
 TEST_COMMAND = (sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v")
-DOCKER_IMAGE = "python:3.11-slim"
+DOCKER_IMAGE = "sha256:324178f308d1fd4385a0ab8b3f5a9d1ba68f831afc7139f249eade9dfaf385b5"
 CODEX_BINARY = Path(
     "/home/kotori9/.codex/packages/standalone/releases/0.146.0-aarch64-unknown-linux-musl/bin/codex"
 )
+RG_BINARY = CODEX_BINARY.parent.parent / "codex-path/rg"
 OPENCODE_BINARY = Path("/home/kotori9/.opencode/bin/opencode")
 OPENCODE_ISOLATION_ENV = {
     "OPENCODE_DISABLE_AUTOUPDATE": "1",
@@ -1067,6 +1068,8 @@ def docker_command(
         f"{workspace}:{workspace}:{workspace_mode}",
         "--volume",
         f"{state}:/state:rw",
+        "--volume",
+        f"{RG_BINARY}:/tools/rg:ro",
         "--env",
         "HOME=/state",
         "--env",

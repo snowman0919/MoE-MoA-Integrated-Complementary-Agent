@@ -149,6 +149,8 @@ def test_docker_command_has_stable_unique_name(tmp_path: Path) -> None:
     assert len(name) == len("moa-qm-") + 20
     state_mount = next(value for value in command if value.endswith(":/state:rw"))
     assert state_mount.startswith("/")
+    assert str(GLOBALS["RG_BINARY"]) + ":/tools/rg:ro" in command
+    assert GLOBALS["DOCKER_IMAGE"].startswith("sha256:324178f308d1")
 
 
 def test_hermes_profile_contains_only_isolated_gateway(tmp_path: Path) -> None:
