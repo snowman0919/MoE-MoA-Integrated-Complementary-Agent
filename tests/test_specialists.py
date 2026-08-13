@@ -192,6 +192,28 @@ async def test_ready_local_context_overflow_routes_remote_before_dispatch() -> N
 
 
 @pytest.mark.asyncio
+async def test_stale_ready_local_routes_remote_when_context_probe_is_unavailable() -> None:
+    records = TransitioningRecords(planner=record("ready"))
+    local = ContextAwarePlannerProvider(None)
+    remote = MockPlannerProvider({"provider": "remote"})
+    router = SpecialistRouter(
+        config(),
+        local={"planner": local, "reviewer": MockReviewerProvider({})},
+        remote={"planner": remote, "reviewer": MockReviewerProvider({})},
+        lifecycle_store=records,
+    )
+
+    response, decision = await router.complete(
+        "planner", {}, request_id="stale", revision="rev", timeout_seconds=5
+    )
+
+    assert response == {"provider": "remote"}
+    assert decision["routing_reason"] == "local_readiness_unverified"
+    assert records.records["planner"].state == "failed"
+    assert not local.requests
+
+
+@pytest.mark.asyncio
 async def test_local_only_context_overflow_fails_closed() -> None:
     local = ContextAwarePlannerProvider(False)
     remote = MockPlannerProvider({"provider": "remote"})

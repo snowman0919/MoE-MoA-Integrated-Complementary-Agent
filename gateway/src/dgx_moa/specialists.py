@@ -171,6 +171,10 @@ class _MockProvider:
             raise self.response
         return self.response
 
+    async def context_fits(self, request: dict[str, Any], *, timeout_seconds: float) -> bool:
+        del request, timeout_seconds
+        return True
+
 
 class MockPlannerProvider(_MockProvider, PlannerProvider):
     pass
@@ -416,19 +420,26 @@ class SpecialistRouter:
             <= cost_adjusted_remote + self.config.local_preference_margin_seconds
         )
         local_context_fits: bool | None = None
+        local_context_probed = use_local or (local_only and local_available)
         if use_local or (local_only and local_available):
             local_context_fits = await self.local[role].context_fits(
                 request,
                 timeout_seconds=min(timeout_seconds, 10),
             )
-            if local_context_fits is False:
+            if local_context_fits is not True:
                 use_local = False
+                if local_context_fits is None:
+                    self._mark_local_failed(
+                        role, SpecialistUnavailable("local context probe unavailable")
+                    )
         if local_only:
             if not local_available:
                 self._schedule_warmup(role, revision, request_id, "local_only_cold_miss")
                 raise SpecialistUnavailable(f"required local {role} is not ready")
             if local_context_fits is False:
                 raise SpecialistUnavailable(f"required local {role} context is insufficient")
+            if local_context_fits is None:
+                raise SpecialistUnavailable(f"required local {role} readiness is unverified")
             use_local = True
         lease_ids: tuple[str, ...] = ()
         if use_local and self.acquire_local is not None:
@@ -451,6 +462,8 @@ class SpecialistRouter:
             if local_only
             else "local_context_exceeded"
             if local_context_fits is False
+            else "local_readiness_unverified"
+            if local_context_probed and local_context_fits is None
             else "local_ready"
             if use_local
             else "local_busy"
