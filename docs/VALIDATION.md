@@ -9229,3 +9229,21 @@ inspection과 달리 production lifecycle이 adaptive라는 문구를 제거하�
 unit map, external Reasoner tailnet endpoint와 gated production override 차이를 audit finding으로
 명시했다. Historical lifecycle/model-path evidence는 삭제하지 않았다. 문서 계약 focused test
 `10`건과 Ruff가 통과했다.
+
+OpenCode coding batch v1은 별도 key/DB와 `127.0.0.1:19003`에서 같은
+`rate-limiter`를 replay했다. OpenCode `1.17.18`은 `155.067`초, exit `0`, source-only change,
+public unit test와 tool evidence를 기록했다. 그러나 positive `window_seconds`를 int로 제한해
+hidden float validator가 `ValueError`로 실패했고 terminal contract도 실패했다. Remote Reviewer는
+한 번 completed해 `rejected`, finding `2`, required correction `2`를 반환했지만 수정 action은
+실행되지 않았다. Raw provider output은 Git에 기록하지 않았다. Key는 revoke `200`, 이후 `401`,
+plaintext `0`, hash `64`, raw DB 검출 `false`; gateway/container/port는 정상 종료·해제됐고
+production health와 checkout은 변하지 않았다.
+
+Codex v3와 OpenCode v1은 서로 다른 model defect를 만들었지만 모두 public test 뒤 Reviewer가
+reject한 결함을 client tool correction으로 전환하지 못했다. 두 client 재현으로 공통 분류를
+`LOOP_CONVERGENCE/TOOL_SEMANTICS`로 확정한다. 수정 전 hypothesis는 Chat common core가
+Reviewer rejection과 available client tools를 관측하면 client-visible terminal을 반환하지 않고
+동일 Executor에 reviewer finding을 포함한 bounded correction tool call을 한 번 강제하면 두
+protocol 모두 다음 tool-result continuation으로 진행한다는 것이다. 대상은 `gateway/src/dgx_moa/api.py`
+Chat review boundary, 기대 효과는 rejected review의 실제 correction handoff, regression risk는
+duplicate tool call, streaming shape, repeated review다. rollback commit은 `709340987`이다.
