@@ -8966,3 +8966,31 @@ Ruff and focused API/streaming tests passed `308`; the complete suite passed
 `response.completed`; its Korean two-sentence answer contained zero Han,
 hiragana, or katakana characters outside code. The gateway remained active
 with restart count zero.
+
+### Codebase evaluation evidence recovery — 2026-08-13
+
+Codex session `419d915b-9788-4e3e-9f1d-4c07d8c9b871` completed a platform
+evaluation after directory listings and a README read. Its filtered `find`
+returned only `README.md`, but the Executor treated README claims as verified
+implementation and produced a positive functionality assessment without source,
+build, or test evidence.
+
+Production release `751f586` derives response language from the current user
+objective while keeping role reasoning in English. For codebase evaluation it
+now requires a bounded inventory or target-directory traversal plus reads of
+discovered implementation and available tests or build configuration. README
+alone cannot satisfy the completion gate; a genuinely documentation-only
+inventory permits only an explicit implementation-unverified conclusion.
+Client-visible progress guidance is bounded to five to seven short lines unless
+the user explicitly requests a detailed final report.
+
+The complete suite passed `1109`. Authenticated production session
+`codebase-evidence-canary-v3-20260813` used synthetic client-workspace results
+to isolate the orchestration contract. It recorded nine successful
+`exec_command` executions: three bounded directory listings, `rg --files`, and
+parallel reads of README, Cargo configuration, two Rust sources, and one test.
+The runtime did not finalize after README; it finalized only after source and
+verification evidence, with `finish_reason=stop`, a 613-character Korean
+assessment, one direct Qwythos Reasoner completion, and no language retry or
+Frontier fallback. The gateway remained bound to `0.0.0.0:9000`, active with
+restart count zero.
