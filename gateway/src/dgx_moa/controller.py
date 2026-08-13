@@ -2384,7 +2384,10 @@ class Controller:
             "for a detailed report, keep the final evaluation below 1,200 characters and cover "
             "only verified implementation, documented-but-unverified claims, observed defects, "
             "and the verdict. Do not add speculative limitations, future plans, thanks, offers "
-            "for more work, a second English summary, or internal response tags."
+            "for more work, a second English summary, or internal response tags. Treat the "
+            "evaluation as read-only unless the objective explicitly requests changes: do not "
+            "create projects or files, install dependencies, stash or clean user changes, or "
+            "delete anything merely to test the codebase."
             if role == "executor"
             else ""
         )
@@ -3858,6 +3861,7 @@ class Controller:
         messages = compress_messages(body["messages"], self.settings.limits)
         evaluation_request = self.is_codebase_evaluation(state)
         evaluation_evidence_pending = self.requires_codebase_evaluation_evidence(state)
+        evaluation_complete = evaluation_request and not evaluation_evidence_pending
         detailed_evaluation = any(
             marker in effective_objective(state).lower()
             for marker in ("detailed", "comprehensive", "in depth", "상세", "종합", "심층")
@@ -3867,7 +3871,16 @@ class Controller:
         implementation_complete = self.implementation_completion_ready(
             state, dict(request.get("metadata", {}))
         )
-        if implementation_complete and (tool_continuation or progress_retry):
+        if evaluation_complete and (tool_continuation or progress_retry):
+            body.pop("tools", None)
+            body.pop("tool_choice", None)
+            available_tools = ()
+            self.store.event(
+                state.session_id,
+                "completed_evaluation_tools_suppressed",
+                {"reason": "inventory_source_and_validation_evidence_complete"},
+            )
+        elif implementation_complete and (tool_continuation or progress_retry):
             body.pop("tools", None)
             body.pop("tool_choice", None)
             available_tools = ()
@@ -3903,9 +3916,12 @@ class Controller:
                         + ", ".join(pending_prerequisites)
                         if pending_prerequisites
                         else (
-                            "Implementation, validation, and required review evidence "
-                            "are complete. "
-                            "Return the concise final result now; do not call more tools."
+                            "The requested evaluation evidence is complete. Return the concise "
+                            "evidence-based verdict now; do not call more tools."
+                            if evaluation_complete
+                            else "Implementation, validation, and required review evidence "
+                            "are complete. Return the concise final result now; do not call "
+                            "more tools."
                             if implementation_complete
                             else (
                                 "Call exec_command now. If an unfiltered inventory is absent, use "
@@ -4053,7 +4069,12 @@ class Controller:
             and " -g " not in command(item)
             and (
                 "rg --files" in command(item)
-                or "git ls-files" in command(item)
+                or bool(
+                    re.search(
+                        r"(?:^|&&|;|\n)\s*git(?:\s+-c\s+\S+)?\s+ls-files\b",
+                        command(item),
+                    )
+                )
                 or (
                     command(item).strip().startswith("ls ")
                     and len(command(item).split()) > 2
@@ -4110,7 +4131,10 @@ class Controller:
         reads = [
             command(item)
             for item in successful[inventory_index + 1 :]
-            if command(item).lstrip().startswith(("cat ", "sed ", "head ", "tail ", "rg ", "awk "))
+            if re.search(
+                r"(?:^|&&|;|\n)\s*(?:cat|sed|head|tail|rg|grep|awk)\b",
+                command(item),
+            )
         ]
 
         def inspected(candidates: list[str]) -> bool:
@@ -4224,6 +4248,8 @@ class Controller:
     def implementation_completion_ready(
         self, state: SessionState, metadata: dict[str, Any]
     ) -> bool:
+        if self.is_codebase_evaluation(state):
+            return False
         return any(
             execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
             for execution in state.tool_executions
