@@ -9047,3 +9047,29 @@ read. One local language mismatch was caught and routed to Codex OAuth Frontier;
 the client received a concise Korean verdict followed by `turn.completed`, with
 no reconnect or workspace mutation. The production gateway remained active on
 `0.0.0.0:9000` with restart count zero.
+
+### Operator Executor ON/OFF dashboard — 2026-08-14
+
+The authenticated admin Dashboard now drives the existing fixed/adaptive
+lifecycle coordinator instead of a second service-control path. A focused
+integration test physically exercised the fake driver's exact stop/start:
+OFF persisted Executor state `disabled`, a low-risk request completed through
+the pinned `deepseek-v4-flash` provider without reloading Mistral, and ON
+returned to `ready`. The status projection exposed generation, lifecycle
+state, weight progress, progress quality, overall phase progress, and ETA;
+unknown weight progress remained `null` until trustworthy evidence existed.
+
+Lifecycle and admin Dashboard tests passed `265`; administrator-boundary and
+disabled-local Flash routing tests passed `43`. Ruff passed for all touched
+Python files, strict mypy passed for `lifecycle.py` and `api.py`, and the full
+suite passed `1136`. These are isolated test results only; no production
+service was stopped, started, or reconfigured by this validation.
+
+The high-risk OFF-state route was then changed from local-only rejection to the
+existing Codex OAuth Frontier Executor. A focused test held local Executor
+unavailable, classified an authentication change as high risk, completed it
+through `gpt-5.6-sol`, recorded routing reason
+`local_unavailable_high_risk`, and made no local model call. Flash remained the
+low/medium-risk route. Frontier failure remains typed fail-closed. Focused
+routing and remote-failure tests passed `3`; Ruff and strict API mypy passed,
+and the full suite passed `1139`. No production mutation was performed.

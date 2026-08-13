@@ -1,15 +1,110 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 from dgx_moa.api import create_app
 from dgx_moa.config import Settings
+from dgx_moa.lifecycle import FakeLifecycleDriver
 from fastapi.testclient import TestClient
 
 from .conftest import StubProvider
+
+
+class StubFlashExecutor:
+    async def available(self) -> bool:
+        return True
+
+    async def execute(self, request: dict[str, Any], correlation_id: str) -> dict[str, Any]:
+        return {
+            "id": "flash-test",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "Flash 처리 완료"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            "provider_provenance": {
+                "provider": "opencode_go",
+                "model": "deepseek-v4-flash",
+                "correlation_id": correlation_id,
+            },
+        }
+
+
+def test_admin_dashboard_controls_executor_and_uses_flash_while_off(
+    settings: Settings,
+) -> None:
+    configured = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "api_key": None,
+            "api_keys": {
+                "operator": "operator-secret-value",
+                "general": "general-secret-value",
+            },
+            "admin_api_enabled": True,
+            "admin_token_ids": ["operator"],
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            },
+        }
+    )
+    driver = FakeLifecycleDriver({"executor": "active"})
+    app = create_app(
+        configured,
+        overflow_executor=StubFlashExecutor(),  # type: ignore[arg-type]
+        lifecycle_driver=driver,
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
+        lifecycle_sleeper=lambda seconds: asyncio.Event().wait(),
+        lifecycle_memory_probe=lambda: 1_000,
+    )
+    operator = {"Authorization": "Bearer operator-secret-value"}
+    general = {"Authorization": "Bearer general-secret-value"}
+
+    with TestClient(app) as client:
+        assert "OFF · Flash 전환" in client.get("/admin").text
+        assert client.get("/v1/admin/executor", headers=general).status_code == 403
+
+        stopped = client.post("/v1/admin/executor/off", headers=operator)
+        assert stopped.status_code == 200
+        assert stopped.json()["operator_enabled"] is False
+        assert stopped.json()["active_executor"] == "deepseek-v4-flash"
+        assert stopped.json()["weight_load_percent"] is None
+        assert driver.calls.count(("stop", "executor")) == 1
+
+        fallback = client.post(
+            "/v1/chat/completions",
+            headers=general,
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "간단히 답해"}],
+            },
+        )
+        assert fallback.status_code == 200
+        assert fallback.json()["choices"][0]["message"]["content"] == "Flash 처리 완료"
+        assert app.state.lifecycle_store.get("executor").state == "disabled"
+
+        started = client.post("/v1/admin/executor/on", headers=operator)
+        assert started.status_code == 200
+        assert started.json()["operator_enabled"] is True
+        for _ in range(100):
+            current = client.get("/v1/admin/executor", headers=operator).json()
+            if current["state"] == "ready":
+                break
+            time.sleep(0.01)
+        assert current["state"] == "ready"
+        assert current["weight_load_percent"] == 100.0
+        assert driver.calls.count(("start", "executor")) == 1
 
 
 def test_admin_dashboard_runs_bounded_custom_provider_codex(

@@ -16,6 +16,7 @@ h1{margin:0 0 6px;font-size:26px}h2{font-size:16px}.muted{color:var(--muted)}
 a{color:var(--accent)}input,select,textarea,button{border:1px solid var(--line);border-radius:8px;
 padding:9px 11px;background:#0e1528;color:var(--text)}button{cursor:pointer}
 button.primary{background:var(--accent);color:#071022}form{display:flex;gap:8px;flex-wrap:wrap}
+progress{width:100%;accent-color:var(--ok)}
 textarea{width:100%;min-height:90px;resize:vertical}.chat{margin-top:16px}.messages{min-height:260px;
 max-height:540px;overflow:auto;display:grid;gap:10px;margin:14px 0}.message{white-space:pre-wrap;
 word-break:break-word;border-radius:10px;padding:11px}.user{background:#20304f}.assistant{background:#12283a}
@@ -40,6 +41,12 @@ word-break:break-word;border-radius:10px;padding:11px}.user{background:#20304f}.
       <section class="card"><h2>Runtime</h2>
         <p class="muted">인증된 런타임 상태 JSON을 확인합니다.</p>
         <button id="runtime">상태 조회</button></section>
+      <section class="card"><h2>Mistral Executor</h2>
+        <p id="executor-state" class="muted">상태 확인 중...</p>
+        <progress id="executor-progress" max="100" aria-label="Mistral 가중치 로드율"></progress>
+        <p id="executor-progress-label" class="muted">가중치 로드율: 확인 중</p>
+        <form><button id="executor-on" type="button">ON</button>
+          <button id="executor-off" type="button">OFF · Flash 전환</button></form></section>
     </div>
     <section class="card chat">
       <h2>Codex CLI · DGX MoA custom provider</h2>
@@ -63,7 +70,7 @@ word-break:break-word;border-radius:10px;padding:11px}.user{background:#20304f}.
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let sessionId=null,busy=false;
+let sessionId=null,busy=false,executorTimer=null;
 const api=async(path,options={})=>{
   const response=await fetch(path,{...options,headers:{"Content-Type":"application/json",
     ...(options.headers||{})}});
@@ -80,7 +87,24 @@ async function load(){
   $("login").hidden=true;$("content").hidden=false;$("workspace").replaceChildren();
   data.workspaces.forEach(name=>{const option=document.createElement("option");
     option.value=name;option.textContent=name;$("workspace").append(option)});
+  await loadExecutor();executorTimer||=setInterval(loadExecutor,2000);
 }
+async function loadExecutor(){try{const data=await api("/v1/admin/executor"),loading=
+  ["load_queued","process_starting","loading_weights","initializing_engine","warming_up"]
+    .includes(data.state),percent=data.weight_load_percent;
+  $("executor-state").textContent=(data.operator_enabled?"ON":"OFF")+" · "+data.state+
+    " · 저·중위험: "+data.active_executor+" · 고위험: "+data.high_risk_executor;
+  if(percent==null)$("executor-progress").removeAttribute("value");
+  else $("executor-progress").value=percent;
+  $("executor-progress-label").textContent="가중치 로드율: "+
+    (percent==null?"측정 불가":percent.toFixed(1)+"%")+
+    (data.estimated_ready_seconds==null?"":" · ETA "+Math.ceil(data.estimated_ready_seconds)+"초");
+  $("executor-on").disabled=!data.control_available||data.state==="ready"||loading;
+  $("executor-off").disabled=!data.control_available||!data.operator_enabled;
+}catch(error){$("executor-state").textContent=error.message}}
+async function setExecutor(enabled){try{$("executor-on").disabled=true;
+  $("executor-off").disabled=true;await api("/v1/admin/executor/"+(enabled?"on":"off"),
+    {method:"POST"});await loadExecutor()}catch(error){$("executor-state").textContent=error.message}}
 function reset(){sessionId=null;$("messages").replaceChildren();
   $("codex-state").textContent="새 독립 Codex CLI 세션입니다."}
 function render(event,assistant){
@@ -118,8 +142,11 @@ $("mode").onchange=()=>{$("workspace-label").hidden=$("mode").value!=="agent";re
 $("workspace").onchange=reset;$("new-session").onclick=reset;$("composer").onsubmit=send;
 $("runtime").onclick=async()=>addMessage(JSON.stringify(
   await api("/v1/admin/runtime-status"),null,2),"event");
+$("executor-on").onclick=()=>setExecutor(true);
+$("executor-off").onclick=()=>setExecutor(false);
 $("logout").onclick=async()=>{await api("/v1/admin/session",{method:"DELETE"});
-  $("content").hidden=true;$("login").hidden=false;reset()};
+  clearInterval(executorTimer);executorTimer=null;$("content").hidden=true;
+  $("login").hidden=false;reset()};
 load().catch(()=>$("login").hidden=false);
 </script>
 </html>"""
