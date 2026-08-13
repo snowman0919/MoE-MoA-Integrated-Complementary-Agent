@@ -16,6 +16,7 @@ import pytest
 from dgx_moa import providers
 from dgx_moa.api import (
     _coerce_responses_input_messages,
+    _response_language,
     create_app,
     has_matching_tool_result,
     ollama_model_ready,
@@ -67,6 +68,19 @@ def test_adjacent_responses_tool_calls_form_one_assistant_batch() -> None:
 
     assert [message["role"] for message in messages] == ["assistant", "tool", "tool"]
     assert [call["id"] for call in messages[0]["tool_calls"]] == ["one", "two"]
+
+
+def test_response_language_uses_current_user_objective() -> None:
+    assert (
+        _response_language(
+            [
+                {"role": "user", "content": "이전 요청"},
+                {"role": "assistant", "content": "이전 답변"},
+                {"role": "user", "content": "Evaluate the current repository."},
+            ]
+        )
+        == "en"
+    )
 
 
 def test_busy_executor_routes_new_session_to_frontier(
