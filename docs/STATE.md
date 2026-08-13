@@ -1390,3 +1390,19 @@ Hermes targeted v108 passed the identical webhook task in 343.912 seconds
 with one native unittest call and one successful result. All ten checks passed;
 cleanup succeeded; production, Pilot, and Candidate A returned HTTP 200. Both
 failed v106 client families now have targeted recovery evidence at `60f7a236e`.
+
+## Production Role Context epoch — 2026-08-13
+
+`main`과 production checkout은 `ffdf006a4`로 정렬됐고 fixed gateway가
+`0.0.0.0:9000`에서 active/restart 0으로 실행 중이다. Candidate A만
+`127.0.0.1:19301`에 남는다. Dashboard는 일곱 역할 모두 available,
+ExecutionGraph `shadow`, `static_skeleton+runtime_created_request_subgraph`,
+네 static template, `runtime_mutation=false`를 보고한다.
+
+인증된 실제 architecture 요청은 HTTP 200이었고 `complex-v1` 10-node/26-edge
+Graph의 모든 attempt가 성공했다. Frontier A는 GPT-5.6-Sol `xhigh`, Codex OAuth
+`primary`, 15,819/966 tokens, 24,569.716 ms였다. 이전 release checkout과 현
+release redeploy canary도 동일 해시로 통과했다. 단, high-risk correction 경로는
+Judge/Frontier B 호출 후 300초를 넘고 fail-closed됐으므로 상태는 계속
+`PILOT_ACTIVE`이며 `COMPLETE`가 아니다. 세부 증거는
+`docs/DYNAMIC_MOA_PILOT_CONTEXT_EPOCH_20260813.md`가 우선한다.

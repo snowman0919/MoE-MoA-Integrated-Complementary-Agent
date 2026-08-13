@@ -144,3 +144,12 @@ Primary Codex write recovery passes in epoch 04 at `2a3afdce8`: exact two-line
 diff, `103 passed`, Reviewer approval, and zero Graph shadow failures. Epochs 02
 and 03 preserve the false-completion causes. A fresh client-quality matrix is
 next; blind and later gates remain unopened.
+
+## 2026-08-13 Role Context production checkpoint
+
+Production `main@ffdf006a4` now physically serves the authenticated fixed
+gateway. Seven-role availability, Role Context fan-out/fan-in provenance,
+complex request-created Graph, and rollback/redeploy passed. Direct-evidence A/B
+passed its qualification, with one Frontier recall regression retained.
+High-risk multi-iteration termination exceeded 300 seconds and failed closed;
+therefore this audit remains `PILOT_ACTIVE`, not `COMPLETE`.

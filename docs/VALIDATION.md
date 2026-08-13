@@ -8722,3 +8722,33 @@ returned HTTP 200. An authenticated Frontier-required
 Codex OAuth profile: 15,663 prompt tokens, 702 completion tokens, and measured
 Frontier latency 24,886.194 ms. The request recorded no
 `FRONTIER_PROCESS_SPAWN_FAILED` event.
+
+### Role Context production epoch and rollback — 2026-08-13
+
+Release `ffdf006a4` passed Ruff/format, strict mypy on 50 source files, and
+pytest `1087/1087`. The first production request preserved a real stale-local
+Planner failure. The shared specialist boundary now treats an unprovable local
+context/readiness probe as unavailable before dispatch, marks the stale state
+failed, and selects the already configured remote provider. Focused coverage
+passed `119/119`.
+
+The retried authenticated request returned 200. The durable log recorded one
+pre-dispatch snapshot shared independently by Reasoner, Planner, and Frontier A,
+then a distinct fan-in snapshot for Executor. Frontier A completed through
+Codex OAuth `primary` using `gpt-5.6-sol` with 15,819 prompt and 966 completion
+tokens in 24,569.716 ms. `complex-v1` persisted 10 successful attempts and 21
+checkpoints with no client-visible provider provenance.
+
+Fresh structured probes passed Planner, Reviewer, Judge `kimi-k3`, Frontier A,
+and Frontier B; live endpoint probes and the successful request covered
+Reasoner and Executor. Dashboard reported all seven available and the exact
+static-skeleton/runtime-subgraph contract. A prior v1 probe using the stale
+`glm-5.2` override failed Judge and remains rejected evidence; v2 hash is
+`06abb808412bcb446f016ee7c4a37b1da2b2963931a83338acab68025e2c8fe3`.
+
+Rollback physically checked out `88f553dec`, restarted, and passed an
+authenticated canary at PID 2985632. Redeploy to `ffdf006a4` passed the same
+content hash at PID 2985816 with restart 0. A separate high-risk request did
+not pass: Reviewer rejected insufficient evidence, Judge and Frontier B ran,
+but correction exceeded 300 seconds and finalized failed. This is a preserved
+long-path latency/termination gap, not a success claim.

@@ -1058,3 +1058,24 @@ Treat `apply_patch verification failed:` without an explicit numeric exit code
 as failure evidence. Do not treat `Do not modify any other file` as global
 read-only intent; it scopes an explicit write. Accept completion only after a
 successful change-capable tool, post-change validation, and configured review.
+
+## Current fixed production release — 2026-08-13
+
+The authenticated fixed gateway runs production `main@ffdf006a4` directly on
+`0.0.0.0:9000`; role inference endpoints must remain non-wildcard. The former
+Dashboard validation drop-in is retained as
+`200-dashboard-validation.conf.disabled-20260813` and must not be renamed to a
+`.conf` file during normal operation. Dashboard and ExecutionGraph shadow are
+explicit production environment overrides; checked-in defaults remain safe.
+
+Before gateway rollback, POST the authenticated `/v1/admin/drain`, wait for
+`active_request_count=0`, stop the fixed unit, checkout the exact reviewed
+release, run `uv sync --frozen`, and start/healthcheck. The measured rollback
+target `88f553dec` and redeploy target `ffdf006a4` both passed the same
+authenticated fast-canary hash. Do not use checkout rollback to change or
+restart Candidate A.
+
+Judge production mapping is `kimi-k3`; `glm-5.2` is rejected stale override
+evidence. A structured Judge probe can pass while a multi-iteration high-risk
+request still exceeds the client deadline. Keep that path fail-closed and do
+not promote beyond `PILOT_ACTIVE` until its bounded termination gate passes.

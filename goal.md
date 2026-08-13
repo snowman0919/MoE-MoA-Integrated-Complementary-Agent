@@ -820,3 +820,13 @@ BLOCKED
 Primary Codex repository-write epoch 04 passes at `2a3afdce8` with an exact
 two-line diff, `103 passed`, Reviewer approval, and zero Graph shadow failures.
 Pilot attempt 12 is active. Resume client quality only in a fresh epoch.
+
+## 2026-08-13 현재 checkpoint
+
+- fixed production gateway는 `main@ffdf006a4`, `0.0.0.0:9000`, 인증 필수다.
+- 일곱 역할 availability와 Role Context fan-out/fan-in, runtime-created
+  `complex-v1` subgraph, rollback/redeploy가 물리적으로 통과했다.
+- direct-evidence A/B v4가 qualification을 통과했지만 Frontier recall 1건 악화는
+  후속 항목이다.
+- high-risk correction은 Judge/Frontier B 실행 뒤 300초를 초과하고 fail-closed됐다.
+  따라서 현재 상태는 계속 `PILOT_ACTIVE`; `COMPLETE` 선언은 금지한다.
