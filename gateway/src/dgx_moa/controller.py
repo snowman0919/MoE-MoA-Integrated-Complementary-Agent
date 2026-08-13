@@ -646,6 +646,14 @@ class Controller:
             "engineering_loop_iteration_completed",
             {"loop_id": loop.loop_id, "iteration": loop.iteration, "outcome": outcome},
         )
+        if (
+            loop.termination_reason is None
+            and loop.remaining_budget.iterations == 0
+            and state.phase not in {Phase.COMPLETED, Phase.BLOCKED}
+        ):
+            state.phase = Phase.BLOCKED
+            state.final_status = "blocked"
+            self.terminate_loop(state, "BUDGET_EXHAUSTED")
 
     def record_provider_failure(self, state: SessionState, role: str, error: Exception) -> None:
         self.record_evidence(

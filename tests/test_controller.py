@@ -1254,6 +1254,22 @@ def test_terminal_loop_ignores_late_provider_usage(settings, stub_provider: Stub
     assert state.engineering_loop.termination_reason == "JUDGE_REJECTED"
 
 
+def test_completed_final_iteration_records_budget_stop(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="final-iteration", phase=Phase.CORRECTION)
+    state.engineering_loop = new_loop("request-1", "finish")
+    state.engineering_loop.iteration = 1
+    state.engineering_loop.remaining_budget.iterations = 0
+
+    controller.complete_loop_iteration(state, "completed")
+
+    assert state.phase == Phase.BLOCKED
+    assert state.final_status == "blocked"
+    assert state.engineering_loop.termination_reason == "BUDGET_EXHAUSTED"
+
+
 @pytest.mark.asyncio
 async def test_new_user_evidence_resumes_no_progress_loop(
     settings, stub_provider: StubProvider
