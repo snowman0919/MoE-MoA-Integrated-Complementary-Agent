@@ -9022,3 +9022,28 @@ excluded `dgx-moa-executor-candidate` and the retired Reviewer use of
 An authenticated live canary then created a one-day general key, received its
 plaintext once, used it successfully against `/v1/models` (`200`), and removed
 it through revoke/delete (`200`/`204`); the temporary key count returned to zero.
+
+### Bounded codebase-evaluation recovery — 2026-08-13
+
+Reported session `b1e4c7d1-1c5e-4e77-9e09-ba2a3e34a11a` took 44 Executor
+steps and 16 tool results. The runtime failed to recognize `git -C <target>
+ls-files` and compound source reads as complete evaluation evidence, treated
+temporary output files as implementation completion, allowed read-only scope to
+expand into project generation/stash/delete attempts, and eventually returned
+an incomplete Responses stream after repeated language/progress retries.
+
+The evaluation path now promotes a single-directory `ls` to a complete tracked
+inventory, distinguishes recorded inventory from pending source/test evidence,
+suppresses tools as soon as both are present, and never treats evaluation output
+files as implementation completion. Read-only evaluations reject mutation and
+pure output tool calls. Mixed-language tool commentary and internal provider
+tokens are replaced or retried before reaching the client.
+
+The full suite passed `1126`. An official Codex CLI canary used the exact Korean
+objective against a four-file synthetic `rust-mcu-ide` Git repository. Session
+`3c92d70a-e921-47ca-8781-99b6a1566af8` completed with four Executor steps and
+two successful tools: one `git ls-files` inventory and one batch source/test
+read. One local language mismatch was caught and routed to Codex OAuth Frontier;
+the client received a concise Korean verdict followed by `turn.completed`, with
+no reconnect or workspace mutation. The production gateway remained active on
+`0.0.0.0:9000` with restart count zero.
