@@ -1887,6 +1887,8 @@ class LifecycleCoordinator:
         self,
         role: str,
         policy_record: LifecycleRecord,
+        *,
+        disable: bool = False,
     ) -> bool:
         async with self._locks[role]:
             if self._automation_disabled():
@@ -1918,7 +1920,7 @@ class LifecycleCoordinator:
                         expected_transition_id=current.transition_id,
                     )
                 return False
-            task = asyncio.create_task(self._complete_unload(role, admitted))
+            task = asyncio.create_task(self._complete_unload(role, admitted, disable=disable))
             self._stop_tasks[role] = task
             try:
                 await asyncio.shield(task)
@@ -1933,6 +1935,8 @@ class LifecycleCoordinator:
         self,
         role: str,
         admitted: LifecycleRecord,
+        *,
+        disable: bool = False,
     ) -> None:
         started = float(self.clock())
         try:
@@ -1950,13 +1954,19 @@ class LifecycleCoordinator:
             except Exception as error:
                 raise LifecycleLoadError("memory_after_failed", type(error).__name__) from None
             duration = max(0.0, float(self.clock()) - started)
-            self.store.complete_unload(
+            cold = self.store.complete_unload(
                 role,
                 expected_transition_id=admitted.transition_id,
                 duration_seconds=duration,
                 memory_before_bytes=admitted.memory_before_bytes,
                 memory_after_bytes=memory_after,
             )
+            if disable:
+                self.store.transition(
+                    role,
+                    "disabled",
+                    expected_transition_id=cold.transition_id,
+                )
         except LifecycleLoadError as error:
             self._fail_unload(role, error.failure_class, error.failure_detail)
         except LifecycleDriverError as error:
@@ -2114,6 +2124,40 @@ class LifecycleCoordinator:
             )
             self._tasks[role] = asyncio.create_task(self._load(role, queued.transition_id))
             return LoadCheck(record=queued, load_triggered=True)
+
+    async def set_enabled(self, role: str, enabled: bool) -> LifecycleRecord:
+        """Apply an explicit operator enable/disable to one managed role."""
+        try:
+            lock = self._locks[role]
+        except KeyError as error:
+            raise UnknownRoleError(role) from error
+        record = self.store.get(role)
+        if enabled:
+            async with lock:
+                record = self.store.get(role)
+                if record.state == "disabled":
+                    record = self.store.transition(
+                        role,
+                        "cold",
+                        expected_transition_id=record.transition_id,
+                    )
+            return (await self.ensure_ready(role)).record
+        if record.state == "disabled":
+            return record
+        if record.state == "cold":
+            async with lock:
+                record = self.store.get(role)
+                if record.state == "cold":
+                    return self.store.transition(
+                        role,
+                        "disabled",
+                        expected_transition_id=record.transition_id,
+                    )
+                return record
+        if record.state != "ready":
+            return record
+        await self._unload_role(role, record, disable=True)
+        return self.store.get(role)
 
     async def _load(self, role: str, transition_id: str) -> None:
         started = self.clock()

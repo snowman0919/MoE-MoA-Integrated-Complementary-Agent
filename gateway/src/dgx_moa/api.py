@@ -2537,17 +2537,23 @@ def create_app(
                 cancel_on_disconnect(), name=f"client-disconnect-{usage_request_id}"
             )
 
+        executor_local_unavailable = bool(
+            (loading_record is not None and loading_record.role == "executor")
+            or (unavailable_record is not None and unavailable_record.role == "executor")
+            or unmanaged_role == "executor"
+        )
+        executor_frontier_fallback = bool(
+            request_class == "high_risk_task"
+            and request.app.state.frontier is not None
+            and executor_local_unavailable
+        )
         executor_flash_fallback = bool(
             configured.executor_scheduling.enabled
             and request_class != "high_risk_task"
             and request.app.state.overflow_executor is not None
-            and (
-                (loading_record is not None and loading_record.role == "executor")
-                or (unavailable_record is not None and unavailable_record.role == "executor")
-                or unmanaged_role == "executor"
-            )
+            and executor_local_unavailable
         )
-        if executor_flash_fallback:
+        if executor_flash_fallback or executor_frontier_fallback:
             loading_record = None
             unavailable_record = None
             unmanaged_role = None
@@ -2574,7 +2580,18 @@ def create_app(
 
         ensured_roles = list(roles)
         try:
-            if configured.executor_scheduling.enabled:
+            if executor_frontier_fallback:
+                executor_remote = True
+                executor_routing_reason = "local_unavailable_high_risk"
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_remote_selected",
+                    {
+                        "routing_reason": executor_routing_reason,
+                        "provider": "frontier",
+                    },
+                )
+            elif configured.executor_scheduling.enabled:
                 executor_admission = await request.app.state.executor_scheduler.acquire(
                     api_token_id,
                     usage_request_id,
@@ -5109,6 +5126,72 @@ def create_app(
             lifecycle_mode=configured.lifecycle_mode,
             managed_roles=tuple(configured.lifecycle_unit_map),
         )
+
+    def executor_control_status(request: Request) -> dict[str, Any]:
+        record = request.app.state.lifecycle_store.get("executor")
+        fallback_configured = bool(
+            configured.executor_scheduling.enabled
+            and request.app.state.overflow_executor is not None
+        )
+        fallback_active = fallback_configured and record.state != "ready"
+        return status_lifecycle_record("executor") | {
+            "operator_enabled": record.state != "disabled",
+            "control_available": bool(
+                configured.lifecycle_mode in {"fixed", "adaptive"}
+                and "executor" in configured.lifecycle_unit_map
+                and fallback_configured
+            ),
+            "active_executor": (
+                configured.executor_scheduling.flash_model
+                if fallback_active
+                else "local_mistral"
+                if record.state == "ready"
+                else "unavailable"
+            ),
+            "fallback_model": configured.executor_scheduling.flash_model,
+            "fallback_active": fallback_active,
+            "high_risk_executor": (
+                request.app.state.frontier.config.model
+                if fallback_active and request.app.state.frontier is not None
+                else "local_mistral"
+                if record.state == "ready"
+                else "unavailable"
+            ),
+        }
+
+    def require_executor_control(request: Request) -> None:
+        if not executor_control_status(request)["control_available"]:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Executor control requires fixed/adaptive lifecycle and configured Flash fallback",
+            )
+
+    @app.get("/v1/admin/executor", dependencies=[Depends(admin_auth)])
+    async def admin_executor_status(request: Request) -> dict[str, Any]:
+        return executor_control_status(request)
+
+    @app.post("/v1/admin/executor/on", dependencies=[Depends(admin_auth)])
+    async def admin_executor_on(request: Request) -> dict[str, Any]:
+        require_executor_control(request)
+        record = await request.app.state.lifecycle.set_enabled("executor", True)
+        request.app.state.store.event(
+            "runtime-executor", "executor_operator_enabled", {"generation": record.generation}
+        )
+        return executor_control_status(request)
+
+    @app.post("/v1/admin/executor/off", dependencies=[Depends(admin_auth)])
+    async def admin_executor_off(request: Request) -> dict[str, Any]:
+        require_executor_control(request)
+        record = await request.app.state.lifecycle.set_enabled("executor", False)
+        if record.state != "disabled":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Executor cannot stop while lifecycle state is {record.state}",
+            )
+        request.app.state.store.event(
+            "runtime-executor", "executor_operator_disabled", {"generation": record.generation}
+        )
+        return executor_control_status(request)
 
     @app.get("/v1/admin/drain", dependencies=[Depends(admin_auth)])
     async def admin_drain_status(request: Request) -> dict[str, Any]:

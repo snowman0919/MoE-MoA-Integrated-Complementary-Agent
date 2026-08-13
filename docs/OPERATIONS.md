@@ -1088,5 +1088,18 @@ credential is rotated; do not re-enable it from repository configuration.
 For enabled Executor scheduling, low/medium-risk admission uses
 `deepseek-v4-flash` when the local Executor is busy or its lifecycle state is
 unavailable after an explicit operator/automation disable. High/critical-risk
-admission never uses Flash and remains local-only fail-closed. This fallback
-does not authorize stopping the normally resident Executor.
+admission never uses Flash; when local Mistral is unavailable it uses the
+configured Codex OAuth Frontier Executor, and remains fail-closed if Frontier
+is unavailable. This fallback does not authorize automatic stopping of the
+normally resident Executor.
+
+An authenticated operator may explicitly switch Mistral from `/admin` only
+when `/v1/admin/executor` reports `control_available=true`. OFF performs the
+selected exact service stop and persists lifecycle state `disabled`; active
+leases or guards reject the change. Low/medium-risk requests then use
+`deepseek-v4-flash`, while high/critical-risk requests use Codex OAuth Frontier
+or fail closed when it is unavailable. ON starts the existing lifecycle load,
+and the page polls its state, generation, ETA, and honest weight progress. A
+missing trustworthy journal counter is shown as unavailable, never estimated
+from elapsed time. Checked-in lifecycle, scheduling, and Dashboard defaults
+remain disabled.
