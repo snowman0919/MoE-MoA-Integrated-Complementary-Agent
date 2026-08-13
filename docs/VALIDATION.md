@@ -8866,3 +8866,8 @@ gateway now normalizes that exact unadvertised harness fallback to `dgx-moa`,
 returns the canonical model name, and records `client_model_fallback` with both
 names. Near matches remain rejected, and `gpt-5.5` is not advertised. Focused
 tests passed `3`; the full suite passed `1098` before deployment.
+Production session `prod-stale-codex-model-recovery-20260813` then sent the
+observed stale `model=gpt-5.5` through the public Responses endpoint. The stream
+identified `model=dgx-moa`, returned `STALE_MODEL_RECOVERED.`, and ended with
+`response.completed`; durable state recorded `client_model_fallback | gpt-5.5 |
+dgx-moa`. Gateway restart count remained zero.
