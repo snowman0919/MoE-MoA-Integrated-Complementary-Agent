@@ -8871,3 +8871,21 @@ observed stale `model=gpt-5.5` through the public Responses endpoint. The stream
 identified `model=dgx-moa`, returned `STALE_MODEL_RECOVERED.`, and ended with
 `response.completed`; durable state recorded `client_model_fallback | gpt-5.5 |
 dgx-moa`. Gateway restart count remained zero.
+
+### Operator Executor ON/OFF dashboard — 2026-08-14
+
+The authenticated admin Dashboard now drives the existing fixed/adaptive
+lifecycle coordinator. OFF uses the selected exact service stop and persists
+Executor state `disabled`; ON starts the existing singleflight load and exposes
+state, generation, honest weight progress, progress quality, overall phase
+progress, and ETA. Unknown weight progress remains `null` rather than being
+estimated from elapsed time.
+
+An isolated integration test exercised stop/start, completed a low-risk OFF-state
+request through pinned `deepseek-v4-flash`, and returned the local Executor to
+`ready`. A separate high-risk authentication request completed through the
+existing Codex OAuth Frontier Executor with routing reason
+`local_unavailable_high_risk` and no local model invocation. Frontier failure
+remains typed fail-closed. Ruff and strict mypy passed for the touched paths,
+and the release-tree full suite passed `1106`. No production mutation occurred
+during this pre-deployment validation.
