@@ -4880,14 +4880,14 @@ def create_app(
                                         yield chunk
                                     else:
                                         translated.append(chunk)
-                            except ProgressOnlyResponse:
+                            except ProgressOnlyResponse as retry_error:
                                 if progress_only_retries >= 3:
                                     async for chunk in responses_error_sse(
                                         response_model,
                                         session_id=response_session_id,
                                         error_type="incomplete_response",
                                         code="incomplete_response",
-                                        source="progress_only_response",
+                                        source=retry_error.reason,
                                         status_code=status.HTTP_502_BAD_GATEWAY,
                                     ):
                                         yield chunk
@@ -4895,22 +4895,39 @@ def create_app(
                                 progress_only_retries += 1
                                 request.app.state.store.event(
                                     response_session_id,
-                                    "progress_only_response_retried",
+                                    (
+                                        "language_mismatch_response_retried"
+                                        if retry_error.reason == "language_mismatch"
+                                        else "progress_only_response_retried"
+                                    ),
                                     {"attempt": progress_only_retries},
                                 )
-                                retry_instruction = (
-                                    "The previous answer did not prove completion. A code block in "
-                                    "the answer does not modify the workspace. Call the required "
-                                    "tool to implement and validate. Return a final result only "
-                                    "after recorded change, test, and required review evidence "
-                                    "exists."
-                                    if goal_requires_tool_action(response_state)
-                                    else "The previous answer was only a progress update. The "
-                                    "required "
-                                    "implementation and validation evidence is already recorded. "
-                                    "Return the concrete final result now without another progress "
-                                    "update or redundant tool call."
-                                )
+                                if retry_error.reason == "language_mismatch":
+                                    retry_instruction = (
+                                        "The previous answer mixed Chinese or "
+                                        "Japanese script into Korean prose. Retry "
+                                        "with Korean prose only. Preserve foreign "
+                                        "text only inside code or identifiers "
+                                        "when required."
+                                    )
+                                elif goal_requires_tool_action(response_state):
+                                    retry_instruction = (
+                                        "The previous answer did not prove "
+                                        "completion. A code block in the answer "
+                                        "does not modify the workspace. Call the "
+                                        "required tool to implement and validate. "
+                                        "Return a final result only after recorded "
+                                        "change, test, and required review evidence exists."
+                                    )
+                                else:
+                                    retry_instruction = (
+                                        "The previous answer was only a progress "
+                                        "update. The required implementation and "
+                                        "validation evidence is already recorded. "
+                                        "Return the concrete final result now "
+                                        "without another progress update or "
+                                        "redundant tool call."
+                                    )
                                 current_body = current_body.model_copy(
                                     update={
                                         "messages": [
