@@ -402,7 +402,11 @@ async def test_responses_sse_preserves_tool_progress_and_terminates_failures(cap
         if line.startswith("data: ")
     ]
     assert any(
-        event.get("delta") == "다음 작업에 필요한 증거를 확인합니다." for event in tool_events
+        event.get("delta") == "exec_command 실행 결과를 이번 단계의 판정 근거로 사용합니다."
+        for event in tool_events
+    )
+    assert all(
+        event.get("delta") != "다음 작업에 필요한 증거를 확인합니다." for event in tool_events
     )
     assert tool_events[-1]["type"] == "response.completed"
 
@@ -541,7 +545,7 @@ async def test_responses_sse_maps_local_mcp_file_to_exec_command() -> None:
     progress_index = next(
         index
         for index, event in enumerate(events)
-        if event.get("delta") == "다음 작업에 필요한 증거를 확인합니다."
+        if event.get("delta") == "read_mcp_resource 실행 결과를 이번 단계의 판정 근거로 사용합니다."
     )
     assert progress_index < events.index(added)
     assert json.loads(done["arguments"]) == {"cmd": "cat -- '/Users/test/goal objective.md'"}
@@ -589,6 +593,37 @@ async def test_responses_sse_replaces_model_commentary_with_document_purpose() -
     deltas = [event.get("delta") for event in events if "delta" in event]
     assert "I will read the required docs first." not in deltas
     assert "저장소 지침과 필수 운영 문서를 확인합니다." in deltas
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_preserves_substantive_batch_commentary() -> None:
+    commentary = (
+        "이번 배치에서는 실제 구현 근거를 확인합니다.\n"
+        "대상은 소스와 테스트입니다.\n"
+        "문서의 주장과 코드를 대조합니다.\n"
+        "독립적인 읽기는 함께 실행합니다.\n"
+        "결과로 평가 범위를 결정합니다."
+    )
+
+    async def upstream():
+        payload = {"choices": [{"delta": {"content": commentary}}]}
+        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call-source","function":{"name":"exec_command",'
+            b'"arguments":"{\\"cmd\\":\\"cat src/main.rs tests/main.rs\\"}"}}]},'
+            b'"finish_reason":"tool_calls"}]}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(upstream(), "dgx-moa", progress_language="ko")
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+
+    assert commentary in [event.get("delta") for event in events]
 
 
 @pytest.mark.asyncio

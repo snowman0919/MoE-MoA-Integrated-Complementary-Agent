@@ -8981,8 +8981,9 @@ now requires a bounded inventory or target-directory traversal plus reads of
 discovered implementation and available tests or build configuration. README
 alone cannot satisfy the completion gate; a genuinely documentation-only
 inventory permits only an explicit implementation-unverified conclusion.
-Client-visible progress guidance is bounded to five to seven short lines unless
-the user explicitly requests a detailed final report.
+Related tool calls are batched where dependencies allow. Client-visible progress
+guidance asks for one substantive five-to-seven-line phase summary instead of a
+generic sentence per command; it is not a total-output limit.
 
 The complete suite passed `1109`. Authenticated production session
 `codebase-evidence-canary-v3-20260813` used synthetic client-workspace results
