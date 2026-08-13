@@ -79,7 +79,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="win")
     parser.add_argument("--base-url", required=True)
-    parser.add_argument("--model", default="dgx-moa/dgx-moa-agent")
+    parser.add_argument("--model", default="dgx-moa/dgx-moa")
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument(
         "--output-dir", type=Path, default=Path("data/diagnostics/opencode-completion")

@@ -120,7 +120,7 @@ def create_fixture(workspace: Path) -> None:
     )
 
 
-def project_config(base_url: str, session: str, task: Task, workspace: Path) -> dict:
+def project_config(base_url: str, session: str, task: Task, workspace: Path) -> dict[str, object]:
     return {
         "$schema": "https://opencode.ai/config.json",
         "provider": {
@@ -142,10 +142,10 @@ def project_config(base_url: str, session: str, task: Task, workspace: Path) -> 
                         "X-Dirty-State": "clean",
                     },
                 },
-                "models": {"dgx-moa-agent": {"name": "DGX MoA Agent"}},
+                "models": {"dgx-moa": {"name": "DGX MoA"}},
             }
         },
-        "model": "dgx-moa/dgx-moa-agent",
+        "model": "dgx-moa/dgx-moa",
         "permission": {"*": "allow"},
     }
 
@@ -187,7 +187,7 @@ def main() -> None:
             "--dir",
             str(workspace),
             "--model",
-            "dgx-moa/dgx-moa-agent",
+            "dgx-moa/dgx-moa",
             task.prompt,
         ]
         try:

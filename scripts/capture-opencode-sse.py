@@ -186,7 +186,7 @@ def main() -> None:
             session,
             1,
             {
-                "model": "dgx-moa-agent",
+                "model": "dgx-moa",
                 "stream": True,
                 "messages": [{"role": "user", "content": "Reply READY."}],
             },
@@ -199,7 +199,7 @@ def main() -> None:
             session,
             2,
             {
-                "model": "dgx-moa-agent",
+                "model": "dgx-moa",
                 "stream": True,
                 "messages": [
                     {
@@ -220,7 +220,7 @@ def main() -> None:
             session,
             3,
             {
-                "model": "dgx-moa-agent",
+                "model": "dgx-moa",
                 "stream": True,
                 "messages": [
                     {

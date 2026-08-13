@@ -9216,3 +9216,10 @@ Evaluation key는 종료 전에 revoke `200`, 이후 models `401`을 반환했�
 kind `evaluation`, plaintext length `0`, hash length `64`, revoked true이고 DB/WAL에서 raw key가
 검출되지 않았다. Gateway exit는 `0`, port `19002`와 container는 해제됐고 production health는
 `200`, production checkout은 clean `main@59bcb54e5`를 유지했다.
+
+실행 가능한 legacy OpenCode validation launcher 세 개는 public catalog에 없는 retired
+`dgx-moa-agent`를 계속 요청하고 있었다. Historical trace/test fixture와 hidden compatibility
+parser는 이번 diff에서 유지하고, `capture-opencode-physical.py`, `capture-opencode-sse.py`,
+`run-opencode-staging.py`의 client model만 canonical `dgx-moa`로 교체했다. 문서 계약 테스트가
+세 launcher에 retired alias가 없는지 검사한다. Focused test `10`건, Ruff, 세 script strict
+mypy가 통과했다. 이 변경은 candidate source에만 있고 production은 변경하지 않았다.

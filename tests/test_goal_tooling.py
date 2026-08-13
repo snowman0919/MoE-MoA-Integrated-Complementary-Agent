@@ -199,10 +199,20 @@ def test_lifecycle_docs_link_canonical_contract_and_keep_evidence_pending() -> N
 def test_api_client_mode_documentation() -> None:
     api_modes = Path("docs/API_CLIENT_MODES.md").read_text()
     hermes = Path("docs/HERMES_AGENT.md").read_text()
+    client_scripts = "\n".join(
+        Path(path).read_text()
+        for path in (
+            "scripts/capture-opencode-physical.py",
+            "scripts/capture-opencode-sse.py",
+            "scripts/run-opencode-staging.py",
+        )
+    )
     for alias in ("dgx-moa", "dgx-moa-fast"):
         assert alias in api_modes
     for retired_alias in ("dgx-moa-agent", "dgx-moa-orchestrated", "dgx-moa-chat"):
         assert retired_alias not in api_modes
+        assert retired_alias not in client_scripts
+    assert "dgx-moa/dgx-moa" in client_scripts
     assert "http://100.125.239.72:9000/v1" in hermes
     assert "DGX_MOA_API_KEY" in hermes
     assert "127.0.0.1:9000" not in hermes
