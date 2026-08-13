@@ -14,6 +14,7 @@ from dgx_moa.streaming import (
     is_progress_only,
     is_repetitive_response,
     keepalive_sse,
+    normalize_workspace_validation_call,
     reported_usage,
     response_usage,
     responses_sse,
@@ -982,6 +983,19 @@ def test_substantive_tool_progress_suppresses_single_validation_command() -> Non
 def test_repetitive_response_detects_runaway_final_synthesis() -> None:
     assert is_repetitive_response("All requirements met and tests pass. " * 30)
     assert not is_repetitive_response("짧고 구체적인 최종 답변입니다.")
+
+
+def test_workspace_validation_uses_existing_python_tests() -> None:
+    calls = {
+        0: {
+            "name": "exec_command",
+            "_arguments": json.dumps(
+                {"cmd": "python - << 'PY'\nfrom app import add\nassert add(2, 3) == 5\nPY"}
+            ),
+        }
+    }
+    assert normalize_workspace_validation_call(calls, ("app.py", "test_app.py"))
+    assert json.loads(str(calls[0]["_arguments"]))["cmd"] == "python -m pytest -q"
 
 
 @pytest.mark.asyncio
