@@ -3893,8 +3893,8 @@ async def test_codebase_evaluation_requires_deep_evidence(
     prepared = await controller.prepare_executor(state, request, ("executor",))
 
     assert prepared["tool_choice"] == "required"
-    assert "Complete codebase evaluation evidence now" in prepared["messages"][0]["content"]
-    assert "README alone is insufficient" in prepared["messages"][0]["content"]
+    assert "Call exec_command now" in prepared["messages"][0]["content"]
+    assert "do not substitute ls" in prepared["messages"][0]["content"]
 
 
 @pytest.mark.asyncio
