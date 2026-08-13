@@ -236,6 +236,10 @@ async def validate(config: Path, frontier_config: Path, output: Path) -> None:
     frontier = CodexOAuthCollaboration(
         load_frontier_config(frontier_config), output.parent / "frontier", Path.cwd()
     )
+    criterion_questions = [
+        f"Does the evidence satisfy this acceptance criterion: {criterion}"
+        for criterion in snapshot.acceptance_criteria_json
+    ]
     for variant, package in (
         ("legacy", legacy),
         ("direct", direct_reviewer.model_dump(mode="json")),
@@ -246,7 +250,7 @@ async def validate(config: Path, frontier_config: Path, output: Path) -> None:
                 "objective": snapshot.objective,
                 "constraints": list(snapshot.acceptance_criteria_json),
                 "relevant_evidence": package,
-                "specific_questions": ["Identify any security-blocking defect."],
+                "specific_questions": criterion_questions,
             },
             f"role-context-ab-{variant}-{uuid.uuid4().hex}",
         )
@@ -267,7 +271,7 @@ async def validate(config: Path, frontier_config: Path, output: Path) -> None:
         return sum(not found for found in cases[name]["marker_recall"].values())
 
     payload: dict[str, Any] = {
-        "schema_version": "role-context-ab-v4",
+        "schema_version": "role-context-ab-v5",
         "measured_at": datetime.now(UTC).isoformat(),
         "status": "passed",
         "snapshot_id": snapshot.snapshot_id,
@@ -318,6 +322,8 @@ async def validate(config: Path, frontier_config: Path, output: Path) -> None:
         and comparison["reviewer_critical_finding_recall"]["direct"]
         and comparison["missed_acceptance_criteria"]["direct"]
         < comparison["missed_acceptance_criteria"]["legacy"]
+        and comparison["frontier_recommendation_acceptance"]["direct"]
+        >= comparison["frontier_recommendation_acceptance"]["legacy"]
         and not comparison["false_approval"]["direct"]
         and comparison["verified_completion"]["direct"]
     )
