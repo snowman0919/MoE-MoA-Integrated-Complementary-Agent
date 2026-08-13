@@ -71,3 +71,21 @@ async def test_executor_scheduler_cancellation_removes_queue_and_pin() -> None:
         await waiting
     assert scheduler.pinned("waiting") is None
     assert scheduler.snapshot()["queued"] == 0
+
+
+@pytest.mark.asyncio
+async def test_unavailable_local_executor_uses_flash_but_high_risk_fails_closed() -> None:
+    scheduler = ExecutorScheduler(queue_timeout_seconds=1)
+    fallback = await scheduler.acquire(
+        "key-a", "fallback", flash_available=True, local_available=False
+    )
+    assert (fallback.selected_executor, fallback.reason) == ("opencode_go", "local_unavailable")
+
+    with pytest.raises(ExecutorQueueFull, match="local Executor is unavailable"):
+        await scheduler.acquire(
+            "key-a",
+            "high-risk",
+            risk="high",
+            flash_available=True,
+            local_available=False,
+        )

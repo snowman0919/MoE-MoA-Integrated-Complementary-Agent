@@ -2526,6 +2526,20 @@ def create_app(
                 cancel_on_disconnect(), name=f"client-disconnect-{usage_request_id}"
             )
 
+        executor_flash_fallback = bool(
+            configured.executor_scheduling.enabled
+            and request_class != "high_risk_task"
+            and request.app.state.overflow_executor is not None
+            and (
+                (loading_record is not None and loading_record.role == "executor")
+                or (unavailable_record is not None and unavailable_record.role == "executor")
+                or unmanaged_role == "executor"
+            )
+        )
+        if executor_flash_fallback:
+            loading_record = None
+            unavailable_record = None
+            unmanaged_role = None
         if loading_record is not None:
             finalize_request(
                 "model_loading",
@@ -2555,6 +2569,7 @@ def create_app(
                     usage_request_id,
                     risk="high" if request_class == "high_risk_task" else "medium",
                     flash_available=request.app.state.overflow_executor is not None,
+                    local_available=not executor_flash_fallback,
                     on_queued=lambda queued: request.app.state.store.event(
                         state_session_id,
                         "executor_local_queued",

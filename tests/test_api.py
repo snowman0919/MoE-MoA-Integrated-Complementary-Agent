@@ -3360,6 +3360,79 @@ def test_failure_circuit_blocks_mutation_but_preserves_ready_traffic(
         assert stub_provider.calls == ["executor"]
 
 
+def test_disabled_local_executor_routes_low_risk_request_to_flash(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            },
+        }
+    )
+
+    class Flash:
+        async def available(self) -> bool:
+            return True
+
+        async def execute(self, request, correlation_id):  # type: ignore[no-untyped-def]
+            del request, correlation_id
+            return {
+                "model": "deepseek-v4-flash",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "FLASH_FALLBACK_OK"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"total_tokens": 1},
+            }
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=FakeLifecycleDriver({"executor": "inactive"}),
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
+        overflow_executor=Flash(),  # type: ignore[arg-type]
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        generation = app.state.lifecycle_store.get("executor").generation
+        for index in range(3):
+            app.state.lifecycle_store.record_failure(
+                "executor",
+                "operator_disabled",
+                f"operator_disabled_{index}",
+                generation,
+                failure_limit=3,
+                failure_window_seconds=900,
+            )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "FLASH_FALLBACK_OK"
+    scheduled = next(
+        event
+        for event in app.state.store.events(response.headers["X-Session-ID"])
+        if event["event_type"] == "executor_scheduled"
+    )
+    assert scheduled["payload"]["selected_executor"] == "opencode_go"
+    assert scheduled["payload"]["reason"] == "local_unavailable"
+    assert stub_provider.calls == []
+
+
 def test_observe_lifecycle_records_state_without_blocking_or_controlling(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

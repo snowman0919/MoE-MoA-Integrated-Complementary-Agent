@@ -128,6 +128,7 @@ class ExecutorScheduler:
         *,
         risk: Risk = "low",
         flash_available: bool,
+        local_available: bool = True,
         on_queued: Callable[[ExecutorAdmission], None] | None = None,
     ) -> ExecutorAdmission:
         self._validate(api_key_id, request_id)
@@ -141,6 +142,23 @@ class ExecutorScheduler:
                 if existing.lease_state == "queued":
                     raise ExecutorSchedulingError("request is already queued")
                 return existing
+            high_risk = risk in {"high", "critical"}
+            if not local_available:
+                if high_risk or not flash_available:
+                    raise ExecutorQueueFull("local Executor is unavailable")
+                admission = ExecutorAdmission(
+                    request_id,
+                    api_key_id,
+                    "opencode_go",
+                    self._owner.api_key_id if self._owner else None,
+                    self._now(),
+                    "overflow",
+                    0,
+                    self._epoch,
+                    "local_unavailable",
+                )
+                self._pins[request_id] = admission
+                return admission
             if self._owner is None and not self._queues:
                 self._epoch += 1
                 admission = ExecutorAdmission(
@@ -158,7 +176,6 @@ class ExecutorScheduler:
                 self._pins[request_id] = admission
                 return admission
 
-            high_risk = risk in {"high", "critical"}
             owner_key = self._owner.api_key_id if self._owner else None
             same_key = owner_key == api_key_id
             key_queue = self._queues.get(api_key_id)
