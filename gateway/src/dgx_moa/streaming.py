@@ -196,7 +196,16 @@ def has_korean_script_leak(text: str, progress_language: str, objective: str) ->
 
 def has_internal_protocol_leak(text: str) -> bool:
     prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
-    return bool(re.search(r"</?(?:function|tool|assistant|response)[_:-]", prose, re.IGNORECASE))
+    return bool(
+        re.search(r"</?(?:function|tool|assistant|response)[_:-]", prose, re.IGNORECASE)
+        or re.search(r"<\|(?:tool|assistant|function)[^|>]*\|>", prose, re.IGNORECASE)
+        or re.search(
+            r"\b(?:INNER_THINKING|AgentFinish|RETURN_VALIDATED_OUTPUT|"
+            r"REQUIREMENT_ACCEPTED_POSTPROCESSING|INVALID_ROLE_MESSAGE|schema-halt)\b",
+            prose,
+            re.IGNORECASE,
+        )
+    )
 
 
 def is_read_only_evaluation(objective: str) -> bool:
@@ -268,6 +277,29 @@ def has_read_only_evaluation_mutation(
             r"switch|add|commit)\b|\./\S+\s+(?:new|install|setup)\b)",
             command,
         ) or re.search(r"(?:^|\s)(?:\d*)>(?![>&])\s*(?!/dev/null(?:\s|$))", command):
+            return True
+    return False
+
+
+def has_non_evidence_evaluation_tool(
+    tool_calls: dict[int, dict[str, object]], objective: str
+) -> bool:
+    if not is_read_only_evaluation(objective):
+        return False
+    for call in tool_calls.values():
+        if call.get("name") != "exec_command":
+            continue
+        try:
+            arguments = json.loads(str(call.get("_arguments") or "{}"))
+        except ValueError:
+            continue
+        command = str(arguments.get("cmd") or arguments.get("command") or "")
+        output_only = re.search(r"(?:^|&&|;|\n|['\"])\s*(?:echo|printf)\b", command)
+        inspection = re.search(
+            r"(?:^|&&|;|\n|['\"])\s*(?:cat|sed|head|tail|rg|grep|find|ls|file|git)\b",
+            command,
+        )
+        if output_only and not inspection:
             return True
     return False
 
@@ -775,6 +807,8 @@ async def responses_sse(
             raise ProgressOnlyResponse("truncated_response")
         if tool_calls and has_read_only_evaluation_mutation(tool_calls, objective):
             raise ProgressOnlyResponse("unsafe_tool_call")
+        if tool_calls and has_non_evidence_evaluation_tool(tool_calls, objective):
+            raise ProgressOnlyResponse("invalid_output")
         if not tool_calls and has_internal_protocol_leak(text):
             raise ProgressOnlyResponse("invalid_output")
         if not tool_calls and has_korean_script_leak(text, progress_language, objective):
@@ -790,6 +824,7 @@ async def responses_sse(
                 not text.strip()
                 or is_progress_only(text)
                 or has_korean_script_leak(text, progress_language, objective)
+                or has_internal_protocol_leak(text)
                 or (progress_language == "ko" and not re.search("[가-힣]", text))
             ):
                 text = tool_progress_text(tool_calls, progress_language)
