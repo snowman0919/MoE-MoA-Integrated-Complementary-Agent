@@ -8871,3 +8871,30 @@ observed stale `model=gpt-5.5` through the public Responses endpoint. The stream
 identified `model=dgx-moa`, returned `STALE_MODEL_RECOVERED.`, and ended with
 `response.completed`; durable state recorded `client_model_fallback | gpt-5.5 |
 dgx-moa`. Gateway restart count remained zero.
+
+### Qwythos structured-output recovery — 2026-08-13
+
+The failed Codex session `ecf09e1a-e87d-49f9-a9f0-15d29a050666` was traced on
+the external `mathcat` host. Ollama accepted a 64,919-token Reasoner prompt in a
+65,536-token slot, generated only the remaining 617 tokens, and logged
+`truncated=1` on both attempts. The resulting incomplete JSON caused the two
+gateway `JSONDecodeError` events and the `gpt-5.6-sol` Reasoner fallback; the
+Qwythos process itself did not fail.
+
+Production release `98be5de` extends projection trimming to oversized request
+input history after preserving bounded Evidence and contributions, dropping the
+oldest inputs only when the immutable snapshot still exceeds the role target.
+The original failing snapshot now projects to 84,361 bytes rather than 217,836
+bytes. The complete suite passed `1099`; focused projection/API tests passed
+`255` after correcting Reasoner provider telemetry to report the actual
+configured provider.
+
+Oversized production session `qwythos-fix-20260813-1645` projected the Reasoner
+context to 92,681 of 98,304 bytes. The external server measured a 12,918-token
+prompt, generated 760 tokens, and logged `truncated=0`; no structured retry or
+Frontier fallback occurred, and the client received exact `QWYTHOS_FIXED`.
+Final session `qwythos-direct-final-20260813` durably records
+`reasoner_started` and `reasoner_completed` with provider `ollama`, model
+`Qwythos-v2-9B:Q4`, zero retry/unavailable/fallback events, and exact
+`QWYTHOS_DIRECT_OK`. The authenticated gateway remains active with restart
+count zero.
