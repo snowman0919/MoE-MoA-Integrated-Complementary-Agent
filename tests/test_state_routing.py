@@ -106,6 +106,7 @@ def test_unknown_model_is_rejected() -> None:
 
 
 def test_codex_utility_model_uses_fast_compatibility_path() -> None:
+    assert COMPATIBILITY_MODEL_ALIASES["gpt-5.5"] == "dgx-moa"
     assert COMPATIBILITY_MODEL_ALIASES["gpt-5.6-luna"] == "dgx-moa-fast"
     assert "gpt-5.6-luna" not in MODEL_MODES
     with pytest.raises(ValueError, match="unknown model"):

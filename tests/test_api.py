@@ -8264,6 +8264,36 @@ def test_codex_utility_model_uses_unadvertised_fast_alias(
     assert stub_provider.calls == ["executor"]
 
 
+def test_codex_stale_default_model_falls_back_to_canonical_moa(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "stale-codex-default",
+            },
+            json={"model": "gpt-5.5", "input": "work", "stream": True},
+        )
+        events = client.app.state.store.events("stale-codex-default")
+
+    assert response.status_code == 200
+    assert "event: response.completed" in response.text
+    completed = next(
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and '"type":"response.completed"' in line
+    )
+    assert completed["response"]["model"] == "dgx-moa"
+    assert stub_provider.calls == ["reasoner", "executor"]
+    fallback = next(event for event in events if event["event_type"] == "client_model_fallback")
+    assert fallback["payload"] == {
+        "requested_model": "gpt-5.5",
+        "selected_model": "dgx-moa",
+    }
+
+
 def test_responses_partial_upstream_eof_fails_instead_of_completing(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
