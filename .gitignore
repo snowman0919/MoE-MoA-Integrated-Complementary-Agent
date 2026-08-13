@@ -21,6 +21,7 @@ data/benchmarks/*.json
 !data/benchmarks/mvp-baseline.json
 data/datasets/*.jsonl
 data/run/
+data/diagnostics/
 data/state/*-completion.json
 data/state/*-models.json
 data/state/gateway-tool-call.json
