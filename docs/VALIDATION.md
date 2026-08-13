@@ -8763,3 +8763,8 @@ returned exact `CRITICAL_FINAL_OK`; Frontier A `gpt-5.6-sol`/Codex OAuth
 completed in 14,808.631 ms, Reviewer approved, and Judge approved. Rollback to
 `90e838742` and redeploy produced an identical authenticated canary hash. Full
 details are in `docs/DYNAMIC_MOA_PILOT_FEEDBACK_EPOCH_20260813.md`.
+
+The final deployed-code canary additionally persisted
+`blocked/BUDGET_EXHAUSTED` after completed iteration 1. Frontier A completed in
+21,458.606 ms and Reviewer/Judge each approved once; the HTTP request itself
+returned 200. Gateway restart count remained zero.

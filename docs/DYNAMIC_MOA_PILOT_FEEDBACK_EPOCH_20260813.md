@@ -38,6 +38,14 @@ mode, 15,759 prompt tokens, 297 completion tokens, and 14,808.631 ms. Reviewer
 approved once and Judge `kimi-k3` approved once. No provider provenance was
 returned to the client.
 
+After deploying `fd658a1e8`, session
+`prod-critical-terminal-final-20260813` independently returned HTTP 200, then
+persisted `phase=blocked`, `final_status=blocked`, completed iteration 1, and
+termination reason `BUDGET_EXHAUSTED`. Its Frontier A call used the same OAuth
+profile/model in 21,458.606 ms with 20,409 prompt and 300 completion tokens;
+Reviewer and Judge each approved once. This separates successful transport and
+adjudication from the bounded task-loop stop state without leaving an open loop.
+
 The same release physically proved non-stream disconnect propagation:
 `prod-disconnect-v2-20260813` ended `cancelled` with active leases at zero.
 DeepSeek V4 Flash overflow returned a non-empty public answer through the
