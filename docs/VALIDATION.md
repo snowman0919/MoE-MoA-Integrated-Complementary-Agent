@@ -8806,3 +8806,15 @@ with SHA-256
 `0ce5802a580738ec0a4d6d0e752cb5cfbcde384e8af8942a2af3cb7fc1bd6a34`.
 The production Executor was not stopped. A subsequent authenticated local
 canary returned HTTP 200; the gateway remained active with restart count zero.
+
+The Codex harness regression at 15:04 KST was not a Frontier result: six
+client requests arrived at `/v1/responses` with the stale model name
+`gpt-5.5` and failed with `invalid_request`/404. The operator clarified the
+current contract as `gpt-5.6-sol` with `high` reasoning. Both checked-in
+Frontier configs and the production override now use that exact pair. After
+the fixed gateway restart, authenticated `/v1/admin/frontier-auth` returned
+`model=gpt-5.6-sol` and `reasoning_effort=high`; the service was active on
+`0.0.0.0:9000` with restart count zero. Config parsing and
+`test_frontier_config` passed. A direct CLI canary was intentionally rejected
+before model invocation because the safety boundary requires a registered
+isolated `frontier/*` worktree; it is not evidence of an inference failure.
