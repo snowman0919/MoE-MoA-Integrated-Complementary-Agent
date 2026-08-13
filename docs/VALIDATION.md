@@ -9082,7 +9082,6 @@ The canonical `dgx-moa-executor.service` is inactive while a separately named
 validated runtime owns port `19301`. No physical OFF/ON canary or unit-map
 change was attempted: activating control requires separate approval to restore
 the canonical Executor unit/topology and re-qualify that exact mapping.
-
 ### Batched general workspace execution — 2026-08-14
 
 General repository work now normalizes bare or filtered file discovery to one
