@@ -11,6 +11,7 @@ from unittest import mock
 import pytest
 
 SCRIPT = Path(__file__).parents[1] / "scripts/run-client-quality-matrix.py"
+VALIDATION_SCRIPT = Path(__file__).parents[1] / "scripts/validate-live-client-matrix.py"
 spec = importlib.util.spec_from_file_location("run_client_quality_matrix", str(SCRIPT))
 if spec is None or spec.loader is None:
     raise RuntimeError(f"Unable to load script module from {SCRIPT}")
@@ -67,6 +68,7 @@ def test_codex_command_uses_explicit_model_catalog(tmp_path: Path) -> None:
     )
 
     assert 'model_catalog_json="/state/model-catalog.json"' in command
+    assert "model_context_window=131072" in command
 
 
 def test_codex_catalog_is_pinned_from_authenticated_gateway(tmp_path: Path) -> None:
@@ -85,7 +87,7 @@ def test_codex_catalog_is_pinned_from_authenticated_gateway(tmp_path: Path) -> N
                         {
                             "slug": "dgx-moa-orchestrated",
                             "tool_mode": "direct",
-                            "context_window": 65536,
+                            "context_window": 131072,
                         }
                     ]
                 }
@@ -106,6 +108,31 @@ def test_codex_catalog_is_pinned_from_authenticated_gateway(tmp_path: Path) -> N
     assert "test-secret" not in path.read_text()
 
 
+def test_matrix_protocol_pins_current_context_channel_and_baseline_effort() -> None:
+    source = SCRIPT.read_text()
+    assert "0.146.0-aarch64-unknown-linux-musl" in source
+    assert '"X-Runtime-Channel": "dev"' in source
+    assert '"model_context_window=131072"' in source
+    assert "gpt-5.6-sol" in source
+    assert 'model_reasoning_effort="high"' in source
+
+
+def test_baseline_reasoning_effort_has_bounded_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DGX_MOA_BASELINE_REASONING_EFFORT", raising=False)
+    assert GLOBALS["baseline_reasoning_effort"]() == "high"
+    monkeypatch.setenv("DGX_MOA_BASELINE_REASONING_EFFORT", "xhigh")
+    assert GLOBALS["baseline_reasoning_effort"]() == "xhigh"
+    monkeypatch.setenv("DGX_MOA_BASELINE_REASONING_EFFORT", "max")
+    with pytest.raises(RuntimeError, match="invalid baseline reasoning effort"):
+        GLOBALS["baseline_reasoning_effort"]()
+
+
+def test_frontier_validation_gateway_enables_operator_admin_path() -> None:
+    source = VALIDATION_SCRIPT.read_text()
+    assert '"api_keys": {"operator" if frontier_enabled else "physical": secret}' in source
+    assert '"admin_api_enabled": frontier_enabled' in source
+
+
 def test_docker_command_has_stable_unique_name(tmp_path: Path) -> None:
     command = GLOBALS["docker_command"](
         tmp_path / "workspace",
@@ -116,6 +143,26 @@ def test_docker_command_has_stable_unique_name(tmp_path: Path) -> None:
     name = command[command.index("--name") + 1]
     assert name.startswith("moa-qm-")
     assert len(name) == len("moa-qm-") + 20
+    state_mount = next(value for value in command if value.endswith(":/state:rw"))
+    assert state_mount.startswith("/")
+
+
+def test_hermes_profile_is_pinned_to_isolated_gateway(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "custom_providers:\n"
+        "  - name: dgx-moa-agent\n"
+        "    base_url: http://production.invalid:9000/v1\n"
+        "    api_key: old-key\n"
+        "    model: dgx-moa-agent\n"
+    )
+
+    GLOBALS["pin_hermes_gateway"](path, "http://127.0.0.1:19300", "canary-key")
+
+    updated = path.read_text()
+    assert "base_url: http://127.0.0.1:19300/v1" in updated
+    assert "api_key: canary-key" in updated
+    assert "old-key" not in updated
 
 
 def test_timed_out_docker_run_removes_exact_container(tmp_path: Path) -> None:

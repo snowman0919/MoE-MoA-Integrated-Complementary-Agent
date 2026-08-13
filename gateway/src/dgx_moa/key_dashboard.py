@@ -147,7 +147,7 @@ const $=id=>document.getElementById(id);
 const fmtTime=value=>value?new Date(value*1000).toLocaleString():"없음";
 const optional=id=>$(id).value?Number($(id).value):null;
 let modelCatalog=new Map();
-const modelNames=new Map([["dgx-moa-executor","Qwen3-Next"],
+const modelNames=new Map([["dgx-moa-executor","Mistral-Small-4"],
   ["dgx-moa-planner","Nemotron-30B"],["dgx-moa-reviewer","North-Mini-30B"]]);
 const modelLabel=model=>modelNames.get(model)||model;
 const reasonNames=new Map([["local_busy","로컬 Busy"],["local_context_exceeded","컨텍스트 초과"],
@@ -183,14 +183,7 @@ const copy=async text=>{
 const keyCell=(row,key)=>{
   const cell=document.createElement("td");const wrap=document.createElement("div");
   wrap.className="key-value";const value=document.createElement("code");value.textContent=key.masked_key;
-  const reveal=document.createElement("button");reveal.textContent="👁";reveal.ariaLabel="키 원문 보기";
-  let visible=false,raw="";const getRaw=async()=>raw||(raw=(await api(
-    "/v1/admin/api-keys/"+key.name+"/reveal")).api_key);
-  reveal.onclick=async()=>{visible=!visible;value.textContent=visible?await getRaw():key.masked_key;
-    reveal.ariaLabel=visible?"키 숨기기":"키 원문 보기"};
-  const copier=document.createElement("button");copier.textContent="복사";copier.onclick=async()=>{
-    await copy(await getRaw());copier.textContent="복사됨";setTimeout(()=>copier.textContent="복사",1200)};
-  wrap.append(value,reveal,copier);cell.append(wrap);row.append(cell);
+  wrap.append(value);cell.append(wrap);row.append(cell);
 };
 const bars=(id,rows,label,value,details)=>{
   const root=$(id);root.replaceChildren();const max=Math.max(1,...rows.map(value));

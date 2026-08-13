@@ -303,6 +303,8 @@ async def test_policy_redacts_specialist_state_event_and_evaluation_boundaries(
     judge_request = next(item for item in events if item["event_type"] == "judge_requested")
     judge_event = next(item for item in events if item["event_type"] == "judge_completed")
     assert review_event["payload"]["findings"] == []
-    assert judge_request["payload"]["observation"] == "[REDACTED_BY_POLICY]"
+    assert "observation" not in judge_request["payload"]
+    assert judge_request["payload"]["snapshot_id"].startswith("snapshot_")
+    assert judge_request["payload"]["projection_id"].startswith("projection_")
     assert judge_event["payload"]["summary"] == "[REDACTED_BY_POLICY]"
     assert state.evaluations[-1]["result"]["summary"] == "[REDACTED_BY_POLICY]"

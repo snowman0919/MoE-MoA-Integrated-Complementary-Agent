@@ -8,6 +8,8 @@ __pycache__/
 *.py[cod]
 data/state/*.db*
 data/state.db*
+data/state/backups/
+runtime_state.sqlite
 data/traces/*.jsonl
 data/traces/**/*.jsonl
 data/staging/
@@ -21,6 +23,7 @@ data/benchmarks/*.json
 !data/benchmarks/mvp-baseline.json
 data/datasets/*.jsonl
 data/run/
+data/diagnostics/
 data/state/*-completion.json
 data/state/*-models.json
 data/state/gateway-tool-call.json

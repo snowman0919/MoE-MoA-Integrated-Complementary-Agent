@@ -6,9 +6,9 @@ insertion is non-blocking; queue saturation or provider failure affects only
 observation and never waits in the request path.
 
 The reviewed production selection uses Telegram with a bot token, chat ID, and
-optional message-thread ID. The implementation also retains an optional Discord
-webhook transport for isolated compatibility tests, but the operator explicitly
-excluded Discord from production and release gating on 2026-07-22. Events are
+optional message-thread ID. The operator explicitly excluded Discord from
+production and release gating on 2026-07-22; its unused compatibility transport
+was removed from `dev` on 2026-08-08. Events are
 batched and rendered as readable multi-line cards. Telegram cards use a fixed
 Korean title/label/value mapping implemented in normal Python; no LLM performs
 translation or logging synthesis. Model-generated content is not language-
@@ -22,8 +22,9 @@ hypotheses, evidence references, recommended actions, and a confidence
 category). Hidden model reasoning is never available to this path. Credentials,
 environment data, and token deltas
 remain excluded, and the selected content is still passed through secret
-redaction. Telegram and Discord are external processors even when the gateway
-itself is tailnet-only. Provider secrets use Pydantic `SecretStr` and must arrive
+redaction. Telegram is an external processor even when the gateway itself is
+limited to authenticated tailnet and local-LAN ingress. Provider secrets use
+Pydantic `SecretStr` and must arrive
 through a protected runtime configuration source.
 
 Optional controls are separately disabled. The only accepted commands are
@@ -53,11 +54,11 @@ gateway:
       role_permissions: {}
 ```
 
-An isolated 2026-07-22 physical check sent Discord- and Telegram-shaped requests
-through a real loopback HTTP server, including thread targets, safe payload
-projection, HTTP 429, connection outage, and non-blocking failure isolation.
-Separate checks passed allowlist denial, scoped nonce, expiration, audit, and
-idempotent replay.
+The historical 2026-07-22 Discord/Telegram loopback evidence remains preserved
+in `docs/VALIDATION.md`. Current Telegram checks cover message-thread targeting,
+safe payload projection, HTTP 429, connection outage, and non-blocking failure
+isolation. Separate checks pass allowlist denial, scoped nonce, expiration,
+audit, and idempotent replay.
 
 The real Telegram bot `@kodex9_AI_observer_bot` then authenticated, discovered
 one user-initiated private target, and accepted a safe validation event. Its
@@ -69,4 +70,4 @@ token, warm-up, failure, and terminal fields when the originating event has
 them. Prompt and Reasoner artifact forwarding remain disabled in the reviewed
 production override. A real core request produced three sent events, zero drops,
 and zero Telegram errors.
-Discord remains unconfigured by design and is not a production release gate.
+Discord is not a production release gate and has no current source/config path.

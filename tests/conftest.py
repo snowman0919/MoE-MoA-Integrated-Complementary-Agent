@@ -86,21 +86,6 @@ class StubProvider:
                     "completion_allowed": True,
                 }
             )
-        elif role == "executor" and (
-            request.get("response_format", {}).get("json_schema", {}).get("name")
-            == "orchestration_decision"
-        ):
-            content = json.dumps(
-                {
-                    "action": "respond",
-                    "required_agents": [],
-                    "optional_agents": [],
-                    "reason": {},
-                    "parallelizable": False,
-                    "continue_after": "respond",
-                    "confidence": 0.9,
-                }
-            )
         else:
             return {
                 "id": "chatcmpl-test",

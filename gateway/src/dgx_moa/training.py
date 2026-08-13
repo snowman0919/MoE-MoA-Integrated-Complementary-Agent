@@ -18,6 +18,7 @@ from typing import Any, Literal, cast
 import zstandard
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .execution_graph import ExecutionGraphStore
 from .security import is_sensitive_key
 from .state import StateStore
 
@@ -141,6 +142,7 @@ class TrainingEvent(BaseModel):
     latency_ms: float | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    cached_tokens: int | None = Field(default=None, ge=0)
     estimated_cost: float | None = None
     status: str
     privacy_class: Literal["public", "internal", "restricted"] = "internal"
@@ -819,6 +821,114 @@ def near_duplicate(left: Any, right: Any, threshold: float = 0.9) -> bool:
     return bool(union) and len(left_tokens & right_tokens) / len(union) >= threshold
 
 
+def execution_graph_training_projection(
+    metadata: Any, store: ExecutionGraphStore
+) -> dict[str, Any] | None:
+    if not isinstance(metadata, dict) or metadata.get("mode") != "shadow":
+        return None
+    graph_id = metadata.get("graph_id")
+    checkpoint_id = metadata.get("checkpoint_id")
+    if (
+        not isinstance(graph_id, str)
+        or not graph_id
+        or not isinstance(checkpoint_id, str)
+        or not checkpoint_id
+    ):
+        return None
+    try:
+        graph = store.load_graph(graph_id)
+        checkpoint = store.load_checkpoint(graph_id, checkpoint_id)
+        checkpoints = store.load_checkpoints(graph_id)
+    except KeyError as error:
+        raise ValueError("execution graph training reference is missing") from error
+    if metadata.get("graph_hash") != graph.graph_hash:
+        raise ValueError("execution graph trace hash mismatch")
+    if metadata.get("template_id") != graph.template_id:
+        raise ValueError("execution graph trace template mismatch")
+    if metadata.get("checkpoint_id") != checkpoint.checkpoint_id:
+        raise ValueError("execution graph trace checkpoint mismatch")
+    if metadata.get("active_state_object_ref") != checkpoint.active_state_object_ref:
+        raise ValueError("execution graph active state mismatch")
+    edge_by_id = {edge.edge_id: edge for edge in graph.edges}
+
+    def edges(edge_ids: tuple[str, ...]) -> list[dict[str, Any]]:
+        if not set(edge_ids).issubset(edge_by_id):
+            raise ValueError("execution graph checkpoint references an unknown edge")
+        return [edge_by_id[edge_id].model_dump(mode="json") for edge_id in edge_ids]
+
+    attempts = [attempt.model_dump(mode="json") for attempt in store.load_attempts(graph_id)]
+    try:
+        active_state = store.load_active_state(checkpoint.active_state_object_ref)
+    except KeyError as error:
+        raise ValueError("execution graph active state is missing") from error
+    checkpoint_history = [
+        item for item in checkpoints if item.checkpoint_id <= checkpoint.checkpoint_id
+    ]
+    return {
+        "schema_version": "execution-graph-training-v1",
+        "graph_schema_version": graph.graph_schema_version,
+        "compiler_version": graph.compiler_version,
+        "policy_version": graph.policy_version,
+        "graph_id": graph.graph_id,
+        "graph_hash": graph.graph_hash,
+        "template_id": graph.template_id,
+        "checkpoint_id": checkpoint.checkpoint_id,
+        "graph_state_before": {
+            "node_states": checkpoint.node_states,
+            "completed_node_ids": checkpoint.completed_node_ids,
+            "active_node_ids": checkpoint.active_node_ids,
+            "pending_node_ids": checkpoint.pending_node_ids,
+            "remaining_budgets": checkpoint.remaining_budgets,
+            "failure_fingerprints": checkpoint.failure_fingerprints,
+            "progress_evidence_ids": checkpoint.progress_evidence_ids,
+            "terminal_status": checkpoint.terminal_status,
+        },
+        "available_edges": edges(checkpoint.available_edges),
+        "selected_edges": edges(checkpoint.selected_edges),
+        "attempts": attempts,
+        "checkpoint_history": [
+            {
+                "checkpoint_id": item.checkpoint_id,
+                "parent_checkpoint_id": item.parent_checkpoint_id,
+                "reason": item.reason,
+                "event_cursor": item.event_cursor,
+                "size_before": item.size_before,
+                "size_after": item.size_after,
+                "created_at": item.created_at,
+            }
+            for item in checkpoint_history
+        ],
+        "checkpoint_resume_result": {
+            "status": (
+                "observed"
+                if any(item.reason == "resumed" for item in checkpoint_history)
+                else "not_observed"
+            ),
+            "checkpoint_ids": [
+                item.checkpoint_id for item in checkpoint_history if item.reason == "resumed"
+            ],
+        },
+        "partial_rerun_result": {
+            "status": (
+                "observed"
+                if any(item.reason == "partial_rerun" for item in checkpoint_history)
+                else "not_observed"
+            ),
+            "checkpoint_ids": [
+                item.checkpoint_id for item in checkpoint_history if item.reason == "partial_rerun"
+            ],
+        },
+        "scheduling": (
+            graph.scheduling.model_dump(mode="json") if graph.scheduling is not None else None
+        ),
+        "active_state": active_state,
+        "latency_ms": sum(attempt.get("latency_ms") or 0 for attempt in attempts),
+        "cost_usd": sum(attempt.get("cost_usd") or 0 for attempt in attempts),
+        "quality_delta": None,
+        "quality_delta_status": "not_measured",
+    }
+
+
 def candidate_from_trace(
     trace: dict[str, Any],
     *,
@@ -949,6 +1059,12 @@ def candidates_from_trace(
             [item for item in trace.get("agent_artifacts", []) if item.get("role") == "reviewer"],
         ),
         ("executor", "routing", "routing_decisions", trace.get("orchestration_decisions", [])),
+        (
+            "executor",
+            "routing",
+            "execution_graph_routing",
+            trace.get("metrics", {}).get("execution_graph_training"),
+        ),
         ("executor", "tool_use", "tool_executions", trace.get("tool_executions", [])),
         (
             "executor",
@@ -1158,6 +1274,25 @@ class TrainingCollector:
                 user_opt_out=bool(metrics.get("user_training_opt_out")) or persistent_user_opt_out,
                 external_output_permitted=self.external_output_permitted,
             )
+            graph_metadata = metrics.get("execution_graph")
+            if (
+                candidates[0].training_eligible
+                and isinstance(graph_metadata, dict)
+                and graph_metadata.get("mode") == "shadow"
+            ):
+                graph_projection = execution_graph_training_projection(
+                    graph_metadata,
+                    ExecutionGraphStore(self.operational_store.path),
+                )
+                if graph_projection is not None:
+                    trace = trace | {
+                        "metrics": metrics | {"execution_graph_training": graph_projection}
+                    }
+                    candidates = candidates_from_trace(
+                        trace,
+                        repository_policy=repository_policy,
+                        external_output_permitted=self.external_output_permitted,
+                    )
             candidate = candidates[0]
             if self.training_store.excluded(request_id):
                 self.metrics["excluded"] += 1
@@ -1208,6 +1343,7 @@ class TrainingCollector:
                     latency_ms=invocation.get("latency_ms"),
                     input_tokens=invocation.get("prompt_tokens"),
                     output_tokens=invocation.get("completion_tokens"),
+                    cached_tokens=invocation.get("cached_tokens"),
                     estimated_cost=invocation.get("cost_usd"),
                     status=str(invocation.get("status", "unknown")),
                     privacy_class="internal",

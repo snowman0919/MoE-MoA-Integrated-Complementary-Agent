@@ -5471,3 +5471,3254 @@ only `log_report.py`; public and hidden validation both exited `0`, and all
 required review calls selected remote `deepseek-v4-flash` with
 `routing_reason=local_not_ready` and both completed. The canary recorded no
 failed specialist call, bad terminal, stream abort, or gateway 5xx.
+
+## Frontier stdin transport pre-production check — 2026-08-08
+
+The development-only Frontier runner now sends the redacted Codex request on
+stdin instead of placing it in the process argument vector. A local subprocess
+check transported exactly 300,000 prompt characters, returned the same byte
+count, captured stdout and stderr concurrently, and confirmed that the prompt
+was absent from `CompletedProcess.args`. A simulated process-spawn `E2BIG`
+returned `FRONTIER_INPUT_TRANSPORT_TOO_LARGE` without retry.
+
+Focused validation passed 35/35 tests in 0.18 seconds. Ruff format and lint,
+strict mypy for `gateway/src/dgx_moa/frontier.py`, and `git diff --check` passed.
+No Codex OAuth provider call, App Server session, production deployment, or
+latency/quality benchmark was performed by this check; those remain separate
+physical gates.
+
+## Execution Graph core development check — 2026-08-08
+
+The development-only `execution-graph-v1` compiler produced stable graph and
+input hashes for repeated normalized inputs while excluding observation time
+from graph identity. Six focused checks covered allowlisted node rejection,
+undeclared-cycle rejection, three-branch fan-out/JOIN readiness, two bounded
+same-node retries followed by a separately pinned fallback node, two bounded
+repair traversals requiring new validated Evidence IDs, no-progress exit,
+policy-owned human approval pause/resume, cancellation-to-Finalize, strict
+numeric inputs, SQLite restart recovery, incompatible-checkpoint rejection,
+provider/model pinning, an explicit CHECKPOINT node, artifact-hash-gated reuse,
+exactly-once finalization, and descendant-only partial rerun. All 6 passed in
+0.05 seconds.
+
+The complete repository suite then passed 1009/1009 in 29.49 seconds with the
+existing Starlette `httpx` deprecation warning. Project-wide Ruff lint and
+strict mypy over 47 source files passed. Focused format checks for the new
+Execution Graph and changed Frontier files passed, as did `git diff --check`
+and the frozen Dynamic MoA v3 plan hash. A repository-wide format check still
+reports six pre-existing unformatted files; no bulk formatting was applied.
+No Controller default-path switch, provider call, production runtime mutation,
+or graph-vs-baseline benchmark was performed by this check.
+
+## Execution Graph common-path shadow check — 2026-08-08
+
+The checked-in and model-default Execution Graph mode is `disabled`. With an
+isolated test configuration set to `shadow`, one Chat request and one Responses
+request each compiled exactly one candidate graph through the existing shared
+Chat execution path. Both persisted graph IDs/hashes on session state, emitted
+one sanitized shadow event, recorded the actual compatibility Executor provider
+as `legacy_local_qwen`, and contained no bearer token. Shadow compilation owns
+no routing or execution authority and its typed validation/SQLite failures do
+not block the validated legacy request path.
+
+After this integration, the complete suite passed 1010/1010 in 29.56 seconds
+with the existing Starlette warning. Project-wide Ruff lint, strict mypy over
+47 source files, `git diff --check`, and the frozen v3 plan hash passed. This is
+not execution parity evidence: the legacy Controller remains authoritative and
+no branches were removed or production defaults changed.
+
+## Concurrent runtime/model mutation incident — 2026-08-08
+
+During the development-only pinned Mistral download, a second unrequested
+download appeared and the active Planner was explicitly stopped. Three paths
+that the frozen inventory had classified as retained and verified present were
+then absent: the rollback Executor, the installed experimental Executor, and
+the active Planner Gemma model. The authorized cleanup command did not target
+those paths. Both exact download process groups were terminated after the
+collision was detected; a subsequent process snapshot found no remaining
+download, deletion, or service-control process.
+
+At `2026-08-08T16:49:16+09:00`, five other retained model paths remained
+present. The two Mistral partial locations were preserved at `20492283799` and
+`2834955254` bytes, and filesystem free space was `267652116480` bytes. The
+user gateway unit remained active and loopback role-model units remained
+stopped. Tailnet `/healthz` returned HTTP 200, while `/readyz` returned HTTP 503
+with the resident Executor, Planner, and Reviewer stopped. Its Reasoner field
+reported ready despite the inactive Reasoner unit and is therefore a recorded
+state-reconciliation discrepancy, not a green result.
+
+The incident evidence is detailed in
+`docs/DYNAMIC_MOA_CONCURRENT_RUNTIME_INCIDENT_20260808.md`. No recovery,
+service start, download resumption, deployment, or further deletion was
+performed. Physical model gates remain paused pending an explicit recovery
+decision and a stable single-actor runtime.
+
+Later in the same validation run, `config/models.yaml` and the API-key
+Dashboard Executor label changed outside the goal-controlled edit stream to
+the pinned Mistral target and a tailnet Reasoner address. The exact concurrent
+diff was preserved rather than reverted. A short stability recheck found no
+active editor, download, or service-control process; this does not establish
+the initiating actor or authorize the configured model for production.
+
+## Execution Graph routing/refactor parity check — 2026-08-08
+
+Review-evidence assembly moved from the Controller into one shared module while
+the existing Controller method signatures remained as one-line compatibility
+delegates. Execution Graph projection persistence moved into the graph module,
+and the Executor local/Frontier priority contract moved from three dispersed
+API branches into one pure routing function. Provider pinning remains
+unchanged: an already selected Frontier provider cannot be switched during the
+turn.
+
+| File | Pre-v3 lines / branches | Candidate lines / branches | Delta |
+| --- | ---: | ---: | ---: |
+| `controller.py` | `4285 / 388` | `4141 / 359` | `-144 / -29` |
+| `api.py` | `4468 / 466` | `4472 / 462` | `+4 / -4` |
+
+A disabled-vs-shadow paired API regression preserved the same selected role,
+Executor request contract, native tool-call ID, `finish_reason`, response, and
+exactly-one terminal event. An injected SQLite graph-store failure emitted a
+typed shadow failure without changing the legacy response or provider call.
+Busy, context overflow, output-budget overflow, correction, repeated-failure,
+and no-progress selection regressions passed. The pre-existing 10-millisecond
+stream timeout test was made scheduler-robust at 200 milliseconds without
+changing production timeout code; the timeout/one-attempt contract and the
+updated Mistral Dashboard label passed five consecutive focused runs.
+
+The complete suite passed `1012/1012` in 29.50 seconds with the existing
+Starlette warning. Project-wide Ruff lint, strict mypy over 47 source files,
+`git diff --check`, and the frozen v3 plan hash passed. This remains a shadow
+parity gate only: the legacy execution path is authoritative, no physical
+provider comparison has run, and the Graph Runtime is not approved as a
+production default.
+
+## Mistral cache PASS and isolated vLLM load FAIL — 2026-08-08
+
+The pinned canonical snapshot at revision
+`b1a9048590131d38491bd23a7c9f6ed0962f0358` contained `23` manifest files
+totaling exactly `70846528432` bytes with zero broken symlinks. `hf cache
+verify --fail-on-missing-files --fail-on-extra-files` checked `23/23` files and
+exited `0`. Cache integrity is PASS.
+
+A concurrent local vLLM `0.22.1` process then attempted the required first-load
+profile on `127.0.0.1:19301`: context `65536`, one sequence, `1700000000` KV
+bytes, `gpu_memory_utilization=0.5`, MARLIN MoE, TRITON_MLA attention, and
+Mistral tool/reasoning parsers. It never opened the port or returned readiness.
+Observed GPU allocation reached `120052` MiB, and EngineCore entered
+uninterruptible `folio_wait_bit_common` sleep with 102 threads.
+
+Kernel evidence records global OOM handling, `NV_ERR_NO_MEMORY`, unrelated
+process kills, three gateway kills, the user systemd manager's death, and final
+kills of EngineCore PID `3386567` and vLLM parent PID `3386426` at `17:28:42`.
+The restarted gateway recovered `/healthz` HTTP `200`; `/readyz` remained HTTP
+`503` with role services stopped. No canary listener or GPU compute remained.
+
+A later check found a second direct-session attempt started at `17:29:29` with
+the same pinned snapshot and core safety limits. Its EngineCore PID `3395983`
+held `68256` MiB GPU memory without opening port `19301`. To prevent another
+global OOM, exact process group `3395728` received `SIGTERM`; after the parent
+failed to reap its zombie child, that same group received `SIGKILL`. Both PIDs,
+the listener, and GPU compute allocation were absent afterward. Available
+system memory was `126931980288` bytes and swap use was `944574464` bytes.
+
+| Gate | Result |
+| --- | --- |
+| pinned snapshot integrity | PASS (`23/23`, `70846528432` bytes) |
+| isolated load and readiness | FAIL (never listened or became ready) |
+| memory isolation | FAIL (global OOM affected unrelated processes and gateway) |
+| Chat, Responses, streaming, tools, long context, cache, cancellation, restart | NOT RUN (readiness prerequisite failed) |
+| deployment | BLOCKED; no same-profile retry authorized |
+
+The exact incident timeline is preserved in
+`docs/DYNAMIC_MOA_CONCURRENT_RUNTIME_INCIDENT_20260808.md`. No model restart,
+backend substitution, production deployment, or production worktree mutation
+was initiated by the goal-controlled path after the failure; the unsafe
+concurrent retry above was stopped by exact process-group scope.
+
+## Remote roles and Codex App Server gate — 2026-08-08
+
+An authenticated OpenCode Go `/v1/models` request returned HTTP `200` with 25
+models. The catalog contained the exact target IDs `deepseek-v4-pro`,
+`deepseek-v4-flash`, `glm-5.2`, `kimi-k3`, and `kimi-k2.5`; no credential value
+was printed or persisted. Checked-in safe defaults remain disabled.
+
+The first post-mapping Planner request failed after about 5.7 seconds despite a
+120-second stage timeout. Root cause was the shared HTTP client interpreting
+explicit `timeout=None` as HTTPX's default five-second timeout. Passing the
+explicit value through to HTTPX restored the existing outer `asyncio.timeout`
+contract. A regression confirms `httpx.Timeout(None)`, and this shared fix also
+applies to local ModelProvider calls that already own stage deadlines.
+
+After the fix, `deepseek-v4-pro` returned a valid `PlannerPlan` in `11.432`
+seconds with `450` prompt, `743` completion, and `1193` total tokens. Planner is
+PASS. `glm-5.2` returned `finish_reason=stop`, zero public content characters,
+and only `reasoning_content`; a separate temperature-1 JSON-object probe again
+returned zero public content. Hidden reasoning was neither parsed nor retained,
+so Reviewer is FAIL.
+
+The Kimi K3 Judge initially returned HTTP `400`: the provider accepts only
+`temperature=1` for that model. Bounded probes then proved that temperature 1,
+strict JSON schema, and seed 0 are accepted. A model-specific temperature fix
+allowed three matrix rows to pass: supported approval, rejection of an
+unsupported production claim, and detection of a failed test reported as
+success. The fourth row returned empty public content. One existing bounded
+retry was extended to empty content only; the rerun returned a 17-character
+truncated JSON value on the same row. Retry count was not increased. Kimi Judge
+is FAIL, and the sanitized partial artifact is
+`data/diagnostics/opencode-completion/kimi-k3-judge-20260808.json` with
+`status=failed` and `failure_class=JudgeProviderError`.
+
+The installed Codex CLI is `0.146.0`. Its generated App Server schema confirmed
+stdio JSONL, ephemeral threads, read-only sandbox, never-approval, per-turn
+output schema, and token-usage notifications. The development Frontier now
+uses `initialize → initialized → thread/start → turn/start → turn/completed`,
+opts out of reasoning deltas, discards reasoning items, and collects only the
+final public `agentMessage`. It starts a new process group and performs exact
+TERM/KILL cleanup on timeout or cancellation. Stdin `codex exec` is attempted
+only for typed `FRONTIER_APP_SERVER_UNAVAILABLE`; auth, usage-limit, and timeout
+failures retain their existing failover/fail-closed behavior.
+
+An OAuth primary App Server preflight reported ChatGPT auth, nine available
+Codex models, and exact `gpt-5.6-sol` presence. A physical architecture turn
+then completed through `transport=codex_app_server`, profile `primary`, in
+`21947.105` ms with `14290` prompt, `551` completion, and `14841` total tokens.
+The output validated all six required architecture fields, and only objective,
+constraints, and specific questions were transmitted. No OpenAI API key,
+OpenRouter fallback, host mutation, production enablement, or deployment was
+used.
+
+After these changes, the complete repository suite passed `1016/1016` in
+35.53 seconds with the existing Starlette warning. Project-wide Ruff lint,
+strict mypy over 47 source files, both frozen plan hashes, and `git diff
+--check` passed. The remote-role stage is not green: Planner and Frontier A
+pass, while Reviewer and Judge remain required physical failures.
+
+## Reasoner pre-ablation smoke — 2026-08-08
+
+The external Ollama catalog at `100.90.167.128:11434` returned the exact
+configured `Qwythos-v2-9B:Q4` model. An intentionally small 128-token structured
+request returned HTTP `200` but ended with `done_reason=length`: all 128 tokens
+were thinking, public content was empty, and no tool call was emitted. This was
+recorded as an output-budget failure rather than parsed from hidden thinking.
+
+With a materially increased but still bounded 1024-token allowance, the same
+read-only schema completed in `2.758` seconds with valid public JSON, `62`
+prompt tokens, `242` completion tokens, and `304` total tokens. The standalone
+Reasoner smoke is PASS. It is not ablation evidence: the required Mistral-only,
+Qwythos→Mistral, Qwythos+Frontier→Mistral, and full parallel variants cannot run
+while the local Mistral Executor gate remains failed.
+
+## API-key Executor scheduling and Flash gate — 2026-08-08
+
+The development candidate now has one process-local, raw-token-free Executor
+scheduler. Its persisted/public fields are `request_id`, `api_key_id`,
+`lease_owner_api_key_id`, `acquired_at`, `lease_state`, `queue_position`,
+`round_robin_epoch`, selected provider, and reason. A different API key is
+pinned immediately to OpenCode Go `deepseek-v4-flash` while local Mistral is
+owned; the owning key receives at most three local waiters before low/medium
+risk overflow. Per-key deques are promoted round-robin. High/critical risk is
+local-only and fails closed when its bounded queue is full. Cancellation,
+timeout, stream completion, and ordinary finalization release the pin.
+
+The OpenCode Go overflow adapter preserves native `tools`, `tool_choice`,
+`parallel_tool_calls`, and public OpenAI-compatible output while removing
+gateway `metadata` and private underscore-prefixed fields. It performs no
+silent provider switch after admission. `401`/`403`, including region opt-in
+denial, is typed as pinned provider unavailable. Scheduler decisions are
+emitted directly through state events and the actual `SchedulingSnapshot` is
+now stored in new Execution Graph records; old v1 records without the field
+retain their original hash compatibility.
+
+Focused scheduler/provider/API/graph checks passed `11/11`. The final complete
+suite passed `1022/1022` in `34.70` seconds with the existing Starlette warning.
+Project Ruff check, strict mypy over 49 source files, both frozen plan hashes,
+and `git diff --check` passed. All 11 scheduler-touched source/test files pass
+Ruff format check. The whole-tree format check retains four pre-existing,
+out-of-scope candidates (`specialists.py`, `streaming.py`,
+`test_controller.py`, and `test_specialists.py`); they were not rewritten.
+
+The authenticated physical model catalog contained exact
+`deepseek-v4-flash`. The first completion was rejected before inference with
+HTTP `403`; a bounded sanitized diagnostic identified provider error type
+`RegionError`: the latest model is China-hosted and requires explicit workspace
+opt-in. No credential was printed or persisted. No opt-in, provider
+substitution, production configuration change, or deployment was performed.
+Therefore Flash catalog availability is PASS, native tool-call completion is
+FAIL/NOT EXECUTED, and the Executor scheduler production gate remains disabled.
+
+## API-key privacy and live Dashboard gate — 2026-08-08
+
+The development credential store no longer writes API-key plaintext. The
+legacy `token` column is retained only as an empty compatibility tombstone;
+authentication uses the existing one-way SHA-256 digest and listings retain
+only a prefix/suffix mask. On opening an older database, plaintext rows are
+replaced with empty values under SQLite `secure_delete`, followed by WAL
+truncate and `VACUUM`. A physical-byte regression confirms that legacy,
+environment, managed, and dashboard-session plaintext values are absent while
+the original credential still authenticates. Creation and rotation return the
+new value once. The former admin reveal endpoint now returns HTTP `410` and
+records `reveal_denied`. The internal Admin Codex key is process-memory-only and
+rotates on first use after restart.
+
+The new Dashboard remains behind `dashboard_enabled: false`. When enabled in an
+isolated development gateway, a bearer credential is exchanged for a one-day,
+HttpOnly, SameSite=Strict session. WebSocket origin and session are checked
+before accept. Runtime `StateStore` events feed one bounded process-local hub:
+general keys receive only their own session events and history; cross-key lease
+owners render as `other`. Operators receive aggregate allowlisted fields by
+default, without session ID, prompt, output, or tool arguments. Opening another
+key's request detail requires an 8-256 character reason and creates a redacted
+`dashboard_raw_view` audit event. Queue overflow drops the oldest live item and
+marks the successor with `gap=true`; durable history remains queryable.
+
+An isolated uvicorn server on loopback port `19091` physically completed HTTP
+session exchange, real TCP WebSocket upgrade, and live event delivery. The
+general-key socket reported `scope=private`, exact synthetic session ownership,
+and its own prompt. The operator socket reported `scope=operator_aggregate`, no
+session ID, and only `{"provider":"local"}`. The isolated server was stopped;
+production services and worktrees were untouched.
+
+The complete repository suite then passed `1026/1026` in `37.14` seconds with
+the existing Starlette warning. Ruff check, strict mypy over 51 source files,
+both frozen plan hashes, and `git diff --check` passed. All nine files touched
+by this Dashboard/privacy slice pass Ruff format check; the four unrelated
+whole-tree format candidates recorded above remain unchanged.
+
+## Execution Graph compact-state and training projection — 2026-08-08
+
+The development shadow now persists a content-addressed
+`session-active-state-v1` object and links it from an immutable Graph checkpoint
+with graph hash, parent checkpoint, durable event cursor, and measured
+before/after byte sizes. Model-relevant top-level fields retain at most the
+existing observation window; any individually oversized field is redacted and
+replaced by a SHA-256 plus bounded JSON summary. The total active-state byte
+ceiling is `max_tool_output_characters * max_retained_observations`. Exceeding
+that ceiling fails shadow projection closed; durable session events are neither
+rewritten nor deleted.
+
+Agent trace remains `agent-trace-v3`. Its existing `metrics` object carries only
+Graph ID/hash/template/checkpoint/active-state references. After all existing
+training eligibility, repository policy, opt-out, privacy, and license gates
+pass, the disabled-by-default collector resolves those references and validates
+their integrity. It then creates a sanitized routing candidate containing graph
+state, available/selected edges, node attempt results, Evidence references,
+latency, and cost. No quality improvement was measured in this slice, so
+`quality_delta=null` and `quality_delta_status=not_measured`; no benchmark value
+was synthesized.
+
+Focused Graph/trace/training/API checks passed `53/53` with the existing
+Starlette warning. Ruff check, touched-file format, and strict mypy over the
+three changed source modules passed.
+
+An isolated physical harness used the same SQLite `StateStore`,
+`ExecutionGraphStore`, restart loader, and `TrainingCollector` with 10,000
+durable tool-output events. A 26,485,228-byte serialized working state compacted
+to 93,367 bytes (ratio `0.003525`) under the 192,000-byte ceiling. All 10,000
+events and cursor 10,000 survived restart. Checkpoint lineage was
+`cp_000001 -> cp_000002` (automatic resume record) `-> cp_000003` (continued
+checkpoint), with the same immutable object reference
+`sha256:38aebaa57a6c66df82e6aa5d84374536abcff80693c72317032bebd521262627`.
+The final sanitized Graph routing candidate was 95,792 bytes and retained exact
+`stdlib-v1` compiler provenance, observed resume checkpoint `cp_000002`, and an
+honest `partial_rerun_result=not_observed`. Elapsed time was 12.079 seconds,
+maximum process RSS was 237,648 KiB, and the operational database was
+33,181,696 bytes.
+
+The first harness assertion expected direct `cp_000001 -> cp_000002`
+continuation and stopped. Inspection confirmed that restart intentionally
+creates its own immutable resume checkpoint; the corrected lineage assertion
+passed without changing runtime behavior. This validates bounded storage and
+restart linkage only. Execution Graph remains shadow/non-authoritative, and
+Mistral, Flash, Reviewer, Judge, client-matrix, blind evaluation, canary, and
+rollback production gates remain red or unrun.
+
+After this slice, the final complete repository suite passed `1028/1028` in 40.78
+seconds with the existing Starlette warning. Project-wide Ruff check, strict
+mypy over 52 source files, touched-file Ruff format, both frozen plan hashes,
+and `git diff --check` passed. The four unrelated whole-tree format candidates
+recorded above remain unchanged.
+
+## Cache null/zero and multi-invocation accounting — 2026-08-08
+
+The prior Responses translator converted both an absent cache measurement and
+an invalid one to `cached_tokens=0`. The development candidate now emits
+`null` when the provider did not supply a valid measurement and preserves an
+explicit integer zero. The same nullable value is retained in each
+`model_invocation_usage` row, agent trace/training event, and Execution Graph
+node attempt. The existing append-only per-invocation store remains the source
+for aggregates; no last-call overwrite path was added.
+
+Focused streaming/usage/controller/training/Graph/API checks passed `226/226`
+with the existing Starlette warning. Ruff check and strict mypy passed over the
+five changed source modules. An isolated physical SQLite/Responses harness
+recorded two `deepseek-v4-pro` Planner calls as `(10, 5, null, 15)` and
+`(20, 7, 0, 27)` for prompt/completion/cache/total. The all-time and API-key
+Dashboard aggregates reported two invocations, 30 prompt tokens, 12 completion
+tokens, explicit cached zero, and 42 total tokens. Responses independently
+returned `null` for unreported cache and `0` for measured zero. This is gateway
+accounting evidence, not a Mistral prefix-cache hit measurement; the latter
+remains NOT RUN behind the failed Executor readiness gate.
+
+After cache accounting integration, the complete repository suite passed
+`1030/1030` in 37.40 seconds with the existing Starlette warning. Project-wide
+Ruff check, strict mypy over 52 source files, touched-file Ruff format, both
+frozen plan hashes, and `git diff --check` passed.
+
+## Direct ExecutionGraph Dashboard projection and replay — 2026-08-08
+
+The development Dashboard no longer has to infer Graph execution from generic
+StateStore event names. `ExecutionGraphStore` publishes a non-blocking delta
+only after graph, attempt, or checkpoint persistence succeeds. Listener failure
+is isolated from Graph execution. Private events contain the owning key's
+redacted graph topology and attempt/checkpoint records; operator events omit
+graph/request IDs and content, retaining only aggregate or allowlisted runtime
+metadata. REST request detail and `/v1/dashboard/snapshot` load the same
+persisted graph records. Operator snapshot exposes only template, terminal,
+active, and pending counts.
+
+The live hub now assigns independent monotonic sequences per private key scope
+and operator scope, retains a bounded replay window, replays events after
+`last_seq`, and returns `RESYNC_REQUIRED` for stale, future, or queue-oversized
+cursors. The browser reloads REST state on resync and renders compiler nodes,
+parallel groups, conditional outgoing edges, providers, attempt state, and
+latency in the fixed role lanes using `textContent` only.
+
+An isolated uvicorn gateway on `127.0.0.1:19093` physically completed bearer to
+HttpOnly-cookie exchange, real TCP WebSocket upgrade, and direct persisted
+Graph delivery. `graph_saved` arrived at seq 1; a running node attempt and its
+checkpoint advanced the cursor to seq 3. The socket disconnected, the attempt
+completed while offline, and reconnect with `last_seq=3` replayed exactly seq 4
+and 5. The replayed attempt was `SUCCEEDED` with measured 6.5 ms latency; REST
+snapshot returned the identical attempt and graph
+`graph_28d9a4334ce19b8d58dc5473`. The synthetic bearer secret was absent from
+the snapshot. The isolated server stopped cleanly; production services and
+runtime data were untouched.
+
+Focused Dashboard/Graph/API checks passed `12/12` with the existing Starlette
+warning. Ruff and strict mypy passed over all four affected source modules.
+This proves direct projection and bounded reconnect behavior for the isolated
+candidate, not production enablement or authoritative Graph execution.
+
+After direct Graph Dashboard integration, the complete repository suite passed
+`1031/1031` in 37.81 seconds with the existing Starlette warning. Project-wide
+Ruff check, strict mypy over 52 source files, touched-file Ruff format, both
+frozen plan hashes, and `git diff --check` passed.
+
+## Actual Executor attempt projection — 2026-08-08
+
+The disabled-by-default Execution Graph shadow now records actual node attempts
+for the bounded request shape whose legacy execution order exactly matches the
+compiled graph: no collaborator, approval, tool, test, Reviewer, or Judge node.
+The compiler no longer creates a meaningless one-branch fan-out/join when no
+collaborator is enabled. Chat Completions and Responses both persist the same
+`CLASSIFY -> EXECUTOR_SELECT -> primary EXECUTOR -> FINALIZE` attempt sequence.
+The primary attempt starts immediately before the pinned provider call and is
+finished only from the common request-finalization boundary. It references the
+real final-synthesis Evidence node and observed latency/token/cache/cost fields.
+Because this bounded path has generated output but no independent validation,
+successful HTTP completion is honestly recorded as Graph terminal `degraded`,
+not falsely as verified `completed`.
+
+An injected actual Executor `StageTimeout` preserved the existing HTTP `504`
+response and recorded `REQUEST_TIMED_OUT` on the primary attempt followed by
+`FINALIZE` with terminal `failed`. Graph persistence/finalization errors remain
+isolated as `execution_graph_shadow_failed` and do not alter inference. Dynamic
+collaboration, tool/test continuation, review, Judge, repair, and cancellation
+attempts are not backfilled; those request shapes remain topology-only shadow
+projections until their real stage boundaries are moved under the runtime.
+
+Focused Graph/API success and failure checks passed `9/9`. The complete suite
+passed `1032/1032` in 39.17 seconds with the existing Starlette warning. Ruff,
+strict mypy over 51 source files, both frozen plan hashes, and
+`git diff --check` passed. This is isolated development evidence only; Graph
+mode remains disabled by default and no production service was changed.
+
+## Runtime-owned orchestration policy — 2026-08-08
+
+The prior orchestrated path asked the Executor model for an
+`orchestration_decision`, retried malformed JSON once, and allowed the parsed
+`required_agents` list to add roles. That made model output an authority over
+runtime topology and consumed an extra pinned Executor call before synthesis.
+The development candidate removes that provider request and retry path. Role
+selection is now deterministic from the existing route, request class, risk,
+explicit architecture/review signals, bounded implementation evidence, and
+active failure count. Reasoner agent recommendations remain advisory and are
+recorded as accepted or rejected against this policy; they cannot add a role.
+
+Unclear explicit-orchestrated, multi-file, recovery, escalation, and high-risk
+requests select Planner. Review-only requests do not load Planner. Reviewer is
+selected by an explicit review signal, a high-risk implementation, or bounded
+implementation evidence paired with an actual change objective. Frontier and
+Judge retain their deterministic architecture/review/high-risk/disagreement
+conditions. Multiple independent Planner/Reviewer/Frontier roles are marked
+parallelizable. The existing `agent-trace-v3` role allowlist and schema were not
+changed: the decision keeps its compatible Executor decision role while its
+structured type, Evidence source, and event payload identify
+`authority=runtime_policy`.
+
+Focused tests prove that malformed or low-confidence Reasoner output cannot
+change policy roles, no Executor invocation has orchestration mode, and a
+multi-file request now calls `reasoner -> planner -> executor` instead of
+spending an extra Executor orchestration call. Lifecycle loading/unmanaged,
+remote specialist, review, streaming, and timing contracts were revalidated.
+The API now evaluates the same pure policy before any role model call. A cold
+or unmanaged policy-selected Planner/Reviewer returns its existing typed `503`
+without spending a Reasoner call; ready requests pass the preselected roles
+unchanged into `prepare_executor()`. Focused Controller/API/Policy checks passed
+`338/338`. The complete suite passed `1031/1031` in 38.38 seconds with the existing
+Starlette warning. Ruff, strict mypy over 51 source files, both frozen plan
+hashes, and `git diff --check` passed. No production service, configuration,
+branch, worktree, credential, or model was changed.
+
+## Early scheduled Graph and collaborator attempts — 2026-08-08
+
+With API-key scheduling enabled in an isolated development app, Runtime Policy
+roles and the pinned scheduling snapshot now compile the shadow Graph before
+the first Reasoner provider call. A scheduled multi-file request persisted the
+actual attempt sequence `CLASSIFY -> REASONER -> PLANNER -> executor evidence
+preparation -> JOIN -> EXECUTOR_SELECT -> primary EXECUTOR -> CHECKPOINT ->
+FINALIZE`. Reasoner, Planner, and primary Executor attempts referenced their
+real generated Evidence node IDs; executor preparation stored a SHA-256
+artifact hash. The successful but independently unvalidated request retained
+terminal `degraded`, and the session referenced the latest persisted terminal
+checkpoint.
+
+The existing concurrent Planner/Frontier check now runs against the same
+runtime boundary. A successful `FRONTIER_A` attempt references its real
+`external_expert_finding` Evidence node. When the parallel Planner fails, the
+Graph fail-closes the already-running Frontier attempt as `CANCELLED` while the
+legacy request preserves the completed Frontier artifact for diagnosis. This
+is mocked-provider stage-boundary evidence, not a new physical Codex OAuth
+provider result.
+
+Focused checks passed `3/3`. The complete suite passed `1031/1031` in 36.68
+seconds with the existing Starlette warning. Project-wide Ruff, strict mypy
+over 51 source files, both frozen plan hashes, and `git diff --check` passed.
+Execution Graph remains shadow/disabled by default; hard rejection, Frontier B,
+streaming continuation, and all physical promotion gates remain open.
+
+## Reviewer, Judge, tool, and test attempt ownership — 2026-08-08
+
+The non-streaming success boundary now closes the primary Executor attempt as
+soon as its final-synthesis Evidence is persisted. A high-risk request then
+recorded the actual `EXECUTOR -> REVIEWER -> JUDGE -> CHECKPOINT -> FINALIZE`
+sequence. Reviewer and remote Judge attempts referenced their generated
+Evidence and the Executor Evidence they independently validated. Only this
+straight-through dual-approved path used Graph terminal `completed`; generated
+but unvalidated paths remain `degraded`.
+
+Client-owned tool execution now pauses at a persisted `WAITING_TOOL` attempt
+instead of forcing a false terminal. A matching same-session tool result loads
+the existing runtime/checkpoint, preserves the provider/model pins, attaches
+the observed tool Evidence, and starts attempt two of the same primary Executor
+node. A tool result whose normalized command is `pytest` additionally records a
+distinct `TEST` attempt before the Executor resumes. Tool and test repair edges
+permit
+at most two traversals and select `ON_BUDGET` afterward. The focused API path
+persisted `CLASSIFY -> EXECUTOR_SELECT -> EXECUTOR(a001) -> TOOL -> TEST ->
+EXECUTOR(a002) -> FINALIZE` under one Graph ID with no inferred history.
+
+Focused checks passed `9/9` for the Graph runtime, `1/1` for tool/test resume,
+and `2/2` for Reviewer/Judge selection. After one full-suite regression was
+fixed at the Graph boundary, the complete suite passed `1033/1033` in 37.81
+seconds with the existing Starlette warning. Project-wide Ruff and strict mypy
+over 51 source files passed before that final focused fix; touched-source Ruff
+and strict mypy passed afterward. This is in-process/mock-provider development
+evidence, not physical Mistral, Flash, Reviewer, Judge, or client-matrix proof.
+
+## Bounded Judge correction and failed-tool fallback — 2026-08-08
+
+For the critical template without Frontier B, a non-approving Judge verdict now
+selects a bounded `ON_FINDING` edge back to the pinned primary Executor. The
+successful correction check persisted `EXECUTOR(a001) -> REVIEWER(a001) ->
+JUDGE(a001) -> EXECUTOR(a002) -> REVIEWER(a002) -> JUDGE(a002) -> CHECKPOINT
+-> FINALIZE`. The first Judge attempt referenced the contradicted draft and its
+finding Evidence; the second Reviewer/Judge pair validated only the corrected
+Executor Evidence. The terminal checkpoint was honestly `completed` after the
+second approval. Minor corrections that do not require Judge recheck use the
+explicit Reviewer `ON_APPROVAL` bypass to the checkpoint.
+
+Failed client tools now persist their failure fingerprint and tool Evidence,
+then select a bounded `ON_FALLBACK` edge to a new attempt of the same primary
+Executor. Both successful tool/test repair and failed-tool fallback permit two
+traversals; the third selects the existing terminal failure/budget edge rather
+than opening another agent loop. No provider/model pin or API-key ownership is
+changed during these cycles.
+
+Focused Graph/API checks passed `13/13`. The complete suite passed `1034/1034`
+in 34.57 seconds with the existing Starlette warning. Project-wide Ruff and
+strict mypy over 51 source files passed. These are in-process/mock-provider
+development checks. Frontier B, hard rejection, streaming tool continuation,
+physical provider/client runs, blind evaluation, soak, canary, rollback, and
+production promotion remain unproven.
+
+## Hard rejection, Frontier B, and streaming Graph continuation — 2026-08-08
+
+The Remote Judge boundary now classifies `approve`/`accept` as success,
+`approve_with_edits`/`revise`/`retry_with_evidence` as bounded findings, and
+all hard rejection verdicts as `ON_REJECTION`. The mocked `reject` request made
+no correction provider call and persisted `CLASSIFY -> EXECUTOR_SELECT ->
+EXECUTOR -> REVIEWER -> JUDGE -> FINALIZE` with terminal `failed` and no
+`execution_graph_shadow_failed` event.
+
+The critical conditional Frontier B path uses the existing configured
+OpenRouter transport directly, not a new provider implementation. An isolated
+mocked-provider request persisted an
+actual Frontier A architecture call followed by Judge `revise`, Frontier B
+disagreement, pinned Executor correction, targeted Reviewer, Judge recheck,
+checkpoint, and finalization in one Graph. Frontier B Evidence opened a bounded
+`ON_FINDING` repair edge, and its structured adjudication was present in the
+correction request. A disabled OpenRouter transport fails closed before network
+access; Frontier A remains on the existing Codex OAuth provider.
+
+A streaming client tool call now closes the primary Executor on `ON_FINDING`
+and persists `TOOL` as `WAITING_TOOL` before request cleanup. The existing
+authenticated matching tool-result path loads that same Graph/checkpoint; no
+parallel streaming-only continuation mechanism was added. Post-stream
+Reviewer/Judge work remains honestly deferred.
+
+Project-wide Ruff passed, strict mypy passed over 51 source files, and the full
+repository suite passed `1038/1038` in 37.27 seconds with the existing
+Starlette warning. `git diff --check` and frozen-plan hashes are checked
+separately. This
+is in-process/mock-provider development evidence only; no physical provider,
+client matrix, deployment, blind evaluation, soak, canary, rollback, or
+production promotion gate was claimed.
+
+## Early Graph compilation and human approval continuation — 2026-08-08
+
+Execution Graph shadow compilation now occurs after deterministic Runtime
+Policy for every request, before `prepare_executor()` dispatches collaborators;
+API-key scheduling still adds its pinned admission snapshot when enabled. This
+removes the former scheduler-only ownership split without changing the
+disabled checked-in default or making shadow failures authoritative.
+
+A declarative policy requiring `operator` approval returned the unchanged HTTP
+`403`, while the Graph persisted `CLASSIFY -> POLICY_GATE ->
+HUMAN_APPROVAL(WAITING_APPROVAL)` rather than emitting a false terminal. The
+existing admin observation command required an admin token, allowlisted user,
+role permission, request-scoped nonce, and idempotency key. Approval recorded a
+policy Evidence node, selected `ON_APPROVAL`, recovered only the matching
+`PERMISSION_REQUIRED` loop state, and the retried request resumed the same Graph
+through `EXECUTOR_SELECT -> EXECUTOR -> FINALIZE` with terminal `degraded`.
+No `execution_graph_shadow_failed` event occurred.
+
+Project-wide Ruff format/check and strict mypy over 51 source files passed. The
+full repository suite passed `1039/1039` in 38.10 seconds with the existing
+Starlette warning. This is isolated development evidence; production controls
+remain disabled and no operator command was sent to production.
+
+## Common Execution Graph attempt adapter consolidation — 2026-08-08
+
+`ExecutionGraphRuntime` now owns node-type/purpose lookup, observed
+token/cache/cost/latency normalization, and deterministic role failure codes
+and fingerprints. Controller collaborator boundaries and API Reviewer/Judge/
+Frontier boundaries call the same methods; their duplicate normalization and
+SHA-256 construction branches were removed. A focused runtime check covered
+metrics and the exact `EXECUTOR_TIMEOUTERROR` fingerprint, and the broader
+Graph/API selection passed `26/26`.
+
+The complete suite passed `1040/1040` in 38.30 seconds with the existing
+Starlette warning; Ruff and strict mypy remained clean. The honest source audit
+against starting `dev@f2c20a7` is not a completion pass: `controller.py` moved
+from 4,285 to 4,152 lines (`-133`), `api.py` from 4,468 to 5,728 (`+1,260`),
+and total `gateway/src/dgx_moa` Python source from 27,842 to 32,622 lines
+(`+4,780`). New Graph/Dashboard/data capabilities explain additions but do not
+satisfy the requested net source reduction; legacy authority/refactor work
+remains open.
+
+## Static release gate and physical readiness audit — 2026-08-08
+
+The development worktree passed Ruff format check over 93 files, project-wide
+Ruff check, strict mypy over 51 source files, and `1038/1038` pytest checks in
+37.27 seconds with the existing Starlette warning. `bash -n scripts/*.sh` and
+`systemd-analyze --user verify systemd/*.service systemd/*.socket` both exited
+zero. The trace audit found 67 complete sessions, zero incomplete/legacy
+sessions, and 100% mandatory-field completeness.
+
+The production runtime was inspected read-only. User services
+`dgx-moa-gateway.service`, `dgx-moa-loopback.service`, and the loopback socket
+were active; PID `3392930` had served the gateway since 17:28:42 KST. The
+tailnet listener remained `100.125.239.72:9000`, loopback `127.0.0.1:9000`
+returned health `ok`, and `/readyz` returned HTTP `503`: Reasoner ready while
+Executor, Planner, Reviewer, and Judge were stopped. The production source was
+`main` at `396e0458f25977293281b953d2c804cf5b689970` and already dirty; it was
+not modified.
+
+Because readiness failed, no physical Mistral/Flash/Planner/Reviewer/Judge,
+Frontier B, client-matrix, Dashboard, blind-evaluation, ablation, canary,
+rollback, or post-deploy claim was attempted. Starting services, changing the
+dirty production worktree, merging, deploying, and rollback rehearsal remain
+approval-gated.
+
+The official OpenRouter catalog resolved the frozen Frontier B target to
+`anthropic/claude-opus-5` on this date. Both inspected worktrees still configure
+`anthropic/claude-sonnet-4.6`; production additionally keeps
+`openrouter_fallback_enabled: false`. The configured key files exist with mode
+`0600` and their contents were not read or emitted. No paid request or config
+promotion was attempted because the provider/readiness gate and approval are
+still open.
+
+## Persistent Codex App Server session contract — 2026-08-08
+
+The installed Codex `0.146.0` generated protocol schema exposes the required
+`thread/start`, `thread/resume`, `turn/start`, `turn/interrupt`, and
+`thread/compact/start` methods. The development adapter now reuses Codex's
+native profile-specific daemon through `codex app-server proxy`; it does not add
+or manage another long-lived process. New threads are non-ephemeral and
+read-only. A mode-`0600` bounded mapping stores only the SHA-256 of API-key plus
+session scope, opaque thread ID, and turns since compaction. Raw scope and
+prompt are absent. Timeout and client cancellation send an exact interrupt
+before proxy process-group cleanup; typed proxy unavailability alone retains
+the stdin `codex exec` fallback.
+
+Focused subprocess tests exercised start, restart-backed resume, one-turn
+compaction, cancellation interrupt, bounded mapping eviction, permission
+rejection, structured public output, and proxy command selection: `42/42`
+passed. The full repository suite passed `1043/1043` in 40.27 seconds with the
+existing Starlette warning; Ruff and strict mypy over 51 source files passed.
+No daemon was started. Read-only `daemon version` found no primary or secondary
+profile socket and found the already-running default daemon at Codex `0.146.0`.
+One bounded structured architecture turn was sent through that default daemon;
+it produced no public result before the exact 300-second deadline and returned
+`FRONTIER_PROVIDER_TIMEOUT`. The adapter sent `turn/interrupt`, removed its
+short-lived proxy process, left the pre-existing daemon running, and did not
+retry or change transport. Because the first turn failed, physical resume and
+compaction were not attempted and the persistent transport gate is FAIL.
+
+The development Frontier B target is now the official OpenRouter slug
+`anthropic/claude-opus-5`; its model page reported `$5` input and `$25` output
+per million tokens on this date, and accounting defaults were updated to those
+values. Production remains on Sonnet with paid fallback disabled. No credential
+contents were read and no paid request was sent.
+
+The source audit remains a completion failure. Against starting
+`dev@f2c20a7`, `api.py` is `4468 -> 5564` (`+1096`), `controller.py` is
+`4285 -> 4163` (`-122`), `frontier.py` is `1407 -> 1945` (`+538`), and all
+gateway Python source is `27842 -> 32765` (`+4923`). Persistent transport closes
+a required functional gap but does not satisfy the requested net reduction.
+
+## Graph-owned continuation and terminal consolidation — 2026-08-08
+
+The Execution Graph runtime now owns successful/failed tool continuation,
+validation-command TEST projection, approval continuation, external wait
+detection, checkpoint emission, and terminal transition. API retains the
+request/Evidence lookup and fail-soft event boundary but no longer traverses or
+mutates those Graph nodes directly. Reviewer/Judge/Frontier attempt failure
+handling also emits the shadow failure event from one helper instead of six
+caller-local exception blocks.
+
+The tool success/failure continuation, human approval, correction/recheck,
+hard rejection, terminal, and SQLite shadow-degradation focused checks passed.
+The final repository suite passed `1043/1043` in 38.16 seconds with the existing
+Starlette warning; Ruff format/check, strict mypy over 51 source files, and
+`git diff --check` passed. This moved 164 lines out of `api.py`, but the common
+runtime remains required source, so the total delta is still `+4923` and the
+net-reduction completion gate remains open.
+
+## Reasoner/Planner/Frontier A three-way fan-out — 2026-08-08
+
+`prepare_executor()` now applies deterministic Runtime Policy and lifecycle
+admission before provider use, then starts Planner, Frontier A, and the optional
+Reasoner as independent tasks before joining their public artifacts. The former
+post-Reasoner Planner/Frontier launch branches and unreachable deferred Frontier
+path were removed. A synchronization-barrier regression test proved all three
+tasks entered concurrently; the Planner-failure case also preserved completed
+Frontier evidence while the Graph cancelled the failed join branch.
+
+The focused Controller/API/Graph suite passed `344/344`; four cold/unmanaged
+lifecycle checks passed; the full repository suite passed `1043/1043` in 42.29
+seconds with the existing Starlette warning. Ruff, strict mypy over 51 source
+files, frozen plan hashes, and `git diff --check` passed. This is isolated mock
+runtime evidence only: actual provider overlap and local compute contention are
+not measured, Graph remains shadow-only, and production was not touched.
+
+## Common Execution Graph shadow-failure boundary — 2026-08-08
+
+API and Controller now call one `record_shadow_failure()` boundary for Graph
+start/finish/resume/approval/tool/finalize persistence errors. Eighteen repeated
+event-construction blocks were removed while preserving each stage name,
+failure class, fail-soft behavior, and legacy client response. Internal-only
+review-evidence forwarding methods were also removed in favor of their existing
+shared functions. The focused Graph/approval/tool/SQLite degradation set passed
+`18/18`, review/fan-out checks passed `6/6`, and the full repository suite passed
+`1043/1043` in 37.99 seconds with the existing Starlette warning. Ruff and
+strict mypy over 51 source files passed.
+
+Against starting `dev@f2c20a7`, `api.py` is now `4468 -> 5528` (`+1060`),
+`controller.py` is `4285 -> 4126` (`-159`), `frontier.py` is `1407 -> 1945`
+(`+538`), and all gateway Python source is `27842 -> 32696` (`+4854`). This is
+69 fewer lines than the preceding checkpoint, but the required net reduction
+and legacy-authority removal gates remain open.
+
+## Discord observation compatibility removal — 2026-08-08
+
+The operator had excluded Discord from release scope on 2026-07-22, neither
+development nor inspected production config contains a Discord key, and
+production observation uses Telegram. The development-only Discord provider,
+config model, English card renderer, metric, and compatibility tests were
+removed. Observation control now accepts only `provider=telegram`; its nonce,
+allowlist, role permission, audit, and idempotency contract is unchanged.
+The unreferenced 80-line `scripts/opencode-completion-fake.py` launcher was also
+removed. The earlier isolated removal evidence remains reachable at experiment
+commit `681f1dd`; historical Discord/fake validation evidence remains in this
+document and Git history.
+
+Telegram transport, batching, provider failure isolation, secret-backed config,
+and Graph approval resume checks passed `13/13`. The full suite passed
+`1042/1042` in 38.19 seconds with the existing Starlette warning; Ruff, strict
+mypy over 51 source files, frozen plan hashes, and `git diff --check` passed.
+Source/config/test reference scan returned no Discord symbols. Against starting
+`dev@f2c20a7`, API is `+1050`, Controller `-159`, and all gateway Python source
+is `27842 -> 32586` (`+4744`). Production files and services were not changed.
+
+## Rejected legacy context tuner retirement — 2026-08-08
+
+Reference scan found `dgx_moa.context_tuning` reachable only from the retired
+`scripts/tune-context.sh` and its unit test. That path restarted legacy
+`resident`/`judge` targets and therefore conflicted with the current fixed Phase
+3 Executor baseline and exact stop/start-only lifecycle contract. Its 300-line
+module, 10-line launcher, and dedicated tests were removed using the preserved
+experiment verdict at `ce2f212`. `docs/CONTEXT_TUNING.md`, benchmark results,
+failure measurements, and Git history remain as historical evidence.
+
+The full suite passed `1037/1037` in 36.75 seconds with the existing Starlette
+warning; Ruff, strict mypy over 50 source files, frozen plan hashes, and
+`git diff --check` passed. Gateway Python source is now `27842 -> 32286`
+(`+4444`), so this removes another 300 runtime lines but does not satisfy the
+overall net-reduction gate. Production files and services were not changed.
+
+The dry-run Mistral command initially depended on an external environment value
+to make the required MARLIN backend explicit. `serve.py` now defaults only the
+Executor to `MARLIN` while retaining `DGX_MOA_EXECUTOR_MOE_BACKEND` as the
+calibration override. Without any backend override, `--print` emitted the pinned
+Mistral revision with context `65536`, `max_num_seqs=1`, `1700000000` KV bytes,
+`gpu_memory_utilization=0.5`, and `--moe-backend MARLIN`. The focused launcher
+suite passed `8/8`; the full suite passed `1038/1038` in 41.60 seconds. This is
+command-construction evidence, not a model-load or readiness pass. Current
+gateway Python source is `32288` lines (`+4446` from the starting epoch).
+
+The reserved `OpenAIAPIProvider` Frontier scaffold had zero references outside
+its own definition and could only raise a disabled-provider error. It was
+removed because Frontier collaboration is Codex OAuth-only and must never
+require an OpenAI API key. The single-implementation `FrontierProvider`
+Protocol and unused `PromptRegistry.active_template()` wrapper were removed in
+the same reference-backed pass. The full suite remained `1038/1038` in 38.81
+seconds; Ruff and strict mypy over 50 source files passed. Gateway Python source
+is now `32254` lines (`+4412` from the starting epoch). These deletions do not
+satisfy the overall net-reduction gate.
+
+The 192-line `sanitized_feed.py` prototype had no runtime, script, or config
+import; only its 148-line dedicated test remained. The live API-key-scoped
+Dashboard already owns the connected redaction, replay/RESYNC, bounded queue,
+gap, and subscriber-isolation path. The disconnected prototype and its test
+were removed, while historical evidence remains in this document and commit
+`3b34e32`. Live Dashboard tests remain in the suite. The full suite passed
+`1032/1032` in 40.71 seconds; Ruff and strict mypy over 49 source files passed.
+Gateway Python source is now `32062` lines (`+4220` from the starting epoch), so
+the overall net-reduction gate remains open.
+
+## Frozen paired-bootstrap evaluator — 2026-08-08
+
+`scripts/evaluate-paired-noninferiority.py` implements the preregistered
+stdlib-only target-minus-comparator statistic, strict `-0.10` margin, 10,000
+paired resamples, fixed seed `20260808`, and two-sided 95% percentile interval.
+It fails closed to `INCONCLUSIVE` for missing/unexpected pairs, fewer than 30
+pairs, mixed epochs, mismatched condition hashes, incomplete telemetry,
+non-blind scoring, failed reliability, or incomplete client/category coverage.
+Failed runs must remain present with success `0`; a success `1` additionally
+requires completed status, passed hidden tests, and no false completion. Input
+and score-freeze hashes are retained without copying raw prompts or outputs.
+
+The preserved `auto/evaluation/frontier-noninferiority-v1` experiment at
+`5133cfc` was inspected before adding this tool. Its five-task panel, quality
+margin `-5`, seed `56052026`, and one-sided 90% bounds conflict with the current
+seven-category, `-0.10`, seed `20260808`, two-sided 95% frozen contract, so it
+was retained as historical evidence rather than reused or merged.
+
+Two focused checks proved deterministic `[1.0, 1.0]` CI for a complete covered
+30-pair fixture and `INCONCLUSIVE` without dropping a missing, 29-pair,
+telemetry-incomplete fixture. The full suite passed `1034/1034` in 37.00
+seconds before the hidden-test/false-completion consistency check was added.
+The final full suite passed `1034/1034` in 43.37 seconds; Ruff and strict mypy
+over 49 source files passed. This is protocol
+implementation evidence only: neither required comparator has a current
+physical 30-pair dataset or CI result, so non-inferiority remains unproven.
+
+## Promotion readiness recheck — 2026-08-09
+
+The production runtime was re-inspected read-only after the blocked Goal was
+resumed. `/readyz` again returned HTTP `503` with Reasoner `ready` and Executor,
+Planner, Reviewer, and Judge `stopped`; the gateway unit was active and all four
+local role units were inactive. Production remained the existing dirty
+`main@396e0458f259`. No service, credentialed provider, paid transport, config,
+production file, branch, or worktree was changed. Physical role/client/
+evaluation/canary/rollback promotion remains blocked on explicit approval and
+readiness.
+
+## Atomic specialist live-validation checkpoints — 2026-08-09
+
+`scripts/validate-specialist-routing.py` now requires an explicit output path
+and atomically checkpoints Planner and Reviewer progress after each role. The
+artifact contains only schema/status/provider, model, structured-output status,
+latency, token usage, and exception class. It never persists prompts, raw
+content, hidden reasoning, credential values, or exception messages. A mocked
+Planner success followed by Reviewer failure retained the passed Planner row,
+recorded only `RuntimeError` for Reviewer, removed the temporary file, and did
+not retain the injected raw error detail. Focused specialist checks passed
+`11/11`; the full suite passed `1035/1035` in 35.67 seconds. Ruff and strict
+mypy over 49 source files passed. No credentialed request was sent.
+
+## Approved isolated physical validation — 2026-08-09
+
+The operator approved physical validation. The approval was applied only to
+isolated model/provider, Frontier, client, and Dashboard gates; it did not
+authorize production worktree changes, service topology changes, deployment,
+merge, canary, or rollback rehearsal. The inspected production gateway stayed
+active and unchanged at dirty `main@396e0458f259`; `/readyz` remained HTTP
+`503` with only Reasoner ready. Executor, Planner, Reviewer, and Judge units
+remained stopped.
+
+The host had `126465490944` available memory bytes and no model GPU compute.
+The pinned Mistral snapshot at revision
+`b1a9048590131d38491bd23a7c9f6ed0962f0358` again passed the authoritative Hugging
+Face cache verification with all `23/23` files. Dry-run command construction
+again emitted the exact Phase 3 contract: context `65536`, one sequence,
+`1700000000` KV bytes, GPU utilization `0.5`, and MARLIN. The same physical load
+was not repeated because the already-recorded identical-profile attempts caused
+global OOM, killed unrelated processes, and never listened. Cache integrity is
+PASS; model load/readiness and every Mistral-dependent gate remain FAIL/NOT RUN.
+
+An authenticated OpenCode Go catalog returned HTTP `200` with 25 models and all
+five exact targets. The atomic specialist run retained these sanitized results:
+DeepSeek V4 Pro Planner passed schema validation in `14.257` seconds with
+`450/812/1262` prompt/completion/total tokens; GLM 5.2 Reviewer returned no
+usable public structured output and failed. DeepSeek V4 Flash completion was
+typed `OverflowExecutorUnavailable`, consistent with the previously measured
+workspace region/opt-in gate; native tool continuation remains FAIL. No raw
+credential, prompt, response, or hidden reasoning was persisted.
+
+Kimi K3 Judge reproduced truncation at the former 1,024-token output ceiling.
+At 2,048 tokens it passed the failed-test row but truncated the next structured
+row after another near-ceiling response. The ceiling was therefore calibrated
+to 4,096 without increasing retry or call budgets. The final sanitized matrix
+passed valid approval, unsupported-claim rejection, failed-test detection,
+missing-criterion detection, bounded correction, corrected recheck, and the
+maximum two-call enforcement. Invalid structured-output exceptions now suppress
+their raw validation context so provider content cannot leak through a CLI
+traceback. Focused Judge checks passed `7/7`.
+
+The required role-independence reverse comparison used Kimi K2.5 Reviewer and
+GLM 5.2 Judge. Kimi Reviewer passed a valid approval in `2.805` seconds and
+rejected failed-test evidence with one important finding in `11.060` seconds.
+GLM Judge rejected the failed-test claim in `25.447` seconds but failed its
+valid-result approval case with invalid structured output. Combined with the
+primary GLM Reviewer failure, this is not enough to promote a replacement
+Reviewer/Judge pair: Kimi K3 Judge is PASS, while Reviewer selection and pair
+independence remain INCONCLUSIVE.
+
+One bounded Frontier A architecture call passed schema validation on OAuth
+profile `primary` in `30135.776` ms with `19553/804/20357` tokens. Its transport
+was `codex_exec_fallback`, proving the read-only stdin fallback but not the
+persistent App Server gate. Resume and compaction remain unproven.
+
+The first paid Frontier B request returned HTTP `400`. Current OpenRouter model
+metadata showed nine Opus 5 endpoints but only one advertising the unnecessary
+`temperature` sampling parameter; `require_parameters=true` therefore excluded
+the other endpoints. Removing that single nonessential field preserved high
+reasoning and strict structured output. The one approved retry passed in
+`43616.312` ms with `826/2554/3380` tokens and calculated cost `$0.06798`; all
+six architecture fields validated and only the five allowlisted evidence
+categories were transmitted. Frontier B is PASS in isolation.
+
+At this checkpoint the repository suite passed `1036/1036` in `36.28` seconds
+with the one existing Starlette warning. Ruff format/check, strict mypy over 49
+source files, shell syntax, frozen plan hashes, and `git diff --check` passed.
+The target client matrix, cross-key Flash overflow, Reasoner ablation, paired blind
+non-inferiority, long-horizon Goal, canary, deployment, and rollback were not
+run because their Mistral/Flash readiness prerequisites remain red.
+The Dashboard remains disabled; its earlier isolated TCP WebSocket/replay
+physical evidence was not promoted to production evidence.
+
+## Reviewer replacement and real collaborator overlap — 2026-08-09
+
+The GLM 5.2 Reviewer failure was isolated from the generic specialist adapter.
+The model's documented `thinking.type=disabled` parameter produced one valid
+approval probe in `3177.929` ms with 346 tokens, but the complete specialist
+validator again returned reasoning-only empty public output twice under the
+same parameter and bounded retry. GLM Reviewer therefore remains a measured
+availability failure rather than a parser workaround.
+
+Kimi K2.5 Reviewer passed one valid approval and one failed-test rejection, but
+the model is a deprecated candidate and would reduce independence from Kimi K3
+Judge. DeepSeek V4 Pro Reviewer instead passed the same two directions: approval
+in `4358.089` ms with 547 tokens and failed-test rejection in `10314.595` ms
+with 943 tokens. The disabled development mapping was changed from GLM 5.2 to
+this measured replacement. The final atomic specialist validator then passed
+both configured roles on their first attempts: Planner in `11.919` seconds with
+1,032 tokens and Reviewer in `4.071` seconds with 516 tokens. No provider output
+or hidden reasoning is present in the artifacts.
+
+The Runtime already retries invalid Reviewer structured output once. The live
+validator now mirrors that bound, aggregates both attempts' usage, records the
+attempt count, and suppresses raw validation context on final failure. A mocked
+empty-then-valid case proved exactly two attempts and accumulated usage; provider
+exceptions are still not retried.
+
+A separate physical fan-out started external Qwythos Reasoner, OpenCode Go
+Planner, and OAuth Frontier A within 14 ms. Reasoner completed at `10203.415`
+ms, Planner at `25169.162` ms, and Frontier at `25288.465` ms; all three
+intervals overlapped and total wall time was `25288.575` ms. All public schemas
+validated. Frontier used the read-only `codex_exec_fallback` transport, so this
+is physical collaborator parallelism evidence but still not a persistent App
+Server resume/compaction pass or an end-to-end Mistral synthesis pass.
+
+Controller also contained six disconnected Frontier candidate-management
+wrappers whose only callers were two dedicated tests; the actual implementation
+and tests already live in `frontier.py`. Removing those wrappers and their
+self-tests reduced Controller from the starting 4,285 lines to 3,994 (`-291`).
+Total gateway Python source is now 31,931 lines versus 27,842 at the epoch start
+(`+4089`), so the requested overall net reduction remains unmet. The full suite
+passed `1034/1034` in `37.96` seconds with the existing Starlette warning. Ruff
+format/check, strict mypy over 49 source files, shell syntax, frozen plan hashes,
+and `git diff --check` passed.
+
+## Physical Execution Graph partial rerun — 2026-08-09
+
+The first isolated SQLite harness exposed that `partial_rerun()` accepted a
+`SKIPPED` TEST node. Because that node had never been on the selected execution
+path, its existing Reviewer-to-FINALIZE edge allowed finalization without
+running the purportedly invalidated TEST. The initial artifact was overwritten
+and was not accepted as evidence.
+
+The Runtime now rejects empty invalidation sets, unknown nodes, and nodes not in
+`SUCCEEDED`, `DEGRADED`, or `FAILED`. The corrected physical harness completed
+an engineering Graph, verified the primary Executor artifact SHA-256, and
+invalidated the successful Reviewer. Exactly Reviewer and FINALIZE reran; the
+unaffected Planner attempt IDs remained unchanged. The persisted checkpoint
+reason was `partial_rerun`, the mode-`0600` SQLite runtime reloaded with terminal
+`completed`, and the post-rerun final emitted exactly once. Elapsed time was
+`67.378` ms. The focused Graph/training check passed. The final full suite passed
+`1034/1034` in `45.82` seconds with the existing Starlette warning; Ruff,
+strict mypy, shell syntax, frozen plan hashes, and `git diff --check` passed.
+
+## Final external-state blocked audit — 2026-08-09
+
+The third consecutive resumed Goal turn rechecked the external prerequisites.
+Available host memory was `126571020288` bytes with `322412544` swap bytes in
+use; GPU compute utilization was zero. The gateway unit was active while
+Executor, Planner, Reviewer, and Judge units were inactive, and loopback
+`/readyz` remained HTTP `503`. Repeating the identical fixed Mistral load is
+still rejected by the recorded global-OOM incident and would not constitute a
+new experiment.
+
+One minimal authenticated DeepSeek V4 Flash completion again failed with the
+typed `OverflowExecutorUnavailable` region/opt-in boundary. Therefore the
+Mistral primary, Flash overflow, target client matrix, paired blind evaluation,
+Reasoner ablation, long-horizon Goal, canary, rollback, deployment, and final
+branch normalization cannot proceed without an external hardware/runtime change
+and operator workspace opt-in. Production files and services were not changed.
+
+## Mistral NVFP4 memory differential and Flash 403 reclassification — 2026-08-09
+
+This physical follow-up supersedes the terminal conclusion of the preceding
+blocked audit without deleting its evidence. The Goal, all prior failures, and
+protocol epoch `dynamic-moa-v3-20260808` remain preserved and active.
+
+The pinned Mistral snapshot contains 13 consolidated shards. Its index reports
+`70801904048` tensor bytes and direct safetensors inspection reports
+`70801959560`: `58435043328` U8 weight bytes, `7304380416` float8 scale bytes,
+`5062424792` BF16 bytes, and `111024` F32 bytes. A vLLM meta-model allocation
+reports `70801959776` parameter bytes. These independent values place the static
+checkpoint/model near 66 GiB, not the historical `120052` MiB allocation.
+
+Three isolated SGLang `dev-cu13` probes used the same revision, context `65536`,
+one running request, and no chunked prefill. The preserved default-TRITON probe
+loaded weights in `354.60` seconds, reported `67.96` GB weights, allocated
+exactly 65,536 BF16 KV tokens in `1.41` GB, and retained `43.90` GB available;
+it then failed CUDA graph compilation with incompatible dimensions `256` and
+`512`. The explicit CUTLASS_MLA probe loaded in `273.38` seconds, reported
+`67.88` GB weights and the same `1.41` GB KV allocation, then failed warmup at
+`D_q_nope == D_latent`. Neither probe showed abnormal post-load growth. Source
+inspection also established that this SGLang compressed-NVFP4 MoE scheme
+selects FlashInfer CUTLASS unless TRTLLM is requested; its `marlin` CLI value did
+not produce a true MARLIN MoE run. SGLang is therefore stable memory evidence,
+not a functional or MARLIN qualification PASS.
+
+A follow-up general FlashInfer-attention probe used the same fixed profile,
+dense FP4 `marlin`, and explicit FlashInfer CUTLASS MoE. It preserved the
+`68137` MiB weight allocation and passed the two earlier MLA attention failure
+sites, but its first dense FFN invocation failed with
+`mm_fp4 does not support backend 'marlin' with capability 121`. The container
+exited without OOM and the gateway remained healthy. This separates another
+runtime-compatibility blocker: the current SGLang/FlashInfer image cannot
+execute its advertised dense MARLIN path on GB10 SM121.
+
+The corrected vLLM `0.22.1` probe forced both dense and MoE MARLIN with the exact
+Phase 3 profile: context `65536`, `max_num_seqs=1`, `1700000000` KV bytes,
+`gpu_memory_utilization=0.5`, lazy safetensors loading, and TRITON_MLA. Static
+allocation stayed at `68256` MiB throughout the 392.44-second load. Immediately
+after the MARLIN weight-only FP4 warning and
+`MoEPrepareAndFinalizeNoDPEPModular`, allocation rose past the 96 GiB guard
+before KV allocation; the exact unit was stopped. This locates the historical
+growth in vLLM's post-load NVFP4-to-MARLIN packing phase, not checkpoint size,
+lazy shard staging, KV, CUDA graph capture, or the steady CUDA context.
+
+Changing only `PYTORCH_CUDA_ALLOC_CONF` to `backend:cudaMallocAsync` completed
+the 422.23-second load and MARLIN preparation. vLLM reported `66.06 GiB` model
+memory; sampled allocation was `71671` MiB, the guard did not fire, and vLLM
+reserved the exact `1.58 GiB` KV budget with 73,776 tokens. CUDA graph warmup
+then failed separately with `CUDA driver error: invalid argument`. Repeating
+with native allocator `expandable_segments:True` loaded in `417.74` seconds but
+crossed the guard at exactly `100868` MiB five seconds after MARLIN preparation.
+Thus allocator selection alone controls the abnormal packing peak on this host:
+native caching retains/fragments MARLIN repack allocations, while
+cudaMallocAsync releases them but is not yet CUDA-graph compatible in this
+runtime. Eager mode was not used or accepted as evidence.
+
+Two native-allocator automatic-reclamation calibrations kept every model,
+backend, context, sequence, KV, and loader argument unchanged. A
+`garbage_collection_threshold` of `0.70` loaded in `409.19` seconds and crossed
+the guard at `98626` MiB five seconds after MARLIN preparation. Lowering the
+threshold to `0.60` loaded in `434.25` seconds but crossed at `99546` MiB ten
+seconds after preparation. Both had zero swap growth and exact-unit cleanup.
+Threshold-only reclamation is therefore non-monotonic and insufficient; neither
+run reached KV allocation or readiness.
+
+Adding native `max_split_size_mb:128` to the `0.60` threshold loaded in
+`482.58` seconds but crossed the guard at `101866` MiB six seconds after MARLIN
+preparation. Native expandable segments, garbage-collection thresholds, and
+large-block split control therefore all fail the 96 GiB safety contract; no
+further native-allocator tuning was accepted.
+
+With cudaMallocAsync, changing the supported vLLM CUDA graph mode from default
+`FULL_AND_PIECEWISE` to `PIECEWISE` preserved `enforce_eager=False`, completed
+MARLIN packing at `71671` MiB, reserved the exact 1.58 GiB KV budget, and
+reported 73,776 KV tokens. Piecewise capture still failed in the same static
+Triton launcher with `CUDA driver error: invalid argument`; PyTorch immediately
+warned about an uncaptured free of a captured cudaMallocAsync allocation.
+Enabling PyTorch's `graph_capture_record_stream_reuse` option reproduced that
+same warning and failure. This isolates the remaining failure to
+cudaMallocAsync captured-allocation lifetime in this PyTorch/vLLM CUDA-graph
+path, not full-graph selection.
+
+The supported compiled path with cudaMallocAsync and
+`cudagraph_mode=NONE` retained `enforce_eager=False`; torch.compile remained
+active and no eager flag was used. It loaded weights in `466.05` seconds,
+completed MARLIN preparation, allocated the fixed KV cache, initialized the
+engine in `18.25` seconds, and opened loopback port `19301`. Steady sampled GPU
+allocation was `72986` MiB. `/health` and `/v1/models` returned HTTP `200` with
+`max_model_len=65536`.
+
+The same isolated server then passed a Chat completion (`READY`, 24 total
+tokens), a forced native `lookup_weather` tool call with JSON arguments, a
+same-call-ID tool-result continuation, a completed Responses request
+(`RESPONSE_OK`, 28 total tokens), and a streaming Chat response with seven data
+chunks, usage, and `[DONE]`. The Responses usage reported 16 cached input
+tokens, directly exercising prefix caching. GPU allocation remained `72986`
+MiB and the unchanged production gateway returned `/healthz` HTTP `200` after
+each gate. Exact service stop removed the model process and listener. This is a
+65K memory/readiness/API PASS and establishes the backend for isolated 128K
+qualification; it is not production promotion or performance-equivalence
+evidence.
+
+The isolated 128K qualification kept the same revision, one sequence,
+cudaMallocAsync, compiled no-cudagraph path, dense/MoE MARLIN, lazy loader, and
+TRITON_MLA. Only `max_model_len=131072` and the approved initial
+`kv_cache_memory_bytes=3400000000` changed. Weight loading took `498.10`
+seconds; vLLM again reported `66.06 GiB` model memory. The fixed KV allocation
+was `3.17 GiB`, exactly 147,568 tokens, giving `1.13x` concurrency for a
+131,072-token request. Engine initialization took `18.47` seconds and
+`/health` plus `/v1/models` returned HTTP `200` with
+`max_model_len=131072`. Sampled steady GPU allocation was `74714` MiB.
+
+At 128K the server passed Chat (`CHAT128_OK`), Responses
+(`RESPONSE128_OK` with 16 cached input tokens), streaming with usage and
+`[DONE]`, a forced native tool call, and same-call-ID tool continuation. A
+tokenizer-counted near-limit request then completed with `125026` prompt tokens,
+`125033` total tokens, output `LONG128_OK`, and 58.359-second wall time. GPU
+allocation after the long request was `75994` MiB and the production gateway
+remained healthy. A distinct 120K-prefix streaming request was disconnected by
+the client after one second; six seconds later running requests, waiting
+requests, and KV-cache usage were all exactly zero while model and gateway
+health remained HTTP `200`. Restart and longer-horizon soak gates remain
+separate requirements; this row alone does not authorize production promotion.
+
+An exact second stop/start used the identical revision and 128K invocation.
+Weight loading again reported `66.06 GiB` and took `504.05` seconds. The engine
+reserved the same fixed `3.17 GiB` KV allocation, exposed 147,568 KV tokens and
+`1.13x` concurrency, and initialized in `6.49` seconds using the cached compiled
+graph while retaining `enforce_eager=False`. Readiness returned HTTP `200`, the
+model list again reported `max_model_len=131072`, steady GPU allocation was
+`74714` MiB, and a post-restart completion returned exactly `RESTART128_OK`.
+The unchanged gateway returned `/healthz` HTTP `200`. Exact service stop then
+removed the model GPU process and listener; the gateway remained healthy and
+`/readyz` honestly returned HTTP `503` because the isolated Executor was stopped.
+This repeat clears the Mistral abnormal-memory/backend-readiness blocker for the
+qualification backend; it does not clear the independent soak, performance,
+coding-task quality matrix, canary, rollback, or promotion gates.
+
+The checked-in development candidate now represents the physically qualified
+profile rather than the former 65K placeholder. Command generation selects
+context 131,072, one sequence, 3.4 GB KV, dense and MoE MARLIN, TRITON_MLA,
+lazy safetensors, compiled `cudagraph_mode=NONE`, and no eager flag; the Executor
+unit supplies cudaMallocAsync. The generated command matched the successful
+probe invocation. Focused configuration and unit checks passed `49/49`.
+
+A third exact 128K transient start then drove an isolated authenticated live
+client matrix without binding the production Executor port. The first retained
+matrix generation passed raw generic/primary, OpenCode, and Hermes but exposed
+Codex Responses HTTP 400 because Mistral rejects the OpenAI `developer` role.
+The shared provider-body path now maps that role to `system` only for a Mistral
+Executor without mutating the client request. The next generation produced the
+requested Codex marker but exposed assistant-final continuation: Mistral requires
+native `continue_final_message=true` and `add_generation_prompt=false` together.
+Both intermediate failure generations are retained rather than overwritten.
+
+After those protocol fixes, Codex received the marker but its strict
+`ResponseCompleted` parser rejected an unmeasured
+`input_tokens_details.cached_tokens=null`. The internal usage, CSV, trace,
+Dashboard, and training representations still preserve null as unmeasured; the
+Responses wire adapter now omits the entire optional detail object when the
+provider did not measure it and still emits integer zero when zero was measured.
+The diagnostic generation retained only event types and the typed parse error;
+raw client artifacts were deleted by the harness.
+
+The final `mistral-128k-20260809-v6` matrix passed. Raw generic and primary Chat
+requests returned valid HTTP 200 JSON; installed Codex completed its Responses
+turn and observed `CODEX_CLIENT_OK`; installed OpenCode and Hermes exited zero
+with their exact markers. The isolated metrics recorded six Executor invocations
+and one Qwythos Reasoner invocation. Production Git was byte-for-byte unchanged,
+the isolated gateway stopped, and all raw client directories were removed. The
+candidate remained at `74716` MiB during the matrix. Exact model/watchdog stop
+removed the GPU process; the unchanged gateway returned `/healthz` HTTP 200 and
+honest stopped-profile `/readyz` HTTP 503. This clears the live protocol matrix,
+not the broader coding-task quality/noninferiority matrix.
+
+The post-fix full suite passed `1036/1036` in `36.14` seconds with the existing
+Starlette warning. Ruff check/format, strict mypy over 49 source files,
+`git diff --check`, and both frozen protocol-epoch hashes passed.
+
+All probes were loopback-only transient units or isolated containers with a
+96 GiB exact-unit watchdog. After cleanup no model GPU process or listener
+remained, swap did not increase, the production gateway returned `/healthz`
+HTTP `200`, and role services retained their prior stopped state. No production
+configuration, service topology, or deployment changed. The 65K abnormal-memory
+cause is diagnosed and the compiled no-cudagraph vLLM backend passed readiness,
+inference, and repeated 131,072-context startup with the target 3.4 GB initial
+KV budget. Longer-horizon qualification remains pending.
+
+The OpenCode Go differential reused endpoint `https://opencode.ai/zen/go`, the
+same safely fingerprinted key/workspace identity found in the protected runtime,
+and the exact catalog model ID `deepseek-v4-flash`. The catalog returned HTTP
+`200` with Flash present. Minimal messages-only, the historical successful JSON
+shape, and native-tools request shapes all returned the same HTTP `403`
+`RegionError`. With the same endpoint and key, `deepseek-v4-pro` returned HTTP
+`200`. Earlier validation records multiple successful Flash completions with
+that same endpoint and identity. Request shape, native tools, and general key
+authentication are therefore excluded; model-specific regional routing,
+workspace policy regression, and provider incident remain unresolved
+possibilities. A China-hosted workspace opt-in is not established as the cause
+or a mandatory prerequisite. Native tool continuation, provider pinning,
+cross-key overflow, same-key queue/fairness, and recovery remain pending until
+a minimal Flash completion succeeds again.
+
+### Qualification-scope correction — 2026-08-09
+
+The 96 GiB watchdog above was a host-protection threshold for those isolated
+runs, not a hard product memory limit. The approximately 96 GiB steady-state
+footprint remains an optimization target with system-headroom requirements.
+Likewise, the compiled `cudagraph_mode=NONE` result clears abnormal-memory,
+readiness, and API questions only. It does not satisfy the final NVFP4
+performance gate. Production qualification additionally requires an active,
+physically measured CUDA Graph path and sustained long-output decode evidence
+under the pinned 128K, one-sequence, NVFP4/MARLIN contract. Historical rows are
+retained unchanged; this paragraph governs their current interpretation.
+
+## Mistral 128K client-quality matrix and Flash recovery check — 2026-08-09
+
+The fresh frozen `mistral-128k-v9-full-20260809` matrix completed all 20
+scheduled Docker-isolated cells. Its immutable schedule used seed
+`74d3de357c0ae2b0314fb68df330b4dba3e4f3cbd7b8f7bdd5fa68c45adfd12c`,
+schedule SHA-256
+`88884649e03ffc552dfea7284904e0a3ddc3336ed8361a14a9c8d40a0643f213`,
+and harness SHA-256
+`37183fd36ae6b44c83e1760e3a063a657e78a6409d9baf877bf0f1f3b12111a2`.
+The isolated vLLM backend remained on the pinned Mistral revision, context
+131,072, one sequence, fixed 3.4 GB KV, dense/MoE MARLIN,
+cudaMallocAsync, compiled `cudagraph_mode=NONE`, lazy safetensors, and
+TRITON_MLA throughout the run.
+
+The matrix result is intentionally retained as incomplete qualification:
+baseline passed `5/5`, OpenCode `4/5`, Codex `2/5`, and Hermes `2/5`, for
+`13/20` total. Every baseline cell passed. OpenCode failed only atomic-store,
+where the generated source contained an unterminated string at line 111 and
+both public and hidden validation failed. Codex webhook-verifier treated the
+documented string timestamp, nonce, and signature arguments as bytes, failed
+three of four public tests, repeated the failed action, and ended after five
+stream reconnection attempts. Codex log-report passed public and hidden
+validation but its stream disconnected before terminal completion. Codex
+dag-runner eventually passed all public and hidden checks after repair, but
+the frozen scorer retained a bad-terminal failure; atomic-store and
+rate-limiter passed all checks.
+
+Hermes rate-limiter and webhook-verifier passed all checks. Hermes dag-runner
+and log-report returned HTTP 409 after exhausting the bounded engineering-loop
+budget. Their usage records consequently contained a null session ID and no
+successful unittest tool-result evidence. Hermes atomic-store emitted a
+validation tool call but ended before receiving its tool result or producing a
+final response, so its source passed public and hidden validation while the
+tool-evidence gate failed. These failures are classified separately from the
+two incorrect source implementations; they remain gateway/session engineering
+failures, not evidence that the backend is unstable in memory.
+
+Before the full matrix, the retained Codex v6 canary exposed a fail-open review
+readiness defect: a Reviewer transport failure was incorrectly treated as
+unfinished implementation work and repeatedly forced another tool call. The
+controller now permits completion when review failed and `review_fail_closed`
+is false, while preserving fail-closed behavior when that flag is true. The
+next canary exposed a second independent defect: malformed optional Frontier
+architecture output raised `ValueError` outside the existing `RuntimeError`
+degradation path. Optional malformed Frontier output now degrades confidence
+and continues; required Frontier and Judge paths remain fail-closed. The
+targeted `mistral-128k-v8-canary-20260809` Codex rate-limiter rerun then passed
+all ten checks in 116.612 seconds, and the fresh full-matrix copy passed again
+in 91.058 seconds.
+
+Post-run regression checks passed: full pytest `1041/1041` in 36.35 seconds,
+Ruff check over the changed gateway, harness, and test files, and strict mypy
+over 49 source files. Both frozen protocol-plan hashes remained unchanged:
+`41e16b4f2fb8f442d8da3065ba53eacb317fc9a68333e63c02253784bcf1a4bd`
+and `bd69063dbd20891349ea459b6ecff4a6cb53ac17f88359d1df47e1b6fb29a668`.
+
+The Mistral abnormal-memory/backend-readiness blocker remains cleared because
+the stable backend completed the entire matrix without OOM or allocator
+growth. Client-quality/noninferiority approval is not cleared: the minimum
+rerun gate is a fresh frozen matrix in which every client stratum passes all
+five tasks, with no loop-budget exhaustion, stream disconnect, missing tool
+result, false completion, or public/hidden validation failure. Blind paired
+evaluation, canary, and promotion remain downstream and were not started.
+
+A new bounded minimal Flash request used the same official
+`deepseek-v4-flash` model ID, protected credential/workspace identity, and
+messages-only request shape. It again returned HTTP 403 `RegionError`, while
+the catalog and earlier same-identity success remain preserved. No minimum
+completion recovery occurred, so native tool continuation, provider pinning,
+cross-key overflow, same-key queue/fairness, and recovery were not rerun. The
+remaining hypotheses are still runtime regression, model-specific regional
+routing, workspace-policy regression, and provider incident; China-hosted
+workspace opt-in is neither proven nor declared mandatory.
+
+### Client-quality recovery canaries — 2026-08-09
+
+Trace inspection of the failed v9 Hermes dag-runner and log-report sessions
+showed that their configured loop budgets were not exhausted. A parallel local
+Reviewer HTTP failure and optional Frontier HTTP failure escaped the optional
+degradation path, reached the generic API exception handler, and terminated the
+engineering loop as `INTERNAL_FAILURE`. The next request then rejected
+Frontier and Reviewer admissions with the misleading text `loop budget
+exhausted` despite substantial remaining budget. The shared optional Frontier
+await now treats `httpx.HTTPError` and `StageTimeout` like the already handled
+runtime and parse failures: confidence degrades and execution continues.
+Required Frontier and Judge paths retain their existing fail-closed behavior.
+
+The fresh `mistral-128k-v10-canary-20260809` Hermes dag-runner canary used a
+new gateway DB and workspace and passed all ten gates in 206.489 seconds. The
+prior HTTP 409 did not recur. A second fresh Hermes log-report canary likewise
+avoided the 409 and returned in 67.975 seconds, but exposed a separate client
+failure: Hermes received a valid `terminal` tool call and ended after one API
+call without executing it, producing no source change or unittest evidence.
+That cell remains failed rather than being credited to the HTTP fix.
+
+The v9 Codex log-report trace exposed another independent continuation defect.
+After several successful tool turns, adjacent Responses `function_call` items
+were converted into separate assistant messages. Mistral rejected the resulting
+history with HTTP 400 `Not the same number of function calls and responses`.
+The converter now batches only adjacent function/custom calls into one
+assistant tool-call message and leaves interleaved call/result turns separate.
+The fresh `mistral-128k-v11-codex-log-20260809` canary then passed all ten gates
+in 75.289 seconds with no 400 or stream disconnect.
+
+The fresh v11 Codex webhook-verifier canary did not pass. It continued beyond
+the earlier failure point, but implemented invalid signatures, stale timestamps,
+and replay detection as exceptions rather than false returns. Its tests failed,
+and a later unavailable `git` command in the minimal Docker image was not
+recovered. This is retained as a model/tool-strategy quality failure. It does
+not reverse the two physically verified gateway protocol fixes.
+
+After both fixes, full pytest passed `1043/1043` in 34.60 seconds, Ruff passed,
+and strict mypy passed over 49 source files. The quality blocker remains open
+until a new complete frozen matrix passes every client/task cell; the Goal
+itself remains active and is not classified as externally blocked.
+
+### CUDA Graph argument-isolation epochs v24-v34 — 2026-08-09
+
+All epochs used snapshot `b1a9048590131d38491bd23a7c9f6ed0962f0358`,
+context 131,072, one sequence, 3,400,000,000 fixed KV bytes, dense and MoE
+MARLIN, lazy safetensors, and loopback port 19301. Production was unchanged.
+
+`FULL_AND_PIECEWISE` v24 failed in an Inductor pointwise kernel with
+`CUDA driver error: invalid argument`. `FULL_DECODE_ONLY` v25 reproduced the
+capture failure. Disabling compilation in v27 moved the first exception to
+TRITON_MLA: `Pointer argument (at 0) cannot be accessed from Triton (cpu
+tensor?)`. Limiting capture sizes to `[1]` in v29 reproduced it, excluding the
+inferred size-2 capture. `FLASHINFER_MLA` v28 was rejected before loading due
+to unsupported measured device capability.
+
+Piecewise v30 enabled `cudagraph_copy_inputs=true` but retained the static
+Triton launcher's invalid-argument failure. v31 reused an old AOT artifact and
+was not accepted as clean evidence. Fresh-cache v32 disabled the static
+launcher and failed in Triton's dynamic launcher with `Pointer argument (at 1)
+cannot be accessed from Triton (cpu tensor?)`. Fresh-cache v34 repeated it with
+`cudagraph_copy_inputs=false`. In every cudaMallocAsync case, uncaptured-free
+and final invalid-argument cleanup followed the first kernel/pointer error and
+remain secondary symptoms.
+
+Native v26 retained MARLIN materialization buffers and crossed 120 GiB before
+capture. Native v33 added `garbage_collection_threshold:0.5`; memory still rose
+from 68,128 MiB through 86,734 MiB to 119,994 MiB during packing and the OOM
+killer fired. Native allocator GC is therefore not a viable argument fix;
+cudaMallocAsync remains the stable no-graph allocator.
+
+No graph-active candidate reached readiness, so restart, repeated decode, long
+prefill, tool continuation, streaming, and cancellation were not credited.
+The blocker is runtime compatibility among this PyTorch/Triton/vLLM stack,
+cudaMallocAsync captured buffers, and TRITON_MLA/Inductor capture paths, not a
+model-size memory requirement. It clears only when a graph-active backend
+reaches readiness under the frozen 131K/seq1/3.4GB/MARLIN contract and passes
+the full physical matrix without pointer/launcher errors, uncaptured-free
+cleanup, or abnormal memory growth. The Goal remains active and is not marked
+externally blocked.
+
+### Stable 131K recovery and Codex sandbox isolation v35-v35j — 2026-08-09
+
+The stable v35 Executor reached readiness on snapshot
+`b1a9048590131d38491bd23a7c9f6ed0962f0358` with context 131,072, one
+sequence, 3,400,000,000 fixed KV bytes, dense/MoE MARLIN, TRITON_MLA,
+cudaMallocAsync, and `cudagraph_mode=NONE`. Readiness memory was 74,714 MiB.
+Repeated canary traffic raised the measured allocation to 76,412 MiB without
+OOM, `invalid argument`, uncaptured-free warnings, or retained KV usage.
+
+The first validation-gateway failure was an argument mismatch: serve-only
+Frontier mode disabled `/v1/admin/codex`, so the Codex cell returned HTTP 404.
+The isolated gateway now enables the admin route only with Frontier validation
+and assigns the ephemeral key the operator token identity. The next physical
+run proved that admin Codex still advertised a 65,536 context window; it is now
+pinned to 131,072 and the observed process command contained the corrected
+value.
+
+Host tool execution then isolated three sandbox outcomes. Workspace-write with
+network disabled failed in bubblewrap while creating loopback; enabling network
+moved the first failure to `bwrap: setting up uid map: Permission denied`.
+The deprecated Landlock candidate panicked because the current direct-enforcement
+permission profile is incompatible with `use_legacy_landlock`. The only working
+local Codex 0.146 mode was `danger-full-access`: shell reads, edits, and unittests
+then executed normally. This mode is not a production default. It requires the
+explicit `DGX_MOA_ADMIN_CODEX_UNSANDBOXED=true` opt-in; otherwise admin agent
+mode remains workspace-write with network disabled.
+
+The v35i webhook canary completed its original turn in 434.856 seconds and
+changed only `webhook.py`. Public validation passed. Hidden validation first
+found uppercase signature acceptance and then bool-as-int constructor
+acceptance. A native same-thread continuation reproduced recovery transport but
+made no change after a 175K accumulated input. Two bounded fresh correction
+turns in the same fixture added lowercase-hex enforcement and exact-int checks;
+public and hidden validation then both exited zero. All functional checks except
+`docker_isolation` were true. The cell therefore remains failed rather than
+being promoted: authenticated disposable-fixture execution is not equivalent
+to an externally enforced container boundary.
+
+The fresh full client matrix was not started because its preregistered canary
+gate requires every check, including Docker isolation. The next engineering
+gate is an externally sandboxed Codex admin runner that preserves operator
+authentication, 131K context, fixture-only writes, secret filtering, and the
+passing continuation/recovery behavior. This is an engineering blocker, not a
+Goal-level blocked or external-host prerequisite.
+
+### Docker client matrix v36-v37 and Flash recovery v38 — 2026-08-09
+
+The existing Docker client runner was reused as the external sandbox boundary.
+Its relative state directory produced Docker exit 125 because Docker interpreted
+the source as a named volume. Resolving and creating that directory before
+building the mount fixed the shared root cause. A fresh v36 webhook canary then
+passed all ten checks, including public/hidden validation and
+`docker_isolation`, in 171.071 seconds.
+
+The preregistered v37 matrix executed all 20 cells against snapshot
+`b1a9048590131d38491bd23a7c9f6ed0962f0358`, context 131,072, one sequence,
+3,400,000,000 fixed KV bytes, dense/MoE MARLIN, TRITON_MLA, cudaMallocAsync,
+and `cudagraph_mode=NONE`. All harness processes returned zero. Functional
+scoring was baseline 4/5, Codex 2/5, Hermes 5/5, and OpenCode 5/5. Baseline
+atomic-store and Codex rate-limiter, atomic-store, and webhook-verifier failed
+public or hidden validation. Docker isolation passed in every cell. GPU memory
+remained approximately 74.7-74.8 GiB and the Executor journal contained no OOM,
+invalid-argument, or uncaptured-free error. The gateway and Executor were then
+stopped in that order; both ports closed and GPU allocation returned to zero.
+Codex noninferiority remains open while the external Docker sandbox blocker is
+cleared.
+
+After the operator enabled China-hosted models, a fresh v38 request used the
+same OpenCode Go endpoint, credential/workspace identity, exact
+`deepseek-v4-flash` model, and messages-only shape. Catalog availability was
+true and the completion returned `FLASH_OK`, `finish_reason=stop`, and 111 total
+tokens. A native tool request initially returned HTTP 400 because Flash thinking
+mode does not support `tool_choice=required`; removing only that parameter
+produced `get_temperature({"city":"Seoul"})`, `finish_reason=tool_calls`, and a
+successful tool-result continuation pinned to the same model. A complete stream
+ended with `[DONE]` after 128 chunks. A separate long stream was closed by the
+client after two chunks in 1.527 seconds. The former 403 availability blocker is
+cleared as workspace-policy evidence. Physical same-key queue/fairness,
+cross-key overflow, and failure-recovery gates remain before scheduler approval.
+
+A direct isolated scheduler/provider integration then held `key-a` as the local
+owner. `key-b` selected `opencode_go` for `cross_key_overflow` and returned
+`CROSS_OK` from exact model `deepseek-v4-flash`. After three same-key requests
+queued, the fourth selected the same pinned provider for
+`same_key_queue_limit` and returned `OVERFLOW_OK`. Releasing the owner promoted
+the queued requests in order 1, 2, 3; the final snapshot had no owner and zero
+queued requests. The earlier unsupported tool-choice 400 was followed by
+successful requests, so provider recovery after a request-shape failure also
+passed.
+
+Fresh v39b exercised the authenticated `/v1/chat/completions` ASGI path with
+two API-key identities and the live Flash provider. While `key-a` held the local
+lease, `key-b` returned HTTP 200 from exact model `deepseek-v4-flash`, content
+`HTTP_CROSS_OK`, selection `opencode_go`, and reason `cross_key_overflow`. A
+high-risk `key-b` request instead remained in the local queue with `queued=1`;
+after releasing the owner it returned HTTP 200 `LOCAL_OK`, selection
+`local_mistral`, and reason `round_robin_promoted`. Only the local request
+reached the local provider and the final scheduler snapshot was idle with zero
+queued requests.
+
+Fresh v39c held a high-risk local owner and filled the same-key queue to exactly
+three authenticated HTTP requests. A fourth high-risk request failed closed
+with HTTP 503, type `executor_admission_error`, code
+`executor_queue_unavailable`, and message `high-risk Executor queue is full`;
+it was not sent to Flash. Releasing the owner completed the first three requests
+with HTTP 200 and returned the scheduler to idle/zero queued. The isolated
+authenticated scheduling, fairness, provider-pinning, and high-risk fail-closed
+gates are cleared. Checked-in scheduling remains disabled pending broader
+release gates.
+
+### Targeted Docker quality rerun v40 — 2026-08-09
+
+The first retained v40 unit failed before shard loading with
+`ModuleNotFoundError: flash_attn.ops` because its transient environment omitted
+the repository compatibility path. The corrected v40b unit added only
+`PYTHONPATH=.../compat` and reached readiness on snapshot
+`b1a9048590131d38491bd23a7c9f6ed0962f0358` with context 131,072, one
+sequence, 3,400,000,000 fixed KV bytes, dense/MoE MARLIN, TRITON_MLA,
+cudaMallocAsync, and `cudagraph_mode=NONE`. Readiness was 74,714 MiB; observed
+traffic reached 76,412 MiB without OOM, `invalid argument`, uncaptured-free, or
+retained-KV errors.
+
+Run `mistral-128k-v40-targeted-docker-20260809` reran only the four v37 failure
+cells against fresh Docker fixtures. Baseline atomic-store passed all ten checks
+in 149.553 seconds. Codex atomic-store passed in 1,155.828 seconds. Codex
+webhook-verifier passed in 1,365.517 seconds after bounded correction of the
+timestamp/nonce/signature string contract and hexadecimal HMAC representation;
+public and hidden validation both exited zero. Thus every v37 generated-code
+failure was recovered.
+
+Codex rate-limiter returned zero and passed public and hidden validation in
+1,138.807 seconds, but remained failed because `no_bad_terminal=false`. Its
+client trace recorded three reconnects: idle timeout, stream close before
+`response.completed`, then a second idle timeout. The final response and all
+four tests succeeded after recovery. The common gateway path sends a comment
+keepalive every 15 seconds but buffers non-comment translated Responses events
+until terminal validation. The physical Codex 0.146 trace demonstrates that
+those comment frames do not satisfy its continuity contract. This is the sole
+remaining v40 targeted blocker; it is a gateway/client streaming issue rather
+than model code quality, memory, or Docker isolation. No heartbeat format change
+is credited without a fresh physical zero-reconnect rerun.
+
+### Responses inner-heartbeat recovery v41-v44 — 2026-08-10
+
+Two isolated 80-second fake Responses servers separated frame acceptance from
+gateway behavior. Codex 0.146 completed once with repeated valid
+`response.in_progress` events and once with repeated `event: ping` frames;
+neither run reconnected. The gateway therefore changed its Responses heartbeat
+from an SSE comment to the named ping while retaining comments as the default
+Chat heartbeat. Fresh v41 Codex rate-limiter then passed all ten checks in
+169.974 seconds with zero reconnects, compared with three reconnects and
+1,138.807 seconds in v40.
+
+The preserved v42 full matrix exposed a second layer. OpenCode passed `5/5`,
+baseline `4/5`, Hermes `4/5`, and Codex `1/5`. Codex rate-limiter,
+atomic-store, and webhook-verifier recorded zero reconnects, but dag-runner and
+log-report each exhausted five reconnects after 1,271.799 and 1,245.751
+seconds. Their traces showed completed tool work followed by a disconnect
+before terminal completion. Inspection found that the inner
+`keepalive_sse(responses_sse(...))` produced the named ping correctly, but the
+Responses adapter treated every non-comment frame as terminal material and
+buffered that ping in `translated`.
+
+The root fix changes only that classification: SSE comments and frames starting
+with `event: ping` bypass the terminal-validation buffer; all model and terminal
+events remain buffered. A regression test injects an immediate inner ping and
+proves that both outer and inner pings reach the response body. The focused run
+passed `5/5`, and Ruff passed the touched API and test files.
+
+Fresh v44 Docker fixtures against the unchanged revision, 131K context, one
+sequence, fixed 3.4 GB KV, dense/MoE MARLIN, TRITON_MLA, cudaMallocAsync, and
+compiled `cudagraph_mode=NONE` physically recovered both disconnect cells.
+Codex dag-runner passed all ten checks in 151.850 seconds; log-report passed all
+ten in 505.383 seconds. Both client traces contained zero reconnect, idle
+timeout, or stream-close records. GPU allocation after the long v42 plus v44
+traffic was 82,236 MiB, with no `invalid argument`, uncaptured-free, CUDA OOM,
+or service restart. The v42 failures remain preserved; a targeted recovery is
+not a replacement for the still-open full-matrix noninferiority gate.
+
+### Fresh matrix and invalid-session recovery v45-v46 — 2026-08-10
+
+The v45 transient epoch reused exact revision
+`b1a9048590131d38491bd23a7c9f6ed0962f0358`, context `131072`, one sequence,
+fixed `3400000000` KV bytes, dense/MoE MARLIN, TRITON_MLA,
+cudaMallocAsync, and compiled `cudagraph_mode=NONE`. Readiness was 74,714 MiB.
+The fresh 20-cell randomized matrix used seed
+`afae47aabf8b5b6157fc81d87fa5f170c24c251654240a1388df4ee0f6469f4d`
+and measured baseline `4/5`, Codex `1/5`, Hermes `5/5`, and OpenCode `5/5`.
+Codex therefore failed paired noninferiority; the other two clients passed.
+GPU allocation after the matrix was 84,668 MiB with no reported CUDA error.
+
+Trace inspection found that the shared Responses compatibility path rewrote an
+invalid or invented `write_stdin` session into a successful `exec_command`
+whose only output was `No active process session; use exec_command or
+apply_patch.` The message appeared 12 times in v45 rate-limiter and 18 times in
+dag-runner, reinforcing a non-progressing tool loop. The minimal fix preserves
+the requested `write_stdin` call and replaces only the invalid session ID with
+sentinel `0`, allowing the client to receive a real tool failure and correct
+its action.
+
+The separate v46 gateway epoch physically reran the affected Codex cells.
+Rate-limiter passed all ten checks in 155.862 seconds, dag-runner in 817.715
+seconds, and log-report in 629.233 seconds; each returned zero and the old
+successful no-op string was absent. Webhook-verifier changed only `webhook.py`
+and passed public and hidden validation, but the harness reached the exact
+1,800.101-second limit with return code 124 and no terminal response. Thus the
+invalid-session root fix is physically accepted for the three recovered cells,
+while webhook terminal convergence and fresh full-matrix Codex noninferiority
+remain open. The repository suite passed 1,050 tests; Ruff passed and mypy
+reported no issues in 49 source files.
+
+### Completion-aware retry and v48 partial matrix — 2026-08-10
+
+The v46 webhook trace had already completed implementation and repeated public
+tests, but every progress-only retry still injected the implementation-only
+instruction `Call the required tool`. That instruction forced redundant tool
+and plan cycles instead of final synthesis. The shared Responses retry now
+checks the persisted implementation/review evidence. Missing evidence retains
+the fail-closed tool instruction; completed evidence receives a bounded request
+for the concrete final result without another progress update or redundant
+tool call. Four focused API tests passed, including a completed-evidence
+regression. The full repository result was 1,051 tests passed, Ruff passed, and
+mypy reported no issues in 49 source files.
+
+The v47 physical epoch used the unchanged pinned revision, context `131072`,
+one sequence, fixed `3400000000` KV bytes, dense/MoE MARLIN, TRITON_MLA,
+cudaMallocAsync, and compiled `cudagraph_mode=NONE`. Weight loading took 412.29
+seconds; readiness was 74,714 MiB. Codex webhook-verifier passed every check in
+588.653 seconds with return code zero. The same cell independently passed in
+v48 in 609.751 seconds. GPU allocation reached 79,708 MiB after the v48 traffic,
+with no `invalid argument`, uncaptured-free, CUDA OOM, or service restart.
+
+The v48 randomized matrix schedule is immutable and uses seed
+`ac5cd8d40cccb13a2f3bfa59fd381bca835b569839b6d2144df6052220e480fb`.
+Baseline, Hermes, and OpenCode each completed `5/5`. Codex rate-limiter,
+webhook-verifier, and log-report passed; atomic-store passed public and hidden
+validation but timed out at 1,800.102 seconds without terminal completion. The
+outer orchestration session received SIGTERM during the final Codex dag-runner
+cell. Its exact test container was allowed to reach the original 1,800-second
+boundary and then stopped, but no synthetic run or score record was created.
+The v48 summary therefore correctly reports baseline `5/5`, Hermes `5/5`,
+OpenCode `5/5`, Codex `3/4`, and `matrix_complete=false`.
+
+Atomic-store completed six loop iterations before client cancellation;
+dag-runner completed eight. Both had successful test evidence but continued
+through repeated review/correction. The dag reviewer explicitly rejected an
+empty `changed_paths` projection because `git` was unavailable in the client
+container, while the client had performed file replacement through shell
+redirection. The atomic trace similarly ended after reviewer approval by
+requesting another implementation action. This evidence separates the
+remaining blocker from CUDA memory and from the recovered Responses heartbeat,
+invalid-session, and completion-aware retry defects. A trustworthy
+shell-mutation/change-scope projection and bounded reviewer convergence must be
+validated before another full noninferiority epoch.
+
+### Reviewer convergence fix and CUDA Graph isolation v49-v53 — 2026-08-10
+
+The v48 SQLite session payloads proved that shell mutation targets were retained
+(`atomic_store.py` and the absolute `dag_runner.py` path); the trace-level empty
+change set was not a parser loss. Two independent convergence defects remained.
+Correction-pending sessions could start a parallel Frontier architecture call
+before local review, preventing the required Frontier code-review verification
+from replacing it, and path extraction scanned free-form `justification` text as
+if it were a mutation target. Pending correction verification now forces the
+initial Frontier mode to `code_review`; reviewer and Frontier evidence merge
+persisted implementation targets; and path extraction is limited to command,
+patch, and explicit path/URI fields. Full pytest passed `1051/1051`, Ruff passed,
+and mypy passed 49 source files.
+
+CUDA Graph epochs v49-v53 preserved revision
+`b1a9048590131d38491bd23a7c9f6ed0962f0358`, context `131072`, one sequence,
+fixed `3400000000` KV bytes, dense/MoE MARLIN, and loopback port 19301. v49
+selected `CUTLASS_MLA + FULL_DECODE_ONLY` but was rejected before weight loading:
+the backend supports capability major 10 while GB10 reports 12.1. v50 used the
+native allocator with `expandable_segments`, `max_split_size_mb=128`, and GC
+0.5 under a 110 GiB guard. It loaded all 13 shards in 443.80 seconds, then the
+guard killed it during MARLIN packing, reproducing native allocator retention.
+
+An isolated v51 overlay backported upstream TRITON_MLA decode-workspace
+preallocation without changing the installed package. Original source SHA-256
+was `fcaa82edd4835f11617cfa6a6783d04914006a5d85915663b0b5a014f42588e0`;
+patched source SHA-256 was
+`5b2c8622f0d9ab77f59570ac00e01604bcd2617130f455a3514f9cfca81689d9`.
+v51 still failed the Inductor pointwise static launcher with `CUDA driver error:
+invalid argument`. v52 combined the backport, a fresh cache, and dynamic Triton
+launcher; its capture allocation `buf9` failed as an inaccessible pointer. v53
+disabled Inductor compilation while retaining FULL decode capture and the
+workspace backport; it advanced past that point but the MoE
+`_fwd_grouped_kernel_stage1` first pointer failed identically. In each
+cudaMallocAsync case, uncaptured-free and final invalid-argument cleanup followed
+the first pointer error.
+
+These results narrow the active CUDA Graph blocker to the general interaction of
+cudaMallocAsync capture allocations with Triton launch on SM121/CUDA 13, rather
+than one MLA scratch buffer or one launcher implementation. Native allocation
+avoids that pointer class but still cannot survive MARLIN materialization within
+host headroom. SGLang remains ineligible under the frozen contract because its
+measured compressed NVFP4 MoE path was not true MARLIN and its dense MARLIN path
+failed on capability 121. No graph-active backend reached readiness, so the
+client matrix was not resumed and no production change was made. The Goal
+remains active; the next gate is an isolated runtime-stack candidate that fixes
+SM121 capture allocation visibility or native MARLIN packing retention.
+
+### Native layer-wise reclamation CUDA Graph qualification v54 — 2026-08-10
+
+Source inspection rejected the proposed packed `sharded_state` shortcut before
+writing a 66 GiB artifact: the saver records the post-processed `weight` keys
+and shapes, while a fresh compressed-tensors model initializes checkpoint
+`weight_packed` parameters and unconditionally runs MARLIN post-processing after
+every loader. It therefore cannot bypass repacking without a new loader format.
+
+The smaller root fix was isolated in the v54 overlay. vLLM's shared
+`process_weights_after_loading` loop now calls `torch.cuda.empty_cache()` after
+each quantized module on CUDA, releasing dead native-allocator repack blocks
+before the next layer. The original utility SHA-256 was
+`55b03cc8443e66f482340790a42b16fa3be4df692eb9db42e0103f52e266dc80` and the
+patched SHA-256 is
+`ab77d138e910b5444ab4a8922e2615df33f9f27d9198597b032bac755a6db9bf`.
+The overlay also changed the optional FlashAttention probe from
+`find_spec("flash_attn")` to `find_spec("flash_attn.ops")` because the installed
+namespace contains only the CUTLASS DSL package; its patched source SHA-256 is
+`b101f8e9ad71a107b2323135459af4cac9cc4b1530a759de0e0858445be57223`.
+
+v54 preserved revision `b1a9048590131d38491bd23a7c9f6ed0962f0358`, context
+`131072`, one sequence, fixed `3400000000` KV bytes, dense and MoE MARLIN,
+TRITON_MLA, native allocator, and `FULL_DECODE_ONLY`. A dedicated process group
+was sampled every two seconds and limited to 110 GiB. The first cold load read
+all 13 shards in 484.14 seconds. MARLIN processing completed in 24 seconds and
+vLLM reported 66.06 GiB model memory instead of v50's 100-120 GiB growth. It
+reserved exactly 3.17 GiB KV, captured the decode graph in two seconds using
+0.01 GiB, and reached loopback readiness. The steady first-request allocation
+was 72,890 MiB.
+
+Physical traffic passed an exact short response, five repeated decode calls, a
+48,024-token prefill, a required native function call and tool-result
+continuation, and a one-second streaming disconnect followed by successful
+cancellation recovery. KV usage returned from 30.5% to zero and sampled GPU
+memory settled at 73,428 MiB. No `invalid argument`, inaccessible Triton
+pointer, uncaptured-free warning, CUDA OOM, or guard action occurred.
+
+The exact v54 process group was then stopped; port 19301, GPU allocation, and
+host paging were observed released. A second cold start re-read all 13 shards
+in 480.75 seconds, again completed MARLIN at 66.06 GiB, reserved the same fixed
+KV cache, captured the decode graph in one second using 0.09 GiB, reached
+readiness, and returned `V54_RESTART_OK`. Post-canary allocation was 72,890 MiB.
+
+The CUDA Graph engineering blocker is therefore cleared for this isolated
+backend: native allocator plus layer-wise MARLIN cache reclamation satisfies the
+frozen graph-active physical contract and the requested restart, repeated,
+long-prefill, tool, stream, cancel, and memory-stability gates. v54 remains a
+transient validation runtime on loopback 19301 for the resumed client matrix;
+the installed package and production services remain unchanged.
+
+### Client/provider resumption probes v55-v58 and Flash — 2026-08-10
+
+The v55 Codex atomic-store probe preserved the unavailable local Planner failure.
+v56 then isolated role convergence by mapping Planner and Reviewer to v54, but
+failed because their Qwen/Cohere reasoning-parser request shape was incompatible
+with Mistral. v57 changed only those transient parser settings to Mistral and
+passed all ten atomic-store harness checks. This is targeted controller-path
+evidence, not qualification of the required remote-role matrix.
+
+The v58 DAG probe completed with harness exit zero and passed its public tests,
+but failed the hidden validator. Its implementation returned results in global
+node-name order (`a,done,z`) instead of deterministic execution-layer order
+(`a,z,done`). The correction history, including the initial test-process exit
+137 and Frontier correction limit, remains under
+`data/diagnostics/client-quality/mistral-128k-v58-local-role-dag-canary-20260810`.
+
+The operator reconfirmed that the China-hosted-provider control is enabled and
+that `deepseek-v4-flash` is available. One fresh local OpenCode CLI probe using
+`opencode/deepseek-v4-flash-free` established provider TLS connections but
+produced no completion bytes within the five-minute bounded canary and was
+interrupted with exit 130. A clean diagnostic retry then returned exact
+`FLASH_OK` with exit zero. A second run emitted a native `bash` tool call,
+observed exact tool output `FLASH_TOOL_OK`, continued on the same model, and
+returned exact `FLASH_TOOL_OK`; explicit continuation of the same session then
+returned `FLASH_CONTINUE_OK`, also with exit zero.
+
+These fresh confirmations are consistent with, and do not replace, the earlier
+v38-v39c physical gateway evidence above. That evidence already cleared minimum
+completion, native tool continuation, complete streaming, cancellation,
+provider pinning, cross-key Flash overflow, same-key FIFO/fairness, recovery
+after request-shape failure, and high-risk fail-closed behavior. The former 403
+is therefore not an active provider blocker. The isolated OpenCode snapshot
+index-lock warnings did not prevent inference, tools, or continuation and are
+client-local observation noise rather than a Flash failure.
+
+Fresh preregistered v59 and v60 Codex canaries then reran the other two v37
+Codex failures against graph-active v54 through the targeted v57 controller.
+The v59 rate-limiter task passed all ten harness checks in 157.157 seconds. The
+v60 webhook-verifier task reached the bounded 24-step correction path, exhausted
+optional Frontier invocations, recovered through the local route, and passed
+all ten checks in 757.391 seconds. Together with v57 atomic-store, all three
+Codex cells that failed in v37 now pass public and hidden validation, Docker
+isolation, terminal-output, tool-evidence, and source-only checks. v58
+dag-runner remains a separate hidden-validation failure and prevents treating
+these targeted rows as a complete or noninferior matrix.
+
+Fresh v61 reran the identical preregistered Codex dag-runner task without
+altering the v58 artifact. It completed in 640.418 seconds and passed all ten
+checks, including the hidden execution-layer ordering contract. The run also
+exercised bounded recovery after a closed Codex transport and optional Frontier
+invocation exhaustion. v58 remains the retained failed attempt; v61 is the
+successful retry. The targeted Codex recovery set is now green, but a fresh
+randomized full client matrix remains mandatory.
+
+The target-topology v62 gateway then loaded the protected OpenCode Go credential
+from the existing mode-0600 production environment without copying or printing
+it, while overriding the validation listener back to loopback and using a new
+SQLite state database. A remote `deepseek-v4-pro` Planner completed alongside
+the local Reasoner and Frontier fan-out. The first Frontier attempt reproduced
+a raw closed `WriteUnixTransport` exception. The shared App Server boundary now
+normalizes write/drain failures to `FRONTIER_APP_SERVER_UNAVAILABLE` and
+suppresses the same cleanup-only close exception, allowing the existing bounded
+stdin fallback contract to operate. The focused suite passed 44 tests plus Ruff
+and strict mypy. After the exact transient gateway restart, Frontier A completed
+through primary in 60.235 seconds while the remote Planner completed in 38.727
+seconds; the joined local Executor then completed. Production was unchanged.
+
+Fresh randomized v63 preregistered all 20 baseline/Codex/OpenCode/Hermes cells
+against v62 and graph-active v54. Its immutable schedule seed is
+`78125677e3afa95e5600188e769966469825222ea9a6fbbc8c3e52192d188dfa`.
+The matrix is in progress and has no verdict yet.
+
+### Blackwell native NVFP4 qualification v64 — 2026-08-10
+
+The exact revision `b1a9048590131d38491bd23a7c9f6ed0962f0358` was tested at
+context 131,072, one sequence, fixed 3.4 GB KV, TRITON_MLA, and
+`FULL_DECODE_ONLY`. The explicit candidate selected
+`FlashInferB12xNvFp4LinearKernel` for dense layers and `FLASHINFER_B12X` for
+MoE. It loaded 66.09 GiB in 398.75 seconds, compiled in 11.54 seconds, reserved
+3.17 GiB KV, captured the decode graph in 12.01 seconds, and reached readiness
+with a 72,430 MiB startup peak. Chat, Responses, single and parallel native
+tools, tool-result continuation, streaming disconnect recovery, cold prefill
+through 128,000 tokens, 4,096-token decode, and exact restart passed. Sustained
+4,096-token decode measured 29.52 output tokens/s and no `invalid argument` or
+uncaptured-free warning occurred. The exact restart reloaded in 387.22 seconds,
+used cached compile in 1.62 seconds, captured in 10.68 seconds, and returned
+`RESTART_OK`.
+
+The `auto` candidate physically selected `FlashInferCutlassNvFp4LinearKernel`
+and `FLASHINFER_CUTLASS`; it did not fall back to MARLIN. Weight load remained
+66.09 GiB and compile completed in 11.34 seconds. Initial warmup then caused
+rapid host/unified-memory growth while GPU usage remained below 70 GiB. The
+original 8 GiB host-floor guard logged at 7,669,180 KiB available, but its
+termination did not occur: dash's `kill` builtin rejected `-- -PGID`, and the
+ignored exit status left the entire process group running while CUDA `cicc`
+children kept allocating. The kernel recorded global OOM kills, including unrelated processes,
+the production `dgx-moa-gateway.service`, and the user systemd manager. The
+candidate was forcibly killed; GPU allocation cleared and host availability
+recovered to 94 GiB. This rejects the installed auto-CUTLASS path and invalidates
+any earlier no-impact interpretation. It does not establish MARLIN as generally
+optimal on Blackwell. Further backend runs are paused pending production
+recovery authority; guards now stop at 24 GiB available with immediate
+process-group `SIGKILL`. Raw logs, telemetry, hashes, and the corrected incident
+record are under
+`data/diagnostics/runtime-overlays/mistral-128k-v64-blackwell-native-b12x`.
+Installed FlashInfer 0.6.12 reads `MAX_JOBS` for ninja `-j`; when it is unset,
+ninja uses host-default parallelism. It was unset here and `nproc` is 20. The
+kernel OOM tables show many concurrent `nvcc`/`cicc` children with individual
+RSS ranging from hundreds of MiB to over 6 GiB. Thus the direct cause is
+uncapped SM121 CUTLASS JIT compile fan-out, not the 65.95 GiB checkpoint or
+3.4 GB KV allocation. A serialized `MAX_JOBS=1` retry remains a verifiable
+engineering path after production recovery is explicitly authorized.
+Both qualification launchers now call checked `/bin/kill -KILL -- -PGID` at the
+24 GiB host floor. `test-run-qualified.sh` forced that branch with a dummy
+process group and passed in under one second with exit 137 and no surviving
+`sleep 300` process. This validates containment control only; it does not
+retroactively validate the failed auto-CUTLASS candidate.
+
+The remaining serialized retry is preregistered separately at
+`data/diagnostics/runtime-overlays/mistral-128k-v65-blackwell-auto-serialized`.
+It fixes `MAX_JOBS=1` as the only candidate change, retains the v64 model,
+context, KV, parser, attention, and CUDA Graph contracts, and requires actual
+dense/MoE kernel identity from runtime logs. Its status is waiting for explicit
+production-recovery approval; no model process has been started for this epoch.
+
+On 2026-08-11 the operator approved production recovery. Read-only inspection
+showed that `user@1000.service` and `dgx-moa-gateway.service` had already
+recovered at 07:16 KST. The gateway had `NRestarts=0`, tailnet `/healthz`
+returned 200, and unauthenticated `/v1/models` returned 401. No restart was
+repeated. The exact observation is preserved in the v66
+`production-recovery.json` artifact.
+
+Protocol epoch `mistral-128k-v66-sglang-native-auto-20260811` preregisters the
+SGLang native challenger without changing qualified vLLM B12x candidate A.
+Installed source inspection, before weight load, found SGLang 0.5.13.post1,
+sglang-kernel 0.4.3, FlashInfer 0.6.12, torch 2.11/cu130, transformers 5.8.1,
+and cuDNN 9.19 on GB10/SM121. Its registry logic resolves FP4 GEMM auto to
+`flashinfer_cutlass`; the compressed-tensors NVFP4 MoE scheme uses native
+CUTLASS when the MoE runner remains auto; default MLA attention is `triton`.
+The Mistral-native parser derives 128000 context by default, so the registered
+131072 contract requires the installed, explicit
+`SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1` override. The KV pool is fixed to
+147568 tokens: 36 layers * (256 KV LoRA + 64 rope) * BF16 equals 23040 bytes per
+token and 3,399,966,720 bytes total. These are registry and configuration
+facts, not readiness or quality evidence; runtime kernel identity must still be
+confirmed from the isolated service logs.
+
+### SGLang native candidate B physical result v66 — 2026-08-11
+
+Attempt 1 failed before Python because the transient unit lacked a Python path;
+the next attempt changed only to the installed absolute interpreter. Attempt 2
+loaded all 13 shards, reported 64.39 GB of weights and the fixed 147,568-token
+3.17 GB KV pool, then failed during batch-one CUDA Graph capture in
+`decode_attention.py::_fwd_grouped_kernel_stage1` with
+`Cannot make_shape_compatible: incompatible dimensions at index 1: 256 and
+512`. The post-error exit 137 was process-tree cleanup, not cgroup OOM.
+
+Attempt 3 changed only MLA attention from Triton to FlashInfer. It loaded 64.42
+GB in 365.72 seconds. Runtime JIT physically compiled FlashInfer
+`fp4_gemm_cutlass_sm120` with `compute_121a/sm_121a`,
+`FLASHINFER_ENABLE_FP4_E2M1`, CUTLASS, `MAX_JOBS=1`, and one NVCC thread. Auto
+MoE used `CompressedTensorsW4A4Nvfp4MoE` native CUTLASS. Batch-one CUDA Graph
+capture completed in 729.82 seconds and used 1.19 GB; piecewise graph remained
+disabled. The default LRU RadixCache initialized at page size one. Final
+telemetry contained 1,531 samples: GPU peak 72,556 MiB, host-available floor
+38,418,064 KiB, host-used peak 89,116,280 KiB, swap-used peak 4,111,300 KiB,
+GPU-utilization peak 96%, and power peak 36.61 W. No guard or OOM fired.
+
+Health became 200 after SGLang's own VLM warmup. Exact Chat returned
+`SGLANG_NATIVE_OK` in 0.560 seconds. Single `add(17,25)` and parallel
+`add(2,3)`/`multiply(4,5)` native tool calls passed. Chat SSE assembled exact
+`STREAM_OK`, emitted usage and `[DONE]`, and a 0.5-second disconnect recovered
+with exact `RECOVERED` plus health 200.
+
+Two mandatory compatibility gates failed. The server's native tool-call message
+contains `content:""`; continuing that exact returned message with tool result
+`42` reissued `add(17,25)`. Changing only assistant content to JSON `null`
+produced a correct final answer, proving a serialization-sensitive tool
+continuation regression. A standard Responses request with string `input`
+returned HTTP 400, `input_ids should be a list of lists for batch processing`,
+from the Pixtral multimodal prompt path. PyPI reported SGLang 0.5.17 as latest;
+official tag commit `29481685462732237d80d86076d6563e1f658102` retains the
+empty-string serialization and the same multimodal Responses wrapping, so an
+unjustified full runtime replacement was not performed.
+
+The isolated unit stopped with result success, released port 19301 and model
+memory, and left production tailnet health at 200. Candidate B is rejected for
+this protocol epoch on client-visible semantics, not native FP4, MLA, CUDA
+Graph, memory, or HTTP readiness. Cold and 80K-100K agent-prefix performance
+lanes were not run after the mandatory correctness gate failed and therefore
+must not be inferred. Candidate A remains the backend decision; MARLIN remains
+compatibility rollback evidence only. Frozen artifacts and hashes are under
+`data/diagnostics/runtime-overlays/mistral-128k-v66-sglang-native-auto`.
+
+### SGLang released-runtime retry preregistration v98 — 2026-08-12
+
+The operator restored SGLang native NVFP4 to backend-qualification priority
+without changing the vLLM B12x decision. The approved production gateway was
+already active in the user manager with `NRestarts=0`; candidate A and its
+persistent validation gateway were also active, so no redundant restart was
+performed. Current package inspection found installed SGLang `0.5.13.post1`
+and released latest `0.5.17`. Pip resolution for the isolated challenger keeps
+torch `2.11.0+cu130` and cuDNN `9.19.0.56`, while selecting sglang-kernel
+`0.4.5`, FlashInfer `0.6.15.post1`, and transformers `5.12.1`.
+
+Official tag commit `b6a09f38fcc5e96574324b4acc19d421c539cfc6` was inspected
+before installation. On SM121, its actual registry rules resolve dense FP4
+auto to `flashinfer_cutlass`, compressed NVFP4 MoE auto to
+`flashinfer_trtllm`, and MLA attention auto to `triton`. Registered alternatives
+are evidence of availability only, not capability qualification. The Responses
+engine-prompt path changed since the installed v66 runtime, while non-stream
+tool-call messages still serialize empty content. Therefore v98 first replays
+auto and the three mandatory correctness regressions; only a known Triton MLA
+failure permits a single-variable FlashInfer-attention retry. Cold and
+80K-100K RadixAttention lanes remain forbidden until Chat, Responses, verbatim
+tool continuation, streaming, cancel/recovery, and exact restart all pass.
+The frozen preregistration is
+`data/diagnostics/runtime-overlays/mistral-128k-v98-sglang-0.5.17-native/protocol.json`.
+
+The physical v98 runs reject native SGLang candidate B for this pinned runtime
+and model contract. Auto loaded native SM121 FlashInfer CUTLASS dense FP4 and
+TensorRT-LLM fused-MoE FP4, then reproduced the Triton MLA CUDA-Graph 256/512
+shape failure without OOM. Explicit FlashInfer compiled SM121 FP4 kernels,
+reached readiness, and passed Chat, Responses, single/multiple native tools,
+verbatim tool-result continuation, streaming, cancellation, and recovery. Its
+MLA wrapper selected FA2 on SM121, however, so it is not the requested native
+attention challenger. With `--max-total-tokens 147568` and allocator headroom
+0.615, that path allocated the exact 3,399,966,720-byte BF16 MLA KV pool and
+captured decode graph in 4.79 seconds.
+
+The first explicit `trtllm_mla` run exposed an SGLang/FlashInfer API-default
+mismatch: SGLang omitted `backend='trtllm-gen'` but supplied its multi-CTA-only
+buffer while FlashInfer auto selected XQA. A one-line patch in the isolated venv
+only proved the next physical gate, where `TllmGenFmhaRunner` rejected SM121 as
+`Unsupported architecture`; the patch was then reverted. Stock `cutlass_mla`
+was the only remaining static candidate: registry import passed and the
+installed `sgl-kernel` image contains `sm_121a`. It reached decode graph capture
+but failed `cutlass_mla_decode` at `D_q_nope == D_latent`, demonstrating a model
+shape-contract mismatch rather than OOM. `flashmla` was rejected before launch
+because its installed binary has no SM121 image; `cutedsl_mla` is SM100-gated;
+`tokenspeed_mla` requires FP8 KV and violates the pinned BF16 KV contract.
+
+No cold or 80K-100K Radix-prefix measurements were run because native readiness
+and correctness did not pass; no warm-prefix sample is mixed into a cold lane.
+The failed TRTLLM and CUTLASS journal hashes are respectively
+`b335099a9fcd4bb975da90f80be811805af56a2c757eb58bd6e757373a773012`
+and `c1d956bea9f0371f0c454707955da0920070791b3f05d165311b0d0a498b275a`.
+Candidate A remains unchanged and exact-restarted from its frozen v64 contract.
+It loaded 66.09 GiB in 393.77 seconds, allocated 147,568 KV tokens from the
+fixed 3.4 GB pool, captured decode graph in 11.92 seconds, and peaked at 72,430
+MiB. Chat, Responses, single/multiple native tools, continuation, streaming
+`[DONE]`, a 20,425-byte canceled stream, and immediate recovery passed. The
+validation gateway returned `/readyz` 200 and authenticated
+`GATEWAY_RECOVERY_OK`. The production gateway remained active with
+`NRestarts=0` and `/healthz` 200; its unchanged stopped production roles explain
+the existing `/readyz` 503. This result does not generalize SGLang or native
+Blackwell performance and does not establish MARLIN as optimal.
+
+### Candidate-A-pinned client-quality matrix v67 — 2026-08-11
+
+Protocol epoch `mistral-128k-v67-b12x-full-matrix-20260811` reused the frozen
+v63 schedule while pinning the physically qualified vLLM candidate A: exact
+model revision `b1a9048590131d38491bd23a7c9f6ed0962f0358`, context 131072,
+one sequence, 3.4 GB KV, dense `FlashInferB12xNvFp4LinearKernel`, MoE
+`FLASHINFER_B12X`, TRITON_MLA, and `FULL_DECODE_ONLY`. The isolated executor
+and gateway stayed loopback-only on ports 19301 and 19310. Production remained
+active and healthy; it was not restarted or mutated.
+
+All 20 immutable cells ran. Baseline passed `5/5` in 911.283 seconds, OpenCode
+passed `5/5` in 1,437.785 seconds, Codex passed `5/5` in 3,729.525 seconds, and
+Hermes passed `4/5` in 4,273.550 seconds. The sole failure was Hermes
+atomic-store: return code 124 at 1,800.141 seconds. Its only changed source was
+`atomic_store.py`; public and hidden validation both exited zero. The failed
+checks were harness exit, Korean final, terminal, and tool evidence. The next
+scheduled OpenCode webhook cell passed, providing immediate recovery evidence.
+
+Read-only inspection of Hermes `state.db` found one session with 52 messages:
+one user message, 25 assistant messages, and 26 tool results. Every assistant
+message ended with `finish_reason=tool_calls`; none was terminal. Tests first
+passed about four minutes into the run, but the client continued cross-instance,
+failure-atomicity, JSON-boundary, Git-scope, and duplicate implementation work.
+Its last successful unittest/UTF-8 check completed 27.813 seconds before the
+frozen timeout. During the cell the isolated gateway logged successful HTTP 200
+chat completions and no provider/backend error. This classifies the cell as a
+Hermes terminal-convergence quality regression, not CUDA Graph, memory,
+candidate-A, or gateway failure. It was not rerun or excluded.
+
+The summary correctly records `matrix_complete=true`, `complete=false`, total
+`19/20`, and Hermes usability below baseline. Schedule SHA-256 is
+`0c94909a906c299a7e8ee6321f79ddba8adabcd7c624e37ee934fa711cacdc5d`;
+summary SHA-256 before the protocol-result annotation is
+`3e90ba98ae2225521a84e469b753a9a0bc4e02394ea5a38ab3e9af7d9e450549`.
+Frozen run, score, session, trace, telemetry, infrastructure-retry, and focused
+failure-analysis artifacts remain under the epoch root. The functional gate is
+failed, so blind noninferiority, Reasoner ablation, long-horizon, canary, and
+release promotion do not resume until a separate targeted recovery demonstrates
+bounded Hermes terminal convergence without weakening correctness or tool
+evidence.
+
+Targeted recovery v68 changed only the copied Hermes profile's
+`agent.max_turns` from 90 to 20. Two pre-request 401 launches were preserved as
+infrastructure retries; neither reached the model. The corrected launch used
+the isolated gateway's active `physical` key identity without printing or
+copying its value. The configured limit was not effective for this `-z`
+execution path: Hermes persisted 36 assistant messages, all ending in tool
+calls, and 40 tool results before the unchanged 1,800.101-second timeout. Only
+`atomic_store.py` changed and both public and hidden validation passed, but no
+terminal response or `usage.json` was written. Production, candidate A, and the
+isolated gateway remained HTTP 200; candidate A remained at 72,428 MiB. v68 is
+therefore failed evidence against the config-only control, not a backend
+regression. v69 preregisters explicit CLI `--max-turns 20` as the next single
+variable because the installed client gives that argument priority over config.
+
+v69 then proved that priority is unavailable to oneshot: top-level `hermes -z`
+does not register `--max-turns`, so the attempted explicit argument exited 2 in
+0.389 seconds before any model request. Source inspection found the direct
+cause: `hermes_cli.oneshot._run_agent()` constructs `AIAgent` without passing
+`cfg.agent.max_turns`; the constructor therefore uses its default 90. The
+`--max-turns` option exists only on the `chat` subparser. v70 preserves all
+prior failures and preregisters an isolated one-line bind-mounted overlay that
+passes the configured value as `max_iterations`; it does not mutate the
+installed Hermes tree.
+
+The v70 overlay made the configured limit effective. The run stopped after 20
+assistant tool-call messages, wrote one terminal assistant message, exited zero
+in 996.819 seconds, changed only `atomic_store.py`, retained successful unittest
+tool evidence, and passed public plus hidden validation. It still failed the
+matrix cell because the terminal text was English. The tool-free summary call
+used `dgx-moa-orchestrated`, whose required Frontier correction could not run
+without client tools and returned 503 `frontier_required_unavailable`; Hermes
+then emitted its English error fallback. v71 retains the proven turn fix and
+changes only the max-iteration summary model to the existing Executor-only
+compatibility path `dgx-moa-fast`.
+
+v71 physically sent that fast summary request. Gateway usage recorded model
+alias `dgx-moa-fast`, fast mode, and Executor-only routing, but the full-history
+request failed after 19.148 seconds with `backend_error`; Hermes retried through
+the original orchestrated model and again emitted the English fallback. Small
+direct `dgx-moa-fast` probes immediately afterward passed both nonstream and
+stream with HTTP 200, so the model alias and candidate-A backend remained
+available. v72 retains both prior overlay fixes and changes only summary context
+to the first two API messages plus the latest twelve followed by tool-pair
+sanitization.
+
+v72 passed the targeted Hermes atomic-store cell in 389.044 seconds. The
+read-only transient overlay left installed Hermes unchanged; the task changed
+only `atomic_store.py`, exited zero, emitted a Korean terminal response, retained
+successful unittest tool evidence, and passed public plus hidden validation and
+all ten matrix checks. Its state database contains seven assistant messages and
+six tool results. Gateway evidence contains seven matching orchestrated
+requests, all completed, with no failed request. Candidate A and both isolated
+services remained healthy. Hermes converged before the configured 20-turn
+limit, so no `dgx-moa-fast` summary request was sent and the compact-summary
+branch itself is not physically validated. This is sufficient targeted
+terminal-convergence recovery evidence, but it does not alter frozen v67 or
+substitute for a fresh full client-quality matrix.
+
+Fresh candidate-A-pinned matrix v73 completed all 20 cells. Baseline and
+OpenCode passed `5/5`, Codex passed `3/5`, and Hermes passed `4/5`, totaling
+`17/20`. The recovered Hermes atomic-store cell passed all checks in 552.221
+seconds. Codex log-report instead crashed with rc 139 after 48.679 seconds and
+before changing source; its gateway interval contained three completed and no
+failed requests. Codex rate-limiter changed only `rate_limiter.py`, passed
+public and hidden validation and retained unittest evidence, but timed out
+without a terminal response at 1,800.094 seconds; 31 requests completed and one
+was cancelled. Hermes log-report changed only `log_report.py` and passed both
+validation layers, but its terminal was `API call failed after 3 retries:
+remote Executor fallback unavailable`; four gateway requests completed and
+three were cancelled, with none recorded failed. The matrix summary SHA-256 is
+`628e561608d0a20251d2da23eeeaf21ca01db3aa7ea8400bcb200ac2e73c18e4`.
+After completion all three services were active and HTTP 200, candidate A used
+72,430 MiB, and host headroom remained above the 24 GiB guard. These failures
+are client process/convergence evidence, not an NVFP4 backend or memory
+regression. The full functional gate remains failed.
+
+### Hermes bounded-output and fast-mode recovery v74-v77 — 2026-08-11
+
+v74 reduced only the copied Hermes output budget to 4,096 tokens. It passed all
+ten matrix checks, but emitted 49,418 bytes of multilingual repetitive output;
+the scorer pass is retained but rejected as production quality. v75 bounded
+the copied oneshot loop to eight turns and v76 additionally bounded the summary
+to 256 tokens. Both failed only the Korean-terminal check because the
+`dgx-moa-fast` summary returned a backend error. Exact v76 tracing showed the
+root cause: `prepare_executor()` dynamically injected Reviewer after fast mode
+had already selected Executor-only roles, then a revise verdict required an
+unavailable correction tool path.
+
+v77 fixes that shared root with one guard: dynamic Reviewer injection is skipped
+when `runtime_mode == "fast"`. Controller tests passed `101/101`, focused fast,
+alias, tool-continuation, and reviewer API tests passed `11/11`, and Ruff
+check/format passed. An isolated direct request containing implementation and
+tool-result evidence returned HTTP 200 in 1.388 seconds. Usage recorded
+`model_alias=dgx-moa-fast`, `runtime_mode=fast`, `roles_required=["executor"]`,
+and completed status. Its exact event window contained only local Executor role
+events and zero `reviewer_required`, `review_started`,
+`frontier_collaboration_started`, or `executor_remote_selected` events. The
+short Korean response had no repetition corruption. Production, candidate A,
+and both gateways were HTTP 200 during the check.
+
+The v77a Hermes log-report cell separately failed task correctness: the model
+changed only `log_report.py` and produced a Korean terminal, but public and
+hidden validation both exited 1 and unittest tool evidence did not pass. Its
+fast summary itself completed Executor-only with 5,211 prompt and 143 completion
+tokens in 18.302 seconds. Therefore v77 passes the gateway compatibility
+contract while v77a remains failed client-quality evidence; neither frozen v73
+nor the broader client gate is rewritten. After evidence capture, only
+`dgx-moa-v77-gateway-attempt04.service` was exactly stopped; port 19311 was
+released while candidate A, its gateway, and production remained active and
+HTTP 200.
+
+### Codex rc139 exact replay v78 — 2026-08-11
+
+Read-only reconstruction of v73 showed that candidate A and the gateway had
+completed all three Responses/tool-call turns before Codex exited 139. The
+third turn contained two pending tool calls, but no core dump, kernel segfault
+record, provider failure, or backend failure artifact survived. A preregistered
+v78 cell therefore changed no code or protocol input: the same Codex 0.146.0
+binary and SHA-256, prompt hash, log-report fixture, Docker controls, gateway,
+and candidate A were exact-replayed in a fresh workspace.
+
+v78 exited zero after 1,240.068 seconds and passed all ten matrix checks. It
+changed only `log_report.py`; public and hidden validation exited zero, unittest
+tool evidence was retained, and the terminal was Korean. All 29 gateway requests
+completed, with zero failed or cancelled request, so the v73 signal-11 exit did
+not reproduce and is not a deterministic gateway wire or tool-payload failure
+under this replay. The run was still inefficient: three completions reached the
+4,096-token ceiling and the model required multiple failed patch/tool attempts
+before converging. This is targeted recovery plus residual convergence evidence,
+not a rewrite of v73 or a fresh matrix pass. Candidate A, its gateway, and
+production remained active and HTTP 200; candidate A used 72,596 MiB after the
+run.
+
+### Codex relative change-evidence recovery v79 — 2026-08-11
+
+The v73 Codex rate-limiter timeout was reconstructed as an evidence handoff
+failure, not a backend timeout. After the client changed `rate_limiter.py` and
+passed tests, the first Reviewer received empty changed paths/no diff summary,
+issued a false critical missing-implementation finding, and opened
+`frontier_correction_required`. The session then accumulated 18 Frontier
+correction-tool retries, 20 remote-Executor selections, and 32 steps before the
+1,800-second timeout.
+
+Current shared path extraction records relative source names from bounded
+`cmd`, `command`, `input`, and `patch` payloads. The existing focused regression
+for shell redirection records `app.py`, and the controller suite passes 101/101.
+An isolated v79 gateway physically recorded a synthetic relative
+`cat > rate_limiter.py` continuation as `target_paths=["rate_limiter.py"]`.
+Reviewer evidence referenced the actual observed stub content instead of
+claiming no change/diff; the intentionally empty stub then failed closed with
+HTTP 409, which is correct functional rejection and not evidence loss.
+
+The fresh v79 Codex rate-limiter cell terminated normally in 166.959 seconds.
+All six gateway requests completed; Reviewer ran once, approved once, and no
+Frontier correction retry occurred. The cell nevertheless failed 9/10 because
+hidden validation found an accepted invalid constructor input. Public tests,
+tool evidence, source scope, and Korean terminal passed. Thus the v73 correction
+loop root cause is closed, but Codex rate-limiter quality is still failed and
+the full client gate remains open. Only the v79 transient gateway was then
+exactly stopped; port 19312 was released while candidate A, its 19310 gateway,
+and production remained active and HTTP 200.
+
+### Fresh fixed-gateway full matrix v80 — 2026-08-11
+
+Protocol epoch `mistral-128k-v80-fixed-gateway-full-matrix-20260811` executed
+all 20 frozen cells with candidate A and the v77/v79 code. Baseline passed all
+five cells. Codex, Hermes, and OpenCode passed none, so the frozen result is
+`5/20` and the functional gate failed. Summary SHA-256 is
+`e696e49c5eae60385b6b05160f53c646dffe30f85c4ff5229df2299ed9fc5d50`;
+schedule SHA-256 remains
+`ccd47f52217dca9a0870e8936f09924d8659735178a318cb2e0cd3e38d83b2bb`.
+
+The broad failure has a shared infrastructure explanation. The transient
+gateway process `PATH` omitted `/home/kotori9/.local/bin`, the location of the
+installed `codex` launcher. Frontier configuration invokes bare `codex`;
+runtime events therefore recorded `FRONTIER_PROCESS_SPAWN_FAILED`. OpenCode and
+Hermes commonly terminated with `remote Executor fallback unavailable`, and
+several Codex Responses streams failed after the same unavailable correction
+path. This prerequisite failure means v80 is not a clean client noninferiority
+result and is not a Candidate-A backend failure. Individual task-quality
+failures remain preserved rather than discarded.
+
+Before cleanup Candidate A used 72,596 MiB, host available memory was
+45,606,052 KiB, and the isolated, candidate, and production gateways all
+returned HTTP 200. Only `dgx-moa-v80-gateway.service` was exactly stopped; port
+19312 was released while candidate A, its gateway, and production stayed active
+and HTTP 200. The next admissible single variable is the transient launcher
+`PATH`, with a direct Codex OAuth Frontier spawn/completion gate before another
+full matrix.
+
+### Frontier PATH qualification v81 — 2026-08-11
+
+Protocol epoch `mistral-128k-v81-frontier-path-qualification-20260811`
+changed only the isolated gateway launcher `PATH`, prepending
+`/home/kotori9/.local/bin`. The service environment resolved the expected
+`/home/kotori9/.local/bin/codex` launcher. One normal orchestrated request
+returned HTTP 200 and recorded `frontier_collaboration_completed` for
+`codex_oauth`, profile `primary`, model `gpt-5.6-sol`, with 28,873.862 ms
+latency, 19,551 prompt tokens, and 1,048 completion tokens. The epoch recorded
+zero `FRONTIER_PROCESS_SPAWN_FAILED` events.
+
+Candidate A remained at 72,596 MiB and host available memory was 45,639,668
+KiB. Candidate A and production remained HTTP 200. The isolated v81 service
+was exactly stopped and port 19312 released. State DB SHA-256 is
+`a73f0c193d58984367f88b0450608d9b0b3addcb2317fe1b1d69fd01e08174d3`.
+This passes only the v80 common prerequisite and authorizes a new full matrix;
+it does not relabel v80 or pass the client-quality gate by itself.
+
+### Corrected-PATH full matrix v82 — 2026-08-11
+
+Protocol epoch `mistral-128k-v82-frontier-path-fixed-full-matrix-20260811`
+executed all 20 frozen cells with the v81-qualified PATH as its only common
+change. Baseline and Hermes passed `5/5`, Codex passed `2/5`, and OpenCode
+passed `3/5`, totaling `15/20`; the functional gate therefore remains failed.
+Summary SHA-256 is
+`86443c82a0a272f86aace2e158ade1dafca70d4b0ae744a807134eae493e23c6`,
+schedule SHA-256 is
+`16c6ddf10745747d0ff1cacb9f3399688e539154f2a016e696c9c5efac14c427`,
+and the checkpointed state DB SHA-256 is
+`a2c7946e302fbfbea4e1a9626673f17dbcdcad3658bffdd97c2c5cf225df724e`.
+
+The v80 systemic failure did not recur: the v82 state DB contains zero
+`FRONTIER_PROCESS_SPAWN_FAILED` events and zero payloads containing `remote
+Executor fallback unavailable`. Codex log-report passed in 360.085 seconds and
+webhook-verifier passed in 816.871 seconds. Codex rate-limiter, atomic-store,
+and dag-runner reached the 1,800-second limit; OpenCode atomic-store also timed
+out, while OpenCode dag-runner completed public and hidden validation but
+failed only the Korean-final check. These five cells remain frozen as distinct
+task-quality/convergence evidence rather than a shared transport or backend
+failure.
+
+Before cleanup candidate A used 72,776 MiB, host available memory was
+45,452,932 KiB, swap use was 2,248,468 KiB, and candidate, isolated, and
+production gateways all returned HTTP 200. Only
+`dgx-moa-v82-gateway.service` was exactly stopped; port 19312 was released and
+the three persistent services remained active. Do not rerun v82 in place.
+Investigate its failures in separately named targeted epochs, then require a
+new full matrix before blind noninferiority or release gates.
+
+### OpenCode dag-runner Korean-final replay v83 — 2026-08-11
+
+Protocol epoch `mistral-128k-v83-opencode-dag-korean-replay-20260811`
+exact-replayed the v82 OpenCode dag-runner cell with repetition as the only
+variable. The client exited zero in 204.123 seconds, changed only
+`dag_runner.py`, passed public and hidden validation, retained tool evidence,
+and produced a Korean terminal response, for 10/10. Candidate A and production
+remained active and HTTP 200 at 72,776 MiB, with 45,513,612 KiB host memory
+available. The v82 English-only final was not reproduced; retain it as a
+stochastic observation rather than changing the prompt or gateway from one
+miss.
+
+### OpenCode atomic-store timeout replay v84 — 2026-08-11
+
+Protocol epoch `mistral-128k-v84-opencode-atomic-timeout-replay-20260811`
+exact-replayed the v82 OpenCode atomic-store cell without changing backend,
+client, prompt, task, timeout, or scoring. It exited zero in 489.769 seconds,
+changed only `atomic_store.py`, and passed all 10 checks. Candidate A and
+production remained active and HTTP 200 at 72,776 MiB, with 45,604,976 KiB
+host memory available. The v82 timeout was not reproduced; preserve it as one
+slow non-convergent execution and make no OpenCode-specific change from this
+pair of observations.
+
+### Codex atomic-store timeout replay and latest-evidence recovery v85/v86 — 2026-08-11
+
+v85 exact-replayed Codex atomic-store and reproduced the timeout at 1,800.097
+seconds. Public and hidden validation passed, but all 33 client-visible agent
+messages were progress-only. The gateway session made 36 requests, five
+Reviewer rejections, and 18 Frontier correction-tool retries. Direct event
+evidence showed that `review_tool_results` retained the first four stub/deadlock
+failures alongside the latest four results, so superseded failures kept
+`frontier_correction_required` open.
+
+v86 changed only review evidence selection to the latest eight results after
+339/339 focused controller/API tests passed. In an isolated port-19312 gateway,
+the stale Frontier correction loop disappeared: zero correction-tool retries
+occurred. The cell nevertheless timed out at 1,800.203 seconds with the same
+8/10 score. Its final state showed two current passing test runs, but the
+eight-result window still included two earlier failures and the last Reviewer
+rejection occurred before the passes. Candidate A, isolated, and production
+gateways were HTTP 200 before exact v86 cleanup; candidate A used 72,776 MiB
+and host memory available was 45,478,724 KiB. v86 is failed evidence and does
+not authorize deployment. The next isolated single variable is the latest four
+review results; contract evidence remains independently preserved.
+
+### Latest-four Codex atomic-store recovery v87 — 2026-08-11
+
+v87 changed only `review_tool_results` from latest eight to latest four, while
+the separate contract-document evidence path remained unchanged. Focused
+controller/API tests passed 339/339. The isolated Codex atomic-store cell then
+completed in 1,058.352 seconds and passed all 10 checks. This was not a review
+bypass: the state DB recorded one Frontier rejection, four requested/completed
+correction-tool retries, one applied correction, and one
+`frontier_correction_verified` event. Before exact cleanup candidate,
+transient, and production gateways were HTTP 200, candidate A used 72,776 MiB,
+and host available memory was 45,339,480 KiB. Only v87 was stopped and port
+19312 released. Latest-four is now the targeted recovery candidate; it remains
+undeployed pending the other failed Codex cells and a fresh full matrix.
+
+### Latest-four Codex rate-limiter v88 — 2026-08-11
+
+v88 reused the physically passed latest-four review evidence policy for the
+v82 Codex rate-limiter failure. The cell exited zero in 457.669 seconds and
+recovered terminal convergence, but scored 9/10: hidden validation showed that
+the implementation rejects valid positive float `window_seconds=2.5`.
+Runtime evidence explains why review assurance missed the boundary. Four
+Frontier architecture calls completed during tool continuation, consuming the
+entire task budget; seven subsequent paths recorded
+`FRONTIER_INVOCATION_LIMIT`, including the clean-local-review assurance
+trigger. Candidate, isolated, and production gateways stayed HTTP 200,
+candidate A used 72,778 MiB, and host available memory was 45,433,560 KiB.
+Only v88 was stopped. Preserve the quality failure; next test architecture
+artifact reuse as a single variable so code-review assurance retains budget.
+
+### Frontier architecture-reuse rate-limiter replay v89 — 2026-08-12
+
+v89 exact-replayed Codex rate-limiter with latest-four review evidence and the
+preregistered architecture-artifact reuse candidate. The cell exited zero in
+742.760 seconds and passed all 10 checks, including hidden validation. Runtime
+evidence does not establish the candidate branch as the cause: all three
+Frontier completions were `code_review`, zero were `architecture`, and zero
+`frontier_architecture_reused` events occurred. One existing progress-retry
+path reused prior Reviewer and Frontier artifacts, while two Frontier
+corrections and one correction verification completed within budget. Preserve
+the 10/10 task recovery, but classify the architecture-reuse acceptance as not
+exercised rather than qualified. Candidate A, isolated, and production
+gateways were HTTP 200 before cleanup; candidate A used 72,778 MiB and host
+available memory was 45,498,024 KiB.
+
+### Latest-four Codex dag-runner recovery v90 — 2026-08-12
+
+v90 applied only the physically passed latest-four review evidence policy to
+the remaining v82 Codex dag-runner failure; the unexercised v89 architecture
+reuse branch was removed before preflight. After 339/339 focused tests, the
+isolated cell exited zero in 864.933 seconds and passed all 10 checks, including
+public and hidden validation. It made 33 request/tool-result continuations and
+completed one review. Four repeated architecture calls exhausted the Frontier
+budget, followed by 20 `frontier_unavailable` events, but the cell still
+converged to a correct Korean terminal. Record this as task-quality recovery
+and as a separate orchestration-efficiency observation, not a Candidate-A
+failure. Before cleanup all three gateways were HTTP 200, candidate A used
+72,778 MiB, and host available memory was 45,405,976 KiB.
+
+### Latest-four fresh matrix v91 and targeted recovery v92 — 2026-08-12
+
+Epoch `mistral-128k-v91-latest-four-full-matrix-20260812` was safely paused
+after two cells and must not be interpreted as a completed matrix. Its first cell, Codex
+rate-limiter, timed out after 1,800.213 seconds. Public and hidden validation,
+source scope, tool evidence, and Korean output checks passed; only harness exit
+and terminal failed. The runtime had falsely derived `/non-string` from the
+implementation docstring phrase `empty/non-string`, so Frontier rejected the
+otherwise allowed scope and correction did not converge.
+
+The second OpenCode atomic-store cell exposed the same evidence-class
+bug through a different input: a `state.json` file created under
+`TemporaryDirectory` by an independent validation command was reported as a
+repository change. Frontier then rejected the permitted single-file scope.
+Both cells timed out at 1,800 seconds after their public and hidden validations
+passed. The pause monitor then stopped only the v91 matrix and gateway; the
+remaining 18 cells were not started. These are controller evidence-extraction
+failures, not Candidate-A kernel or memory failures.
+
+The separate new-process v92 epoch narrowed relative-path extraction to actual
+command arguments or mutation targets and excluded tempfile validation writes.
+OpenCode atomic-store passed 10/10 in 231.803 seconds with Frontier verification,
+physically clearing its v91 failure. Codex rate-limiter exited normally in
+451.399 seconds, clearing the timeout/terminal failure, but passed only 9/10:
+hidden validation showed that the generated implementation incorrectly rejected
+a valid non-integer `window_seconds`. Therefore v92 is a partial failure and does
+not authorize a full matrix. It also exposed `bool:`/`int:` false paths because
+the shell-redirection matcher interpreted Python `->` annotations as redirects;
+the shared matcher now excludes `->` and `>=`. Focused controller/API tests pass
+341/341 and Ruff passes after that source-only correction; physical replay remains
+required. Candidate A remained at 72,778 MiB and both persistent gateways were
+HTTP 200 after transient cleanup.
+
+V93 then replayed Codex rate-limiter with the first redirect-boundary fix. The
+cell passed all 10 functional checks in 1,137.327 seconds, including hidden
+validation and verified Frontier correction. It is not parser qualification:
+the raw implementation evidence still contained false paths `/remaining(` and
+`cutoff`, caused respectively by slash-separated method prose and a Python `>`
+comparison. The next source candidate limits redirect parsing to explicit
+`cat`/`echo`/`printf` shell commands and excludes parenthesized slash prose;
+341 focused tests, Ruff, and a direct combined regression pass. A new-process
+physical replay remains required before a full matrix.
+
+V94 performed that new-process replay with conservative command-specific path
+extraction. Codex rate-limiter passed all 10 checks in 714.089 seconds; public
+and hidden validation, Korean terminal, and verified Frontier correction all
+passed. Every recorded implementation target path was exactly
+`rate_limiter.py`, with none of the v91-v93 false tokens. Candidate A remained
+72,778 MiB and both persistent gateways were HTTP 200 after cleanup. This
+qualifies the common parser prerequisite and authorizes a separately named
+fresh 20-cell matrix; it does not substitute for that matrix.
+
+Fresh matrix v95 used frozen schedule SHA-256
+`9b63d1ce3883e06debd2794358856c776fbfb2fcff580ac4f38e4f08396a081c`
+against a new isolated gateway. Its first cell, Hermes
+atomic-store, passed 10/10 in 303.809 seconds. No matrix verdict exists yet.
+Candidate A and both persistent gateways remained immutable.
+The monitor's first version misclassified systemd `activating` as terminal and
+briefly stopped the isolated gateway during cell 02, Codex log-report. The
+gateway was immediately recreated, the incident is recorded in the protocol,
+and the monitor now checks explicit active-state values. Cell 02 cannot be
+called a clean result without inspecting its transport evidence. Persistent
+services and Candidate A were unaffected. Cell 02 completed in 636.803 seconds
+but failed hidden validation because `sample_limit=True` was accepted and also
+failed bad-terminal due to the reconnect records. The pause race started cell
+03 before stopping it, so OpenCode log-report has no score. V95 is frozen as an
+invalid interrupted matrix: two scored cells, one pass, one fail, and 17 cells
+not started. The common quality contract now explicitly requires bool rejection
+for `limit` and names ending in `_limit`; 341 focused tests and Ruff pass, but
+this is source evidence pending a new-process targeted replay.
+
+V96 was that new-process Codex log-report replay. It ran without an automatic
+gateway stop monitor. Hidden validation passed, physically recovering boolean
+`sample_limit`, but the cell timed out at 1,800.145 seconds and failed harness
+exit plus terminal. All four Frontier completions were architecture calls; no
+code-review call occurred, followed by 18 unavailable events and eight local
+review attempts. Direct control-flow inspection showed that architecture
+fanout occupied the Frontier task before local implementation review, so later
+reviewer findings could not start code-review escalation. A source candidate
+now defers architecture when implementation evidence and a reviewer are
+present; the existing shared fanout/code-review test was strengthened and all
+341 focused tests plus Ruff pass. Physical convergence remains unqualified.
+
+V97 physically qualified the convergence candidate. Launch attempt 1 stopped
+before a request because the quality workspace lacked the runner's prepare
+step; that setup failure is preserved. Attempt 2 changed only that setup step,
+then Codex log-report passed all 10 frozen checks in 329.680 seconds. Runtime
+events contained two `code_review` collaborations and zero `architecture`
+collaborations, two completed local reviews, one Frontier rejection, one
+correction application, and `frontier_correction_verified`; no
+`frontier_unavailable` event occurred. Public and hidden validations returned
+zero and only `log_report.py` changed. The isolated gateway was stopped after a
+SQLite WAL checkpoint, while candidate A and both persistent gateways remained
+healthy. Frozen evidence is under
+`data/diagnostics/client-quality/mistral-128k-v97-review-first-codex-log-20260812`.
+
+### Authenticated LAN ingress — 2026-08-11
+
+An address-specific systemd socket proxy was enabled at
+`192.168.0.42:9000`, forwarding to the unchanged authenticated gateway at
+`100.125.239.72:9000`. After activation, loopback `127.0.0.1`, tailnet
+`100.125.239.72`, and LAN `192.168.0.42` each returned HTTP `200` for
+`/healthz` and HTTP `401` for an unauthenticated `/v1/models` request. The
+gateway remained active with `NRestarts=0`; role-model listeners were not
+changed. No wildcard `0.0.0.0:9000` listener was introduced.
+
+UFW was active with the configured default input policy `DROP`. The unprivileged
+session could not inspect or add its root-owned rules, so reachability from a
+second LAN host remains unverified until the documented subnet-scoped rule is
+applied by an operator. This does not alter the verified address-specific bind
+or authentication behavior above.
+
+### Candidate-A post-SGLang full matrix v99 — 2026-08-12
+
+V99 completed all 20 frozen cells against the preserved vLLM Blackwell-native
+Candidate A and scored `18/20`: Hermes and OpenCode passed `5/5`; baseline and
+Codex passed `4/5`. Candidate A remained at 72,428 MiB and the matrix and
+gateway recorded zero restarts. Exact cleanup stopped only the transient v99
+matrix and gateway; Candidate A and the production gateway remained active.
+
+Codex log-report passed public validation and review but rejected valid
+`sample_limit=0` in hidden validation. Baseline, Hermes, and OpenCode log-report
+all passed, so this is a Codex trajectory failure rather than a shared backend
+verdict. Baseline atomic-store passed public validation but accepted an invalid
+boolean expected version (`True == 1`); the other three clients passed that
+task. The frozen summary SHA-256 is
+`675977f1d5ae1326a83ffb1654f7eb9e05af1575f9128ab5996d54f52063cb60`.
+V99 is complete failed evidence. Recover both cells in separately named epochs,
+then require a fresh full matrix before blind noninferiority or later gates.
+
+V100 targeted both v99 failures in fresh workspaces. Codex log-report converged
+through repeated review/correction and passed all ten checks in 1,482.571
+seconds. Baseline atomic-store passed public validation but failed hidden
+validation in 107.525 seconds: `expected_version=True` raised
+`VersionConflict`, while the invalid-input contract requires `TypeError` or
+`ValueError`. V100 is partial failed evidence; replay only baseline atomic-store
+in a new epoch before authorizing another full matrix.
+
+V101 exact-replayed baseline atomic-store at the unchanged `high` reasoning
+effort and reproduced the hidden `invalid update accepted` failure in 117.656
+seconds. Repetition at the same setting is exhausted. The next isolated single
+variable is baseline reasoning effort `high` to `xhigh`; the common runner keeps
+`high` as its default and accepts only those two values. Focused matrix tests
+passed 13/13 and Ruff passed before physical v102 execution.
+
+V102 changed only baseline reasoning effort to `xhigh`. Its generated
+atomic-store validated expected-version type before CAS comparison, rejected
+boolean input correctly, and passed all ten frozen checks in 190.610 seconds.
+This qualifies the baseline configuration candidate but does not replace the
+required fresh 20-cell matrix. The next matrix must pin baseline xhigh while
+leaving Candidate A and all non-baseline harness contracts unchanged.
+
+### Baseline-xhigh fresh full matrix v103 — 2026-08-12
+
+V103 completed all 20 frozen cells against unchanged Candidate A with only
+baseline reasoning effort changed to `xhigh`. Baseline, Hermes, and OpenCode
+passed `5/5`; Codex passed `3/5`, for `18/20`. The frozen summary SHA-256 is
+`efb6c530703cf8f44f10cf5dac368280de7e2075fc9345382a8de5db319e9a4a`.
+
+Codex rate-limiter passed public validation but hidden validation terminated in
+its constructor with `TypeError: window_seconds must be an integer`. Baseline
+and OpenCode passed the same rate-limiter contract. Codex atomic-store also
+passed public validation but hidden validation raised
+`AssertionError: invalid update accepted`; baseline, Hermes, and OpenCode
+passed that task. Codex log-report passed in 504.676 seconds, confirming the
+v100 recovery in a fresh matrix. These two failures are client trajectories,
+not shared model-runtime, memory, or gateway failures.
+
+The matrix, gateway, and cleanup-monitor units all ended `success`, inactive,
+with zero restarts. Candidate A remained active at 72,430 MiB, and the
+production gateway remained active. Frozen failure hashes and cleanup state are
+recorded in the epoch's `finalization.json`. V103 is complete failed evidence;
+blind noninferiority and later gates remain unstarted pending targeted recovery
+of both Codex cells and another fresh full matrix.
+
+V104 replayed the two v103 Codex failures without changing the model, backend,
+harness, reasoning setting, or scoring contract. Attempt 1 created no score and
+made no model request because the launcher omitted `prepare`; attempt 2 added
+only that required setup action. Codex rate-limiter passed all ten checks in
+302.828 seconds, and Codex atomic-store passed all ten in 386.212 seconds.
+All three transient units then ended `success`, inactive, with zero restarts.
+This is targeted recovery evidence; a fresh 20-cell matrix remains mandatory.
+
+### Pilot-first transition, containment, and runtime contract — 2026-08-12
+
+The active Goal policy changed from completion-first to Pilot-first without
+altering any frozen plan, hash, protocol epoch, success, or failure artifact.
+The v105 client-quality matrix was safely paused after preserving eight scored
+cells (four pass, four fail); it is now `POST_PILOT_VALIDATION`, not discarded evidence. The
+frozen completion-plan SHA-256 still equals
+`41e16b4f2fb8f442d8da3065ba53eacb317fc9a68333e63c02253784bcf1a4bd`.
+
+Protocol `pilot-v1-transition-20260812` first tested OOM blast-radius isolation.
+A transient pressure unit in `dgx-moa-qualification.slice` used
+`MemoryMax=134217728`, zero swap, `OOMPolicy=stop`, and control-group kill. Its
+second run allocated 8 MiB increments through 120 MiB and then ended
+`oom-kill`/SIGKILL; slice `MemoryPeak` was 134,258,688 bytes. Across 320 health
+samples there were zero production or validation gateway failures. The user
+manager PID `3107444`, production gateway PID `3107456`, and Candidate A PID
+`2383374` were unchanged. Candidate A then received live limits of 12 GiB high,
+16 GiB max, and 4 GiB swap max; it remained active with 8,295,600,128-byte host
+memory peak. Exact measurements are frozen in `containment-result.json`.
+
+An isolated loopback gateway on port 19320 then used one validation key,
+Candidate A, `execution_graph.mode=shadow`, and a dedicated SQLite DB. Attempt
+01 preserved a pre-inference `invalid trace_origin` failure; attempt 02 changed
+only `pilot_validation` to the supported `validation` value. It passed Chat
+(`PILOT_OK`), Responses, completed SSE (`STREAM_OK`), a forced native
+`get_status` tool call, and same-session tool-result continuation. After exact
+gateway stop/start the DB retained four graphs. Enabling only the Pilot
+destructive-operation policy returned HTTP 403 with `approval_required` and a
+`HUMAN_APPROVAL/WAITING_APPROVAL` attempt; a subsequent normal request returned
+HTTP 200 and `RECOVERY_OK`.
+
+The finalized DB contains six graphs, 25 attempts, 57 checkpoints, six active
+states, one `execution_graph_resumed` event, and zero
+`execution_graph_shadow_failed` events. Its SHA-256 is
+`37e6dac4cf4c752ce1d8618ec0187f4612f86084fca7de4c544649405fadfa31`.
+The transient gateway was stopped and its WAL checkpointed; Candidate A and
+both persistent gateways remained HTTP 200.
+
+Inspection also found that scheduler-disabled graph projection labeled the
+actual Mistral Candidate A as `legacy_local_qwen`. The shared projection branch
+now records `local_mistral`; its focused test passed, and a new-process physical
+attempt recorded both `scheduling.selected_executor` and the Executor node
+provider as `local_mistral`. That DB SHA-256 is
+`82525b4614ddb4234c88225f39df95b5cf4503d898b3a79ec214310704f195da`.
+
+The checked-in launcher now expands to the fixed revision, context 131072,
+seq1, KV 3.4 GB, TRITON_MLA, lazy safetensors, `FULL_DECODE_ONLY`, and
+`flashinfer_b12x`, with no MARLIN linear override. The Executor unit encodes
+`VLLM_NVFP4_GEMM_BACKEND=flashinfer-b12x`, long-context permission, and the
+measured 12/16/4 GiB cgroup limits. MARLIN plus graph `NONE` remains an explicit
+rollback environment. Focused validation passed 39 tests. The complete current
+worktree gate then passed Ruff check and format, strict mypy on 49 source files,
+`1059 passed` in pytest, and `systemd-analyze --user verify`. These are
+checked-in release-candidate facts, not an
+installed production deployment. Remaining Pilot gates are reviewed revision,
+installed exact restart, rollback rehearsal, and limited developer canary.
+
+### Limited Pilot deployment and rollback — 2026-08-12
+
+A temporary Git index captured the validated source/docs without modifying the
+pre-existing dirty worktree or its AvatarForge-staged index. Clean branch
+`codex/pilot-v1-release-candidate` points to commit
+`1384c319dc76d5f3aa07693da6380a0cf9a4826a` and tree
+`5c4ed368296d5144477490b6a171669e349819b9`. Its separate clean worktree passed
+Ruff check/format, strict mypy on 49 source files, pytest `1059/1059`, systemd
+verify, and the frozen plan hash. Raw benchmark DB/log artifacts and credentials
+were excluded from the commit; five bounded Pilot summary JSON files were
+included.
+
+The first encrypted-credential preflight failed before service creation because
+the user manager could not read the host credential secret. A mode-0600
+volatile credential plus systemd `LoadCredential` replaced only that transport.
+Launch attempt 01 then failed closed because unescaped `$` expansion emptied the
+Flash credential; attempt 02 loaded correctly but its standard config expected
+the not-yet-installed Executor on port 8101. Attempt 03 changed only the model
+config to the frozen Candidate A listener on 19301 and became ready on the
+tailnet-only address `100.125.239.72:19000`. All failure classes remain in
+`pilot-active-result.json`.
+
+The authenticated canary returned 401 without a key and 200 with its only key.
+It passed Chat `PILOT_ACTIVE_OK`, completed Responses and SSE, native
+`get_status`, semantic same-session tool-result continuation `STATUS_READY`,
+high-risk HTTP 403 `approval_required`, and a live DeepSeek V4 Flash minimum
+completion `FLASH_PILOT_OK`. The durable store reached ten graphs, 43 attempts,
+99 checkpoints, ten active states, and zero shadow failures. An initial
+adversarial continuation structurally resumed the graph but echoed the original
+instruction; it is preserved separately and the explicit semantic continuation
+is the accepted canary.
+
+Exact restart changed the Pilot gateway PID from 3492952 to 3496804 while graph
+count stayed 10 and authenticated readiness returned 200. Exact stop then closed
+port 19000 while production and validation remained 200 and the production
+gateway, Candidate A, and user manager PIDs stayed 3107456, 2383374, and
+3107444. The checkpointed DB SHA-256 was
+`1a75f68b5b8cacf390b64370b9f34d1dc546eefe25af1002dc2386ca4cda0494`.
+Attempt 04 redeployed the same release and reused all ten graphs. It is active
+with PID 3498366, zero restarts, and the 1/2/0.5 GiB cgroup limits. A post-
+redeploy Candidate A request returned `PILOT_REDEPLOY_OK`; 120 paired
+Pilot/production health samples had zero failures. Durable totals then reached
+11 graphs, 47 attempts, 108 checkpoints, 11 active states, zero shadow
+failures, and a 59,916,288-byte Pilot gateway peak. This advances the operating stage to `PILOT_ACTIVE`;
+the Goal remains active for bounded real-use telemetry and post-Pilot gates.
+
+### Pilot real-use Graph recovery — 2026-08-12
+
+`real-use-codex-01` made five completed requests (31,215 tokens) before one
+bounded cancellation. The client emitted five progress-only messages and no
+final audit. All shell attempts failed in the client sandbox with
+`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`. Durable Graph
+evidence additionally recorded three `reasoner`, one `tool`, and one
+`stream_tool_wait` shadow `ValueError`; the raw client event and stderr hashes
+are frozen in `real-use-result.json`.
+
+The minimal fix was validated in the clean release worktree: Ruff check/format,
+strict mypy over 49 source files, and `1061 passed`. Release commit `c96ace60`
+changed only Graph reprojection after failed tool continuation and effective
+Frontier availability in projection, plus two regressions. Deployment attempt
+05 failed closed before readiness because the transient command expanded the
+Flash credential expression incorrectly. Attempt 06 reused the proven escaped
+command and became healthy without restarting production or Candidate A.
+
+Physical session `pilot-graph-reentry-canary-20260812-01` produced a native
+`shell` tool call, submitted a synthetic nonzero tool result, and received a
+normal final completion. It recorded two compiled graphs, one resume, one
+preserved failed TOOL attempt, zero Frontier nodes, and zero
+`execution_graph_shadow_failed` events. Pilot, production, and Candidate A all
+returned HTTP 200; exact evidence is in
+`graph-reentry-fix-20260812/result.json`. This closes that failure family only;
+it did not by itself convert the interrupted Codex task into a successful
+real-use canary.
+
+Codex canary 02 disabled the broken client bwrap boundary and completed seven
+read-only commands but did not finalize. It had zero Graph shadow failures;
+durable events showed the remaining cause was
+`implementation_tool_action_required`, because Korean `수정하지 마라` still
+contained the naive `수정` marker. Canary 03 added a read-only intent guard and
+did finalize, but executed zero commands and therefore failed for false
+completion. Both failures and hashes remain frozen.
+
+Commit `0f170c02` separates the two contracts: explicit read-only intent cannot
+trigger the file-change gate, while an objective naming `exec_command` requires
+at least one successful tool execution before final output. API/controller
+regression passed `341/341`; final clean release validation passed Ruff check,
+Ruff format over 93 files, strict mypy over 49 source files, and pytest
+`1061/1061`. Codex canary 04 then completed all three requested commands with
+exit zero, emitted an evidence-backed PASS, and exited zero. Its two Gateway
+requests used 13,041 tokens in 23.785 active seconds; the durable Graph compiled
+once, resumed once, and recorded zero shadow failures. Attempt 08 remained
+active with zero restarts; Pilot, production, and Candidate A returned 200.
+Exact hashes and runtime identities are frozen in `real-use-codex-04/result.json`.
+
+OpenCode `real-use-opencode-01` subsequently executed exactly two requested
+`bash` commands with exit zero, returned `PASS`, and exited zero. Its two
+Gateway requests used 20,340 tokens in 23.851 active seconds; the Graph compiled
+once, resumed once, and had zero shadow failures. The client emitted one host
+warning: adding an inotify watch on the development `.git` directory returned
+`ENOSPC`. It did not alter the result but remains actionable operational
+evidence. Read-only `/proc` inspection attributed 65,448 of the 65,536 user
+watches to `zed-remote-serv` PID `3393658`; Codex used 35. This rules out the
+Pilot gateway and Candidate A as the source. Restarting the developer's Zed
+session or changing host sysctl was not authorized, so neither was performed.
+The exact count is preserved in `inotify-watch-audit-20260812/result.json`.
+
+Hermes `real-use-hermes-01` executed exactly two requested `terminal` commands,
+returned exactly `PASS`, and exited zero. Its usage artifact reports two API
+calls, 30,786 tokens, completed true, and failed false; Gateway accounting
+matches 30,786 tokens over 39.273 active seconds. Its Graph compiled once,
+resumed once, and had zero shadow failures. Pilot attempt 08 stayed active with
+zero restarts. Exact logs, usage, and hashes are stored beside each result.
+
+### Instruction-scoped tool evidence and Codex canary 05 — 2026-08-12
+
+Codex review `real-use-codex-review-01` exited zero but violated its requested
+JSON schema and returned plain-text `FAIL`. The proposed Graph finding was not
+accepted because the focused regression and physical Graph continuation canary
+demonstrated the opposite behavior. The invalid review, rejection reason, and
+raw hashes remain in `real-use-codex-review-01/result.json`.
+
+Independent inspection instead reproduced a false-completion boundary in the
+shared controller: a successful tool from any earlier instruction in the same
+session satisfied a later explicit tool request. Commit
+`40fddc0b2e05520117fdfc93d4247528ebe86406` scopes evidence with a persisted
+instruction hash and tool-execution cursor. Ruff check/format, strict mypy over
+49 source files, and pytest `1061/1061` passed in the clean release worktree.
+
+Physical session `pilot-request-scoped-tool-evidence-20260812-01` first
+completed an unrelated `noop`, then submitted a new instruction explicitly
+requiring `exec_command`. The prior success did not count: the gateway emitted
+and completed `printf SCOPED_OK`, then finalized. The DB retained cursor `1`,
+two tool executions, one `implementation_tool_action_required` event, and zero
+`execution_graph_shadow_failed` events. Four completed requests used 6,105
+tokens over 14.497 active seconds. Exact evidence is in
+`request-scoped-tool-evidence-20260812/result.json`.
+
+Codex `real-use-codex-05` then read the release HEAD and located the new cursor
+field with exactly two successful commands, returned `PASS`, and exited zero.
+Its two Gateway requests used 12,157 tokens over 21.640 active seconds; the
+Graph compiled once, resumed once, and recorded zero shadow failures. Pilot
+attempt 09 runs the committed release with PID `3628923`, zero restarts, and
+unchanged 1/2/0.5 GiB limits. Production PID `3107456` and Candidate A PID
+`2383374` remained unchanged. Exact client/session IDs and SHA-256 hashes are in
+`real-use-codex-05/result.json`.
+
+### Exhausted TOOL-graph reprojection and write canary — 2026-08-12
+
+Codex write attempt 01 never reached the Pilot: `OPENAI_BASE_URL` alone left
+the client on `api.openai.com`, which returned 401. Attempt 02 reached
+`dgx-moa-fast`, issued ten tool results, and reproduced four
+`execution_graph_shadow_failed` events after the bounded TOOL repair edge was
+exhausted. Its 11 requests used 103,991 tokens over 136.800 active seconds.
+
+Commit `ed9f3d943d8f3c8b6877293472cef2d6c6db4140` fixes the shared boundary. If
+`resume_tool_result()` selects an exhausted `ON_BUDGET` edge, the API preserves
+the completed attempt, emits a `tool_cycle_budget_exhausted` reprojection event,
+and compiles a new immutable Graph. It does not increase the Graph repair limit
+or the engineering-loop tool budget. The clean release gate passed Ruff check
+and format, strict mypy on 49 source files, and pytest `1062/1062`.
+
+After attempt 10 deployed that commit, attempt 03 physically crossed the same
+boundary with two Graph compiles, four resumes, one reprojection, and zero
+shadow failures. Later probes also reprojected without a shadow failure. A
+persistence round-trip regression for the instruction-scoped tool cursor passed
+`tests/test_controller.py` `103/103` plus Ruff check/format and is stored by
+test-only commit `eaaa4e0f5`.
+
+The client catalog is part of the physical contract. A catalog file merely
+present under `CODEX_HOME` did not advertise `apply_patch`; Codex must receive
+an explicit `model_catalog_json` path to the authenticated `/v1/models`
+artifact. With that pin, `client_tools_available` contained `apply_patch` for
+both `dgx-moa-fast` and primary `dgx-moa`. Nevertheless, neither completed the
+requested two-line test change. The primary path made seven tool calls, then
+returned `PATCH_MARKER_NOT_FOUND` and an `AttributeError` from two shell rewrite
+attempts before cancellation. The canary worktree remained clean, so the write
+quality gate remains `FAILED_OPEN`. Full counters, client/gateway session IDs,
+raw hashes, and the unchanged-worktree verdict are frozen in
+`real-use-codex-write-01/result.json`.
+
+Service observation after evidence capture: production gateway PID `3107456`,
+Pilot PID `3704865`, both active with zero restarts; production and Pilot
+`/healthz` and Candidate A loopback `/health` returned HTTP 200. This result
+does not change the already qualified vLLM native-NVFP4 candidate A, the v66/v98
+SGLang candidate-B rejection for this exact epoch, or MARLIN's rollback-only
+status.
+
+### Primary Codex write recovery epochs 02–04 — 2026-08-12
+
+Epoch 02 (`54cb7eb5-f337-4872-ac4c-e0a321a4b376`) returned a false completion
+after a failed patch was normalized as exit code zero. Commit `b6912a119`
+corrects that envelope. Epoch 03 (`c715880e-b680-4f52-816c-401ea68f9328`)
+physically classified six malformed/tool parse failures and Reviewer rejected
+the unchanged worktree, but scoped text `Do not modify any other file` still
+disabled the write gate.
+
+Commit `2a3afdce826b7fbc4e5cf3d682085b427ebcfa22` corrects that classification.
+Ruff check/format, strict mypy over 49 source files, and pytest `1062/1062`
+passed with zero JUnit failures/errors. Epoch 04
+(`c6e01c18-662b-4bb3-b363-baddb7ceb14e`) then passed: exact two-line diff,
+`103 passed`, Reviewer approved/no-findings, seven requests, 35,542 tokens,
+94.253 active seconds, three Graph compiles, six resumes, and zero shadow
+failures. Each epoch retains its own raw hashes and `result.json`.
+
+Attempt 11 stopped with `success`; attempt 12 is active at PID `3790208`, zero
+restarts. Production, Pilot, and Candidate A remained HTTP 200. This authorizes
+only a fresh client-quality epoch, not blind or later gates.
+
+### Client-quality v106 and targeted v107 recovery — 2026-08-12
+
+The frozen v106 20-cell result was baseline `5/5`, OpenCode `5/5`, Codex
+`0/5`, Hermes `0/5`. Summary SHA-256 is
+`c1dd1ffe64fdbcd3a48ade5e41a4090a120526b1135a7b630d7a48542852b45d`;
+execution-log SHA-256 is
+`b065ebe1f2b8f08f816bfda2fa5cce08a159ced8cc81c98da56b75f6588dcd41`.
+Hermes passed visible/hidden validation but lacked native unittest evidence in
+all five cells. Codex recorded mutations but failed visible/hidden validation
+in all five cells.
+
+State inspection proved Korean scoped write text was treated as global
+read-only, and `write_stdin failed: Unknown process id 0` was normalized as
+success. Commit `60f7a236e` fixes those common guards. Targeted tests passed
+`105/105`; clean Ruff, strict mypy on 49 files, and pytest `1062/1062` passed.
+Isolated v107 passed the identical Codex webhook task after native unittest
+exits `1, 1, 0`; duration was 434.176 seconds and all ten scoring checks
+passed. Attempt 01 preserved the missing-`WorkingDirectory` launch failure;
+attempt 02 passed. Cleanup succeeded and production, Pilot, and Candidate A
+each returned HTTP 200.
+
+Hermes targeted v108 passed the webhook cell in 343.912 seconds. Its evidence
+records one unittest tool call and one successful result; all ten scoring
+checks passed. Summary SHA-256 is
+`b26dc42b03ff499100e6ae1c8b11367bee23d5b36a1de53cd61580f0f4526ad9`.
+
+### Runtime Dashboard 완성형 UI 개발 검증 — 2026-08-12
+
+기존 API-key scoped REST/WebSocket/ExecutionGraph projection을 그대로 사용해
+`runtime_dashboard.py`의 placeholder 여섯 화면을 실제 UI로 교체했다. 구현 범위는
+LIVE workflow/timeline, REQUESTS 목록, MODELS token/cache/fallback 집계, SYSTEM
+runtime/telemetry, INCIDENTS failure/recovery, EVALUATION review/Judge/test, AUDIT
+privacy contract와 사유 필수 cross-key 조회다. Request Inspector는 SUMMARY, PROMPT,
+LIVE, OUTPUT, EVIDENCE, EXECUTION, LOGS 일곱 탭을 제공한다. 모든 동적 값은
+`textContent`로만 렌더하며 API key는 기존 HttpOnly session 교환 경계를 유지한다.
+Private request 목록에는 기존 `api_token_dashboard(name=api_key_id)` 집계를 추가해
+다른 key의 usage가 섞이지 않게 했다.
+
+Dashboard/API-key/usage/Admin 관련 테스트는 `47 passed`였고 Ruff, JavaScript
+`node --check`, Python compile, `git diff --check`가 통과했다. 임시 loopback 정적
+서버와 synthetic redacted snapshot을 Chromium headless로 렌더해 로그인 화면과
+인증 후 KPI, 8-lane ExecutionGraph canvas, timeline을 육안 확인했다. 임시 포트는
+종료됐고 production, v118 gateway/matrix, Candidate A gateway는 모두 active,
+`NRestarts=0`; production `/healthz`는 HTTP 200이었다.
+
+전체 pytest는 두 번 동일하게 61% 이후 shell exit marker 없이 종료되어 full-suite
+PASS로 기록하지 않는다. 두 실행에서 Dashboard 관련 실패는 없었지만 원인은 이
+epoch에서 규명하지 않았다. 이 변경은 개발 worktree에만 있으며
+`dashboard_enabled=false` 기본값, production/Pilot configuration과 systemd topology를
+변경하거나 배포하지 않았다.
+
+### Runtime Dashboard role topology and current-runtime audit — 2026-08-12
+
+The Dashboard snapshot now reports the seven requested role slots separately:
+Reasoner, Planner, Frontier A, Executor, Reviewer, Judge, and Frontier B. Local
+roles use bounded loopback model probes. Remote specialists and Frontier roles
+remain explicitly `configured_unprobed` unless the runtime has a trustworthy
+provider probe; configuration is never converted into a false availability
+claim. The MODELS view renders model, provider, enablement, measured
+availability, and evidence basis.
+
+The LIVE view now distinguishes fixed control nodes as `Static Skeleton` from
+role/tool/test nodes in the runtime-created request subgraph. The label is
+deliberately request-compiled, not runtime-mutable: the deterministic compiler
+selects an allowlisted simple/engineering/complex/critical topology and the
+persisted graph remains immutable. Live Graph events update the canvas, paused
+views retain their bounded buffer, graph cards open a node inspector, and an
+open owner-scoped request inspector refreshes on matching runtime events.
+
+`GET /v1/dashboard/runtime` adds authenticated content-free telemetry from the
+local GB10 and the fixed `ssh mathcat` host. Both probes physically succeeded:
+GB10 reported 130,595,168,256 total and 46,593,409,024 available memory bytes;
+mathcat reported 32,702,402,560 total and 18,742,693,888 available bytes plus
+one RTX 3080. The response records only bounded memory/GPU measurements and
+failure classes. Durable Dashboard events have a 90-day minimum-retention
+contract and no automatic purge; this does not authorize a retention delete.
+
+The current deployed topology does not pass the seven-role gate. The fixed
+production gateway remained active with zero restarts and `/healthz` HTTP 200,
+but `/readyz` returned 503: Reasoner was ready while Executor, Planner,
+Reviewer, and Judge were stopped. The limited Pilot had a healthy loopback
+Mistral Executor and role-conditioned ExecutionGraphs, but Planner/Reviewer
+reused that model, Frontier A was disabled in the active path, and no current
+Judge or Frontier B node was present. Production `/dashboard` and its snapshot
+route returned 404 because the deployed revision predates this development UI;
+no deployment, service restart, or topology change was performed.
+
+A Codex App harness failure at 22:47 KST was reproduced without a service exit.
+Production `:9000` accepted the Responses stream but returned a terminal
+`response.failed` with `backend_error`; the same `dgx-moa-fast` request against
+the approved Pilot `:19000` returned exact `RUNTIME_OK` and
+`response.completed`. Gateway logs also showed the harness retrying unsupported
+model `gpt-5.5`, which returned 404. The immediate client correction is to use
+the Pilot `/v1` endpoint with `dgx-moa-fast`; changing or restarting production
+requires separate deployment approval.
+
+Focused Dashboard, ExecutionGraph, runtime telemetry, and Admin tests passed
+`20/20`. Ruff, JavaScript `node --check`, and `git diff --check` passed. The
+complete suite then passed `1064/1064` in 44.23 seconds with only the existing
+Starlette TestClient deprecation warning; this supersedes the earlier 61%
+full-suite interruption for the current development worktree.
+
+### Dashboard production-address validation deployment — 2026-08-12
+
+The operator approved a production change after the failed Codex App harness
+request. The fixed `main` gateway was drained to zero active requests and
+stopped. A rollback-preserving transient validation gateway now serves the same
+authenticated tailnet address `100.125.239.72:9000` from the tested development
+source with `runtime_channel=dev`, `trace_origin=validation`, Dashboard enabled,
+and ExecutionGraph shadow mode. The fixed gateway unit remains installed and
+inactive for exact rollback. Candidate A remained loopback-only on `19301` and
+was not restarted.
+
+The common terminal finalizer retained the ExecutionGraph runtime while an
+observed-attempt shadow failure is recorded; an injected SQLite finish failure
+now still returns one client terminal response and one `session_ended` event.
+Dashboard model readiness now checks the exact served model ID. System telemetry
+is single-flight cached for five seconds, audited cross-key reasons use a POST
+body, snapshot ordering retains the newest 500 events, and queue gaps force a
+full resync.
+
+Frontier A is configured and physically invoked through Codex OAuth with model
+`gpt-5.6-sol` and reasoning effort `xhigh`. The bounded read-only smoke completed
+on profile `primary` through the Codex exec fallback transport and reported
+15,323 tokens. Both primary and secondary profiles reported authenticated.
+
+Post-deployment physical checks passed: `/healthz`, `/readyz`, `/dashboard`, the
+private Dashboard snapshot, and runtime telemetry returned HTTP 200. The
+Responses-compatible `dgx-moa-fast` stream returned exact `RUNTIME_OK` and a
+terminal `response.completed`. The resident readiness profile reported the
+exact Executor and Reasoner endpoints ready. The snapshot exposed all seven
+role slots and `static_skeleton+runtime_created_request_subgraph`. Direct bounded
+specialist probes returned non-empty responses from Planner
+`deepseek-v4-pro` and Reviewer `deepseek-v4-flash`. Judge passed its model-list
+startup probe but an actual structured `glm-5.2` verdict returned empty output;
+the validation runtime therefore disabled Remote Judge. Frontier B remained
+unavailable because no OpenRouter credential file exists in any configured
+Codex profile, and its fallback was disabled without attempting a remote call.
+The gateway and Candidate A each remained active with zero restarts.
+
+After the stream-finalization regression and review corrections, strict mypy on
+49 source files, Ruff, shell syntax, and `git diff --check` passed. The complete
+test suite passed `1064/1064` in 44.23 seconds with only the existing Starlette
+TestClient deprecation warning.
+
+### Seven-role Dashboard gate correction and fixed-service deployment — 2026-08-12
+
+The earlier Frontier B and Judge conclusions above were superseded by direct
+inspection and fresh inference. A root-owned `0600` OpenRouter credential was
+already present; no credential was created or copied. Frontier B completed a
+bounded structured call through `anthropic/claude-opus-5`. The authoritative
+Remote Judge mapping is OpenCode Go `kimi-k3`, not the rejected GLM probe. Its
+fresh six-case validation matrix passed approval, unsupported-claim, failed-test,
+missing-criterion, correction, and corrected-recheck cases; a third call was
+blocked by the two-call budget. The sanitized matrix hash is
+`5f0126c1d64514d8398d9e36d1d4764768d46189c883848c9970e764199bf34c`.
+
+`scripts/validate-runtime-roles.py` then issued content-free structured probes
+to Planner `deepseek-v4-pro`, Reviewer `deepseek-v4-flash`, Judge `kimi-k3`,
+Frontier A `gpt-5.6-sol` with configured `xhigh` reasoning, and Frontier B
+`anthropic/claude-opus-5`. All five succeeded. The runtime artifact stores no
+prompt or model output and has SHA-256
+`c0d3d6501ac24a96c3c9368b66362a713cf33f5c7d6adaf3db73b364e50d0124`.
+Dashboard availability accepts only fresh, exact-model, structured-probe
+records; the Reasoner and Executor retain their exact endpoint probes. The
+deployed snapshot consequently reports all seven roles `available=true`, with
+the external Ollama Reasoner correctly distinguished from local GB10 service.
+
+The transient gateway was replaced by the fixed `dgx-moa-gateway.service`
+using a user-service validation drop-in. It was drained to zero before each
+restart. The fixed gateway, loopback proxy, and Candidate A remained active
+with zero restarts; tailnet, loopback, and LAN health checks returned HTTP 200.
+An authenticated `dgx-moa-fast` Responses stream returned exact `RUNTIME_OK`
+and terminal `response.completed`. Its persisted request-created
+`engineering-v1` graph contained four runtime nodes and seven edges; CLASSIFY,
+EXECUTOR_SELECT, EXECUTOR, and FINALIZE all reached `SUCCEEDED`.
+
+The first physical WebSocket upgrade found that the deployment lacked a
+Uvicorn WebSocket protocol implementation and therefore returned HTTP 404.
+Adding the minimal `wsproto` runtime dependency and restarting corrected the
+root cause. A raw TCP upgrade then returned HTTP 101 and the authenticated
+`connected` event with operator scope and `current_seq=0`. The snapshot-to-live
+client handshake now refreshes at that cursor and reconnects with replay,
+closing the former REST/subscribe race. Ruff, strict mypy over 50 source files,
+focused Dashboard/runtime tests `9/9`, `git diff --check`, and the complete test
+suite `1065/1065` passed.
+
+Two production gates remain open and are not claimed as complete. Execution
+Graph is physically generating immutable request subgraphs from the static
+allowlisted skeleton, but the deployed mode is still `shadow` and therefore
+non-authoritative. No approved HTTPS ingress is installed. Tailscale Serve has
+no configuration, and the current `docs/OPERATIONS.md` network authority
+explicitly prohibits both Serve and Funnel. The deployed gateway rejects every
+plain-HTTP Dashboard route with `426 dashboard_https_required` and rejects
+non-WSS live connections while leaving Chat/Responses and health routes intact.
+Dashboard access therefore remains safely closed until a separately reviewed
+HTTPS ingress decision and subsequent authenticated HTTPS/WSS gate pass.
+
+An isolated application-level TLS gate subsequently used a one-day loopback
+certificate, disposable state database, and test-only key on `127.0.0.1:19443`.
+Verified-certificate HTTPS returned `200` for `/dashboard`; the session exchange
+returned an HttpOnly `Secure` cookie; and a raw TLS WebSocket upgrade returned
+HTTP `101` followed by authenticated `connected`, operator scope, and
+`current_seq=0`. The server and all temporary certificate/state material were
+then removed. A WebSocket cancelled during server shutdown is now treated as
+normal disconnect cleanup instead of producing an ASGI error. This proves the
+application HTTPS/WSS behavior, but does not substitute for the still-missing
+approved production ingress.
+
+A fresh physical disabled-versus-shadow comparison then sent the same bounded
+`dgx-moa-fast` request twice through disposable state databases to the active
+Candidate A endpoint. Both returned HTTP `200`, exact `GRAPH_PARITY_OK`, finish
+reason `stop`, one Executor invocation, and exactly one terminal event. Disabled
+elapsed time was 0.506 seconds and shadow elapsed time was 0.538 seconds. The
+shadow request compiled `engineering-v1`, persisted successful CLASSIFY,
+EXECUTOR_SELECT, local-Mistral EXECUTOR, and FINALIZE attempts, and recorded zero
+shadow failures. This is direct simple-path contract parity evidence only; it
+does not satisfy the frozen all-template, failure-injection, or authoritative
+Graph Engine paired-comparison gate.
+
+The validation launcher was also corrected to stop pointing shadow Graph writes
+at `/home/kotori9/dgx-moa-agent/data/state/gateway.db`. After an authenticated
+drain, only the fixed gateway restarted against the dedicated
+`data/diagnostics/runtime-overlays/dashboard-production-20260812/state/gateway.db`.
+The new directory is mode `0700`, the SQLite database is `0600`, and the
+124,891,136-byte production database was neither copied nor migrated. An actual
+post-restart request returned exact `ISOLATED_STATE_OK`; only the validation DB
+received its four-node `engineering-v1` shadow graph. Health/model checks passed
+and the gateway retained zero restarts.
+
+Two further authenticated requests exercised runtime template selection in the
+dedicated validation database. Clear one-file metadata selected `simple-v1`
+with five nodes and nine edges and returned exact `SIMPLE_GRAPH_OK`. High-risk
+metadata selected `critical-v1` with seven nodes and 21 edges and returned exact
+`CRITICAL_GRAPH_OK`. The latter physically persisted successful CLASSIFY,
+EXECUTOR_SELECT, local-Mistral EXECUTOR, OpenCode Go Reviewer, OpenCode Go Kimi
+Judge, CHECKPOINT, and FINALIZE attempts. Neither request recorded a shadow
+failure. This proves request-created subgraph selection and actual observed
+critical-stage projection; the legacy Controller still owns dispatch until the
+separate enforced-promotion gates pass.
+
+### Authenticated wildcard gateway ingress — 2026-08-13
+
+The operator corrected the repository network policy to expose the authenticated
+gateway directly on `0.0.0.0:9000`. Role-model inference endpoints remain
+loopback-only. Checked-in model defaults, examples, installer/uninstaller,
+README, security/operations authority, and systemd tests were updated; the four
+obsolete loopback/LAN socket-proxy units were removed.
+
+The live gateway was drained to zero active requests before the proxy sockets
+were disabled and removed. The fixed gateway then restarted with one listener,
+`0.0.0.0:9000`, PID-owned by `dgx-moa`; no socket-proxy listener remains.
+Loopback `127.0.0.1`, LAN `192.168.0.42`, tailnet `100.125.239.72`, and Docker
+host `172.17.0.1` each returned health HTTP `200` and Dashboard HTTP `200`.
+An unauthenticated LAN `/v1/models` request returned `401`, preserving the
+mandatory authentication boundary.
+
+The LAN Dashboard exchanged an authenticated HttpOnly session, returned a
+snapshot with all seven roles available and the static-skeleton/request-subgraph
+contract, and completed a raw WebSocket upgrade with HTTP `101`, operator scope,
+and `current_seq=0`. An authenticated LAN Responses stream returned exact
+`BIND_ALL_OK` and terminal `response.completed`. The fixed gateway and Candidate
+A were active with `NRestarts=0`. Focused systemd/config/Dashboard tests passed
+`45/45`; Ruff, strict mypy, unit verification, shell syntax, and diff checks
+passed before the runtime transition.
+
+After the transition, the complete repository suite passed `1064/1064` in
+34.18 seconds with only the existing Starlette TestClient deprecation warning.
+
+### Runtime-owned evidence projections and current-source canary — 2026-08-13
+
+An isolated current-source gateway ran on `127.0.0.1:19010` with a disposable
+SQLite database while reusing the production model configuration and existing
+credentials. No production service, tailnet setting, or role-model endpoint was
+changed. Its authenticated Dashboard snapshot reported all seven roles ready:
+Reasoner `Qwythos-v2-9B:Q4`, Planner `deepseek-v4-pro`, Frontier A
+`gpt-5.6-sol` at `xhigh`, Executor `dgx-moa-executor`, Reviewer
+`deepseek-v4-flash`, Judge `kimi-k3`, and Frontier B
+`anthropic/claude-opus-5`. The same snapshot reported the four allowlisted
+static templates and `static_skeleton+runtime_created_request_subgraph` in
+shadow mode.
+
+One authenticated `dgx-moa-orchestrated` architecture request selected
+`complex-v1`. The request-created graph placed Reasoner, Planner, Frontier A,
+and the evidence-stage Executor in `parallel_0`; the three model evidence nodes
+completed with 2,733, 4,582, and 17,013 tokens respectively. Reasoner, Planner,
+and Frontier A each received a role-specific projection derived from the exact
+same immutable snapshot hash
+`4ccb2d10af76e673b2324c1380d4721540ae6cb13c3d0bd5614b8c259c00b03f`.
+After all three completed, Runtime created a separate fan-in snapshot hash
+`e367181123139ef14f8309df6edcbec5cddcafae9d92c19a72f2e4be897f4dc8`.
+Its Executor projection listed the Reasoner, Planner, and Frontier A outputs as
+separate `model_contribution:*` categories and named all three source attempt
+IDs. All ten graph nodes reached `SUCCEEDED`, and the client-visible output was
+persisted in both Dashboard `current_draft` and `final_output` with transport
+status `completed`.
+
+The same canary then exercised both streaming adapters. Chat Completions
+reconstructed exact `STREAM_CURRENT_SOURCE_OK` from deltas and ended with
+`[DONE]`. Responses API reconstructed exact `RESPONSES_STREAM_OK`, emitted
+exactly one `response.completed`, and emitted no `response.failed`. Dashboard
+persisted the latter draft and final output, six owner-scoped output-delta
+events, and `client_response_status=completed`. The isolated graph terminal
+was marked degraded only because the unprivileged canary could not write the
+production trace archive; every execution attempt itself was `SUCCEEDED`.
+
+Source validation after the evidence-space integration passed the complete
+suite `1073/1073`, Ruff, strict mypy over 50 source files, and
+`git diff --check`. The canary process was then shut down normally.
+
+### Evidence-boundary correction and loopback Reasoner gate — 2026-08-13
+
+Three independent Round-1 audits rejected the preceding candidate and that
+round was discarded. The audits reproduced a partial-delta upstream SSE ending
+without a terminal marker being promoted to completion, a Remote Judge package
+that reread mutable state after projection, the absence of aggregate context
+bounds in the staged index, and the configured Reasoner's use of a native
+tailnet Ollama endpoint. None of those findings was waived.
+
+The shared SSE forwarding boundary now accepts clean EOF only after an observed
+finish reason; partial EOF raises a backend failure and never promotes
+`current_draft` to `final_output`. A composed `/v1/responses` regression test
+physically feeds one partial Chat delta followed by EOF and verifies exactly one
+`response.failed`, no `response.completed`, empty `final_output`, and transport
+status `failed`. Normal current-source streaming returned exact
+`FINAL_STREAM_OK`, exactly one `response.completed`, and no failure event.
+
+Canonical snapshots and projections now reject an aggregate encoding above
+1,000,000 bytes in addition to their per-item limits. Judge packages are frozen
+at the model boundary and independently enforce the same aggregate ceiling.
+The Judge package is derived only from the immutable Judge projection:
+constraints, criteria, observed tool/failure/policy evidence, Executor draft,
+Reviewer findings, diff/test/build metadata, hashes, and attempt provenance are
+no longer reread from mutable state after projection. Canonical full snapshots
+are persisted with their creation events while active state retains only the
+latest copy and bounded manifests. Reviewer and Judge projections now receive
+their actual ExecutionGraph target attempt IDs.
+
+The exact `Qwythos-v2-9B:Q4` Ollama manifest and its 6,825,527,040 referenced
+blob bytes were copied from the previously validated mathcat runtime into the
+local model store without committing weights. A dedicated Ollama instance on
+`127.0.0.1:11435` completed a schema-constrained response with `{"ok":true}`
+at context 65,536. `ss` reported only the loopback listener, and a LAN request
+to port 11435 was refused. With Candidate A and Qwythos loaded, measured
+`MemAvailable` was 39,108,018,176 bytes, above the 10 GiB safety floor. The
+checked-in Reasoner unit has 12/16 GiB high/max memory limits, 4 GiB swap max,
+`OOMPolicy=stop`, an exact local model store, and the loopback bind. The
+authenticated gateway remains the only wildcard listener at `0.0.0.0:9000`.
+
+A fresh content-free role validation artifact then passed Planner
+`deepseek-v4-pro`, Reviewer `deepseek-v4-flash`, Judge `kimi-k3`, Frontier A
+`gpt-5.6-sol`/`xhigh` through Codex OAuth, and Frontier B
+`anthropic/claude-opus-5`. The current-source Dashboard consequently reported
+all seven requested roles available, including local loopback Qwythos and the
+loopback Candidate A endpoint at 19301. A high-risk physical request persisted
+successful CLASSIFY, EXECUTOR_SELECT, EXECUTOR, REVIEWER, KIMI JUDGE,
+CHECKPOINT, and FINALIZE attempts; its Reviewer projection named the Executor
+attempt contribution and its Judge projection independently named the Executor
+and Reviewer contributions. Both gates approved.
+
+One architecture canary independently proved identical pre-dispatch snapshot
+hash `21711382fa20f4b9cf99a427330f2a6c02e4b5d98f2234c796daff2c1b66ee11`
+for Reasoner, Planner, and Frontier A. Reasoner and Planner completed, while
+Frontier A hit its bounded provider timeout during concurrent Codex load; the
+graph recorded `FRONTIER_PROVIDER_TIMEOUT` and Runtime produced the Executor
+fan-in snapshot from the two completed contributions. This is preserved as a
+degraded-request result, not a Frontier success claim. The fresh independent
+structured role probe and the earlier successful architecture canary remain the
+availability evidence.
+
+After all corrections, the complete repository suite passed `1078/1078` in
+37.03 seconds with only the existing Starlette TestClient deprecation warning.
+Ruff, format check, strict mypy over 50 source files, shell syntax, systemd unit
+verification, the frozen-plan checksum, and `git diff --check` also passed.
+
+### Production Frontier spawn-path correction — 2026-08-13
+
+Three authenticated production requests recorded
+`FRONTIER_PROCESS_SPAWN_FAILED`. The running gateway process had no
+`/home/kotori9/.local/bin` entry in `PATH`; reproducing that exact environment
+raised `FileNotFoundError: [Errno 2]` for `codex`. The gateway unit now includes
+the installed Codex directory in its explicit service `PATH`.
+
+After unit verification, deployment, and a clean gateway restart, `/readyz`
+returned HTTP 200. An authenticated Frontier-required
+`dgx-moa-orchestrated` request returned HTTP 200 and recorded
+`frontier_collaboration_completed` for `gpt-5.6-sol` through the `primary`
+Codex OAuth profile: 15,663 prompt tokens, 702 completion tokens, and measured
+Frontier latency 24,886.194 ms. The request recorded no
+`FRONTIER_PROCESS_SPAWN_FAILED` event.

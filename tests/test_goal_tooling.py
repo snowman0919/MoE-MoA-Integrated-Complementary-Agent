@@ -213,6 +213,7 @@ def test_external_reasoner_uses_requested_q4_model() -> None:
     assert reasoner["served_name"] == "Qwythos-v2-9B:Q4"
     assert reasoner["provider"] == "ollama"
     assert reasoner["lifecycle_control"] == "external"
+    assert reasoner["base_url"] == "http://100.90.167.128:11434"
 
 
 def test_hermes_documentation_matches_physical_config() -> None:

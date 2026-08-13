@@ -8,7 +8,7 @@ from .config import load_settings, parse_bool
 
 PORTS = {"executor": 8101, "planner": 8102, "reviewer": 8103, "reasoner": 8104, "judge": 8110}
 KV_CACHE = {
-    "executor": 1_700_000_000,
+    "executor": 3_400_000_000,
     "planner": 600_000_000,
     "reviewer": 2_300_000_000,
     "reasoner": 2_450_000_000,
@@ -59,9 +59,23 @@ def command(role: str) -> list[str]:
     ]
     if model.trust_remote_code:
         arguments.append("--trust-remote-code")
+    if role == "executor":
+        if linear_backend := role_environment(role, "LINEAR_BACKEND", ""):
+            arguments += ["--linear-backend", linear_backend]
+        arguments += [
+            "--attention-backend",
+            role_environment(role, "ATTENTION_BACKEND", "TRITON_MLA"),
+            "--safetensors-load-strategy",
+            "lazy",
+            "--compilation-config",
+            role_environment(role, "COMPILATION_CONFIG", '{"cudagraph_mode":"FULL_DECODE_ONLY"}'),
+        ]
     if role_bool_environment(role, "ENFORCE_EAGER"):
         arguments.append("--enforce-eager")
-    if moe_backend := os.getenv(f"DGX_MOA_{role.upper()}_MOE_BACKEND"):
+    if moe_backend := os.getenv(
+        f"DGX_MOA_{role.upper()}_MOE_BACKEND",
+        "flashinfer_b12x" if role == "executor" else "",
+    ):
         arguments += ["--moe-backend", moe_backend]
     if role == "reviewer":
         source = model.destination / "config.json"

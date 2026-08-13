@@ -7,7 +7,7 @@ from collections import OrderedDict
 from typing import Any, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .http_client import managed_http_client
 from .security import redact
@@ -15,9 +15,13 @@ from .training import sanitize
 
 
 class JudgeEvidencePackage(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal["1.0"] = "1.0"
+    snapshot_id: str | None = None
+    snapshot_hash: str | None = None
+    projection_id: str | None = None
+    projection_hash: str | None = None
     request_id: str
     objective: str
     request_constraints: list[str] = Field(default_factory=list)
@@ -37,8 +41,20 @@ class JudgeEvidencePackage(BaseModel):
     retrieved_knowledge: list[Any] = Field(default_factory=list)
     specific_judgment_question: str = "Is this result ready for final delivery?"
 
+    @model_validator(mode="after")
+    def bounded(self) -> JudgeEvidencePackage:
+        if len(self.model_dump_json().encode()) > 1_000_000:
+            raise ValueError("Judge evidence package exceeds 1000000 bytes")
+        return self
+
     def sanitized(self) -> JudgeEvidencePackage:
         cleaned = sanitize(redact(self.model_dump(mode="json"))).value
+        cleaned.update(
+            {
+                key: getattr(self, key)
+                for key in ("snapshot_id", "snapshot_hash", "projection_id", "projection_hash")
+            }
+        )
         return JudgeEvidencePackage.model_validate(cleaned)
 
 
@@ -150,7 +166,7 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
         *,
         endpoint: str,
         api_key_env: str,
-        model: str = "glm-5.2",
+        model: str = "kimi-k3",
         timeout_seconds: float = 120,
         max_retries: int = 1,
         max_calls_per_request: int = 2,
@@ -224,8 +240,8 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
                 },
                 {"role": "user", "content": evidence.model_dump_json()},
             ],
-            "temperature": 0,
-            "max_tokens": 1024,
+            "temperature": 1 if self.model == "kimi-k3" else 0,
+            "max_tokens": 4096,
             "seed": 0,
             "stream": False,
             "response_format": {
@@ -252,6 +268,10 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
                     response.raise_for_status()
                     payload = response.json()
                 content = payload["choices"][0]["message"]["content"]
+                if isinstance(content, str) and not content.strip():
+                    if attempt < self.max_retries:
+                        continue
+                    raise JudgeProviderError("Remote Judge returned empty structured output")
                 verdict = RemoteJudgeVerdict.model_validate_json(content)
                 raw_usage = payload.get("usage", {})
                 usage = {
@@ -273,10 +293,10 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
                     if error.response.status_code == 429:
                         raise JudgeRateLimited("Remote Judge rate limited") from error
                     raise JudgeUnavailable("Remote Judge provider unavailable") from error
-            except (KeyError, TypeError, ValueError) as error:
+            except (KeyError, TypeError, ValueError):
                 raise JudgeProviderError(
                     "Remote Judge returned invalid structured output"
-                ) from error
+                ) from None
         raise AssertionError("unreachable")
 
     async def usage(self, request_id: str) -> dict[str, int]:

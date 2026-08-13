@@ -123,57 +123,6 @@ REASONER_PAYLOAD_KEYS = (
     "recommended_actions",
 )
 
-EVENT_TITLES = {
-    "request_received": "📥 Request received",
-    "reasoner_started": "🧠 Reasoner started",
-    "reasoner_completed": "🧠 Reasoner completed",
-    "executor_started": "⚙️ Executor started",
-    "tool_call_requested": "🛠 Executor step requested",
-    "tool_result_received": "🛠 Tool completed",
-    "executor_skills_selected": "🧩 Executor skills selected",
-    "knowledge_retrieved": "📚 Knowledge retrieved",
-    "planner_invoked": "🗺 Planner invoked",
-    "plan_created": "🗺 Plan created",
-    "review_started": "🔎 Review started",
-    "review_completed": "🔎 Review completed",
-    "frontier_collaboration_started": "🌐 Frontier collaboration started",
-    "frontier_collaboration_completed": "🌐 Frontier collaboration completed",
-    "judge_requested": "⚖️ Judge invoked",
-    "judge_completed": "⚖️ Judge completed",
-    "failure_classified": "⚠️ Failure classified",
-    "task_blocked": "⛔ Task blocked",
-    "task_completed": "✅ Task completed",
-    "request_finalized": "✅ Request finalized",
-    "stream_failed": "❌ Stream failed",
-    "provider_failure": "❌ Provider failure",
-    "specialist_provider_selected": "🔀 Specialist provider selected",
-    "specialist_provider_completed": "🔀 Specialist completed",
-    "specialist_provider_failed": "❌ Specialist provider failed",
-    "specialist_warmup_started": "🔥 Specialist warm-up started",
-    "specialist_warmup_completed": "🔥 Specialist warm-up completed",
-    "specialist_warmup_failed": "❌ Specialist warm-up failed",
-    "specialist_unused_warmup": "💤 Specialist warm-up unused",
-}
-
-DETAIL_LABELS = {
-    "task_id": "Task",
-    "phase": "Phase",
-    "step": "Step",
-    "status": "Status",
-    "role": "Role",
-    "mode": "Mode",
-    "latency_ms": "Latency (ms)",
-    "confidence": "Confidence",
-    "confidence_category": "Confidence",
-    "prompt": "Prompt",
-    "assumptions": "Assumptions",
-    "constraints": "Constraints",
-    "conclusions": "Conclusions",
-    "hypotheses": "Hypotheses",
-    "evidence_references": "Evidence references",
-    "recommended_actions": "Recommended actions",
-}
-
 TELEGRAM_EVENT_TITLES = {
     "request_received": "📥 요청 접수",
     "reasoner_started": "🧠 Reasoner 분석 시작",
@@ -319,7 +268,7 @@ class ObservationEvent(BaseModel):
 
 
 class ObservationNonceRequest(BaseModel):
-    provider: Literal["discord", "telegram"]
+    provider: Literal["telegram"]
     user_id: str = Field(min_length=1, max_length=128)
     request_id: str = Field(min_length=1, max_length=128)
 
@@ -403,21 +352,6 @@ def _render_detail(label: str, value: Any) -> list[str]:
     return [f"{label}: {text}"]
 
 
-def render_events(events: Sequence[ObservationEvent], max_characters: int = 4_000) -> str:
-    blocks = []
-    for event in events:
-        lines = [EVENT_TITLES.get(event.event_type, event.event_type.replace("_", " ").title())]
-        lines.append(f"Request: {event.request_id}")
-        for key, value in event.details.items():
-            label = DETAIL_LABELS.get(key, key.replace("_", " ").title())
-            lines.extend(_render_detail(label, value))
-        blocks.append("\n".join(lines))
-    rendered = "\n\n──────────\n\n".join(blocks)
-    if len(rendered) <= max_characters:
-        return rendered
-    return rendered[: max_characters - 16].rstrip() + "\n… (truncated)"
-
-
 def render_telegram_events(events: Sequence[ObservationEvent], max_characters: int = 4_000) -> str:
     def localized(value: Any) -> Any:
         if isinstance(value, str):
@@ -446,31 +380,6 @@ def render_telegram_events(events: Sequence[ObservationEvent], max_characters: i
     if len(rendered) <= max_characters:
         return rendered
     return rendered[: max_characters - 20].rstrip() + "\n… (길이 제한으로 생략)"
-
-
-class DiscordProvider:
-    name = "discord"
-
-    def __init__(
-        self,
-        webhook_url: str,
-        *,
-        thread_id: str | None = None,
-        timeout: float = 10,
-        transport: httpx.AsyncBaseTransport | None = None,
-    ):
-        self.webhook_url = webhook_url
-        self.thread_id = thread_id
-        self.timeout = timeout
-        self.transport = transport
-
-    async def send(self, events: Sequence[ObservationEvent]) -> None:
-        params = {"thread_id": self.thread_id} if self.thread_id else None
-        async with managed_http_client(timeout=self.timeout, transport=self.transport) as client:
-            response = await client.post(
-                self.webhook_url, params=params, json={"content": render_events(events)}
-            )
-            response.raise_for_status()
 
 
 class TelegramProvider:
@@ -523,7 +432,7 @@ class ObservationBus:
         self.include_reasoner_artifact = include_reasoner_artifact
         self.max_content_characters = max_content_characters
         self.task: asyncio.Task[None] | None = None
-        self.metrics = {"sent": 0, "dropped": 0, "discord_errors": 0, "telegram_errors": 0}
+        self.metrics = {"sent": 0, "dropped": 0, "telegram_errors": 0}
 
     def publish_store_event(
         self, request_id: str, event_type: str, payload: dict[str, Any], created_at: str

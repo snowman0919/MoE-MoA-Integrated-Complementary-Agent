@@ -1,7 +1,7 @@
 # Repository Instructions
 
 - Keep role-model inference endpoints loopback-only; expose only the authenticated
-  gateway on the configured tailnet address.
+  gateway on `0.0.0.0` and retain mandatory bearer authentication.
 - Treat `dgx-moa` as the primary Reasoner + Executor path. `dgx-moa-fast` is the
   only intentional Executor-only compatibility path. The Executor alone owns
   tools, routing authority, and client-visible final synthesis.

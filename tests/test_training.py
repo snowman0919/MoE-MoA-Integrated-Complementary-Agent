@@ -4,6 +4,13 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from dgx_moa.execution_graph import (
+    ExecutionGraphRuntime,
+    ExecutionGraphStore,
+    GraphCompileInput,
+    SchedulingSnapshot,
+    compile_execution_graph,
+)
 from dgx_moa.state import StateStore
 from dgx_moa.training import (
     ContentStore,
@@ -14,6 +21,7 @@ from dgx_moa.training import (
     assess_candidate,
     candidate_from_trace,
     candidates_from_trace,
+    execution_graph_training_projection,
     near_duplicate,
     sanitize,
 )
@@ -603,6 +611,77 @@ def test_collector_creates_separate_events_and_candidate_without_raw_duplication
         "license_exclusions": 0,
     }
     assert len(training.packageable_candidates()) == 1
+
+
+def test_collector_projects_verified_execution_graph_state_to_routing_data(
+    tmp_path: Path,
+) -> None:
+    operational = StateStore(tmp_path / "operational.db")
+    graph_store = ExecutionGraphStore(operational.path)
+    graph = compile_execution_graph(
+        GraphCompileInput(
+            request_id="request-1",
+            api_key_id="key-id-1",
+            objective="bounded routing sample",
+            request_class="native_agent_turn",
+            complexity="simple",
+            risk="low",
+            policy_version="policy-1",
+            policy_hash="0" * 64,
+            deadline="2099-01-01T00:00:00+00:00",
+            scheduling=SchedulingSnapshot(selected_executor="local_mistral"),
+        )
+    )
+    runtime = ExecutionGraphRuntime(graph, graph_store)
+    active_state_ref = graph_store.save_active_state(
+        {"objective": "bounded routing sample", "api_key": "synthetic-secret"}
+    )
+    runtime.checkpoint(reason="compact", active_state_object_ref=active_state_ref)
+    attempt = runtime.start_attempt(graph.entry_nodes[0])
+    runtime.finish_attempt(attempt.attempt_id, latency_ms=12.5, cost_usd=0.01)
+    checkpoint = graph_store.load_latest_checkpoint(graph.graph_id)
+    training = TrainingStore(
+        tmp_path / "training.db", ContentStore(tmp_path / "objects"), minimum_free_bytes=0
+    )
+    collector = TrainingCollector(training, operational)
+    graph_metadata = {
+        "mode": "shadow",
+        "graph_id": graph.graph_id,
+        "graph_hash": graph.graph_hash,
+        "template_id": graph.template_id,
+        "checkpoint_id": checkpoint.checkpoint_id,
+        "active_state_object_ref": active_state_ref,
+    }
+    collector.collect(
+        eligible_trace()
+        | {
+            "metrics": {
+                "repository_training_policy": "training_allowed",
+                "execution_graph": graph_metadata,
+            }
+        }
+    )
+
+    routing = next(
+        candidate
+        for candidate in training.packageable_candidates()
+        if "execution_graph_routing" in candidate.transformations
+    )
+    projection = routing.accepted_answer
+    assert projection["graph_schema_version"] == "execution-graph-v1"
+    assert projection["compiler_version"] == "stdlib-v1"
+    assert projection["graph_state_before"]["completed_node_ids"]
+    assert projection["selected_edges"]
+    assert projection["attempts"][0]["latency_ms"] == 12.5
+    assert projection["latency_ms"] == 12.5
+    assert projection["cost_usd"] == 0.01
+    assert projection["quality_delta"] is None
+    assert projection["quality_delta_status"] == "not_measured"
+    assert projection["checkpoint_resume_result"]["status"] == "not_observed"
+    assert projection["partial_rerun_result"]["status"] == "not_observed"
+    assert projection["active_state"]["api_key"] == "[REDACTED]"
+    with pytest.raises(ValueError, match="hash mismatch"):
+        execution_graph_training_projection(graph_metadata | {"graph_hash": "f" * 64}, graph_store)
 
 
 def test_collector_records_exact_provider_classes(tmp_path: Path) -> None:

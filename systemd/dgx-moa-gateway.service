@@ -10,6 +10,7 @@ Type=simple
 WorkingDirectory=/home/kotori9/dgx-moa-agent
 EnvironmentFile=/home/kotori9/dgx-moa-agent/.env
 EnvironmentFile=-/home/kotori9/dgx-moa-agent/.env.local
+Environment=PATH=/home/kotori9/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=/home/kotori9/dgx-moa-agent/.venv/bin/dgx-moa
 Restart=on-failure
 RestartSec=5

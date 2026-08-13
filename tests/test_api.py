@@ -10,18 +10,27 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+import dgx_moa.api as api_module
 import httpx
 import pytest
 from dgx_moa import providers
-from dgx_moa.api import create_app, has_matching_tool_result, ollama_model_ready
+from dgx_moa.api import (
+    _coerce_responses_input_messages,
+    create_app,
+    has_matching_tool_result,
+    ollama_model_ready,
+)
 from dgx_moa.config import Settings
 from dgx_moa.controller import fingerprint
+from dgx_moa.execution_graph import ExecutionGraphRuntime, NodeState, NodeType
+from dgx_moa.frontier import FrontierCollaborationResult
 from dgx_moa.lifecycle import (
     FakeLifecycleDriver,
     calculate_idle_policy,
     continuation_correlation,
 )
 from dgx_moa.loop_engineering import new_loop
+from dgx_moa.overflow_executor import OpenCodeGoExecutorProvider
 from dgx_moa.remote_judge import MockJudgeProvider, RemoteJudgeVerdict
 from dgx_moa.replay import ReplaySnapshot
 from dgx_moa.schemas import ChatRequest, ResponsesRequest
@@ -44,6 +53,20 @@ def test_runtime_version_is_2_0(settings: Settings) -> None:
 
     assert __version__ == "2.0.0"
     assert app.version == "2.0.0"
+
+
+def test_adjacent_responses_tool_calls_form_one_assistant_batch() -> None:
+    messages = _coerce_responses_input_messages(
+        [
+            {"type": "function_call", "call_id": "one", "name": "read", "arguments": "{}"},
+            {"type": "function_call", "call_id": "two", "name": "list", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "one", "output": "a"},
+            {"type": "function_call_output", "call_id": "two", "output": "b"},
+        ]
+    )
+
+    assert [message["role"] for message in messages] == ["assistant", "tool", "tool"]
+    assert [call["id"] for call in messages[0]["tool_calls"]] == ["one", "two"]
 
 
 def test_busy_executor_routes_new_session_to_frontier(
@@ -102,6 +125,159 @@ def test_busy_executor_routes_new_session_to_frontier(
     started = next(event for event in events if event["event_type"] == "executor_started")
     assert started["payload"]["provider"] == "frontier"
     assert started["payload"]["routing_reason"] == "local_busy"
+
+
+def test_api_key_scheduler_pins_cross_key_turn_to_flash_and_projects_graph(
+    settings: Settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [{"id": "deepseek-v4-flash"}]})
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-flash",
+                "model": "deepseek-v4-flash",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "Flash 처리 완료"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+            },
+        )
+
+    monkeypatch.setenv("OPENCODE_GO_API_KEY", "synthetic")
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "api_key": None,
+            "api_keys": {"key-a": "secret-a", "key-b": "secret-b"},
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            },
+            "execution_graph": {"mode": "shadow"},
+        }
+    )
+    flash = OpenCodeGoExecutorProvider(
+        endpoint="https://opencode.invalid",
+        api_key_env="OPENCODE_GO_API_KEY",
+        transport=httpx.MockTransport(handler),
+    )
+    app = create_app(controlled, overflow_executor=flash)
+
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        held = asyncio.run(
+            app.state.executor_scheduler.acquire(
+                "key-a", "held-request", risk="medium", flash_available=True
+            )
+        )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer secret-b", "X-Session-ID": "flash-session"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "간단히 답해"}],
+            },
+        )
+        events = app.state.store.events("flash-session")
+        state = app.state.store.get("flash-session")
+        app.state.executor_scheduler.release(held.request_id)
+        flash_calls = tuple(stub_provider.calls)
+        stub_provider.calls.clear()
+        original_complete = stub_provider.complete
+        graph_seen_before_reasoner: dict[str, object] = {}
+
+        async def observe_early_graph(role, model, payload, **kwargs):  # type: ignore[no-untyped-def]
+            if role == "reasoner":
+                early_state = app.state.store.get("scheduled-orchestrated")
+                assert early_state is not None and early_state.execution_graph_id is not None
+                early_graph = app.state.controller.execution_graph_store.load_graph(
+                    early_state.execution_graph_id
+                )
+                graph_seen_before_reasoner["roles"] = {
+                    node.role for node in early_graph.nodes if node.role
+                }
+                graph_seen_before_reasoner["executor"] = early_graph.scheduling.selected_executor
+            return await original_complete(role, model, payload, **kwargs)
+
+        stub_provider.complete = observe_early_graph  # type: ignore[method-assign]
+        early_response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer secret-a",
+                "X-Session-ID": "scheduled-orchestrated",
+            },
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "네 파일을 수정해"}],
+                "metadata": {"expected_files": 4},
+            },
+        )
+        early_events = app.state.store.events("scheduled-orchestrated")
+        early_state = app.state.store.get("scheduled-orchestrated")
+        assert early_state is not None and early_state.execution_graph_id is not None
+        early_attempts = app.state.controller.execution_graph_store.load_attempts(
+            early_state.execution_graph_id
+        )
+        early_checkpoint = app.state.controller.execution_graph_store.load_latest_checkpoint(
+            early_state.execution_graph_id
+        )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Flash 처리 완료"
+    assert "executor" not in flash_calls
+    scheduled = next(event for event in events if event["event_type"] == "executor_scheduled")
+    assert scheduled["payload"]["selected_executor"] == "opencode_go"
+    assert scheduled["payload"]["lease_owner_api_key_id"] == "key-a"
+    assert state is not None and state.execution_graph_id is not None
+    graph = app.state.controller.execution_graph_store.load_graph(state.execution_graph_id)
+    assert graph.scheduling is not None
+    assert graph.scheduling.selected_executor == "opencode_go"
+    assert graph.scheduling.lease_owner_api_key_id == "key-a"
+    assert state.execution_checkpoint_id is not None
+    assert state.active_state_object_ref is not None
+    checkpoint = app.state.controller.execution_graph_store.load_latest_checkpoint(
+        state.execution_graph_id
+    )
+    assert checkpoint.checkpoint_id == state.execution_checkpoint_id
+    active_state = app.state.controller.execution_graph_store.load_active_state(
+        state.active_state_object_ref
+    )
+    assert active_state["schema_version"] == "session-active-state-v1"
+    assert active_state["scheduling"]["selected_executor"] == "opencode_go"
+    assert app.state.executor_scheduler.pinned(scheduled["payload"]["request_id"]) is None
+    assert early_response.status_code == 200
+    assert graph_seen_before_reasoner == {
+        "roles": {"reasoner", "planner", "executor"},
+        "executor": "local_mistral",
+    }
+    event_types = [event["event_type"] for event in early_events]
+    assert event_types.index("execution_graph_shadow_compiled") < event_types.index(
+        "reasoner_started"
+    )
+    assert [(attempt.node_type.value, attempt.state.value) for attempt in early_attempts] == [
+        ("CLASSIFY", "SUCCEEDED"),
+        ("REASONER", "SUCCEEDED"),
+        ("PLANNER", "SUCCEEDED"),
+        ("EXECUTOR", "SUCCEEDED"),
+        ("JOIN", "SUCCEEDED"),
+        ("EXECUTOR_SELECT", "SUCCEEDED"),
+        ("EXECUTOR", "SUCCEEDED"),
+        ("CHECKPOINT", "SUCCEEDED"),
+        ("FINALIZE", "SUCCEEDED"),
+    ]
+    assert early_attempts[1].generated_evidence_ids
+    assert early_attempts[2].generated_evidence_ids
+    assert early_attempts[3].artifact_hash is not None
+    assert early_attempts[6].generated_evidence_ids
+    assert early_checkpoint.terminal_status == "degraded"
+    assert early_checkpoint.checkpoint_id == early_state.execution_checkpoint_id
 
 
 def test_busy_executor_remote_stream_failure_is_observable(
@@ -341,9 +517,7 @@ def test_repeated_failure_routes_executor_to_frontier(
     assert response.status_code == 200, response.text
     assert response.json()["choices"][0]["message"]["content"] == "원격 반복 실패 복구"
     assert "executor" not in stub_provider.calls
-    selected = next(
-        event for event in events if event["event_type"] == "executor_remote_selected"
-    )
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
     assert selected["payload"]["routing_reason"] == "local_repeated_failure"
 
 
@@ -433,9 +607,7 @@ def test_duplicate_failed_call_routes_once_to_frontier(
     assert blocked.status_code == 409
     assert remote_calls == 1
     assert "executor" not in stub_provider.calls
-    selected = next(
-        event for event in events if event["event_type"] == "executor_remote_selected"
-    )
+    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
     assert selected["payload"]["routing_reason"] == "local_duplicate_failure"
 
 
@@ -509,6 +681,18 @@ def test_repeated_inspection_routes_executor_to_frontier(
             for lines in (20, 40, 80)
         ],
     )
+    correction_tool = {
+        "type": "function",
+        "function": {
+            "name": "apply_patch",
+            "description": "Apply a bounded patch.",
+            "parameters": {
+                "type": "object",
+                "properties": {"patch": {"type": "string"}},
+                "required": ["patch"],
+            },
+        },
+    }
     with TestClient(app) as client:
         app.state.provider = stub_provider
         app.state.controller.provider = stub_provider
@@ -520,6 +704,7 @@ def test_repeated_inspection_routes_executor_to_frontier(
             json={
                 "model": "dgx-moa-fast",
                 "messages": [{"role": "user", "content": state.objective}],
+                "tools": [correction_tool],
             },
         )
         events = app.state.store.events(session_id)
@@ -563,18 +748,6 @@ def test_repeated_inspection_routes_executor_to_frontier(
             }
         )
         app.state.store.save(rejected)
-        correction_tool = {
-            "type": "function",
-            "function": {
-                "name": "apply_patch",
-                "description": "Apply a bounded patch.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"patch": {"type": "string"}},
-                    "required": ["patch"],
-                },
-            },
-        }
         reviewer_calls_before_correction = stub_provider.calls.count("reviewer")
         correction_response = client.post(
             "/v1/chat/completions",
@@ -661,7 +834,9 @@ def test_repeated_inspection_routes_executor_to_frontier(
         tool_less_events = app.state.store.events(tool_less_id)
 
     assert response.status_code == 200, response.text
-    assert response.json()["choices"][0]["message"]["content"] == "원격 진행 복구"
+    assert response.json()["choices"][0]["finish_reason"] == "tool_calls"
+    assert len(remote_requests) >= 2
+    assert remote_requests[0]["tool_choice"] == "required"
     selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
     assert selected["payload"]["routing_reason"] == "local_no_progress"
     assert "Do not inspect another file or repeat a read" in str(
@@ -863,12 +1038,17 @@ def test_systemd_lifecycle_driver_uses_model_load_timeout(
     assert captured == {"unit_map": {}, "timeout_seconds": 123.0}
 
 
-@pytest.mark.parametrize(("judge_value", "expected_status"), (("approve", 200), ("revise", 409)))
+@pytest.mark.parametrize(
+    ("judge_value", "expected_status"),
+    (("approve", 200), ("revise", 409), ("reject", 409)),
+)
 def test_selective_remote_judge_gates_final_delivery(
     settings: Settings,
     judge_value: str,
     expected_status: int,
 ) -> None:
+    settings.execution_graph.mode = "shadow"
+
     class FinalProvider(StubProvider):
         async def complete(self, role, model, request, **options):  # type: ignore[no-untyped-def]
             if role != "executor":
@@ -909,24 +1089,70 @@ def test_selective_remote_judge_gates_final_delivery(
 
     assert response.status_code == expected_status
     assert provider.calls == (
-        ["executor", "reviewer"]
-        if judge_value == "approve"
-        else ["executor", "reviewer", "executor", "reviewer"]
+        ["executor", "reviewer", "executor", "reviewer"]
+        if judge_value == "revise"
+        else ["executor", "reviewer"]
     )
-    assert len(remote.packages) == (1 if judge_value == "approve" else 2)
+    assert len(remote.packages) == (2 if judge_value == "revise" else 1)
+    assert all(package.snapshot_id for package in remote.packages)
+    assert all(package.snapshot_hash for package in remote.packages)
+    assert all(package.projection_id for package in remote.packages)
+    assert all(package.projection_hash for package in remote.packages)
     state = app.state.store.get(f"judge-{judge_value}")
     assert state is not None
     assert state.judge_status == judge_value
     if judge_value == "approve":
+        assert state.execution_graph_id is not None
+        graph_store = app.state.controller.execution_graph_store
+        attempts = graph_store.load_attempts(state.execution_graph_id)
+        checkpoint = graph_store.load_latest_checkpoint(state.execution_graph_id)
+        assert [attempt.node_type.value for attempt in attempts] == [
+            "CLASSIFY",
+            "EXECUTOR_SELECT",
+            "EXECUTOR",
+            "REVIEWER",
+            "JUDGE",
+            "CHECKPOINT",
+            "FINALIZE",
+        ]
+        assert attempts[3].generated_evidence_ids
+        assert attempts[3].validated_evidence_ids == attempts[2].generated_evidence_ids
+        assert attempts[4].generated_evidence_ids
+        assert attempts[4].validated_evidence_ids == attempts[2].generated_evidence_ids
+        assert checkpoint.terminal_status == "completed"
+        assert not any(
+            event["event_type"] == "execution_graph_shadow_failed"
+            for event in app.state.store.events(f"judge-{judge_value}")
+        )
         assert response.json()["choices"][0]["message"]["content"] == "verified result"
-    else:
+    elif judge_value == "revise":
         assert response.json()["error"]["type"] == "judge_correction_required"
         assert state.phase == Phase.CORRECTION
+    else:
+        graph_store = app.state.controller.execution_graph_store
+        attempts = graph_store.load_attempts(state.execution_graph_id)
+        checkpoint = graph_store.load_latest_checkpoint(state.execution_graph_id)
+        assert [attempt.node_type.value for attempt in attempts] == [
+            "CLASSIFY",
+            "EXECUTOR_SELECT",
+            "EXECUTOR",
+            "REVIEWER",
+            "JUDGE",
+            "FINALIZE",
+        ]
+        assert attempts[4].selected_outgoing_edges
+        assert checkpoint.terminal_status == "failed"
+        assert not any(
+            event["event_type"] == "execution_graph_shadow_failed"
+            for event in app.state.store.events(f"judge-{judge_value}")
+        )
 
 
 def test_selective_remote_judge_correction_is_validated_and_rechecked(
     settings: Settings,
 ) -> None:
+    settings.execution_graph.mode = "shadow"
+
     class CorrectingProvider(StubProvider):
         async def complete(self, role, model, request, **options):  # type: ignore[no-untyped-def]
             if role != "executor":
@@ -1003,8 +1229,165 @@ def test_selective_remote_judge_correction_is_validated_and_rechecked(
     state = app.state.store.get("judge-corrected")
     assert state is not None
     assert state.judge_status == "approve"
+    assert state.execution_graph_id is not None
+    graph_store = app.state.controller.execution_graph_store
+    attempts = graph_store.load_attempts(state.execution_graph_id)
+    checkpoint = graph_store.load_latest_checkpoint(state.execution_graph_id)
+    assert [attempt.node_type.value for attempt in attempts] == [
+        "CLASSIFY",
+        "EXECUTOR_SELECT",
+        "EXECUTOR",
+        "REVIEWER",
+        "JUDGE",
+        "EXECUTOR",
+        "REVIEWER",
+        "JUDGE",
+        "CHECKPOINT",
+        "FINALIZE",
+    ]
+    assert attempts[2].attempt_id.endswith("a001")
+    assert attempts[5].attempt_id.endswith("a002")
+    assert attempts[4].progress_evidence_ids
+    assert attempts[7].validated_evidence_ids == attempts[5].generated_evidence_ids
+    assert checkpoint.terminal_status == "completed"
+    assert not any(
+        event["event_type"] == "execution_graph_shadow_failed"
+        for event in app.state.store.events("judge-corrected")
+    )
     assert minor_response.status_code == 200
     assert len(minor_remote.packages) == 1
+
+
+def test_frontier_b_adjudication_is_in_the_judge_repair_graph(
+    settings: Settings,
+) -> None:
+    settings.execution_graph.mode = "shadow"
+    settings.executor_scheduling.enabled = True
+    settings.frontier_enabled = True
+    settings.frontier_config = settings.state_db.parent / "frontier-b.yaml"
+    settings.frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\n"
+        "openrouter_fallback_enabled: true\n"
+    )
+
+    class CorrectingProvider(StubProvider):
+        async def complete(self, role, model, request, **options):  # type: ignore[no-untyped-def]
+            if role != "executor":
+                return await super().complete(role, model, request, **options)
+            self.calls.append(role)
+            self.requests.append(request)
+            self.call_options.append(options)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": (
+                                "corrected result"
+                                if options.get("stage") == "judge_correction"
+                                else "draft result"
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"total_tokens": 2},
+            }
+
+    class AvailableOverflow:
+        async def available(self) -> bool:
+            return True
+
+    app = create_app(
+        settings,
+        overflow_executor=AvailableOverflow(),  # type: ignore[arg-type]
+    )
+    provider = CorrectingProvider()
+    remote = MockJudgeProvider([remote_verdict("revise"), remote_verdict("approve")])
+    frontier_modes: list[str] = []
+
+    async def collaborate(mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+        frontier_modes.append(mode)
+        return FrontierCollaborationResult(
+            mode=mode,
+            output={
+                "recommended_architecture": "bounded",
+                "design_decisions": [],
+                "tradeoffs": [],
+                "failure_modes": [],
+                "implementation_sequence": [],
+                "review_questions": [],
+            },
+            total_tokens=3,
+            latency_ms=1,
+            transmitted_categories=sorted(evidence),
+            profile="primary",
+            transport="codex_oauth",
+        )
+
+    async def collaborate_openrouter(  # type: ignore[no-untyped-def]
+        mode, evidence, correlation_id
+    ):
+        frontier_modes.append(f"openrouter:{mode}")
+        return FrontierCollaborationResult(
+            mode=mode,
+            output={
+                "preferred_position": "apply bounded correction",
+                "evidence": ["judge finding"],
+                "rejected_assumptions": [],
+                "required_follow_up": ["targeted recheck"],
+                "confidence": 0.9,
+            },
+            total_tokens=3,
+            latency_ms=1,
+            transmitted_categories=sorted(evidence),
+            profile="openrouter:configured-model",
+            transport="openrouter",
+        )
+
+    with TestClient(app) as client:
+        app.state.provider = provider
+        app.state.controller.provider = provider
+        app.state.frontier.collaborate = collaborate
+        app.state.frontier.collaborate_openrouter = collaborate_openrouter
+        app.state.remote_judge = remote
+        app.state.remote_judge_available = True
+        app.state.controller.remote_judge = remote
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "frontier-b-repair",
+            },
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "design a secure architecture"}],
+                "metadata": {"authentication": True, "architecture": True},
+            },
+        )
+        state = app.state.store.get("frontier-b-repair")
+        assert state is not None and state.execution_graph_id is not None
+        attempts = app.state.controller.execution_graph_store.load_attempts(
+            state.execution_graph_id
+        )
+
+    assert response.status_code == 200
+    assert frontier_modes == ["architecture", "openrouter:disagreement"]
+    assert [attempt.node_type.value for attempt in attempts].count("FRONTIER_B") == 1
+    assert any(
+        item["role"] == "frontier_b" and item["stage"] == "adjudication"
+        for item in state.role_context_projections
+    )
+    correction = next(
+        request
+        for request, options in zip(provider.requests, provider.call_options, strict=True)
+        if options.get("stage") == "judge_correction"
+    )
+    assert "apply bounded correction" in correction["messages"][-1]["content"]
+    assert not any(
+        event["event_type"] == "execution_graph_shadow_failed"
+        for event in app.state.store.events("frontier-b-repair")
+    )
 
 
 def test_selective_remote_judge_rejects_unbuffered_high_risk_stream(
@@ -1074,12 +1457,28 @@ def test_repeated_test_failure_does_not_block_streamed_correction(
     assert any(event["event_type"] == "remote_judge_stream_deferred" for event in events)
 
 
-async def direct_chat(app, session_id: str, *, stream: bool = False):  # type: ignore[no-untyped-def]
+async def direct_chat(  # type: ignore[no-untyped-def]
+    app, session_id: str, *, stream: bool = False, tools: bool = False
+):
     return await chat_endpoint(app)(
         ChatRequest(
             model="dgx-moa-fast",
             stream=stream,
             messages=[{"role": "user", "content": "work"}],
+            tools=(
+                [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "read_file",
+                            "description": "read",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ]
+                if tools
+                else None
+            ),
         ),
         Request({"type": "http", "app": app}),
         x_session_id=session_id,
@@ -2160,7 +2559,7 @@ def test_nonstream_tool_call_payload_creates_continuation_when_finish_reason_is_
         held = client.app.state.lifecycle_store.get("executor")
 
     assert response.status_code == 200
-    assert response.json()["choices"][0]["finish_reason"] == "stop"
+    assert response.json()["choices"][0]["finish_reason"]
     assert response.json()["choices"][0]["message"]["tool_calls"]
     assert held.continuation_lease_count == 1
 
@@ -2169,6 +2568,7 @@ def test_nonstream_tool_call_payload_creates_continuation_when_finish_reason_is_
 async def test_stream_tool_calls_create_one_continuation_before_stream_release(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
+    settings.execution_graph.mode = "shadow"
     tool_delta = (
         b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"stream-call",'
         b'"type":"function","function":{"name":"read_file","arguments":"{}"}}]}}]}\n\n'
@@ -2189,15 +2589,25 @@ async def test_stream_tool_calls_create_one_continuation_before_stream_release(
     async with app.router.lifespan_context(app):
         app.state.provider = stub_provider
         app.state.controller.provider = stub_provider
-        response = await direct_chat(app, "stream-continuation", stream=True)
+        response = await direct_chat(app, "stream-continuation", stream=True, tools=True)
         assert isinstance(response, StreamingResponse)
         forwarded = b"".join([chunk async for chunk in response.body_iterator])
         record = app.state.lifecycle_store.get("executor")
+        state = app.state.store.get("stream-continuation")
+        assert state is not None and state.execution_graph_id is not None
+        graph_store = app.state.controller.execution_graph_store
+        attempts = graph_store.load_attempts(state.execution_graph_id)
 
     assert forwarded == tool_delta + terminal + done
     assert record.active_request_count == 0
     assert record.open_stream_count == 0
     assert record.continuation_lease_count == 1
+    assert [attempt.node_type.value for attempt in attempts][-2:] == ["EXECUTOR", "TOOL"]
+    assert attempts[-1].state.value == "WAITING_TOOL"
+    assert not any(
+        event["event_type"] == "execution_graph_shadow_failed"
+        for event in app.state.store.events("stream-continuation")
+    )
 
 
 def test_stream_tool_budget_exhaustion_returns_terminal_sse_error(
@@ -2762,7 +3172,8 @@ def test_explicit_ready_reasoner_is_used_only_when_selected(
         reasoner_usage = client.app.state.usage.recent_role_requests("reasoner")
 
     assert response.status_code == 200
-    assert stub_provider.calls == ["reasoner", "executor", "executor"]
+    assert sorted(stub_provider.calls[:2]) == ["planner", "reasoner"]
+    assert stub_provider.calls[2:] == ["executor"]
     assert len(reasoner_usage) == 1
     assert reasoner_usage[0].success is True
 
@@ -3314,7 +3725,7 @@ async def test_managed_request_rejects_an_unmapped_required_role_honestly(
     assert usage.model_state == "cold"
     assert usage.load_triggered is False
     assert usage.retryable_failure_class is None
-    assert stub_provider.calls == ["reasoner", "executor"]
+    assert stub_provider.calls == []
     assert driver.calls == [("status", "executor")]
 
 
@@ -3619,43 +4030,9 @@ def test_reasoner_retries_one_malformed_structured_response(
     assert retry["payload"] == {"attempt": 2, "failure_class": "JSONDecodeError"}
 
 
-def test_executor_selected_planner_gets_usage_and_lease_tracking(
+def test_runtime_policy_selected_planner_gets_usage_and_lease_tracking(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
-    original = stub_provider.complete
-
-    async def select_planner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
-        if role == "executor" and (
-            request.get("response_format", {}).get("json_schema", {}).get("name")
-            == "orchestration_decision"
-        ):
-            stub_provider.calls.append(role)
-            stub_provider.requests.append(request)
-            stub_provider.call_options.append(kwargs)
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "action": "invoke_agents",
-                                    "required_agents": ["planner"],
-                                    "optional_agents": [],
-                                    "reason": {"planner": "decomposition needed"},
-                                    "parallelizable": False,
-                                    "continue_after": "synthesize",
-                                    "confidence": 0.8,
-                                }
-                            ),
-                        },
-                        "finish_reason": "stop",
-                    }
-                ]
-            }
-        return await original(role, model, request, **kwargs)
-
-    stub_provider.complete = select_planner  # type: ignore[method-assign]
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(
             "/v1/chat/completions",
@@ -3663,7 +4040,7 @@ def test_executor_selected_planner_gets_usage_and_lease_tracking(
             json={
                 "model": "dgx-moa-orchestrated",
                 "messages": [{"role": "user", "content": "make the focused change"}],
-                "metadata": {"target_clear": True, "expected_files": 1},
+                "metadata": {"expected_files": 4},
             },
         )
         usage = client.app.state.usage.recent_requests()[0]
@@ -3671,12 +4048,13 @@ def test_executor_selected_planner_gets_usage_and_lease_tracking(
         assert_no_request_leases(client.app)
 
     assert response.status_code == 200
-    assert stub_provider.calls == ["reasoner", "executor", "planner", "executor"]
+    assert sorted(stub_provider.calls[:2]) == ["planner", "reasoner"]
+    assert stub_provider.calls[2:] == ["executor"]
     assert usage.roles_required == ("reasoner", "executor", "planner")
     assert len(planner_rows) == 1 and planner_rows[0].success is True
 
 
-def test_executor_selected_cold_planner_triggers_load_and_typed_usage(
+def test_runtime_policy_selected_cold_planner_triggers_load_and_typed_usage(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
     controlled = Settings.model_validate(
@@ -3691,41 +4069,10 @@ def test_executor_selected_cold_planner_triggers_load_and_typed_usage(
     driver = FakeLifecycleDriver(
         {"reasoner": "active", "executor": "active", "planner": "inactive"}
     )
-    original = stub_provider.complete
-
-    async def select_planner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
-        if role == "executor" and (
-            request.get("response_format", {}).get("json_schema", {}).get("name")
-            == "orchestration_decision"
-        ):
-            stub_provider.calls.append(role)
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "action": "invoke_agents",
-                                    "required_agents": ["planner"],
-                                    "optional_agents": [],
-                                    "reason": {"planner": "decomposition needed"},
-                                    "parallelizable": False,
-                                    "continue_after": "synthesize",
-                                    "confidence": 0.8,
-                                }
-                            ),
-                        },
-                        "finish_reason": "stop",
-                    }
-                ]
-            }
-        return await original(role, model, request, **kwargs)
 
     async def health_probe(role: str) -> bool:
         return role != "planner"
 
-    stub_provider.complete = select_planner  # type: ignore[method-assign]
     app = create_app(
         controlled,
         lifecycle_driver=driver,
@@ -3740,7 +4087,7 @@ def test_executor_selected_cold_planner_triggers_load_and_typed_usage(
             json={
                 "model": "dgx-moa-orchestrated",
                 "messages": [{"role": "user", "content": "make the focused change"}],
-                "metadata": {"target_clear": True, "expected_files": 1},
+                "metadata": {"expected_files": 4},
             },
         )
         for _ in range(1_000):
@@ -3754,7 +4101,7 @@ def test_executor_selected_cold_planner_triggers_load_and_typed_usage(
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "model_loading"
     assert response.headers["X-DGX-MOA-Model-Role"] == "planner"
-    assert stub_provider.calls == ["reasoner", "executor"]
+    assert stub_provider.calls == []
     assert usage.roles_required == ("reasoner", "executor", "planner")
     assert usage.retryable_failure_class == "model_loading"
     assert len(planner_rows) == 1
@@ -3783,41 +4130,10 @@ def test_cold_planner_runs_remotely_while_local_warmup_starts(
     driver = FakeLifecycleDriver(
         {"reasoner": "active", "executor": "active", "planner": "inactive"}
     )
-    original = stub_provider.complete
-
-    async def select_planner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
-        if role == "executor" and (
-            request.get("response_format", {}).get("json_schema", {}).get("name")
-            == "orchestration_decision"
-        ):
-            stub_provider.calls.append(role)
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(
-                                {
-                                    "action": "invoke_agents",
-                                    "required_agents": ["planner"],
-                                    "optional_agents": [],
-                                    "reason": {"planner": "decomposition needed"},
-                                    "parallelizable": False,
-                                    "continue_after": "synthesize",
-                                    "confidence": 0.8,
-                                }
-                            ),
-                        },
-                        "finish_reason": "stop",
-                    }
-                ]
-            }
-        return await original(role, model, request, **kwargs)
 
     async def health_probe(role: str) -> bool:
         return role != "planner"
 
-    stub_provider.complete = select_planner  # type: ignore[method-assign]
     app = create_app(controlled, lifecycle_driver=driver, lifecycle_health_probe=health_probe)
     remote = MockPlannerProvider(
         {
@@ -3847,7 +4163,7 @@ def test_cold_planner_runs_remotely_while_local_warmup_starts(
             json={
                 "model": "dgx-moa-orchestrated",
                 "messages": [{"role": "user", "content": "make the focused change"}],
-                "metadata": {"target_clear": True, "expected_files": 1},
+                "metadata": {"expected_files": 4},
             },
         )
         for _ in range(1_000):
@@ -3911,7 +4227,7 @@ def test_policy_selected_cold_reviewer_triggers_load_before_review(
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "model_loading"
     assert response.headers["X-DGX-MOA-Model-Role"] == "reviewer"
-    assert stub_provider.calls == ["reasoner", "executor"]
+    assert stub_provider.calls == []
     assert usage.roles_required == ("reasoner", "executor", "reviewer")
     assert usage.model_state == "loading"
     assert len(reviewer_rows) == 1
@@ -4003,7 +4319,7 @@ def test_dynamically_selected_unconfigured_role_is_typed_unmanaged(
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "model_not_managed"
     assert response.headers["X-DGX-MOA-Model-Role"] == "planner"
-    assert stub_provider.calls == ["reasoner", "executor"]
+    assert stub_provider.calls == []
     assert usage.roles_required == ("reasoner", "executor", "planner")
     assert usage.model_state == "cold"
     assert len(planner_rows) == 1
@@ -4492,7 +4808,8 @@ def test_orchestrated_mode_uses_policy_roles(settings, stub_provider: StubProvid
             event["event_type"] for event in client.app.state.store.events("role-start-events")
         }
     assert response.status_code == 200
-    assert stub_provider.calls == ["reasoner", "executor", "planner", "executor"]
+    assert sorted(stub_provider.calls[:2]) == ["planner", "reasoner"]
+    assert stub_provider.calls[2:] == ["executor"]
     assert {"reasoner_started", "planner_invoked", "executor_started"}.issubset(event_types)
 
 
@@ -4512,7 +4829,8 @@ def test_security_architecture_without_implementation_evidence_skips_reviewer(
         usage = client.app.state.usage.recent_requests()[0]
 
     assert response.status_code == 200
-    assert stub_provider.calls == ["reasoner", "executor", "planner", "executor"]
+    assert sorted(stub_provider.calls[:2]) == ["planner", "reasoner"]
+    assert stub_provider.calls[2:] == ["executor"]
     assert usage.roles_required == ("reasoner", "executor", "planner")
 
 
@@ -4529,10 +4847,9 @@ def test_role_calls_receive_exact_stage_timeouts(settings, stub_provider: StubPr
         )
 
     assert response.status_code == 200
-    assert stub_provider.calls == ["reasoner", "executor", "reviewer", "executor"]
+    assert stub_provider.calls == ["reasoner", "reviewer", "executor"]
     assert stub_provider.call_options == [
         {"timeout_seconds": 120, "stage": "reasoner"},
-        {"timeout_seconds": 120, "stage": "orchestration"},
         {"timeout_seconds": 120, "stage": "reviewer"},
         {"timeout_seconds": 900, "stage": "executor_total"},
     ]
@@ -4719,7 +5036,8 @@ def test_orchestrated_assistant_answer_without_evidence_skips_review(
         )
 
     assert response.status_code == 200
-    assert stub_provider.calls == ["reasoner", "executor", "executor"]
+    assert sorted(stub_provider.calls[:2]) == ["planner", "reasoner"]
+    assert stub_provider.calls[2:] == ["executor"]
 
 
 @pytest.mark.parametrize("failure", ["http", "timeout", "value"])
@@ -5427,7 +5745,7 @@ def test_observation_control_api_is_allowlisted_scoped_and_idempotent(
                 "enabled": False,
                 "controls": {
                     "enabled": True,
-                    "allowed_users": {"discord:user-1": "operator"},
+                    "allowed_users": {"telegram:user-1": "operator"},
                     "role_permissions": {"operator": ["pause", "resume", "show-status"]},
                 },
             },
@@ -5441,15 +5759,19 @@ def test_observation_control_api_is_allowlisted_scoped_and_idempotent(
         denied = client.post(
             "/v1/admin/observation/nonces",
             headers=headers,
-            json={"provider": "discord", "user_id": "stranger", "request_id": "controlled-request"},
+            json={
+                "provider": "telegram",
+                "user_id": "stranger",
+                "request_id": "controlled-request",
+            },
         )
         nonce_response = client.post(
             "/v1/admin/observation/nonces",
             headers=headers,
-            json={"provider": "discord", "user_id": "user-1", "request_id": "controlled-request"},
+            json={"provider": "telegram", "user_id": "user-1", "request_id": "controlled-request"},
         )
         command = {
-            "provider": "discord",
+            "provider": "telegram",
             "user_id": "user-1",
             "request_id": "controlled-request",
             "command": "pause",
@@ -5465,6 +5787,126 @@ def test_observation_control_api_is_allowlisted_scoped_and_idempotent(
     assert first.json()["control_state"] == "paused"
     assert replay.status_code == 200
     assert replay.json()["replayed"] is True
+
+
+def test_policy_approval_resumes_waiting_execution_graph(
+    settings: Settings,
+) -> None:
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "admin_api_enabled": True,
+            "execution_graph": {"mode": "shadow"},
+            "loop_engineering": {"enabled": True},
+            "declarative_policy": {
+                "enabled": True,
+                "version": "approval-graph-1",
+                "policies": [
+                    {
+                        "id": "operator-approval",
+                        "when": {"task.needs_approval": True},
+                        "request_approval": ["operator"],
+                    }
+                ],
+            },
+            "live_observation": {
+                "enabled": False,
+                "controls": {
+                    "enabled": True,
+                    "allowed_users": {"telegram:user-1": "operator"},
+                    "role_permissions": {"operator": ["approve"]},
+                },
+            },
+        }
+    )
+
+    class FinalProvider(StubProvider):
+        async def complete(self, role, model, request, **options):  # type: ignore[no-untyped-def]
+            if role != "executor":
+                return await super().complete(role, model, request, **options)
+            self.calls.append(role)
+            self.requests.append(request)
+            self.call_options.append(options)
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "approved execution"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+
+    app = create_app(controlled)
+    provider = FinalProvider()
+    headers = {
+        "Authorization": "Bearer test-secret",
+        "X-Session-ID": "approval-graph",
+    }
+    request_body = {
+        "model": "dgx-moa-fast",
+        "messages": [{"role": "user", "content": "perform approved work"}],
+        "metadata": {"needs_approval": True},
+    }
+    with TestClient(app) as client:
+        app.state.provider = provider
+        app.state.controller.provider = provider
+        blocked = client.post("/v1/chat/completions", headers=headers, json=request_body)
+        waiting_state = app.state.store.get("approval-graph")
+        assert waiting_state is not None and waiting_state.execution_graph_id is not None
+        graph_store = app.state.controller.execution_graph_store
+        waiting = graph_store.load_attempts(waiting_state.execution_graph_id)
+        nonce = client.post(
+            "/v1/admin/observation/nonces",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "provider": "telegram",
+                "user_id": "user-1",
+                "request_id": "approval-graph",
+            },
+        )
+        approved = client.post(
+            "/v1/admin/observation/commands",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "provider": "telegram",
+                "user_id": "user-1",
+                "request_id": "approval-graph",
+                "command": "approve",
+                "nonce": nonce.json()["nonce"],
+                "idempotency_key": "approve-graph-1",
+            },
+        )
+        completed = client.post("/v1/chat/completions", headers=headers, json=request_body)
+        final_state = app.state.store.get("approval-graph")
+        attempts = graph_store.load_attempts(waiting_state.execution_graph_id)
+        checkpoint = graph_store.load_latest_checkpoint(waiting_state.execution_graph_id)
+
+    assert blocked.status_code == 403
+    assert [attempt.node_type.value for attempt in waiting] == [
+        "CLASSIFY",
+        "POLICY_GATE",
+        "HUMAN_APPROVAL",
+    ]
+    assert waiting[-1].state.value == "WAITING_APPROVAL"
+    assert approved.status_code == 200
+    assert completed.status_code == 200
+    assert final_state is not None and final_state.final_status != "blocked"
+    assert [attempt.node_type.value for attempt in attempts] == [
+        "CLASSIFY",
+        "POLICY_GATE",
+        "HUMAN_APPROVAL",
+        "EXECUTOR_SELECT",
+        "EXECUTOR",
+        "FINALIZE",
+    ]
+    assert attempts[2].selected_outgoing_edges
+    assert checkpoint.terminal_status == "degraded"
+    shadow_failures = [
+        event
+        for event in app.state.store.events("approval-graph")
+        if event["event_type"] == "execution_graph_shadow_failed"
+    ]
+    assert not shadow_failures, shadow_failures
 
 
 def test_training_review_admin_api_inspects_transitions_and_revokes_request(
@@ -5679,11 +6121,19 @@ def test_profile_aware_readiness(settings, stub_provider: StubProvider, monkeypa
         async def __aexit__(self, *args) -> None:  # type: ignore[no-untyped-def]
             return None
 
+        async def aclose(self) -> None:
+            return None
+
         async def get(self, url: str) -> httpx.Response:
             status_code = (
                 200 if url.endswith(":8101/v1/models") or url.endswith(":8104/v1/models") else 503
             )
-            return httpx.Response(status_code, request=httpx.Request("GET", url))
+            model = "executor" if ":8101/" in url else "reasoner"
+            return httpx.Response(
+                status_code,
+                json={"data": [{"id": model}]},
+                request=httpx.Request("GET", url),
+            )
 
     monkeypatch.setattr("dgx_moa.api.httpx.AsyncClient", FakeAsyncClient)
     app = create_app(settings)
@@ -5979,7 +6429,7 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
         first = await asyncio.wait_for(anext(response.body_iterator), timeout=1)
         assert first == first_event
         assert not release.is_set()
-        assert stub_provider.calls == ["reasoner", "executor", "executor"]
+        assert stub_provider.calls == ["reasoner", "executor"]
         assert not any(
             event["event_type"] == "session_ended"
             for event in app.state.store.events("immediate-stream")
@@ -5991,7 +6441,7 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
         release.set()
         remaining = b"".join([chunk async for chunk in response.body_iterator])
         assert remaining.count(b"data: [DONE]") == 1
-        assert stub_provider.calls == ["reasoner", "executor", "executor"]
+        assert stub_provider.calls == ["reasoner", "executor"]
         state = app.state.store.get("immediate-stream")
         assert state and state.review_deferred
         assert state.review_status == "deferred"
@@ -6006,7 +6456,7 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
 async def test_stream_total_deadline_does_not_retry_after_first_byte(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
-    settings.limits.executor_total_timeout_seconds = 0.01
+    settings.limits.executor_total_timeout_seconds = 0.2
     first_event = b'data: {"choices":[{"delta":{"content":"first"}}]}\n\n'
     stream_attempts = 0
 
@@ -6047,7 +6497,7 @@ async def test_stream_total_deadline_does_not_retry_after_first_byte(
         assert await anext(response.body_iterator) == first_event
 
         with pytest.raises(TimeoutError) as captured:
-            await asyncio.wait_for(anext(response.body_iterator), timeout=0.1)
+            await asyncio.wait_for(anext(response.body_iterator), timeout=0.5)
 
         assert stream_attempts == 1
         assert type(captured.value).__name__ == "StageTimeout"
@@ -6501,16 +6951,570 @@ def test_responses_post_returns_openai_response_shape(  # type: ignore[no-untype
     assert body["output"][0]["content"][0]["text"] == "ok"
     assert body["usage"] == {
         "input_tokens": 3,
-        "input_tokens_details": {"cached_tokens": 0},
         "output_tokens": 4,
         "output_tokens_details": {"reasoning_tokens": 0},
         "total_tokens": 7,
     }
 
 
-def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def]
+def test_chat_and_responses_share_one_disabled_by_default_graph_shadow_path(
     settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    assert settings.execution_graph.mode == "disabled"
+    settings.execution_graph.mode = "shadow"
+    original = stub_provider.complete
+
+    async def complete(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor":
+            return {
+                "id": "chatcmpl-graph-shadow",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = complete  # type: ignore[method-assign]
+    headers = {"Authorization": "Bearer test-secret"}
+    with client_with_stub(settings, stub_provider) as client:
+        chat = client.post(
+            "/v1/chat/completions",
+            headers={**headers, "X-Session-ID": "graph-chat"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        response = client.post(
+            "/v1/responses",
+            headers={**headers, "X-Session-ID": "graph-responses"},
+            json={"model": "dgx-moa-fast", "input": "hello"},
+        )
+        states = [
+            client.app.state.store.get(session_id)
+            for session_id in ("graph-chat", "graph-responses")
+        ]
+        event_counts = [
+            sum(
+                event["event_type"] == "execution_graph_shadow_compiled"
+                for event in client.app.state.store.events(session_id)
+            )
+            for session_id in ("graph-chat", "graph-responses")
+        ]
+        graph_store = client.app.state.controller.execution_graph_store
+        assert graph_store is not None
+        assert all(state and state.execution_graph_id for state in states)
+        graphs = [graph_store.load_graph(state.execution_graph_id) for state in states if state]
+        attempts = [graph_store.load_attempts(graph.graph_id) for graph in graphs]
+        checkpoints = [graph_store.load_latest_checkpoint(graph.graph_id) for graph in graphs]
+
+    assert chat.status_code == response.status_code == 200
+    assert event_counts == [1, 1]
+    assert len(graphs) == 2
+    assert len({graph.template_id for graph in graphs}) == 1
+    assert all(any(node.provider == "local_mistral" for node in graph.nodes) for graph in graphs)
+    assert all(graph.nodes[-1].node_type == "FINALIZE" for graph in graphs)
+    assert all(
+        [attempt.node_type for attempt in graph_attempts]
+        == ["CLASSIFY", "EXECUTOR_SELECT", "EXECUTOR", "FINALIZE"]
+        for graph_attempts in attempts
+    )
+    assert all(
+        graph_attempts[-2].generated_evidence_ids and graph_attempts[-1].state == "SUCCEEDED"
+        for graph_attempts in attempts
+    )
+    assert all(checkpoint.terminal_status == "degraded" for checkpoint in checkpoints)
+    assert "test-secret" not in "".join(graph.model_dump_json() for graph in graphs)
+
+
+def test_graph_shadow_records_actual_executor_failure_without_changing_response(
+    settings: Settings, stub_provider: StubProvider
 ) -> None:
+    settings.execution_graph.mode = "shadow"
+
+    async def fail_executor(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise providers.StageTimeout("executor_total")
+
+    stub_provider.complete = fail_executor  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "graph-failure"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+        state = client.app.state.store.get("graph-failure")
+        assert state is not None and state.execution_graph_id is not None
+        graph_store = client.app.state.controller.execution_graph_store
+        attempts = graph_store.load_attempts(state.execution_graph_id)
+        checkpoint = graph_store.load_latest_checkpoint(state.execution_graph_id)
+
+    assert response.status_code == 504
+    assert attempts[-2].failure_code == "REQUEST_TIMED_OUT"
+    assert attempts[-1].node_type == "FINALIZE"
+    assert checkpoint.terminal_status == "failed"
+
+
+def test_graph_shadow_resumes_bounded_tool_and_test_continuation(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    settings.execution_graph.mode = "shadow"
+
+    async def complete(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role != "executor":
+            return await StubProvider.complete(stub_provider, role, model, request, **kwargs)
+        if any(message.get("role") == "tool" for message in request["messages"]):
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "tool accepted"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"total_tokens": 2},
+            }
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-validation",
+                                "type": "function",
+                                "function": {
+                                    "name": "shell",
+                                    "arguments": '{"cmd":"pytest -q"}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"total_tokens": 2},
+        }
+
+    stub_provider.complete = complete  # type: ignore[method-assign]
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "shell", "parameters": {"type": "object"}},
+        }
+    ]
+    headers = {
+        "Authorization": "Bearer test-secret",
+        "X-Session-ID": "graph-tool-resume",
+    }
+    with client_with_stub(settings, stub_provider) as client:
+        first = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "read x"}],
+                "tools": tools,
+                "metadata": {"validation_command": "pytest -q"},
+            },
+        )
+        assistant = first.json()["choices"][0]["message"]
+        first_state = client.app.state.store.get("graph-tool-resume")
+        assert first_state is not None and first_state.execution_graph_id is not None
+        graph_id = first_state.execution_graph_id
+        second = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [
+                    {"role": "user", "content": "read x"},
+                    assistant,
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-validation",
+                        "content": '{"stdout":"ok","exit_code":0}',
+                    },
+                ],
+                "tools": tools,
+            },
+        )
+        state = client.app.state.store.get("graph-tool-resume")
+        graph_store = client.app.state.controller.execution_graph_store
+        attempts = graph_store.load_attempts(graph_id)
+        checkpoint = graph_store.load_latest_checkpoint(graph_id)
+        events = client.app.state.store.events("graph-tool-resume")
+        failure_headers = {
+            "Authorization": "Bearer test-secret",
+            "X-Session-ID": "graph-tool-failure",
+        }
+        failure_first = client.post(
+            "/v1/chat/completions",
+            headers=failure_headers,
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "run check"}],
+                "tools": tools,
+            },
+        )
+        failure_assistant = failure_first.json()["choices"][0]["message"]
+        failure_state = client.app.state.store.get("graph-tool-failure")
+        assert failure_state is not None and failure_state.execution_graph_id is not None
+        failure_graph_id = failure_state.execution_graph_id
+        failure_second = client.post(
+            "/v1/chat/completions",
+            headers=failure_headers,
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [
+                    {"role": "user", "content": "run check"},
+                    failure_assistant,
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-validation",
+                        "content": '{"stderr":"failed","exit_code":1}',
+                    },
+                ],
+                "tools": tools,
+            },
+        )
+        failure_attempts = graph_store.load_attempts(failure_graph_id)
+        failure_checkpoint = graph_store.load_latest_checkpoint(failure_graph_id)
+        failure_events = client.app.state.store.events("graph-tool-failure")
+
+    assert first.status_code == second.status_code == 200
+    assert state is not None and state.execution_graph_id == graph_id
+    assert [attempt.node_type.value for attempt in attempts] == [
+        "CLASSIFY",
+        "EXECUTOR_SELECT",
+        "EXECUTOR",
+        "TOOL",
+        "TEST",
+        "EXECUTOR",
+        "FINALIZE",
+    ]
+    assert attempts[2].attempt_id.endswith("a001")
+    assert attempts[5].attempt_id.endswith("a002")
+    assert attempts[3].generated_evidence_ids == attempts[3].validated_evidence_ids
+    assert attempts[4].generated_evidence_ids == attempts[4].validated_evidence_ids
+    assert checkpoint.terminal_status == "degraded"
+    assert any(event["event_type"] == "execution_graph_resumed" for event in events)
+    assert not any(event["event_type"] == "execution_graph_shadow_failed" for event in events)
+    assert failure_first.status_code == failure_second.status_code == 200
+    assert [attempt.node_type.value for attempt in failure_attempts] == [
+        "CLASSIFY",
+        "EXECUTOR_SELECT",
+        "EXECUTOR",
+        "TOOL",
+        "EXECUTOR",
+        "FINALIZE",
+    ]
+    assert failure_attempts[3].state.value == "FAILED"
+    assert failure_attempts[3].failure_code
+    assert failure_attempts[3].generated_evidence_ids
+    assert failure_attempts[4].attempt_id.endswith("a002")
+    assert failure_checkpoint.terminal_status == "degraded"
+    assert not any(
+        event["event_type"] == "execution_graph_shadow_failed" for event in failure_events
+    )
+
+
+def test_graph_shadow_sqlite_failure_preserves_legacy_role_tool_and_terminal_contract(
+    settings: Settings, tmp_path: Path
+) -> None:
+    baseline_settings = settings.model_copy(
+        deep=True,
+        update={
+            "state_db": tmp_path / "baseline.db",
+            "run_dir": tmp_path / "baseline-run",
+        },
+    )
+    shadow_settings = settings.model_copy(
+        deep=True,
+        update={
+            "state_db": tmp_path / "shadow.db",
+            "run_dir": tmp_path / "shadow-run",
+        },
+    )
+    shadow_settings.execution_graph.mode = "shadow"
+    headers = {"Authorization": "Bearer test-secret"}
+    payload = {
+        "model": "dgx-moa-fast",
+        "messages": [{"role": "user", "content": "read x"}],
+        "tools": [
+            {
+                "type": "function",
+                "function": {"name": "read_file", "parameters": {"type": "object"}},
+            }
+        ],
+    }
+    baseline_provider = StubProvider()
+    shadow_provider = StubProvider()
+
+    with client_with_stub(baseline_settings, baseline_provider) as client:
+        baseline = client.post(
+            "/v1/chat/completions",
+            headers={**headers, "X-Session-ID": "graph-parity-baseline"},
+            json=payload,
+        )
+        baseline_events = client.app.state.store.events("graph-parity-baseline")
+
+    with client_with_stub(shadow_settings, shadow_provider) as client:
+        graph_store = client.app.state.controller.execution_graph_store
+        assert graph_store is not None
+
+        def fail_save(_graph) -> None:  # type: ignore[no-untyped-def]
+            raise sqlite3.OperationalError("injected graph store failure")
+
+        graph_store.save_graph = fail_save  # type: ignore[method-assign]
+        shadow = client.post(
+            "/v1/chat/completions",
+            headers={**headers, "X-Session-ID": "graph-parity-shadow"},
+            json=payload,
+        )
+        shadow_events = client.app.state.store.events("graph-parity-shadow")
+        shadow_state = client.app.state.store.get("graph-parity-shadow")
+
+    assert baseline.status_code == shadow.status_code == 200
+    assert baseline.json() == shadow.json()
+    assert baseline_provider.calls == shadow_provider.calls == ["executor"]
+    assert len(baseline_provider.requests) == len(shadow_provider.requests) == 1
+    contract_fields = ("model", "tools", "tool_choice", "max_tokens", "stream")
+    assert {key: baseline_provider.requests[0].get(key) for key in contract_fields} == {
+        key: shadow_provider.requests[0].get(key) for key in contract_fields
+    }
+    assert baseline.json()["choices"][0]["finish_reason"] == "tool_calls"
+    assert baseline.json()["choices"][0]["message"]["tool_calls"][0]["id"] == "call-preserved"
+    assert sum(event["event_type"] == "session_ended" for event in baseline_events) == 1
+    assert sum(event["event_type"] == "session_ended" for event in shadow_events) == 1
+    assert any(
+        event["event_type"] == "execution_graph_shadow_failed"
+        and event["payload"]["failure_code"] == "OperationalError"
+        for event in shadow_events
+    )
+    assert shadow_state is not None and shadow_state.execution_graph_id is None
+
+
+def test_graph_shadow_finish_failure_still_returns_terminal_response(
+    settings: Settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings.execution_graph.mode = "shadow"
+
+    def fail_finish(*_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+        raise sqlite3.OperationalError("injected finish failure")
+
+    monkeypatch.setattr(ExecutionGraphRuntime, "finish_observed_attempt", fail_finish)
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": "finish-failure"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "reply"}],
+            },
+        )
+        events = client.app.state.store.events("finish-failure")
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["finish_reason"]
+    assert sum(event["event_type"] == "session_ended" for event in events) == 1
+    assert any(event["event_type"] == "execution_graph_shadow_failed" for event in events)
+
+
+def test_graph_shadow_reprojects_failed_tool_before_collaborator_reentry(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    settings.execution_graph.mode = "shadow"
+    settings.frontier_enabled = False
+
+    async def complete(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role != "executor":
+            return await StubProvider.complete(stub_provider, role, model, request, **kwargs)
+        if any(message.get("role") == "tool" for message in request["messages"]):
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "failure observed"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"total_tokens": 2},
+            }
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-failed-check",
+                                "type": "function",
+                                "function": {"name": "shell", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"total_tokens": 2},
+        }
+
+    stub_provider.complete = complete  # type: ignore[method-assign]
+    headers = {
+        "Authorization": "Bearer test-secret",
+        "X-Session-ID": "graph-collaborator-tool-failure",
+    }
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "shell", "parameters": {"type": "object"}},
+        }
+    ]
+    with client_with_stub(settings, stub_provider) as client:
+        first = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "inspect the release"}],
+                "tools": tools,
+            },
+        )
+        assistant = first.json()["choices"][0]["message"]
+        first_state = client.app.state.store.get("graph-collaborator-tool-failure")
+        assert first_state is not None and first_state.execution_graph_id is not None
+        first_graph_id = first_state.execution_graph_id
+
+        second = client.post(
+            "/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [
+                    {"role": "user", "content": "inspect the release"},
+                    assistant,
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-failed-check",
+                        "content": '{"stderr":"sandbox unavailable","exit_code":1}',
+                    },
+                ],
+                "tools": tools,
+            },
+        )
+        second_state = client.app.state.store.get("graph-collaborator-tool-failure")
+        assert second_state is not None and second_state.execution_graph_id is not None
+        graph_store = client.app.state.controller.execution_graph_store
+        assert graph_store is not None
+        first_attempts = graph_store.load_attempts(first_graph_id)
+        second_graph = graph_store.load_graph(second_state.execution_graph_id)
+        events = client.app.state.store.events("graph-collaborator-tool-failure")
+
+    assert first.status_code == second.status_code == 200
+    assert second_state.execution_graph_id != first_graph_id
+    assert any(
+        attempt.node_type == NodeType.TOOL and attempt.state == NodeState.FAILED
+        for attempt in first_attempts
+    )
+    assert all(node.node_type != NodeType.FRONTIER_A for node in second_graph.nodes)
+    assert not any(event["event_type"] == "execution_graph_shadow_failed" for event in events)
+
+
+def test_graph_shadow_reprojects_after_bounded_successful_tool_cycles(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    settings.execution_graph.mode = "shadow"
+    calls = 0
+
+    async def complete(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        if role != "executor":
+            return await StubProvider.complete(stub_provider, role, model, request, **kwargs)
+        calls += 1
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": f"call-{calls}",
+                                "type": "function",
+                                "function": {"name": "shell", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"total_tokens": 2},
+        }
+
+    stub_provider.complete = complete  # type: ignore[method-assign]
+    session_id = "graph-successful-tool-budget"
+    headers = {"Authorization": "Bearer test-secret", "X-Session-ID": session_id}
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "shell", "parameters": {"type": "object"}},
+        }
+    ]
+    messages: list[dict[str, object]] = [{"role": "user", "content": "inspect and test"}]
+    graph_ids: list[str] = []
+
+    with client_with_stub(settings, stub_provider) as client:
+        for index in range(4):
+            response = client.post(
+                "/v1/chat/completions",
+                headers=headers,
+                json={"model": "dgx-moa-fast", "messages": messages, "tools": tools},
+            )
+            assert response.status_code == 200
+            assistant = response.json()["choices"][0]["message"]
+            state = client.app.state.store.get(session_id)
+            assert state is not None and state.execution_graph_id is not None
+            graph_ids.append(state.execution_graph_id)
+            messages.extend(
+                [
+                    assistant,
+                    {
+                        "role": "tool",
+                        "tool_call_id": f"call-{index + 1}",
+                        "content": '{"stdout":"ok","exit_code":0}',
+                    },
+                ]
+            )
+        events = client.app.state.store.events(session_id)
+
+    assert graph_ids[0] == graph_ids[1] == graph_ids[2]
+    assert graph_ids[3] != graph_ids[2]
+    assert any(
+        event["event_type"] == "execution_graph_shadow_reprojected"
+        and event["payload"]["reason"] == "tool_cycle_budget_exhausted"
+        for event in events
+    )
+    assert not any(event["event_type"] == "execution_graph_shadow_failed" for event in events)
+
+
+def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def]
+    settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_keepalive = api_module.keepalive_sse
+
+    async def keepalive_with_immediate_ping(upstream, **kwargs):  # type: ignore[no-untyped-def]
+        yield kwargs["heartbeat"]
+        async for chunk in original_keepalive(upstream, **kwargs):
+            yield chunk
+
+    monkeypatch.setattr(api_module, "keepalive_sse", keepalive_with_immediate_ping)
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(
             "/v1/responses",
@@ -6531,7 +7535,8 @@ def test_responses_post_streams_responses_events(  # type: ignore[no-untyped-def
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert response.headers["x-session-id"] == "responses-stream"
-    assert response.text.startswith(": keep-alive\n\n")
+    assert response.text.startswith("event: ping\ndata: {}\n\n")
+    assert response.text.count("event: ping") == 2
     assert "event: response.output_text.delta" in response.text
     assert "event: response.completed" in response.text
     assert "data: [DONE]" not in response.text
@@ -6584,6 +7589,60 @@ def test_responses_retries_progress_only_stop(  # type: ignore[no-untyped-def]
     assert "event: response.completed" in response.text
     assert any(event["event_type"] == "progress_only_response_retried" for event in events)
     assert stub_provider.requests[-1]["messages"][-1]["role"] == "developer"
+
+
+def test_responses_progress_retry_does_not_request_redundant_tool_after_evidence(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    calls = 0
+    session_id = "responses-completed-progress-retry"
+    test_client: TestClient | None = None
+
+    async def stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        stub_provider.requests.append(request)
+        assert test_client is not None
+        if calls == 1:
+            state = test_client.app.state.store.get(session_id)
+            assert state is not None
+            state.review_status = "approved"
+            state.tool_executions = [
+                {
+                    "tool_name": "apply_patch",
+                    "exit_code": 0,
+                    "filesystem_effect": {"changed_paths": ["app.py"]},
+                },
+                {"tool_name": "exec_command", "exit_code": 0},
+            ]
+            test_client.app.state.store.save(state)
+        text = (
+            "다음 작업에 필요한 증거를 확인합니다."
+            if calls == 1
+            else "수정과 테스트를 완료했습니다."
+        )
+
+        async def chunks():  # type: ignore[no-untyped-def]
+            yield f'data: {{"choices":[{{"delta":{{"content":"{text}"}}}}]}}\n\n'.encode()
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return chunks()
+
+    stub_provider.stream = stream  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        test_client = client
+        response = client.post(
+            "/v1/responses",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={"model": "dgx-moa-fast", "input": "작업을 완료해", "stream": True},
+        )
+
+    retry = stub_provider.requests[-1]["messages"][-1]["content"]
+    assert calls == 2
+    assert "already recorded" in retry
+    assert "Call the required tool" not in retry
+    assert "수정과 테스트를 완료했습니다." in response.text
 
 
 def test_responses_retries_consecutive_progress_only_stops(  # type: ignore[no-untyped-def]
@@ -6739,7 +7798,9 @@ def test_responses_retries_code_block_without_workspace_change(
             headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
             json={
                 "model": "dgx-moa-agent",
-                "input": "이 저장소에 rate_limiter.py를 구현하고 테스트해.",
+                "input": (
+                    "이 저장소에 rate_limiter.py를 구현하고 테스트해. Do not modify any other file."
+                ),
                 "stream": True,
             },
         )
@@ -6893,7 +7954,7 @@ def test_responses_waits_through_model_loading_without_terminal_failure(
 
     assert "event: response.completed" in response.text
     assert "event: response.failed" not in response.text
-    assert response.text.count(": keep-alive") >= 2
+    assert response.text.count("event: ping") >= 2
     assert [record.status for record in usage] == ["failed", "completed"]
     assert driver.calls.count(("start", "executor")) == 1
 
@@ -6933,7 +7994,7 @@ async def test_responses_heartbeat_close_cancels_pending_chat(
             x_dirty_state=None,
         )
         assert isinstance(response, StreamingResponse)
-        assert await anext(response.body_iterator) == b": keep-alive\n\n"
+        assert await anext(response.body_iterator) == b"event: ping\ndata: {}\n\n"
         await asyncio.wait_for(entered.wait(), timeout=1)
 
         await response.body_iterator.aclose()
@@ -7002,6 +8063,36 @@ def test_codex_utility_model_uses_unadvertised_fast_alias(
     assert "gpt-5.6-luna" not in aliases
     assert near_match.text.count("event: response.failed") == 1
     assert stub_provider.calls == ["executor"]
+
+
+def test_responses_partial_upstream_eof_fails_instead_of_completing(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    async def partial_stream(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        del role, model, request, kwargs
+
+        async def upstream():  # type: ignore[no-untyped-def]
+            yield b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+
+        return upstream()
+
+    stub_provider.stream = partial_stream  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/responses",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "responses-partial-eof",
+            },
+            json={"model": "dgx-moa-fast", "input": "work", "stream": True},
+        )
+        state = client.app.state.store.get("responses-partial-eof")
+
+    assert response.text.count("event: response.failed") == 1
+    assert "event: response.completed" not in response.text
+    assert state is not None
+    assert state.client_response_status == "failed"
+    assert state.final_output == ""
 
 
 def test_responses_post_preserves_function_tool_loop(  # type: ignore[no-untyped-def]

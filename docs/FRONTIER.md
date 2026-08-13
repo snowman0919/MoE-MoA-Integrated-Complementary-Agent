@@ -6,8 +6,10 @@ emergency-only fallback and it never owns deployment, tools, or final output.
 
 ## Authentication and execution
 
-Frontier uses `codex exec --json --sandbox read-only` with an existing Codex
-OAuth profile stored outside the repository. It does not use an OpenAI API key.
+The development transport uses an operator-managed, profile-specific Codex App
+Server daemon through `codex app-server proxy`; the deployed baseline still
+uses `codex exec --json --sandbox read-only`. Both use an existing Codex OAuth
+profile stored outside the repository and never use an OpenAI API key.
 Profile directories and locks remain owner-only; credentials are never copied
 into task evidence, traces, or configuration. Creating a new gateway client
 token is allowed, but that is independent from Frontier OAuth.
@@ -28,12 +30,18 @@ bounded retry count, profile lock, and circuit breaker. Failures distinguish
 timeout, rate limit, usage limit, authentication, provider, protocol, and open
 circuit. Optional failures retain completed local evidence and lower derived
 confidence; policy-required failures return a typed retryable response.
+The App Server path starts or resumes a non-ephemeral thread scoped to the
+hashed API-key/session identity, compacts it after the configured turn bound,
+and interrupts an active turn on timeout or cancellation. Its mode-`0600`
+mapping contains no raw identity or prompt. The gateway does not manage daemon
+lifecycle; typed daemon/proxy unavailability alone permits the stdin exec
+fallback.
 The adapter tries the configured `primary` OAuth profile first and falls back
 once to `secondary` on authentication, usage-limit, or rate-limit failures.
 Provider and protocol failures do not silently change identities. The selected
 profile name is recorded in collaboration evidence and traces; OAuth material
 is not.
-The checked-in task budget permits at most three Frontier collaborations and
+The checked-in task budget permits at most four Frontier collaborations and
 three recursive cycles, so architecture and later review can both occur without
 an unbounded model conversation.
 
