@@ -8889,3 +8889,20 @@ existing Codex OAuth Frontier Executor with routing reason
 remains typed fail-closed. Ruff and strict mypy passed for the touched paths,
 and the release-tree full suite passed `1106`. No production mutation occurred
 during this pre-deployment validation.
+
+PR `#111` merged the focused seven-file release to `main@1f6e78ce9`. The
+production checkout preserved its existing local operating history and applied
+the reviewed release as `1745d23`; its integrated full suite passed `1141`.
+The authenticated drain restart completed at 01:30 KST. Post-restart health
+reported Gateway, Executor, and Reasoner ready, Gateway restart count `0`, the
+Executor listener remained loopback-only on `127.0.0.1:19301`, and only the
+authenticated Gateway listened on `0.0.0.0:9000`.
+
+The deployed Dashboard contains the Executor controls, but the authenticated
+control projection truthfully reported `state=unmanaged` and
+`control_available=false`. The inspected production override is currently
+`lifecycle_mode=disabled` with an empty unit map and a tripped automation latch.
+The canonical `dgx-moa-executor.service` is inactive while a separately named
+validated runtime owns port `19301`. No physical OFF/ON canary or unit-map
+change was attempted: activating control requires separate approval to restore
+the canonical Executor unit/topology and re-qualify that exact mapping.
