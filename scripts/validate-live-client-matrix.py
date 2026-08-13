@@ -88,6 +88,7 @@ def start_gateway(
     *,
     frontier_enabled: bool = False,
     execution_graph_shadow: bool = False,
+    specialists_enabled: bool = False,
 ) -> tuple[uvicorn.Server, threading.Thread]:
     original_auth = os.environ.get("DGX_MOA_AUTH_ENABLED")
     os.environ["DGX_MOA_AUTH_ENABLED"] = "false"
@@ -131,8 +132,12 @@ def start_gateway(
             "remote_judge": base.remote_judge.model_copy(
                 update={"enabled": False, "provider": "disabled"}
             ),
-            "specialist_routing": base.specialist_routing.model_copy(
-                update={"enabled": False, "provider": "disabled"}
+            "specialist_routing": (
+                base.specialist_routing
+                if specialists_enabled
+                else base.specialist_routing.model_copy(
+                    update={"enabled": False, "provider": "disabled"}
+                )
             ),
             "declarative_policy": base.declarative_policy.model_copy(update={"enabled": False}),
             "executor_scheduling": base.executor_scheduling.model_copy(update={"enabled": False}),
@@ -175,6 +180,7 @@ def main() -> None:
     parser.add_argument("--serve-only", action="store_true")
     parser.add_argument("--frontier-enabled", action="store_true")
     parser.add_argument("--execution-graph-shadow", action="store_true")
+    parser.add_argument("--specialists-enabled", action="store_true")
     args = parser.parse_args()
     root = args.output.resolve()
     root.mkdir(parents=True, exist_ok=False)
@@ -191,6 +197,7 @@ def main() -> None:
             args.executor_base_url,
             frontier_enabled=args.frontier_enabled,
             execution_graph_shadow=args.execution_graph_shadow,
+            specialists_enabled=args.specialists_enabled,
         )
         stopped = threading.Event()
         signal.signal(signal.SIGTERM, lambda *_: stopped.set())
@@ -207,7 +214,13 @@ def main() -> None:
     operator_secret = secrets.token_urlsafe(32)
     base_url = f"http://127.0.0.1:{args.port}"
     operator_headers = {"Authorization": f"Bearer {operator_secret}"}
-    server, thread = start_gateway(root, args.port, operator_secret, args.executor_base_url)
+    server, thread = start_gateway(
+        root,
+        args.port,
+        operator_secret,
+        args.executor_base_url,
+        specialists_enabled=args.specialists_enabled,
+    )
     results: dict[str, object] = {}
     client_keys: dict[str, str] = {}
     key_lifecycle: dict[str, dict[str, object]] = {}

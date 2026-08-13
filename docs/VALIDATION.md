@@ -9168,3 +9168,18 @@ hash-only key를 직접 revoke했다. Production listener/state에는 접근하�
 를 pin했다. 이 image의 Git `2.47.3`을 확인했고 pinned Codex ripgrep `15.2.0` binary를
 read-only `/tools/rg`로 mount했다. 다음 epoch는 새 fixture hash/run ID에서 failed task를
 먼저 replay한다.
+
+Codex coding batch v2는 같은 `rate-limiter` task에서 Git/ripgrep inventory, source/test
+read, 실패하는 초기 unit test, patch 적용 복구, 최종 unit test 성공까지 진행했다. 즉
+v1의 tool-image hypothesis는 물리적으로 확인됐다. 그러나 구현 증거가 생긴 뒤 Runtime이
+요구한 Reviewer를 격리 launcher가 무조건 disable했고 local Reviewer도 실행 중이 아니어서
+`review_status=failed`와 client cancellation로 끝났다. 중간 Reasoner JSON decode 실패
+한 건은 `RESOURCE` 증거로 보존했으며 이후 Reasoner 호출은 복구됐다.
+
+v2도 candidate 품질이 아닌 `HARNESS` 실패다. 아직 보지 않은 두 task는 시작하지 않았다.
+정확한 child/container를 종료하고 stopped isolated DB의 evaluation key를 직접 revoke했으며
+production listener/state는 변경하지 않았다. 다음 replay는 launcher 기본값을 계속 disabled로
+유지하되 명시적인 `--specialists-enabled`에서만 기존 provider 설정을 사용한다. Gateway
+process에만 물리 검증 대상 OpenCode Planner/Reviewer credential을 제공하고 client Docker에는
+core environment와 client별 evaluation key만 전달한다. Production DB, `.env`, Hermes
+credential은 mount하거나 전달하지 않는다.
