@@ -3868,6 +3868,36 @@ async def test_incomplete_implementation_requires_a_tool_action(
 
 
 @pytest.mark.asyncio
+async def test_codebase_evaluation_requires_deep_evidence(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="evaluation-evidence",
+        objective="rust-mcu-ide 플랫폼을 확인하고 평가해봐",
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "cat rust-mcu-ide/README.md"},
+                "exit_code": 0,
+            }
+        ],
+    )
+    request = {
+        "model": "dgx-moa",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {},
+        "tools": [{"type": "function", "function": {"name": "exec_command", "parameters": {}}}],
+    }
+
+    prepared = await controller.prepare_executor(state, request, ("executor",))
+
+    assert prepared["tool_choice"] == "required"
+    assert "Complete codebase evaluation evidence now" in prepared["messages"][0]["content"]
+    assert "README alone is insufficient" in prepared["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
 async def test_progress_retry_rechecks_deferred_review(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

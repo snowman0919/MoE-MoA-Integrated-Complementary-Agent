@@ -3830,6 +3830,7 @@ class Controller:
                 {"tools": list(available_tools)},
             )
         messages = compress_messages(body["messages"], self.settings.limits)
+        evaluation_evidence_pending = self.requires_codebase_evaluation_evidence(state)
         implementation_complete = self.implementation_completion_ready(
             state, dict(request.get("metadata", {}))
         )
@@ -3847,7 +3848,7 @@ class Controller:
                 state, cast(list[dict[str, Any]], body.get("messages", []))
             )
             or self.requires_implementation_tool_action(state, dict(request.get("metadata", {})))
-            or self.requires_codebase_evaluation_evidence(state)
+            or evaluation_evidence_pending
         ):
             body["tool_choice"] = "required"
             self.store.event(
@@ -3873,7 +3874,14 @@ class Controller:
                             "are complete. "
                             "Return the concise final result now; do not call more tools."
                             if implementation_complete
-                            else "Take one useful step"
+                            else (
+                                "Complete codebase evaluation evidence now: obtain an unfiltered "
+                                "file inventory if absent, then inspect representative source and "
+                                "available tests or build configuration. README alone is "
+                                "insufficient."
+                                if evaluation_evidence_pending
+                                else "Take one useful step"
+                            )
                         )
                     ),
                     available_tools=available_tools,
