@@ -3875,10 +3875,12 @@ class Controller:
                             "Return the concise final result now; do not call more tools."
                             if implementation_complete
                             else (
-                                "Complete codebase evaluation evidence now: obtain an unfiltered "
-                                "file inventory if absent, then inspect representative source and "
-                                "available tests or build configuration. README alone is "
-                                "insufficient."
+                                "Call exec_command now. If an unfiltered inventory is absent, use "
+                                "`rg --files TARGET` or `git -C TARGET ls-files`; do not "
+                                "substitute ls, a filtered find, or a README read. After inventory "
+                                "evidence, "
+                                "read representative implementation source and available tests or "
+                                "build configuration."
                                 if evaluation_evidence_pending
                                 else "Take one useful step"
                             )
