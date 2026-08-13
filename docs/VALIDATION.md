@@ -8858,3 +8858,11 @@ The loopback vLLM model endpoint independently reported
 `prod-canonical-model-catalog-20260813` returned exact `CANONICAL_MODEL_OK` and
 terminal `response.completed` using `model=dgx-moa`. Gateway restart count was
 zero.
+
+At 15:53 KST the Codex 0.147.0 client fetched the canonical catalog but still
+sent six Responses requests with its stale default `model=gpt-5.5`; every one
+ended in `response.failed` after the gateway's internal 404. The authenticated
+gateway now normalizes that exact unadvertised harness fallback to `dgx-moa`,
+returns the canonical model name, and records `client_model_fallback` with both
+names. Near matches remain rejected, and `gpt-5.5` is not advertised. Focused
+tests passed `3`; the full suite passed `1098` before deployment.

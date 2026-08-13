@@ -2073,6 +2073,12 @@ def create_app(
         raw["model"] = model_alias
         provided_session_id = x_session_id or str(body.metadata.get("session_id") or "")
         session_id = provided_session_id or str(uuid.uuid4())
+        if model_alias != body.model:
+            request.app.state.store.event(
+                session_id,
+                "client_model_fallback",
+                {"requested_model": body.model, "selected_model": model_alias},
+            )
         api_token_id = getattr(request.state, "api_token_id", "legacy")
         recovered_tool_owner = False
         if not provided_session_id:
@@ -4733,6 +4739,12 @@ def create_app(
                     )
                 else:
                     response_session_id = str(uuid.uuid4())
+            if response_model != body.model:
+                request.app.state.store.event(
+                    response_session_id,
+                    "client_model_fallback",
+                    {"requested_model": body.model, "selected_model": response_model},
+                )
 
             async def response_stream() -> AsyncIterator[bytes]:
                 chat_task: asyncio.Task[Response] | None = None
