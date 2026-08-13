@@ -3921,7 +3921,12 @@ async def test_codebase_evaluation_requires_deep_evidence(
         "model": "dgx-moa",
         "messages": [{"role": "user", "content": state.objective}],
         "metadata": {},
-        "tools": [{"type": "function", "function": {"name": "exec_command", "parameters": {}}}],
+        "max_tokens": 32_768,
+        "tools": [
+            {"type": "function", "function": {"name": "exec_command", "parameters": {}}},
+            {"type": "function", "function": {"name": "create_goal", "parameters": {}}},
+            {"type": "function", "function": {"name": "update_goal", "parameters": {}}},
+        ],
     }
 
     prepared = await controller.prepare_executor(state, request, ("executor",))
@@ -3929,6 +3934,8 @@ async def test_codebase_evaluation_requires_deep_evidence(
     assert prepared["tool_choice"] == "required"
     assert "Call exec_command now" in prepared["messages"][0]["content"]
     assert "do not substitute ls" in prepared["messages"][0]["content"]
+    assert prepared["max_tokens"] == 2_048
+    assert [tool["function"]["name"] for tool in prepared["tools"]] == ["exec_command"]
 
 
 @pytest.mark.asyncio

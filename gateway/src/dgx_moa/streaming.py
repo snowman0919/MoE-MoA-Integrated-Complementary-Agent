@@ -173,13 +173,29 @@ def has_korean_script_leak(text: str, progress_language: str, objective: str) ->
         return False
     prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     prose = re.sub(r"`[^`\n]*`", "", prose)
-    if re.search(r"[\u3040-\u30ff]", prose):
+    if re.search(
+        r"[\u0370-\u052f\u0530-\u058f\u0590-\u08ff\u0900-\u097f"
+        r"\u0e00-\u0e7f\u10a0-\u10ff\u3040-\u30ff]",
+        prose,
+    ):
         return True
     allowed_han = set(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", objective))
-    return any(
+    if any(
         character not in allowed_han
         for character in re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", prose)
+    ):
+        return True
+    return any(
+        not re.search(r"[가-힣]", line)
+        and not line.lstrip().startswith(("|", "http://", "https://"))
+        and len(re.findall(r"\b[A-Za-z][A-Za-z'-]*\b", line)) >= 8
+        for line in prose.splitlines()
     )
+
+
+def has_internal_protocol_leak(text: str) -> bool:
+    prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    return bool(re.search(r"</?(?:function|tool|assistant|response)[_:-]", prose, re.IGNORECASE))
 
 
 def _log_token(value: str) -> str:
@@ -215,12 +231,30 @@ def tool_progress_text(tool_calls: dict[int, dict[str, object]], progress_langua
                 if progress_language == "ko"
                 else "Reading the repository instructions and required operational documents."
             )
+        if command.lstrip().startswith("cd ") and "&&" in command:
+            try:
+                workspace = shlex.split(command.split("&&", 1)[0])[1]
+            except (IndexError, ValueError):
+                workspace = "the target workspace"
+            return (
+                f"{workspace}의 주요 소스와 설정을 한 배치로 읽어 구현 범위와 결함을 판정합니다."
+                if progress_language == "ko"
+                else f"Reading {workspace}'s main sources and configuration as one batch to "
+                "assess scope and defects."
+            )
         try:
             words = shlex.split(command)
         except ValueError:
             words = command.split()
         action = words[0].rsplit("/", 1)[-1] if words else "command"
-        target = next((word for word in reversed(words[1:]) if not word.startswith("-")), ".")
+        positional = [word for word in words[1:] if not word.startswith("-") and word not in {"|"}]
+        target = (
+            positional[0]
+            if action in {"ls", "find"} and positional
+            else positional[-1]
+            if positional
+            else "."
+        )
         if action in {"ls", "find", "rg"}:
             target = (
                 "현재 작업 디렉터리"
@@ -525,6 +559,7 @@ async def responses_sse(
     usage: dict[str, object] | None = None
     terminal_error: dict[str, str] | None = None
     terminal_seen = False
+    finish_reasons: list[str] = []
 
     def response_payload(status: str, output: list[dict[str, object]]) -> dict[str, object]:
         return {
@@ -603,6 +638,7 @@ async def responses_sse(
                 choice = (chat_event.get("choices") or [{}])[0]
                 if choice.get("finish_reason"):
                     terminal_seen = True
+                    finish_reasons.append(str(choice["finish_reason"]))
                 delta = choice.get("delta") or {}
                 content = delta.get("content")
                 if isinstance(content, str) and content:
@@ -653,6 +689,10 @@ async def responses_sse(
                 len(goal_prerequisites),
             )
         text = "".join(text_parts)
+        if "length" in finish_reasons:
+            raise ProgressOnlyResponse("truncated_response")
+        if not tool_calls and has_internal_protocol_leak(text):
+            raise ProgressOnlyResponse("invalid_output")
         if not tool_calls and has_korean_script_leak(text, progress_language, objective):
             raise ProgressOnlyResponse("language_mismatch")
         if not tool_calls and (

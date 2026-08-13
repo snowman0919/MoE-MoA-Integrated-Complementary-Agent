@@ -137,7 +137,16 @@ async def test_responses_sse_preserves_requested_short_output_near_context_limit
     assert b'"text":"OK"' in b"".join(chunks)
 
 
-@pytest.mark.parametrize("text", ["프로젝트存在 확인", "存在しないとき는 종료합니다."])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "프로젝트存在 확인",
+        "存在しないとき는 종료합니다.",
+        "설정은 включен 상태입니다.",
+        "장점은 شديدة 개발 경험입니다.",
+        "Validated the platform scripts and evaluated their intended functionality completely.",
+    ],
+)
 @pytest.mark.asyncio
 async def test_responses_sse_retries_chinese_or_japanese_in_korean_prose(text: str) -> None:
     async def upstream():
@@ -176,6 +185,24 @@ async def test_responses_sse_allows_foreign_script_inside_code() -> None:
     ]
 
     assert b"response.completed" in b"".join(chunks)
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_retries_truncated_or_internal_output() -> None:
+    async def upstream(text: str, finish_reason: str):
+        payload = {"choices": [{"delta": {"content": text}, "finish_reason": finish_reason}]}
+        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    with pytest.raises(ProgressOnlyResponse, match="truncated_response"):
+        _ = [chunk async for chunk in responses_sse(upstream("평가 결과", "length"), "dgx-moa")]
+    with pytest.raises(ProgressOnlyResponse, match="invalid_output"):
+        _ = [
+            chunk
+            async for chunk in responses_sse(
+                upstream("평가 결과</function_response>", "stop"), "dgx-moa"
+            )
+        ]
 
 
 @pytest.mark.asyncio
@@ -563,6 +590,14 @@ async def test_responses_sse_maps_local_mcp_file_to_exec_command() -> None:
         (
             {"cmd": "cat AGENTS.md docs/STATE.md docs/OPERATIONS.md"},
             "저장소 지침과 필수 운영 문서를 확인합니다.",
+        ),
+        (
+            {"cmd": "find /tmp/rust-mcu-ide -type f | sort"},
+            "/tmp/rust-mcu-ide의 파일 구조를 확인해 실제 평가 대상을 정합니다.",
+        ),
+        (
+            {"cmd": "cd /tmp/rust-mcu-ide && file README.md install.sh"},
+            "/tmp/rust-mcu-ide의 주요 소스와 설정을 한 배치로 읽어 구현 범위와 결함을 판정합니다.",
         ),
     ],
 )

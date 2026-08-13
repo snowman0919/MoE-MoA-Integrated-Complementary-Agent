@@ -2634,6 +2634,21 @@ def create_app(
                         ),
                     )
                     executor_remote = executor_provider == "frontier"
+            quality_retry_reason = str(
+                getattr(request.state, "responses_quality_retry_reason", "") or ""
+            )
+            if quality_retry_reason and request.app.state.frontier is not None:
+                executor_remote = True
+                executor_flash = False
+                executor_routing_reason = f"local_{quality_retry_reason}"
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_remote_selected",
+                    {
+                        "routing_reason": executor_routing_reason,
+                        "provider": "frontier",
+                    },
+                )
             async with request.app.state.executor_admission_lock:
                 initial_lease_roles = tuple(
                     role
@@ -4899,6 +4914,15 @@ def create_app(
                                         yield chunk
                                     return
                                 progress_only_retries += 1
+                                quality_retry = retry_error.reason in {
+                                    "invalid_output",
+                                    "language_mismatch",
+                                    "truncated_response",
+                                }
+                                if quality_retry:
+                                    request.state.responses_quality_retry_reason = (
+                                        retry_error.reason
+                                    )
                                 request.app.state.store.event(
                                     response_session_id,
                                     (
@@ -4910,11 +4934,23 @@ def create_app(
                                 )
                                 if retry_error.reason == "language_mismatch":
                                     retry_instruction = (
-                                        "The previous answer mixed Chinese or "
-                                        "Japanese script into Korean prose. Retry "
-                                        "with Korean prose only. Preserve foreign "
-                                        "text only inside code or identifiers "
-                                        "when required."
+                                        "The previous answer mixed another prose language into "
+                                        "Korean. Produce one concise Korean final answer only. "
+                                        "Keep necessary foreign identifiers inside inline code. "
+                                        "Do not append an English recap or meta commentary."
+                                    )
+                                elif retry_error.reason == "truncated_response":
+                                    retry_instruction = (
+                                        "The previous final answer reached the output limit and "
+                                        "is incomplete. Return one evidence-based final answer "
+                                        "under 1,200 characters. Do not repeat tool work, add "
+                                        "future plans, or append an English recap."
+                                    )
+                                elif retry_error.reason == "invalid_output":
+                                    retry_instruction = (
+                                        "The previous answer leaked an internal protocol marker. "
+                                        "Return only the concise user-facing final answer without "
+                                        "XML-like tags, function responses, or provider metadata."
                                     )
                                 elif goal_requires_tool_action(response_state):
                                     retry_instruction = (
