@@ -387,3 +387,20 @@ def test_role_targets_bound_discretionary_evidence_without_dropping_original_con
     assert json.loads(planner.request_constraints_json[0]) == "hard constraint"
     assert json.loads(planner.acceptance_criteria_json[0]) == "acceptance criterion"
     assert planner.provenance.excluded_evidence_ids
+
+
+def test_reasoner_target_drops_old_oversized_inputs_and_keeps_current_objective() -> None:
+    source = build_runtime_evidence_snapshot(
+        request_id="oversized-history",
+        objective="current objective",
+        request_inputs=tuple(
+            canonical_request_input(f"input-{index}", {"content": "x" * 30_000})
+            for index in range(8)
+        ),
+    )
+
+    reasoner = project_role_context(source, "reasoner", stage="fanout")
+
+    assert len(reasoner.model_dump_json().encode()) <= ROLE_CONTEXT_TARGET_BYTES["reasoner"]
+    assert reasoner.objective == "current objective"
+    assert reasoner.request_inputs[-1].input_id == "input-7"

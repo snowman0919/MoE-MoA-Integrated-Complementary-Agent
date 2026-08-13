@@ -515,6 +515,7 @@ def project_role_context(
         if item.role in policy.allowed_contribution_roles
         and (not causal_parents or item.source_attempt_id in causal_parents)
     )
+    request_inputs = snapshot.request_inputs
     target_bytes = ROLE_CONTEXT_TARGET_BYTES[role]
 
     def build() -> RoleContextProjection:
@@ -544,7 +545,7 @@ def project_role_context(
                 if item.role in policy.allowed_contribution_roles and item not in contributions
             ),
             included_categories=_projection_categories(
-                snapshot.request_inputs,
+                request_inputs,
                 snapshot.request_constraints_json,
                 snapshot.acceptance_criteria_json,
                 evidence,
@@ -563,7 +564,7 @@ def project_role_context(
             "stage": stage,
             "request_id": snapshot.request_id,
             "objective": snapshot.objective,
-            "request_inputs": snapshot.request_inputs,
+            "request_inputs": request_inputs,
             "request_constraints_json": snapshot.request_constraints_json,
             "acceptance_criteria_json": snapshot.acceptance_criteria_json,
             "runtime_evidence": evidence,
@@ -581,5 +582,8 @@ def project_role_context(
         projection = build()
     while len(_canonical(projection).encode()) > target_bytes and contributions:
         contributions = contributions[:-1]
+        projection = build()
+    while len(_canonical(projection).encode()) > target_bytes and request_inputs:
+        request_inputs = request_inputs[1:]
         projection = build()
     return projection
