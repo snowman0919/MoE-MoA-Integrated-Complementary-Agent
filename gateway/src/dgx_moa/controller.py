@@ -4018,6 +4018,11 @@ class Controller:
                 "rg --files" in command(item)
                 or "git ls-files" in command(item)
                 or (
+                    command(item).strip().startswith("ls ")
+                    and len(command(item).split()) > 2
+                    and command(item).split()[-1] not in {".", "./"}
+                )
+                or (
                     "find " in command(item)
                     and "-type f" in command(item)
                     and "-name" not in command(item)
@@ -4027,20 +4032,24 @@ class Controller:
         if not inventories:
             return True
 
-        inventory = inventories[-1]
-        summary = str(inventory.get("stdout_summary", ""))
-        paths = [line.strip().lower() for line in summary.splitlines() if line.strip()]
+        summary = "\n".join(str(item.get("stdout_summary", "")) for item in inventories)
+        paths = [line.strip().lower().split()[-1] for line in summary.splitlines() if line.strip()]
         source_paths = [
             path
             for path in paths
-            if path.endswith((".rs", ".c", ".cc", ".cpp", ".h", ".py", ".js", ".ts", ".sh"))
+            if (
+                path == "src"
+                or path.endswith("/src")
+                or path.endswith((".rs", ".c", ".cc", ".cpp", ".h", ".py", ".js", ".ts", ".sh"))
+            )
             and "/test" not in path
             and not path.startswith("test")
         ]
         verification_paths = [
             path
             for path in paths
-            if "/test" in path
+            if path in {"test", "tests"}
+            or "/test" in path
             or path.startswith("test")
             or path.rsplit("/", 1)[-1]
             in {
@@ -4055,11 +4064,12 @@ class Controller:
         ]
         if not source_paths and not verification_paths:
             return bool(
-                inventory.get("truncated")
-                or int(inventory.get("stdout_bytes", 0)) > len(summary.encode())
+                any(item.get("truncated") for item in inventories)
+                or sum(int(item.get("stdout_bytes", 0)) for item in inventories)
+                > len(summary.encode())
             )
 
-        inventory_index = successful.index(inventory)
+        inventory_index = successful.index(inventories[0])
         reads = [
             command(item)
             for item in successful[inventory_index + 1 :]

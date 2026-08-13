@@ -3607,6 +3607,40 @@ def test_implementation_completion_requires_change_validation_and_review(
     )
     assert controller.requires_codebase_evaluation_evidence(workspace_evaluation) is False
 
+    traversed_evaluation = SessionState(
+        session_id="traversed-evaluation",
+        objective=workspace_evaluation.objective,
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "ls -la rust-mcu-ide"},
+                "stdout_summary": "README.md\nCargo.toml\nsrc\ntests",
+                "exit_code": 0,
+            },
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "cat rust-mcu-ide/README.md"},
+                "exit_code": 0,
+            },
+        ],
+    )
+    assert controller.requires_codebase_evaluation_evidence(traversed_evaluation) is True
+    traversed_evaluation.tool_executions.extend(
+        [
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "cat rust-mcu-ide/src/main.rs"},
+                "exit_code": 0,
+            },
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "cat rust-mcu-ide/Cargo.toml"},
+                "exit_code": 0,
+            },
+        ]
+    )
+    assert controller.requires_codebase_evaluation_evidence(traversed_evaluation) is False
+
     documentation_only = SessionState(
         session_id="documentation-only",
         objective="Evaluate this platform codebase.",
