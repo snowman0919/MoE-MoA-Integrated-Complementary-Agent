@@ -46,6 +46,7 @@ from .controller import (
     LoopAdmissionError,
     PolicyBlocked,
     ReasonerUnavailable,
+    ReviewerCorrectionRequired,
     pending_goal_prerequisites,
 )
 from .evolution import PromptRegistry
@@ -3977,13 +3978,158 @@ def create_app(
                             raise
                         raise ValueError(f"review failed: {error}") from error
                 else:
+                    review_approved = review_result.get("status") == "approved"
                     finish_execution_role(
                         state,
                         reviewer_execution_attempt,
                         "reviewer",
-                        approved=review_result.get("status") == "approved",
+                        approved=review_approved,
+                        outcome=(EdgeType.ON_SUCCESS if review_approved else EdgeType.ON_FINDING),
                     )
                     stage_status["reviewer"] = "completed"
+                    if not review_approved and prepared.get("tools") and not assistant_tool_calls:
+                        tool_names = sorted(
+                            {
+                                str(tool.get("name") or tool.get("function", {}).get("name"))
+                                for tool in prepared["tools"]
+                                if isinstance(tool, dict)
+                                and (tool.get("name") or tool.get("function", {}).get("name"))
+                            }
+                        )
+                        correction_request = dict(prepared)
+                        correction_request["stream"] = False
+                        correction_request["tool_choice"] = "required"
+                        correction_request["messages"] = [
+                            *prepared.get("messages", []),
+                            assistant_message,
+                            {
+                                "role": "system",
+                                "content": (
+                                    "The Reviewer rejected the prior terminal response. Call "
+                                    "exactly one available client tool now to apply the required "
+                                    "correction or perform its next bounded validation step. "
+                                    "Return a native tool call, not prose.\n"
+                                    + json.dumps(
+                                        {"findings": review_result.get("findings", [])},
+                                        ensure_ascii=False,
+                                        sort_keys=True,
+                                    )
+                                ),
+                            },
+                        ]
+                        request.app.state.store.event(
+                            state_session_id,
+                            "review_correction_started",
+                            {"tools": tool_names},
+                        )
+                        if execution_runtime is not None:
+                            try:
+                                primary_node = next(
+                                    node
+                                    for node in execution_runtime.graph.nodes
+                                    if node.node_type == NodeType.EXECUTOR
+                                    and node.purpose == "primary"
+                                )
+                                if primary_node.node_id in execution_runtime.ready_node_ids():
+                                    execution_evidence_ids.clear()
+                                    execution_validated_evidence_ids.clear()
+                                    execution_contradicted_evidence_ids.clear()
+                                    execution_attempt_id = execution_runtime.start_attempt(
+                                        primary_node.node_id,
+                                        model=(
+                                            configured.executor_scheduling.flash_model
+                                            if executor_flash
+                                            else request.app.state.frontier.config.model
+                                            if executor_remote
+                                            else configured.models["executor"].served_name
+                                        ),
+                                    ).attempt_id
+                            except (StopIteration, ValueError, sqlite3.Error) as error:
+                                record_shadow_failure(
+                                    request.app.state.store,
+                                    state_session_id,
+                                    "review_correction",
+                                    error,
+                                )
+                                execution_runtime = None
+                                execution_attempt_id = None
+                        active_stage = "executor_total"
+                        correction_started = time.monotonic()
+                        response = (
+                            await remote_executor_correction(
+                                correction_request, "review_correction"
+                            )
+                            if executor_remote
+                            else await request.app.state.provider.complete(
+                                "executor",
+                                configured.models["executor"],
+                                correction_request,
+                                timeout_seconds=(configured.limits.executor_total_timeout_seconds),
+                                stage="review_correction",
+                            )
+                        )
+                        token_usage.update(reported_usage(response.get("usage")))
+                        request.app.state.controller.record_invocation(
+                            state,
+                            "executor",
+                            response,
+                            correction_started,
+                            mode="review_correction",
+                            fallback_reason=(executor_routing_reason if executor_remote else None),
+                        )
+                        validate_assistant_response(response)
+                        assistant_message = response.get("choices", [{}])[0].get("message", {})
+                        assistant_tool_calls = assistant_message.get("tool_calls") or []
+                        if not assistant_tool_calls:
+                            request.app.state.store.event(
+                                state_session_id,
+                                "review_correction_failed",
+                                {"reason": "tool_call_missing"},
+                            )
+                            raise ReviewerCorrectionRequired(
+                                "Reviewer correction did not produce a client tool call"
+                            )
+                        for call in assistant_tool_calls:
+                            request.app.state.controller.admit_tool_call(
+                                state,
+                                str(call.get("function", {}).get("name", "")) or None,
+                            )
+                        assistant_tool_call_ids = [
+                            str(call.get("id"))
+                            for call in assistant_tool_calls
+                            if isinstance(call, dict) and call.get("id")
+                        ]
+                        state.pending_tool_call_ids = list(
+                            dict.fromkeys([*state.pending_tool_call_ids, *assistant_tool_call_ids])
+                        )[-configured.limits.max_steps :]
+                        state.last_tool_call = assistant_tool_calls[-1]
+                        finish_reason = response.get("choices", [{}])[0].get("finish_reason")
+                        state.finish_reasons = [str(finish_reason)] if finish_reason else []
+                        state.truncated = finish_reason == "length"
+                        execution_evidence_ids.append(
+                            request.app.state.controller.record_evidence(
+                                state,
+                                "review_correction_action",
+                                "executor",
+                                {
+                                    "finish_reason": finish_reason,
+                                    "has_tool_calls": True,
+                                },
+                                generated_from=state.last_decision_id,
+                            )
+                        )
+                        if state.decisions:
+                            state.decisions[-1]["structured_decision"] = assistant_message
+                        finish_execution_primary(
+                            state,
+                            outcome=EdgeType.ON_FINDING,
+                            stage="review_correction_executor",
+                        )
+                        request.app.state.store.event(
+                            state_session_id,
+                            "review_correction_completed",
+                            {"tool_calls": len(assistant_tool_calls)},
+                        )
             if not state.truncated:
                 request.app.state.controller.apply_metadata(state, body.metadata)
             judge_reasons = list(
@@ -4446,6 +4592,15 @@ def create_app(
                 str(error),
                 "judge_correction_required",
                 error.verdict,
+                headers={"X-Session-ID": state_session_id},
+            )
+        except ReviewerCorrectionRequired as error:
+            finalize_request("reviewer", "failed", downstream_started=True)
+            return error_response(
+                status.HTTP_409_CONFLICT,
+                str(error),
+                "reviewer_correction_required",
+                "tool_call_missing",
                 headers={"X-Session-ID": state_session_id},
             )
         except JudgeProviderError as error:

@@ -5385,6 +5385,92 @@ def test_low_risk_review_failure_preserves_executor_response(
     assert any(event["event_type"] == "review_failed" for event in events)
 
 
+def test_reviewer_rejection_hands_correction_to_client_tool(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+    executor_calls = 0
+
+    async def reject_then_correct(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal executor_calls
+        if role == "reviewer":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "status": "rejected",
+                                    "findings": [
+                                        {
+                                            "finding_id": "review-1",
+                                            "severity": "important",
+                                            "category": "correctness",
+                                            "evidence_references": ["diff-1"],
+                                            "affected_location": "rate_limiter.py",
+                                            "impact": "Float windows are rejected.",
+                                            "required_correction": "Accept positive finite floats.",
+                                            "optional_recommendation": None,
+                                        }
+                                    ],
+                                }
+                            )
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        if role == "executor" and not request.get("response_format"):
+            executor_calls += 1
+            if executor_calls == 1:
+                return {
+                    "choices": [
+                        {
+                            "message": {"role": "assistant", "content": "done"},
+                            "finish_reason": "stop",
+                        }
+                    ]
+                }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = reject_then_correct  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "review-correction-tool",
+            },
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "fix rate_limiter.py"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "apply_patch",
+                            "description": "patch a file",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+                "metadata": {"diff_summary": "implemented rate limiter"},
+            },
+        )
+        state = client.app.state.store.get("review-correction-tool")
+        events = client.app.state.store.events("review-correction-tool")
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == (
+        "read_file"
+    )
+    assert stub_provider.requests[-1]["tool_choice"] == "required"
+    assert "Accept positive finite floats." in stub_provider.requests[-1]["messages"][-1]["content"]
+    assert state is not None and state.review_status == "rejected"
+    assert state.pending_tool_call_ids == ["call-preserved"]
+    assert any(event["event_type"] == "review_correction_completed" for event in events)
+
+
 @pytest.mark.parametrize("failure", ["value", "timeout", "http_4xx"])
 def test_high_risk_review_failure_returns_typed_bad_gateway(
     settings, stub_provider: StubProvider, failure: str

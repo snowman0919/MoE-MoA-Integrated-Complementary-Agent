@@ -140,6 +140,10 @@ class JudgeCorrectionRequired(RuntimeError):
         super().__init__("Remote Judge requires an Executor correction turn")
 
 
+class ReviewerCorrectionRequired(RuntimeError):
+    pass
+
+
 class LoopAdmissionError(RuntimeError):
     pass
 
