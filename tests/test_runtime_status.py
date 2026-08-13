@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from dgx_moa import runtime_status
@@ -13,6 +14,72 @@ from dgx_moa.usage import (
     RequestUsageStart,
     UsageStore,
 )
+
+
+def test_dashboard_telemetry_reports_local_and_mathcat_without_raw_commands(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    outputs = iter(
+        [
+            ("NVIDIA GB10, [N/A], [N/A], [N/A], 96, 35.68", None),
+            (
+                "MemTotal: 100 kB\nMemAvailable: 40 kB\n--GPU--\n"
+                "NVIDIA RTX, 10240, 8161, 1708, 0, 20.62",
+                None,
+            ),
+        ]
+    )
+    monkeypatch.setattr(runtime_status, "_telemetry_command", lambda *args: next(outputs))
+
+    result = runtime_status.dashboard_telemetry()
+
+    assert result["retention"] == {
+        "minimum_days": 90,
+        "automatic_purge": False,
+        "basis": "durable_store_without_automatic_deletion",
+    }
+    assert result["hosts"]["gb10"]["status"] == "available"
+    assert result["hosts"]["gb10"]["gpus"][0]["memory_total_mib"] is None
+    assert result["hosts"]["mathcat"] == {
+        "status": "available",
+        "memory": {"memtotal_bytes": 102400, "memavailable_bytes": 40960},
+        "gpus": [
+            {
+                "name": "NVIDIA RTX",
+                "memory_total_mib": 10240.0,
+                "memory_used_mib": 8161.0,
+                "memory_free_mib": 1708.0,
+                "utilization_percent": 0.0,
+                "power_watts": 20.62,
+            }
+        ],
+        "error_class": None,
+    }
+
+
+def test_role_validation_requires_fresh_exact_structured_probe(tmp_path: Path) -> None:
+    measured_at = datetime.now(UTC).isoformat()
+    planner = {
+        "model": "planner-model",
+        "available": True,
+        "basis": "structured_inference_probe",
+        "measured_at": measured_at,
+    }
+    path = tmp_path / "role-validation.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "role-validation-v1",
+                "measured_at": measured_at,
+                "roles": {
+                    "Planner": planner,
+                    "Reviewer": planner | {"model": "wrong-model"},
+                },
+            }
+        )
+    )
+
+    assert runtime_status.role_validation(
+        path, {"Planner": "planner-model", "Reviewer": "reviewer-model"}
+    ) == {"Planner": planner}
 
 
 def test_runtime_report_contains_bounded_content_free_usage(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -428,7 +428,3 @@ class PromptRegistry:
         if role not in PROMPT_ROLES:
             raise ValueError("unsupported prompt role")
         return self.registry.active(f"prompt.{role}")
-
-    def active_template(self, role: str) -> str | None:
-        artifact = self.active_artifact(role)
-        return str(artifact.payload["template"]) if artifact else None

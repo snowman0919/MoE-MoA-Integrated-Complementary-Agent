@@ -179,6 +179,14 @@ def test_trace_metrics_include_content_free_runtime_timing() -> None:
         "knowledge_versions": [],
         "prompt_versions": {},
         "engineering_loop_id": "",
+        "execution_graph": {
+            "mode": "disabled",
+            "graph_id": None,
+            "graph_hash": None,
+            "template_id": None,
+            "checkpoint_id": None,
+            "active_state_object_ref": None,
+        },
     }
     serialized = json.dumps(metrics)
     assert state.objective not in serialized

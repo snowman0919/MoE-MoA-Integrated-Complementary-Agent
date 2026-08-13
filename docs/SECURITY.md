@@ -22,10 +22,13 @@ not a replacement for administrator authentication.
   revocation, and logout invalidate the session. The cookie gains `Secure`
   automatically under HTTPS; the reviewed deployment currently uses encrypted
   tailnet transport without Tailscale HTTPS.
-- Role-model endpoints bind to loopback. The gateway binds only the configured
-  tailnet address and is the sole inference ingress.
-- Direct tailnet TCP is the ingress; Tailscale Serve and Funnel are not used.
-- Tailnet ACL and optional gateway bearer authentication protect inference.
+- Role-model endpoints bind to loopback. The authenticated gateway is the sole
+  inference ingress and binds `0.0.0.0:9000` for loopback, tailnet, and LAN
+  clients.
+- Direct authenticated TCP is the ingress path; Tailscale Serve and Funnel are
+  not used.
+- Tailnet ACLs protect tailnet transport. Gateway bearer authentication is
+  mandatory on every interface. Host firewall rules define external reachability.
 - API key lives only in untracked `.env` and client environment variables.
 - Authentication compares tokens in constant time.
 - Trace export recursively redacts token, password, secret, and API-key fields.

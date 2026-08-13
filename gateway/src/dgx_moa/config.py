@@ -276,7 +276,7 @@ class RemoteJudgeConfig(BaseModel):
     enabled: bool = False
     provider: Literal["disabled", "opencode_go", "mock"] = "disabled"
     mode: Literal["selective"] = "selective"
-    model: str = "glm-5.2"
+    model: str = "kimi-k3"
     endpoint: str | None = None
     api_key_env: str = "OPENCODE_GO_API_KEY"
     timeout_seconds: float = Field(default=120, gt=0, le=600)
@@ -312,7 +312,7 @@ class SpecialistRoutingConfig(BaseModel):
     models: dict[str, str] = Field(
         default_factory=lambda: {
             "planner": "deepseek-v4-pro",
-            "reviewer": "deepseek-v4-flash",
+            "reviewer": "deepseek-v4-pro",
         }
     )
     timeout_seconds: float = Field(default=120, gt=0, le=600)
@@ -369,11 +369,31 @@ class DeclarativePolicyConfig(BaseModel):
         return PolicySet(version=self.version, policies=self.policies)
 
 
-class DiscordObservationConfig(BaseModel):
+class ExecutionGraphConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    webhook_url: SecretStr
-    thread_id: str | None = None
+    mode: Literal["disabled", "shadow"] = "disabled"
+
+
+class ExecutorSchedulingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    same_key_max_local_queue: Literal[3] = 3
+    max_total_local_queue: int = Field(default=256, ge=3, le=10_000)
+    queue_timeout_seconds: float = Field(default=14_400, gt=0, le=86_400)
+    flash_provider: Literal["disabled", "opencode_go"] = "disabled"
+    flash_model: Literal["deepseek-v4-flash"] = "deepseek-v4-flash"
+    flash_endpoint: str | None = None
+    flash_api_key_env: str = "OPENCODE_GO_API_KEY"
+
+    @model_validator(mode="after")
+    def validate_enabled_scheduler(self) -> ExecutorSchedulingConfig:
+        if self.enabled and (self.flash_provider != "opencode_go" or not self.flash_endpoint):
+            raise ValueError("enabled Executor scheduling requires OpenCode Go Flash")
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", self.flash_api_key_env):
+            raise ValueError("Executor Flash credential must be an environment variable name")
+        return self
 
 
 class TelegramObservationConfig(BaseModel):
@@ -405,7 +425,6 @@ class LiveObservationConfig(BaseModel):
     batch_size: int = Field(default=10, ge=1, le=50)
     batch_interval_seconds: float = Field(default=2, ge=0.1, le=60)
     request_timeout_seconds: float = Field(default=10, gt=0, le=60)
-    discord: DiscordObservationConfig | None = None
     telegram: TelegramObservationConfig | None = None
     controls: ObservationControlConfig = Field(default_factory=ObservationControlConfig)
 
@@ -514,13 +533,22 @@ class Settings(BaseModel):
     remote_judge: RemoteJudgeConfig = Field(default_factory=RemoteJudgeConfig)
     specialist_routing: SpecialistRoutingConfig = Field(default_factory=SpecialistRoutingConfig)
     declarative_policy: DeclarativePolicyConfig = Field(default_factory=DeclarativePolicyConfig)
+    execution_graph: ExecutionGraphConfig = Field(default_factory=ExecutionGraphConfig)
+    executor_scheduling: ExecutorSchedulingConfig = Field(default_factory=ExecutorSchedulingConfig)
+    dashboard_enabled: bool = False
     live_observation: LiveObservationConfig = Field(default_factory=LiveObservationConfig)
     training_data: TrainingDataConfig = Field(default_factory=TrainingDataConfig)
     weekly_jobs: WeeklyJobsConfig = Field(default_factory=WeeklyJobsConfig)
     models: dict[str, ModelConfig] = Field(default_factory=dict)
     limits: Limits = Field(default_factory=Limits)
 
-    @field_validator("auth_enabled", "admin_api_enabled", "frontier_enabled", mode="before")
+    @field_validator(
+        "auth_enabled",
+        "admin_api_enabled",
+        "frontier_enabled",
+        "dashboard_enabled",
+        mode="before",
+    )
     @classmethod
     def validate_boolean(cls, value: Any) -> bool:
         return parse_bool(value)
@@ -707,6 +735,21 @@ def load_settings(path: str | Path | None = None) -> Settings:
         with suppress(json.JSONDecodeError):
             declarative_policy = json.loads(declarative_policy)
     gateway["declarative_policy"] = declarative_policy
+    execution_graph: Any = os.getenv("DGX_MOA_EXECUTION_GRAPH", gateway.get("execution_graph", {}))
+    if isinstance(execution_graph, str):
+        with suppress(json.JSONDecodeError):
+            execution_graph = json.loads(execution_graph)
+    gateway["execution_graph"] = execution_graph
+    executor_scheduling: Any = os.getenv(
+        "DGX_MOA_EXECUTOR_SCHEDULING", gateway.get("executor_scheduling", {})
+    )
+    if isinstance(executor_scheduling, str):
+        with suppress(json.JSONDecodeError):
+            executor_scheduling = json.loads(executor_scheduling)
+    gateway["executor_scheduling"] = executor_scheduling
+    gateway["dashboard_enabled"] = os.getenv(
+        "DGX_MOA_DASHBOARD_ENABLED", gateway.get("dashboard_enabled", False)
+    )
     live_observation: Any = os.getenv(
         "DGX_MOA_LIVE_OBSERVATION", gateway.get("live_observation", {})
     )

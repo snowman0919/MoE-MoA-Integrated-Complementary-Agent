@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import shutil
+import signal
 import socket
 import subprocess
 import threading
@@ -79,7 +80,15 @@ def client_env(root: Path, secret: str) -> dict[str, str]:
     }
 
 
-def start_gateway(root: Path, port: int, secret: str) -> tuple[uvicorn.Server, threading.Thread]:
+def start_gateway(
+    root: Path,
+    port: int,
+    secret: str,
+    executor_base_url: str | None,
+    *,
+    frontier_enabled: bool = False,
+    execution_graph_shadow: bool = False,
+) -> tuple[uvicorn.Server, threading.Thread]:
     original_auth = os.environ.get("DGX_MOA_AUTH_ENABLED")
     os.environ["DGX_MOA_AUTH_ENABLED"] = "false"
     try:
@@ -89,22 +98,32 @@ def start_gateway(root: Path, port: int, secret: str) -> tuple[uvicorn.Server, t
             os.environ.pop("DGX_MOA_AUTH_ENABLED", None)
         else:
             os.environ["DGX_MOA_AUTH_ENABLED"] = original_auth
+    models = dict(base.models)
+    if executor_base_url:
+        models["executor"] = models["executor"].model_copy(
+            update={"base_url": executor_base_url, "context_length": 131_072}
+        )
+    execution_graph = base.execution_graph.model_copy(
+        update={"mode": "shadow" if execution_graph_shadow else "disabled"}
+    )
     settings = base.model_copy(
         update={
             "bind_host": "127.0.0.1",
             "bind_port": port,
             "auth_enabled": True,
             "api_key": None,
-            "api_keys": {"physical": secret},
-            "admin_api_enabled": False,
+            "api_keys": {"operator" if frontier_enabled else "physical": secret},
+            "admin_api_enabled": frontier_enabled,
             "state_db": root / "runtime/state.db",
             "run_dir": root / "runtime",
             "runtime_channel": "dev",
             "trace_origin": "validation",
             "controller_commit": "dirty-predeployment-validation",
-            "frontier_enabled": False,
+            "frontier_enabled": frontier_enabled,
+            "execution_graph": execution_graph,
             "lifecycle_mode": "disabled",
             "lifecycle_unit_map": {},
+            "models": models,
         }
     )
     server = uvicorn.Server(
@@ -135,16 +154,43 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--port", type=int, default=19300)
+    parser.add_argument("--executor-base-url")
+    parser.add_argument("--serve-only", action="store_true")
+    parser.add_argument("--frontier-enabled", action="store_true")
+    parser.add_argument("--execution-graph-shadow", action="store_true")
     args = parser.parse_args()
     root = args.output.resolve()
     root.mkdir(parents=True, exist_ok=False)
     if not port_available(args.port):
         raise SystemExit(f"port {args.port} is already bound")
+    if args.serve_only:
+        secret = os.getenv("DGX_MOA_OPENCODE_KEY")
+        if not secret:
+            raise SystemExit("DGX_MOA_OPENCODE_KEY is required for --serve-only")
+        server, thread = start_gateway(
+            root,
+            args.port,
+            secret,
+            args.executor_base_url,
+            frontier_enabled=args.frontier_enabled,
+            execution_graph_shadow=args.execution_graph_shadow,
+        )
+        stopped = threading.Event()
+        signal.signal(signal.SIGTERM, lambda *_: stopped.set())
+        signal.signal(signal.SIGINT, lambda *_: stopped.set())
+        try:
+            while thread.is_alive() and not stopped.wait(0.5):
+                pass
+        finally:
+            server.should_exit = True
+            thread.join(timeout=30)
+        return
+
     before = git_fingerprint(PRODUCTION)
     secret = secrets.token_urlsafe(32)
     base_url = f"http://127.0.0.1:{args.port}"
     headers = {"Authorization": f"Bearer {secret}"}
-    server, thread = start_gateway(root, args.port, secret)
+    server, thread = start_gateway(root, args.port, secret, args.executor_base_url)
     results: dict[str, object] = {}
     try:
         generic = httpx.post(
@@ -231,7 +277,7 @@ def main() -> None:
                             "models": {
                                 "dgx-moa-fast": {
                                     "name": "DGX MoA fast",
-                                    "limit": {"context": 65_536, "output": 16_384},
+                                    "limit": {"context": 131_072, "output": 16_384},
                                 }
                             },
                         }
@@ -273,7 +319,7 @@ def main() -> None:
             "  provider: custom\n"
             f"  base_url: {base_url}/v1\n"
             "  api_key: ${DGX_MOA_API_KEY}\n"
-            "  context_length: 65536\n"
+            "  context_length: 131072\n"
             "  max_tokens: 128\n"
         )
         hermes_env = client_env(root / "hermes/environment", secret)

@@ -115,6 +115,12 @@ class SessionState(BaseModel):
     completed_steps: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
     engineering_loop: LoopState | None = None
+    execution_graph_mode: Literal["disabled", "shadow"] = "disabled"
+    execution_graph_id: str | None = None
+    execution_graph_hash: str | None = None
+    execution_graph_template: str | None = None
+    execution_checkpoint_id: str | None = None
+    active_state_object_ref: str | None = None
     skill_selections: list[dict[str, Any]] = Field(default_factory=list)
     knowledge_selections: list[dict[str, Any]] = Field(default_factory=list)
     prompt_versions: dict[str, str] = Field(default_factory=dict)
@@ -123,6 +129,14 @@ class SessionState(BaseModel):
     policy_redact_fields: list[str] = Field(default_factory=list)
     policy_fail_closed_roles: list[str] = Field(default_factory=list)
     completion_evidence: dict[str, str] = Field(default_factory=dict)
+    current_draft: str = ""
+    final_output: str = ""
+    role_context_projections: list[dict[str, Any]] = Field(default_factory=list)
+    canonical_evidence_snapshot_id: str | None = None
+    canonical_evidence_snapshot_hash: str | None = None
+    canonical_evidence_snapshot: dict[str, Any] | None = None
+    explicit_tool_instruction_hash: str | None = None
+    explicit_tool_evidence_cursor: int = 0
     approved_scope: list[str] = Field(default_factory=list)
     last_tool_call: dict[str, Any] | None = None
     pending_tool_call_ids: list[str] = Field(default_factory=list)
@@ -149,6 +163,7 @@ class SessionState(BaseModel):
     repository_training_policy: Literal[
         "training_allowed", "internal_only", "training_denied", "unknown"
     ] = "unknown"
+    client_response_status: Literal["completed", "failed", "timed_out", "cancelled"] | None = None
     final_status: FinalStatus | None = None
     control_state: Literal["running", "paused", "terminated"] = "running"
     control_approvals: list[str] = Field(default_factory=list)
@@ -181,6 +196,7 @@ class SessionState(BaseModel):
 class StateStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
+        self._session_owners: dict[str, str] = {}
         self._event_listeners: list[Callable[[str, str, dict[str, Any], str], None]] = []
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as database:
@@ -245,6 +261,7 @@ class StateStore:
 
     def save(self, state: SessionState) -> None:
         state.updated_at = now()
+        self._session_owners[state.session_id] = state.api_token_id
         with self._connect() as database:
             database.execute(
                 "INSERT INTO sessions(session_id, payload, updated_at) VALUES (?, ?, ?) "
@@ -252,6 +269,28 @@ class StateStore:
                 "updated_at=excluded.updated_at",
                 (state.session_id, state.model_dump_json(), state.updated_at),
             )
+
+    def session_owner(self, session_id: str) -> str | None:
+        if owner := self._session_owners.get(session_id):
+            return owner
+        state = self.get(session_id)
+        if state is not None:
+            self._session_owners[session_id] = state.api_token_id
+            return state.api_token_id
+        return None
+
+    def sessions(self, api_token_id: str, *, limit: int = 100) -> list[SessionState]:
+        bounded_limit = max(1, min(limit, 500))
+        with self._connect() as database:
+            rows = database.execute(
+                "SELECT payload FROM sessions ORDER BY updated_at DESC LIMIT ?",
+                (bounded_limit * 10,),
+            ).fetchall()
+        return [
+            state
+            for (payload,) in rows
+            if (state := SessionState.model_validate_json(payload)).api_token_id == api_token_id
+        ][:bounded_limit]
 
     def event(self, session_id: str, event_type: str, payload: dict[str, Any]) -> None:
         created_at = now()
@@ -281,6 +320,14 @@ class StateStore:
             {"event_type": event_type, "payload": json.loads(payload), "created_at": created_at}
             for event_type, payload, created_at in rows
         ]
+
+    def event_cursor(self, session_id: str) -> int:
+        with self._connect() as database:
+            return int(
+                database.execute(
+                    "SELECT COUNT(*) FROM events WHERE session_id = ?", (session_id,)
+                ).fetchone()[0]
+            )
 
     def index_trace(
         self,

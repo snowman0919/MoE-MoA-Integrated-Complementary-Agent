@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import re
 import sqlite3
 import subprocess
+from datetime import UTC, datetime
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +15,30 @@ from .lifecycle import read_automation_status, read_latest_decisions
 from .usage import UsageStore
 
 SERVICES = ("gateway", "executor", "planner", "reviewer", "reasoner", "judge")
+GPU_QUERY = "name,memory.total,memory.used,memory.free,utilization.gpu,power.draw"
+ROLE_VALIDATION_MAX_AGE_SECONDS = 86_400
+
+
+def role_validation(path: Path, expected_models: dict[str, str]) -> dict[str, dict[str, Any]]:
+    try:
+        payload = json.loads(path.read_text())
+        measured_at = datetime.fromisoformat(payload["measured_at"])
+        age = (datetime.now(UTC) - measured_at.astimezone(UTC)).total_seconds()
+        roles = payload["roles"]
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    if payload.get("schema_version") != "role-validation-v1" or not 0 <= age <= (
+        ROLE_VALIDATION_MAX_AGE_SECONDS
+    ):
+        return {}
+    return {
+        role: record
+        for role, model in expected_models.items()
+        if isinstance((record := roles.get(role)), dict)
+        and record.get("model") == model
+        and record.get("available") is True
+        and record.get("basis") == "structured_inference_probe"
+    }
 
 
 def command(*args: str) -> str:
@@ -23,6 +50,94 @@ def memory_available() -> int:
         if line.startswith("MemAvailable:"):
             return int(line.split()[1]) * 1024
     raise RuntimeError("MemAvailable unavailable")
+
+
+def _telemetry_command(*args: str) -> tuple[str, str | None]:
+    try:
+        result = subprocess.run(args, text=True, capture_output=True, check=False, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return "", type(error).__name__
+    return result.stdout.strip(), None if result.returncode == 0 else "command_failed"
+
+
+def _memory_values(payload: str) -> dict[str, int]:
+    wanted = {"MemTotal", "MemAvailable", "SwapTotal", "SwapFree"}
+    values: dict[str, int] = {}
+    for line in payload.splitlines():
+        key, separator, value = line.partition(":")
+        parts = value.split()
+        if separator and key in wanted and parts and parts[0].isdigit():
+            values[f"{key.lower()}_bytes"] = int(parts[0]) * 1024
+    return values
+
+
+def _gpu_values(payload: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for values in csv.reader(StringIO(payload)):
+        if len(values) != 6:
+            continue
+        name, total, used, free, utilization, power = (value.strip() for value in values)
+
+        def number(value: str) -> float | None:
+            try:
+                return float(value)
+            except ValueError:
+                return None
+
+        rows.append(
+            {
+                "name": name,
+                "memory_total_mib": number(total),
+                "memory_used_mib": number(used),
+                "memory_free_mib": number(free),
+                "utilization_percent": number(utilization),
+                "power_watts": number(power),
+            }
+        )
+    return rows
+
+
+def dashboard_telemetry() -> dict[str, Any]:
+    """Read bounded content-free telemetry from the local GB10 and fixed mathcat host."""
+    query = f"--query-gpu={GPU_QUERY}"
+    local_gpu, local_error = _telemetry_command(
+        "nvidia-smi", query, "--format=csv,noheader,nounits"
+    )
+    remote, remote_error = _telemetry_command(
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=3",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "mathcat",
+        f"cat /proc/meminfo; printf '\\n--GPU--\\n'; "
+        f"nvidia-smi {query} --format=csv,noheader,nounits",
+    )
+    remote_memory, _, remote_gpu = remote.partition("--GPU--")
+    return {
+        "measured_at": datetime.now(UTC).isoformat(),
+        "retention": {
+            "minimum_days": 90,
+            "automatic_purge": False,
+            "basis": "durable_store_without_automatic_deletion",
+        },
+        "hosts": {
+            "gb10": {
+                "status": "available" if local_error is None else "unavailable",
+                "memory": _memory_values(Path("/proc/meminfo").read_text()),
+                "gpus": _gpu_values(local_gpu),
+                "error_class": local_error,
+            },
+            "mathcat": {
+                "status": "available" if remote_error is None else "unavailable",
+                "memory": _memory_values(remote_memory),
+                "gpus": _gpu_values(remote_gpu),
+                "error_class": remote_error,
+            },
+        },
+    }
 
 
 def minimum_memory(path: Path) -> int | None:

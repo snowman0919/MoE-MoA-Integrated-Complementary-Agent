@@ -17,6 +17,7 @@ RequestClass = Literal[
     "high_risk_task",
     "explicit_orchestrated",
 ]
+ExecutorProvider = Literal["local", "frontier"]
 
 MODEL_MODES: dict[str, RuntimeMode] = {
     "dgx-moa": "moa",
@@ -137,6 +138,38 @@ def select_route(metadata: dict[str, Any]) -> tuple[str, list[str]]:
     if not fast_blockers:
         return "fast", ["clear_limited_validated_change"]
     return "standard", fast_blockers
+
+
+def select_executor_provider(
+    current_provider: ExecutorProvider = "local",
+    current_reason: str = "local_ready",
+    *,
+    frontier_available: bool,
+    local_busy: bool = False,
+    duplicate_failure: bool = False,
+    context_exceeded: bool = False,
+    output_budget_exceeded: bool = False,
+    frontier_correction: bool = False,
+    completion_stalled: bool = False,
+    repeated_failure: bool = False,
+    stalled: bool = False,
+) -> tuple[ExecutorProvider, str]:
+    """Select and pin one Executor provider using the legacy priority contract."""
+    if current_provider == "frontier" or not frontier_available:
+        return current_provider, current_reason
+    for triggered, reason in (
+        (local_busy, "local_busy"),
+        (duplicate_failure, "local_duplicate_failure"),
+        (context_exceeded, "local_context_exceeded"),
+        (output_budget_exceeded, "local_output_budget_exceeded"),
+        (frontier_correction, "frontier_correction_required"),
+        (completion_stalled, "local_completion_stalled"),
+        (repeated_failure, "local_repeated_failure"),
+        (stalled, "local_no_progress"),
+    ):
+        if triggered:
+            return "frontier", reason
+    return current_provider, current_reason
 
 
 def needs_planner(state: SessionState, nontrivial: bool = True) -> bool:

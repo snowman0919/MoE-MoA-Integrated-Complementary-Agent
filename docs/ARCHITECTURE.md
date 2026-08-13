@@ -1,19 +1,24 @@
 # Architecture
 
-The v2 development path adds two independent bounded resources. Runtime
-Knowledge is a versioned SQLite/WAL fact registry retrieved only by the
-Executor; it grants no procedure, tool, or policy authority. The Remote Judge
-is a read-only OpenCode Go `glm-5.2` provider receiving only a sanitized
-Judge Evidence Package and returning strict structured corrections. The
-existing local Heavy Judge remains an operator-only compatibility profile while
-provider validation is gated. Neither development feature changes the
-Executor's sole ownership of tools, routing, corrections, final validation, or
+The Runtime owns a versioned, immutable canonical evidence snapshot for every
+collaboration boundary. Original request data, observed tool/diff/test/failure
+evidence, and model contributions remain separate. Reasoner, Planner, Frontier
+A, Executor, Reviewer, Judge, and Frontier B receive allowlisted read-only role
+projections with snapshot/projection hashes and causal provenance. No role uses
+the Executor draft as a replacement for original evidence. The Executor still
+solely owns tools, mutation, routing decisions, correction execution, and
 client-visible synthesis.
 
-OpenCode connects over tailnet TCP to the authenticated gateway. The controller
-stores session state in SQLite and calls loopback-only local role servers. The
-Reasoner is an externally managed Ollama service configured as an explicit
-external dependency; no local role endpoint is exposed by this gateway.
+Runtime Knowledge is a versioned SQLite/WAL fact registry retrieved only by the
+Executor; it grants no procedure, tool, or policy authority. The Remote Judge
+is read-only OpenCode Go `kimi-k3`, receives a sanitized Runtime-owned Judge
+projection through the Judge Evidence Package, and returns strict structured
+corrections.
+
+OpenCode connects over tailnet or local-LAN TCP to the authenticated gateway.
+The controller stores session state in SQLite and calls loopback-only local role servers. The
+Reasoner is a separately started Ollama service bound only to `127.0.0.1:11435`;
+no role-model endpoint is exposed by this gateway.
 Resident and judge profiles remain mutually exclusive systemd targets.
 
 The primary `dgx-moa` and external-tool-loop `dgx-moa-agent` aliases invoke the
@@ -24,14 +29,18 @@ or Heavy Judge. The Executor alone emits native tool calls and client-visible
 content. Standard OpenAI fields are forwarded to it; project metadata remains
 optional.
 
-Planner and Frontier architecture work run concurrently when independent.
-Local Reviewer and Frontier code review initially receive the same bounded
-evidence independently. All artifacts return to the Executor for evidence-based
-synthesis; agent outputs are never concatenated into the client response.
+Reasoner, Planner, and Frontier A start concurrently from the same immutable
+pre-dispatch snapshot and cannot observe one another's output. Their independent
+contributions are joined by the Runtime into a new Executor projection.
+Reviewer, Judge, and Frontier B each receive a direct projection from the
+current Runtime snapshot; the Executor draft is merely one explicitly labeled
+model contribution. All projection manifests are durable and visible in the
+Dashboard without hidden reasoning or secrets.
 
 Streaming is a bounded forwarding path, not a review buffer. Complete SSE events
 are released immediately, native deltas are preserved, duplicate DONE events
-are filtered, and clean EOF receives one DONE. Capture and per-event bounds are
+are filtered, and EOF without either a finish reason or DONE fails instead of
+promoting a partial draft. Capture and per-event bounds are
 both 1,000,000 bytes. Streaming review is deferred. Non-streaming review uses at
 most 16,000 characters of external evidence; low-risk review failure preserves
 valid executor output, while high-risk orchestration may fail closed.
@@ -39,8 +48,8 @@ valid executor output, while high-risk orchestration may fail closed.
 The local resident target keeps the Qwen3-Coder-Next Executor and gateway.
 Planner and Reviewer are optional local services whose
 `PartOf=dgx-moa-resident.target` relationship ensures a resident stop also stops
-any role loaded separately. The Ollama Reasoner is externally lifecycle-managed,
-normally resident, and never locally idle-unloaded. Judge runs only
+any role loaded separately. The Ollama Reasoner is a separately started,
+memory-bounded service and is never locally idle-unloaded. Judge runs only
 `nvidia/Mistral-Medium-3.5-128B-NVFP4`; coding requests return retryable `503`
 while judge profile is active. Health is public; inference uses
 `DGX_MOA_AUTH_ENABLED`, and admin profile switching is disabled by default.
@@ -51,7 +60,7 @@ enables reviewed adaptive control for the exact Executor, Planner, and Reviewer
 units. Cold optional roles use the typed loading/unavailable `503` contract when
 remote specialist routing is disabled. When enabled, cold Planner and Reviewer
 calls use their pinned OpenCode Go DeepSeek provider while local warm-up runs.
-Judge stays outside that unit map and the Ollama Reasoner remains externally managed.
+Judge and the Ollama Reasoner stay outside that unit map.
 
 The topology follows physical Phase 3 evidence. Exact full process stop/start
 is the selected executor unload and mandatory fallback. The retained executor

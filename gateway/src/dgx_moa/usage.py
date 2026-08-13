@@ -65,6 +65,7 @@ MODEL_INVOCATION_RATE_COLUMNS = (
     "average_latency_ms",
     "prompt_tokens",
     "completion_tokens",
+    "cached_tokens",
     "total_tokens",
 )
 
@@ -344,6 +345,7 @@ class UsageStore:
                     latency_ms REAL NOT NULL,
                     prompt_tokens INTEGER,
                     completion_tokens INTEGER,
+                    cached_tokens INTEGER,
                     total_tokens INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS model_invocation_usage_role_time
@@ -368,6 +370,10 @@ class UsageStore:
                 database.execute(
                     "ALTER TABLE model_invocation_usage ADD COLUMN fallback_reason TEXT"
                 )
+            if "cached_tokens" not in invocation_columns:
+                database.execute(
+                    "ALTER TABLE model_invocation_usage ADD COLUMN cached_tokens INTEGER"
+                )
         self.write_model_invocation_rates()
 
     def record_model_invocation(
@@ -383,6 +389,7 @@ class UsageStore:
         latency_ms: float,
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
+        cached_tokens: int | None = None,
         total_tokens: int | None = None,
     ) -> None:
         if role not in {*self.model_catalog, "frontier"}:
@@ -391,8 +398,8 @@ class UsageStore:
             database.execute(
                 "INSERT INTO model_invocation_usage "
                 "(invocation_id, request_id, role, model, provider, fallback_reason, mode, "
-                "invoked_at, status, latency_ms, prompt_tokens, completion_tokens, total_tokens) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "invoked_at, status, latency_ms, prompt_tokens, completion_tokens, cached_tokens, "
+                "total_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     str(uuid.uuid4()),
                     request_id,
@@ -406,6 +413,7 @@ class UsageStore:
                     latency_ms,
                     prompt_tokens,
                     completion_tokens,
+                    cached_tokens,
                     total_tokens,
                 ),
             )
@@ -428,6 +436,7 @@ class UsageStore:
                         "SUM(status = 'completed'), SUM(status != 'completed'), AVG(latency_ms), "
                         "COALESCE(SUM(prompt_tokens), 0), "
                         "COALESCE(SUM(completion_tokens), 0), "
+                        "SUM(cached_tokens), "
                         "COALESCE(SUM(total_tokens), 0) "
                         "FROM model_invocation_usage WHERE invoked_at >= ? GROUP BY role, model",
                         (since,),
@@ -458,7 +467,10 @@ class UsageStore:
                             else "",
                             "prompt_tokens": int(summary[7]) if summary else 0,
                             "completion_tokens": int(summary[8]) if summary else 0,
-                            "total_tokens": int(summary[9]) if summary else 0,
+                            "cached_tokens": (
+                                int(summary[9]) if summary and summary[9] is not None else ""
+                            ),
+                            "total_tokens": int(summary[10]) if summary else 0,
                         }
                     )
         return rows
@@ -927,7 +939,8 @@ class UsageStore:
             ).fetchall()
             models = database.execute(
                 "SELECT r.api_token_id, m.role, m.model, m.provider, COUNT(*), "
-                "COALESCE(SUM(m.total_tokens), 0) FROM model_invocation_usage m "
+                "SUM(m.cached_tokens), COALESCE(SUM(m.total_tokens), 0) "
+                "FROM model_invocation_usage m "
                 f"JOIN request_usage r ON r.request_id = m.request_id{model_where} "
                 "GROUP BY r.api_token_id, m.role, m.model, m.provider "
                 "ORDER BY r.api_token_id, COUNT(*) DESC",
@@ -942,7 +955,8 @@ class UsageStore:
             daily_models = database.execute(
                 "SELECT r.api_token_id, date(r.accepted_at, 'unixepoch'), m.model, "
                 "COUNT(*), COALESCE(SUM(m.prompt_tokens), 0), "
-                "COALESCE(SUM(m.completion_tokens), 0), COALESCE(SUM(m.total_tokens), 0) "
+                "COALESCE(SUM(m.completion_tokens), 0), SUM(m.cached_tokens), "
+                "COALESCE(SUM(m.total_tokens), 0) "
                 "FROM model_invocation_usage m "
                 f"JOIN request_usage r ON r.request_id = m.request_id{model_where} "
                 "GROUP BY r.api_token_id, date(r.accepted_at, 'unixepoch'), m.model "
@@ -1000,7 +1014,8 @@ class UsageStore:
                     "model": row[2],
                     "provider": row[3],
                     "invocations": int(row[4]),
-                    "total_tokens": int(row[5]),
+                    "cached_tokens": int(row[5]) if row[5] is not None else None,
+                    "total_tokens": int(row[6]),
                 }
                 for row in models
             ],
@@ -1013,7 +1028,8 @@ class UsageStore:
                     "invocations": int(row[3]),
                     "prompt_tokens": int(row[4]),
                     "completion_tokens": int(row[5]),
-                    "total_tokens": int(row[6]),
+                    "cached_tokens": int(row[6]) if row[6] is not None else None,
+                    "total_tokens": int(row[7]),
                 }
                 for row in daily_models
             ],

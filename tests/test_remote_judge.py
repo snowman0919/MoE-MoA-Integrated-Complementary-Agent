@@ -15,6 +15,7 @@ from dgx_moa.remote_judge import (
     RemoteJudgeVerdict,
 )
 from dgx_moa.state import SessionState, StateStore
+from pydantic import ValidationError
 
 
 def verdict(verdict: str = "approve") -> dict[str, object]:
@@ -68,8 +69,9 @@ async def test_opencode_judge_sends_redacted_bounded_strict_package(monkeypatch)
     assert result.verdict == "approve"
     body = json.loads(requests[0].content)
     assert "tools" not in body
-    assert body["model"] == "glm-5.2"
-    assert body["max_tokens"] == 1024
+    assert body["model"] == "kimi-k3"
+    assert body["temperature"] == 1
+    assert body["max_tokens"] == 4096
     assert body["seed"] == 0
     assert "one bounded required edit" in body["messages"][0]["content"]
     assert requests[0].url == "https://opencode.invalid/v1/chat/completions"
@@ -140,8 +142,30 @@ async def test_nim_judge_timeout_and_invalid_output_are_controlled(monkeypatch) 
             )
         ),
     )
-    with pytest.raises(JudgeProviderError, match="invalid structured output"):
+    with pytest.raises(JudgeProviderError, match="invalid structured output") as invalid_error:
         await invalid.judge(JudgeEvidencePackage(request_id="invalid", objective="judge"))
+    assert invalid_error.value.__suppress_context__ is True
+
+    empty_attempts = 0
+
+    def empty_then_valid(request: httpx.Request) -> httpx.Response:
+        nonlocal empty_attempts
+        empty_attempts += 1
+        content = "" if empty_attempts == 1 else json.dumps(verdict())
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": content}}]}, request=request
+        )
+
+    empty = OpenCodeGoJudgeProvider(
+        endpoint="https://nim.invalid",
+        api_key_env="TEST_NVIDIA_KEY",
+        max_retries=1,
+        transport=httpx.MockTransport(empty_then_valid),
+    )
+    assert (
+        await empty.judge(JudgeEvidencePackage(request_id="empty", objective="judge"))
+    ).verdict == "approve"
+    assert empty_attempts == 2
 
 
 def test_remote_verdict_requires_every_criterion() -> None:
@@ -149,6 +173,15 @@ def test_remote_verdict_requires_every_criterion() -> None:
     del payload["criteria"]["safety"]  # type: ignore[index]
     with pytest.raises(ValueError):
         RemoteJudgeVerdict.model_validate(payload)
+
+
+def test_judge_package_rejects_aggregate_payload_above_byte_ceiling() -> None:
+    with pytest.raises(ValidationError, match="exceeds 1000000 bytes"):
+        JudgeEvidencePackage(
+            request_id="oversized",
+            objective="bounded",
+            tool_evidence=[{"output": "x" * 400_000} for _ in range(3)],
+        )
 
 
 def test_selective_judge_policy_covers_risk_and_skips_tool_turns(settings, stub_provider) -> None:

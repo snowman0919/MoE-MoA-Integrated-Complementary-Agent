@@ -24,6 +24,8 @@ SECRET_PATTERNS = (
 TOKEN_ID = re.compile(r"[a-z][a-z0-9_-]{0,31}")
 ADMIN_SESSION_COOKIE = "dgx_moa_operator_session"
 ADMIN_SESSION_SECONDS = 30 * 86_400
+DASHBOARD_SESSION_COOKIE = "dgx_moa_dashboard_session"
+DASHBOARD_SESSION_SECONDS = 86_400
 
 
 class ApiKeyRequest(BaseModel):
@@ -54,13 +56,31 @@ class ApiKeyStore:
         self.clock = clock
         self.max_admin_keys = max_admin_keys
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        migrated_plaintext = False
         with self._connect() as database:
             database.execute(
                 "CREATE TABLE IF NOT EXISTS api_keys ("
                 "name TEXT PRIMARY KEY, token TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, "
+                "masked_key TEXT NOT NULL, "
                 "kind TEXT NOT NULL, source TEXT NOT NULL, created_at REAL NOT NULL, "
                 "expires_at REAL, revoked_at REAL, request_limit INTEGER, token_limit INTEGER)"
             )
+            columns = {
+                str(row[1]) for row in database.execute("PRAGMA table_info(api_keys)").fetchall()
+            }
+            if "masked_key" not in columns:
+                database.execute(
+                    "ALTER TABLE api_keys ADD COLUMN masked_key TEXT NOT NULL DEFAULT ''"
+                )
+            plaintext_rows = database.execute(
+                "SELECT name, token, masked_key FROM api_keys WHERE token != ''"
+            ).fetchall()
+            for name, token, masked_key in plaintext_rows:
+                database.execute(
+                    "UPDATE api_keys SET token = '', masked_key = ? WHERE name = ?",
+                    (masked_key or self._mask(str(token)), name),
+                )
+            migrated_plaintext = bool(plaintext_rows)
             database.execute(
                 "CREATE TABLE IF NOT EXISTS api_key_admin_sessions ("
                 "token_hash TEXT PRIMARY KEY, api_token_id TEXT NOT NULL, "
@@ -73,12 +93,13 @@ class ApiKeyStore:
                 ).fetchone()
                 if row is None:
                     database.execute(
-                        "INSERT INTO api_keys VALUES (?, ?, ?, ?, 'environment', ?, NULL, "
-                        "NULL, NULL, NULL)",
+                        "INSERT INTO api_keys(name, token, token_hash, masked_key, kind, source, "
+                        "created_at, expires_at, revoked_at, request_limit, token_limit) "
+                        "VALUES (?, '', ?, ?, ?, 'environment', ?, NULL, NULL, NULL, NULL)",
                         (
                             name,
-                            token,
                             digest,
+                            self._mask(token),
                             "admin" if name in admin_token_ids else "general",
                             self.clock(),
                         ),
@@ -90,9 +111,9 @@ class ApiKeyStore:
                     )
                     if row["token_hash"] != digest:
                         database.execute(
-                            "UPDATE api_keys SET token = ?, token_hash = ?, "
+                            "UPDATE api_keys SET token = '', token_hash = ?, masked_key = ?, "
                             "created_at = ?, expires_at = NULL, revoked_at = NULL WHERE name = ?",
-                            (token, digest, self.clock(), name),
+                            (digest, self._mask(token), self.clock(), name),
                         )
                         database.execute(
                             "DELETE FROM api_key_admin_sessions WHERE api_token_id = ?", (name,)
@@ -104,16 +125,25 @@ class ApiKeyStore:
             ).fetchone()[0]
             if admin_count > self.max_admin_keys:
                 raise ValueError("configured admin API keys exceed the limit")
+        if migrated_plaintext:
+            with self._connect() as database:
+                database.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                database.execute("VACUUM")
         os.chmod(self.path, 0o600)
 
     def _connect(self) -> sqlite3.Connection:
         database = sqlite3.connect(self.path, timeout=30)
         database.row_factory = sqlite3.Row
+        database.execute("PRAGMA secure_delete=ON")
         return database
 
     @staticmethod
     def _digest(token: str) -> str:
         return hashlib.sha256(token.encode()).hexdigest()
+
+    @staticmethod
+    def _mask(token: str) -> str:
+        return f"{token[:8]}…{token[-4:]}"
 
     def verify(self, token: str) -> str | None:
         digest = self._digest(token)
@@ -189,12 +219,12 @@ class ApiKeyStore:
                     raise ValueError("admin API key limit reached")
             if exists:
                 database.execute(
-                    "UPDATE api_keys SET token = ?, token_hash = ?, kind = ?, source = 'managed', "
-                    "created_at = ?, expires_at = ?, revoked_at = NULL, request_limit = ?, "
-                    "token_limit = ? WHERE name = ?",
+                    "UPDATE api_keys SET token = '', token_hash = ?, masked_key = ?, kind = ?, "
+                    "source = 'managed', created_at = ?, expires_at = ?, revoked_at = NULL, "
+                    "request_limit = ?, token_limit = ? WHERE name = ?",
                     (
-                        token,
                         self._digest(token),
+                        self._mask(token),
                         request.kind,
                         now,
                         expires_at,
@@ -208,11 +238,13 @@ class ApiKeyStore:
                 )
             else:
                 database.execute(
-                    "INSERT INTO api_keys VALUES (?, ?, ?, ?, 'managed', ?, ?, NULL, ?, ?)",
+                    "INSERT INTO api_keys(name, token, token_hash, masked_key, kind, source, "
+                    "created_at, expires_at, revoked_at, request_limit, token_limit) "
+                    "VALUES (?, '', ?, ?, ?, 'managed', ?, ?, NULL, ?, ?)",
                     (
                         name,
-                        token,
                         self._digest(token),
+                        self._mask(token),
                         request.kind,
                         now,
                         expires_at,
@@ -290,32 +322,49 @@ class ApiKeyStore:
             database.execute("DELETE FROM api_key_admin_sessions WHERE api_token_id = ?", (name,))
 
     def create_admin_session(self, name: str) -> str:
+        return self._create_session(name, ADMIN_SESSION_SECONDS)
+
+    def create_dashboard_session(self, name: str) -> str:
+        return self._create_session(name, DASHBOARD_SESSION_SECONDS)
+
+    def _create_session(self, name: str, lifetime_seconds: int) -> str:
         token = secrets.token_urlsafe(32)
         now = self.clock()
         with self._connect() as database:
             database.execute("DELETE FROM api_key_admin_sessions WHERE expires_at <= ?", (now,))
             database.execute(
                 "INSERT INTO api_key_admin_sessions VALUES (?, ?, ?, ?)",
-                (self._digest(token), name, now, now + ADMIN_SESSION_SECONDS),
+                (self._digest(token), name, now, now + lifetime_seconds),
             )
         return token
 
     def verify_admin_session(self, token: str) -> str | None:
+        return self._verify_session(token, admin_only=True)
+
+    def verify_dashboard_session(self, token: str) -> str | None:
+        return self._verify_session(token, admin_only=False)
+
+    def _verify_session(self, token: str, *, admin_only: bool) -> str | None:
         digest = self._digest(token)
         now = self.clock()
+        admin_clause = "AND k.kind = 'admin' " if admin_only else ""
+        query = (
+            "SELECT s.api_token_id, s.token_hash FROM api_key_admin_sessions s "
+            "JOIN api_keys k ON k.name = s.api_token_id "
+            "WHERE s.token_hash = ? AND s.expires_at > ? "
+            f"{admin_clause}"
+            "AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > ?)"
+        )
         with self._connect() as database:
-            row = database.execute(
-                "SELECT s.api_token_id, s.token_hash FROM api_key_admin_sessions s "
-                "JOIN api_keys k ON k.name = s.api_token_id "
-                "WHERE s.token_hash = ? AND s.expires_at > ? AND k.kind = 'admin' "
-                "AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > ?)",
-                (digest, now, now),
-            ).fetchone()
+            row = database.execute(query, (digest, now, now)).fetchone()
         if row is None or not secrets.compare_digest(digest, row["token_hash"]):
             return None
         return str(row["api_token_id"])
 
     def delete_admin_session(self, token: str) -> None:
+        self.delete_dashboard_session(token)
+
+    def delete_dashboard_session(self, token: str) -> None:
         with self._connect() as database:
             database.execute(
                 "DELETE FROM api_key_admin_sessions WHERE token_hash = ?",
@@ -332,15 +381,14 @@ class ApiKeyStore:
         now = self.clock()
         with self._connect() as database:
             rows = database.execute(
-                "SELECT name, token, kind, source, created_at, expires_at, revoked_at, "
+                "SELECT name, masked_key, kind, source, created_at, expires_at, revoked_at, "
                 "request_limit, token_limit "
                 "FROM api_keys ORDER BY name"
             ).fetchall()
         return [
             {
                 "name": row["name"],
-                "api_key": row["token"],
-                "masked_key": f"{row['token'][:8]}…{row['token'][-4:]}",
+                "masked_key": row["masked_key"],
                 "kind": row["kind"],
                 "source": row["source"],
                 "created_at": row["created_at"],

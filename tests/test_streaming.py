@@ -142,10 +142,25 @@ def test_response_usage_rejects_malformed_token_details(invalid: object) -> None
 
     assert usage == {
         "input_tokens": 3,
-        "input_tokens_details": {"cached_tokens": 0},
         "output_tokens": 2,
         "output_tokens_details": {"reasoning_tokens": 0},
         "total_tokens": 5,
+    }
+
+
+def test_response_usage_distinguishes_unreported_cache_from_measured_zero() -> None:
+    unreported = response_usage({"prompt_tokens": 3, "completion_tokens": 2})
+    measured_zero = response_usage(
+        {
+            "prompt_tokens": 3,
+            "completion_tokens": 2,
+            "prompt_tokens_details": {"cached_tokens": 0},
+        }
+    )
+
+    assert unreported is not None and "input_tokens_details" not in unreported
+    assert measured_zero is not None and measured_zero["input_tokens_details"] == {
+        "cached_tokens": 0
     }
 
 
@@ -580,10 +595,8 @@ async def test_responses_sse_replaces_invented_write_stdin_session_id() -> None:
         for event in events
         if event["type"] == "response.output_item.done" and event["output_index"] == 1
     )
-    assert output["item"]["name"] == "exec_command"
-    assert json.loads(done["arguments"]) == {
-        "cmd": "printf '%s\\n' 'No active process session; use exec_command or apply_patch.'"
-    }
+    assert output["item"]["name"] == "write_stdin"
+    assert json.loads(done["arguments"])["session_id"] == 0
 
 
 @pytest.mark.asyncio
@@ -629,6 +642,18 @@ async def test_keepalive_sse_covers_silent_upstream() -> None:
     assert await anext(stream) == b": keep-alive\n\n"
     release.set()
     assert await anext(stream) == b"event: done\ndata: done\n\n"
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_keepalive_sse_accepts_responses_ping() -> None:
+    async def upstream():
+        await asyncio.Event().wait()
+        yield b"unreachable"
+
+    heartbeat = b"event: ping\ndata: {}\n\n"
+    stream = keepalive_sse(upstream(), interval_seconds=0.01, heartbeat=heartbeat)
+    assert await anext(stream) == heartbeat
     await stream.aclose()
 
 
@@ -723,7 +748,8 @@ async def test_first_event_is_forwarded_before_upstream_completion() -> None:
 async def test_split_delimiters_and_crlf_are_framed_byte_exactly() -> None:
     first = b"data: first\r\n\r\n"
     second = b"data: second\n\n"
-    upstream = chunks(first[:13], first[13:-1], first[-1:] + second[:-1], second[-1:])
+    done = b"data: [DONE]\n\n"
+    upstream = chunks(first[:13], first[13:-1], first[-1:] + second[:-1], second[-1:] + done)
 
     forwarded = [
         event
@@ -732,7 +758,7 @@ async def test_split_delimiters_and_crlf_are_framed_byte_exactly() -> None:
         )
     ]
 
-    assert forwarded == [first, second, b"data: [DONE]\n\n"]
+    assert forwarded == [first, second, done]
 
 
 @pytest.mark.asyncio
@@ -806,16 +832,17 @@ async def test_first_done_stops_before_later_upstream_error_and_closes_it() -> N
 
 
 @pytest.mark.asyncio
-async def test_missing_done_is_synthesized_on_clean_eof() -> None:
+async def test_missing_done_is_rejected_on_clean_eof() -> None:
     content = b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
     observation = StreamObservation(max_capture_bytes=1000)
 
-    forwarded = [
-        event async for event in forward_sse(chunks(content), observation, max_event_bytes=1000)
-    ]
+    forwarded = []
+    with pytest.raises(ValueError, match="before terminal marker"):
+        async for event in forward_sse(chunks(content), observation, max_event_bytes=1000):
+            forwarded.append(event)
 
-    assert forwarded == [content, b"data: [DONE]\n\n"]
-    assert observation.done_seen
+    assert forwarded == [content]
+    assert not observation.done_seen
 
 
 @pytest.mark.asyncio
@@ -827,12 +854,14 @@ async def test_native_tool_call_delta_bytes_are_preserved_exactly() -> None:
     )
     observation = StreamObservation(max_capture_bytes=1000)
 
-    forwarded = [
-        event
+    forwarded = []
+    with pytest.raises(ValueError, match="before terminal marker"):
         async for event in forward_sse(
-            chunks(tool_event[:31], tool_event[31:]), observation, max_event_bytes=1000
-        )
-    ]
+            chunks(tool_event[:31], tool_event[31:]),
+            observation,
+            max_event_bytes=1000,
+        ):
+            forwarded.append(event)
 
     assert forwarded[0] == tool_event
     assert bytes(observation.captured).startswith(tool_event)
@@ -848,10 +877,11 @@ async def test_observation_capture_is_truncated_at_bound() -> None:
     second = b"data: second\n\n"
     observation = StreamObservation(max_capture_bytes=17)
 
-    _ = [
-        event
-        async for event in forward_sse(chunks(first, second), observation, max_event_bytes=1000)
-    ]
+    with pytest.raises(ValueError, match="before terminal marker"):
+        _ = [
+            event
+            async for event in forward_sse(chunks(first, second), observation, max_event_bytes=1000)
+        ]
 
     assert bytes(observation.captured) == (first + second)[:17]
 
@@ -865,7 +895,10 @@ async def test_observation_extracts_only_reported_token_counts() -> None:
     )
     observation = StreamObservation(max_capture_bytes=1_000)
 
-    _ = [chunk async for chunk in forward_sse(chunks(event), observation, max_event_bytes=1_000)]
+    with pytest.raises(ValueError, match="before terminal marker"):
+        _ = [
+            chunk async for chunk in forward_sse(chunks(event), observation, max_event_bytes=1_000)
+        ]
 
     assert observation.usage == {
         "prompt_tokens": 2,

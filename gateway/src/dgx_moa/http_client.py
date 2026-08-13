@@ -15,9 +15,7 @@ def make_http_client(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> httpx.AsyncClient:
     """Create a single AsyncClient with optional timeout/transport overrides."""
-    kwargs: dict[str, Any] = {}
-    if timeout is not None:
-        kwargs["timeout"] = timeout
+    kwargs: dict[str, Any] = {"timeout": timeout}
     if transport is not None:
         kwargs["transport"] = transport
     return httpx.AsyncClient(**kwargs)

@@ -207,12 +207,13 @@ def test_api_client_mode_documentation() -> None:
     assert "Tailscale Serve" not in hermes
 
 
-def test_external_reasoner_uses_requested_q4_model() -> None:
+def test_loopback_reasoner_uses_requested_q4_model() -> None:
     reasoner = yaml.safe_load(Path("config/models.yaml").read_text())["models"]["reasoner"]
     assert reasoner["revision"] == "Q4"
     assert reasoner["served_name"] == "Qwythos-v2-9B:Q4"
     assert reasoner["provider"] == "ollama"
-    assert reasoner["lifecycle_control"] == "external"
+    assert reasoner["lifecycle_control"] == "systemd"
+    assert reasoner["base_url"] == "http://127.0.0.1:11435"
 
 
 def test_hermes_documentation_matches_physical_config() -> None:

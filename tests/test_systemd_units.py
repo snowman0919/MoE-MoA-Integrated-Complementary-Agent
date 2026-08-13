@@ -9,8 +9,6 @@ SYSTEMD = ROOT / "systemd"
 def test_required_systemd_units_exist() -> None:
     required = {
         "dgx-moa-gateway.service",
-        "dgx-moa-loopback.service",
-        "dgx-moa-loopback.socket",
         "dgx-moa-executor.service",
         "dgx-moa-planner.service",
         "dgx-moa-reviewer.service",
@@ -24,19 +22,16 @@ def test_required_systemd_units_exist() -> None:
     assert required == {path.name for path in SYSTEMD.iterdir()}
 
 
-def test_loopback_socket_proxies_only_to_the_configured_gateway() -> None:
-    socket = (SYSTEMD / "dgx-moa-loopback.socket").read_text()
-    service = (SYSTEMD / "dgx-moa-loopback.service").read_text()
+def test_authenticated_gateway_binds_all_interfaces_without_socket_proxies() -> None:
+    config = (ROOT / "config/models.yaml").read_text()
+    example = (ROOT / "config/models.example.yaml").read_text()
     installer = (ROOT / "scripts/install-systemd-user.sh").read_text()
-    assert "ListenStream=127.0.0.1:9000" in socket
-    assert "0.0.0.0" not in socket
-    assert "Requires=dgx-moa-gateway.service dgx-moa-loopback.socket" in service
-    assert '"$DGX_MOA_BIND_HOST:$DGX_MOA_BIND_PORT"' in service
-    assert "systemd-socket-proxyd" in service
-    assert "StartLimitIntervalSec=60" in service
-    assert "StartLimitBurst=10" in service
-    assert "dgx-moa-*.socket" in installer
-    assert "enable dgx-moa-resident.target dgx-moa-loopback.socket" in installer
+    assert "bind_host: 0.0.0.0" in config
+    assert "bind_host: 0.0.0.0" in example
+    assert not list(SYSTEMD.glob("dgx-moa-*.socket"))
+    assert "shopt -s nullglob" in installer
+    assert "disable --now dgx-moa-loopback.socket dgx-moa-lan.socket" in installer
+    assert "enable dgx-moa-resident.target" in installer
 
 
 def test_targets_and_services_are_mutually_exclusive() -> None:
@@ -67,13 +62,35 @@ def test_resident_target_requires_only_gateway_and_executor() -> None:
     assert "reasoner" not in requires
 
 
+def test_executor_uses_qualified_cuda_allocator() -> None:
+    executor = (SYSTEMD / "dgx-moa-executor.service").read_text()
+    assert "Environment=PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync" in executor
+    assert "Environment=VLLM_NVFP4_GEMM_BACKEND=flashinfer-b12x" in executor
+    assert "Environment=VLLM_ALLOW_LONG_MAX_MODEL_LEN=1" in executor
+    assert "MemoryHigh=12G" in executor
+    assert "MemoryMax=16G" in executor
+    assert "MemorySwapMax=4G" in executor
+    assert "OOMPolicy=stop" in executor
+
+
+def test_reasoner_ollama_is_loopback_only_and_memory_bounded() -> None:
+    reasoner = (SYSTEMD / "dgx-moa-reasoner.service").read_text()
+    assert "Environment=OLLAMA_HOST=127.0.0.1:11435" in reasoner
+    assert "Environment=OLLAMA_CONTEXT_LENGTH=65536" in reasoner
+    assert "Environment=OLLAMA_NOPRUNE=true" in reasoner
+    assert "MemoryHigh=12G" in reasoner
+    assert "MemoryMax=16G" in reasoner
+    assert "MemorySwapMax=4G" in reasoner
+    assert "OOMPolicy=stop" in reasoner
+
+
 def test_profile_scripts_wait_for_executor_and_verify_all_resident_roles_stop() -> None:
     wait = (ROOT / "scripts/wait-profile.sh").read_text()
     verify_stopped = (ROOT / "scripts/verify-profile-stopped.sh").read_text()
 
-    assert "resident) ports=(8101); minimum=5368709120 ;;" in wait
+    assert "resident) ports=(19301); minimum=5368709120 ;;" in wait
     assert (
-        "resident) services=(executor planner reviewer reasoner); ports=(8101 8102 8103 8104) ;;"
+        "resident) services=(executor planner reviewer reasoner); ports=(19301 8102 8103 11435) ;;"
     ) in verify_stopped
 
 
@@ -90,9 +107,8 @@ def test_unit_environment_and_hardening() -> None:
         assert "LockPersonality=true" in unit
         assert "RestrictSUIDSGID=true" in unit
         assert "Restart=on-failure" in unit
-        if "loopback" not in path.name:
-            assert "StartLimitIntervalSec=600" in unit
-            assert "StartLimitBurst=3" in unit
+        assert "StartLimitIntervalSec=600" in unit
+        assert "StartLimitBurst=3" in unit
 
 
 def test_profile_switch_uses_systemd_and_lock() -> None:

@@ -9,11 +9,11 @@ call while a singleflight local warm-up runs independently when needed. The
 warmed role is eligible only for later calls. Explicit local-only policy may
 queue behind a healthy busy specialist.
 
-The remote cold-start models are `deepseek-v4-pro` for Planner and
-`deepseek-v4-flash` for Reviewer. They do not replace the local models. The
-separate GLM-5.2 `JudgeProvider` is never used as their fallback. Provider choice
-is pinned after dispatch; race-to-first is disabled and local and remote partial
-outputs are never combined.
+The measured remote cold-start model is `deepseek-v4-pro` for both Planner and
+Reviewer. It does not replace the local models. The separate Kimi K3
+`JudgeProvider` is never used as their fallback. Provider choice is pinned after
+dispatch; race-to-first is disabled and local and remote partial outputs are
+never combined.
 
 The default 60-second local preference margin keeps a READY, healthy local
 Planner or Reviewer selected. Cold, loading, busy, degraded, or materially
@@ -24,7 +24,7 @@ Checked-in defaults are disabled. Enable with a protected runtime environment:
 
 ```text
 OPENCODE_GO_API_KEY=<operator-owned secret>
-DGX_MOA_SPECIALIST_ROUTING={"enabled":true,"provider":"opencode_go","endpoint":"https://opencode.ai/zen/go","api_key_env":"OPENCODE_GO_API_KEY","models":{"planner":"deepseek-v4-pro","reviewer":"deepseek-v4-flash"}}
+DGX_MOA_SPECIALIST_ROUTING={"enabled":true,"provider":"opencode_go","endpoint":"https://opencode.ai/zen/go","api_key_env":"OPENCODE_GO_API_KEY","models":{"planner":"deepseek-v4-pro","reviewer":"deepseek-v4-pro"}}
 ```
 
 Never commit the key or copy `opencode_api` into deployment artifacts. Local
@@ -43,8 +43,19 @@ labels. Weekly packages include:
 - `datasets/routing/eviction-decisions.jsonl`
 - `datasets/routing/latency-prediction.jsonl`
 
-Use `scripts/validate-specialist-routing.py` for credentialed structured-output
-checks. The live checks, full automated suite, ordinary cold-role remote-routing
-test, independent singleflight warm-up, subsequent-call local eligibility, and
-rollback verification passed on 2026-07-22; production routing is enabled from
-its protected environment.
+After explicit approval and protected credential injection, run:
+
+```bash
+uv run python scripts/validate-specialist-routing.py \
+  --output data/diagnostics/opencode-completion/specialists-YYYYMMDD.json
+```
+
+The validator atomically checkpoints each completed role using only model,
+status, latency, usage, and failure class; prompts and raw provider output are
+not persisted. The 2026-07-22 live checks, full automated suite, ordinary
+cold-role remote-routing test, independent singleflight warm-up, subsequent-call
+local eligibility, and rollback verification passed; production routing is
+enabled from its protected environment. GLM 5.2 remained reasoning-only across
+the bounded v3 retry gate. The measured DeepSeek V4 Pro replacement passed both
+approval and failed-test rejection; the checked-in routing gate remains
+disabled pending the remaining production gates.

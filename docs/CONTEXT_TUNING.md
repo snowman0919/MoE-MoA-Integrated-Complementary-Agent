@@ -1,9 +1,14 @@
 # Context Tuning
 
-`scripts/tune-context.sh resident` and `scripts/tune-context.sh judge` perform
-three restart/readiness checks, five sequential requests, structured-output and
+This document preserves historical context-tuning evidence. The retired
+`scripts/tune-context.sh` and `dgx_moa.context_tuning` path performed three
+restart/readiness checks, five sequential requests, structured-output and
 near-limit probes, memory measurement, KV-cache log parsing, and OOM inspection.
-Results append to `data/benchmarks/context-tuning.json`.
+Its results remain in `data/benchmarks/context-tuning.json` and Git history.
+
+Do not rerun that legacy profile tuner. Production uses the fixed Phase 3
+Executor contract and exact service stop/start lifecycle; any new context study
+requires a separately approved isolated protocol and a new evidence epoch.
 
 The selector uses `0.60 * executor + 0.20 * planner + 0.15 * reviewer + 0.05
 * reasoner`, while requiring 10 GiB available memory for resident and 16 GiB

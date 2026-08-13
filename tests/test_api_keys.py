@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import sqlite3
 import stat
 from pathlib import Path
 
@@ -19,6 +21,29 @@ from fastapi.testclient import TestClient
 from .conftest import StubProvider
 
 
+def test_legacy_plaintext_api_key_is_scrubbed_without_changing_credential(tmp_path: Path) -> None:
+    path = tmp_path / "legacy.db"
+    token = "legacy-secret-value"
+    with sqlite3.connect(path) as database:
+        database.execute(
+            "CREATE TABLE api_keys (name TEXT PRIMARY KEY, token TEXT NOT NULL, "
+            "token_hash TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, source TEXT NOT NULL, "
+            "created_at REAL NOT NULL, expires_at REAL, revoked_at REAL, "
+            "request_limit INTEGER, token_limit INTEGER)"
+        )
+        database.execute(
+            "INSERT INTO api_keys VALUES "
+            "(?, ?, ?, 'general', 'managed', 1, NULL, NULL, NULL, NULL)",
+            ("legacy", token, hashlib.sha256(token.encode()).hexdigest()),
+        )
+
+    store = ApiKeyStore(path, {})
+
+    assert store.verify(token) == "legacy"
+    assert store.get("legacy")["masked_key"] == "legacy-s…alue"
+    assert token.encode() not in b"".join(file.read_bytes() for file in tmp_path.glob("legacy.db*"))
+
+
 def test_key_store_enforces_expiry_limits_admin_cap_and_file_mode(tmp_path: Path) -> None:
     now = [100.0]
     path = tmp_path / "state.db"
@@ -33,9 +58,10 @@ def test_key_store_enforces_expiry_limits_admin_cap_and_file_mode(tmp_path: Path
 
     assert store.is_admin("operator")
     assert not store.is_admin("client")
-    assert {item["api_key"] for item in store.list()} == {
-        "operator-secret-value",
-        "client-secret-value",
+    assert all("api_key" not in item for item in store.list())
+    assert {item["masked_key"] for item in store.list()} == {
+        "operator…alue",
+        "client-s…alue",
     }
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     with pytest.raises(ValueError, match="admin API key limit"):
@@ -79,7 +105,9 @@ def test_key_store_enforces_expiry_limits_admin_cap_and_file_mode(tmp_path: Path
     store.delete_admin_session(session_token)
     assert store.verify_admin_session(session_token) is None
     database_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("state.db*"))
-    assert token.encode() in database_bytes
+    assert token.encode() not in database_bytes
+    assert b"operator-secret-value" not in database_bytes
+    assert b"client-secret-value" not in database_bytes
     assert session_token.encode() not in database_bytes
 
 
@@ -122,7 +150,7 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert "kpi-fallback" in dashboard.text
         assert 'class="tooltip"' in dashboard.text
         assert all(
-            name in dashboard.text for name in ("Qwen3-Next", "Nemotron-30B", "North-Mini-30B")
+            name in dashboard.text for name in ("Mistral-Small-4", "Nemotron-30B", "North-Mini-30B")
         )
 
         listing = client.get("/v1/admin/api-keys", headers=operator)
@@ -142,7 +170,8 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
             "profiles": [],
         }
         revealed = client.get("/v1/admin/api-keys/general/reveal", headers=operator)
-        assert revealed.json()["api_key"] == "general-secret-value"
+        assert revealed.status_code == 410
+        assert "returned only once" in revealed.json()["error"]["message"]
         session = client.post("/v1/admin/session", headers=operator)
         assert session.status_code == 204
         cookie = session.headers["set-cookie"]
@@ -241,6 +270,7 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         audit = client.app.state.store.events("api-key-admin")
 
     assert [event["payload"]["action"] for event in audit] == [
+        "reveal_denied",
         "create",
         "update",
         "revoke",

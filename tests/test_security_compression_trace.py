@@ -69,6 +69,29 @@ def test_repeated_messages_are_deduplicated() -> None:
     assert len(compress_messages(messages, limits)) == 1
 
 
+def test_compression_keeps_assistant_preceding_retained_tool_results() -> None:
+    limits = Limits(max_retained_observations=2)
+    messages = [
+        {"role": "user", "content": "inspect"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "call_1", "function": {"name": "exec", "arguments": "{}"}},
+                {"id": "call_2", "function": {"name": "exec", "arguments": "{}"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "one"},
+        {"role": "tool", "tool_call_id": "call_2", "content": "two"},
+    ]
+
+    assert [message["role"] for message in compress_messages(messages, limits)] == [
+        "assistant",
+        "tool",
+        "tool",
+    ]
+
+
 def test_tool_outputs_share_the_compression_budget() -> None:
     limits = Limits(max_tool_output_characters=80)
     messages = [{"role": "tool", "content": character * 100} for character in ("a", "b", "c", "d")]

@@ -26,7 +26,7 @@ CORE_ENV = ("HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "SHELL", "TERM", "USER"
 TEST_COMMAND = (sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v")
 DOCKER_IMAGE = "python:3.11-slim"
 CODEX_BINARY = Path(
-    "/home/kotori9/.codex/packages/standalone/releases/0.145.0-aarch64-unknown-linux-musl/bin/codex"
+    "/home/kotori9/.codex/packages/standalone/releases/0.146.0-aarch64-unknown-linux-musl/bin/codex"
 )
 OPENCODE_BINARY = Path("/home/kotori9/.opencode/bin/opencode")
 OPENCODE_ISOLATION_ENV = {
@@ -63,6 +63,13 @@ class Task:
 
 def block(value: str) -> str:
     return textwrap.dedent(value).lstrip()
+
+
+def baseline_reasoning_effort() -> str:
+    effort = os.getenv("DGX_MOA_BASELINE_REASONING_EFFORT", "high")
+    if effort not in {"high", "xhigh"}:
+        raise RuntimeError(f"invalid baseline reasoning effort: {effort}")
+    return effort
 
 
 TASKS = (
@@ -919,7 +926,7 @@ def prepare_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str,
                         "apiKey": "{env:DGX_MOA_API_KEY}",
                         "headers": {
                             "X-Session-ID": session,
-                            "X-Runtime-Channel": "main",
+                            "X-Runtime-Channel": "dev",
                             "X-Trace-Origin": "validation",
                             "X-Task-ID": f"{args.run_id}-{task.slug}",
                             "X-Workspace-Path": str(workspace),
@@ -961,6 +968,28 @@ def filtered_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     environment = {name: os.environ[name] for name in CORE_ENV if name in os.environ}
     environment.update(extra or {})
     return environment
+
+
+def pin_hermes_gateway(path: Path, gateway: str, api_key: str) -> None:
+    pattern = re.compile(r"(?ms)^  - name: dgx-moa-agent\n.*?(?=^  - name:|\Z)")
+    matches = list(pattern.finditer(path.read_text()))
+    if len(matches) != 1:
+        raise RuntimeError("Hermes dgx-moa-agent provider is missing or duplicated")
+    match = matches[0]
+    block, url_count = re.subn(
+        r"(?m)(^    base_url: )[^\n]+$",
+        lambda value: value.group(1) + gateway.rstrip("/") + "/v1",
+        match.group(),
+    )
+    block, key_count = re.subn(
+        r"(?m)(^    api_key: )[^\n]+$",
+        lambda value: value.group(1) + api_key,
+        block,
+    )
+    if url_count != 1 or key_count != 1:
+        raise RuntimeError("Hermes dgx-moa-agent URL or key is missing or duplicated")
+    text = path.read_text()
+    path.write_text(text[: match.start()] + block + text[match.end() :])
 
 
 def run_process(
@@ -1016,6 +1045,7 @@ def docker_command(
     read_only_mounts: tuple[tuple[Path, str], ...] = (),
     workspace_mode: str = "rw",
 ) -> list[str]:
+    state = state.resolve()
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     container = "moa-qm-" + hashlib.sha256(f"{workspace}\0{state}".encode()).hexdigest()[:20]
     command = [
@@ -1084,7 +1114,7 @@ def codex_moa_command(args: argparse.Namespace, workspace: Path, task: Task) -> 
         "-c",
         'model="dgx-moa-orchestrated"',
         "-c",
-        "model_context_window=65536",
+        "model_context_window=131072",
         "-c",
         'model_catalog_json="/state/model-catalog.json"',
         "-c",
@@ -1261,6 +1291,8 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             str(workspace),
             "-m",
             "gpt-5.6-sol",
+            "-c",
+            f'model_reasoning_effort="{baseline_reasoning_effort()}"',
             prompt(task),
         ]
         if args.runtime == "docker":
@@ -1285,10 +1317,14 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
         )
         return_code, stdout, stderr = run.returncode, run.stdout, run.stderr
     else:
+        key = os.getenv("DGX_MOA_OPENCODE_KEY")
+        if not key:
+            raise RuntimeError("DGX_MOA_OPENCODE_KEY is required")
         hermes_home = args.output_root / args.run_id / "profiles" / f"hermes-{task.slug}"
         hermes_home.mkdir(parents=True, exist_ok=True)
         shutil.copy2("/home/kotori9/.hermes/config.yaml", hermes_home / "config.yaml")
         shutil.copy2("/home/kotori9/.hermes/.env", hermes_home / ".env")
+        pin_hermes_gateway(hermes_home / "config.yaml", args.gateway, key)
         (hermes_home / "config.yaml").chmod(0o600)
         (hermes_home / ".env").chmod(0o600)
         usage_path = (
