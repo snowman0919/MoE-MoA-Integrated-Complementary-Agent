@@ -521,9 +521,9 @@ def tool_progress_text(tool_calls: dict[int, dict[str, object]], progress_langua
             )
         if action in {"cat", "sed", "head", "tail"}:
             return (
-                f"{target}의 실제 내용을 읽어 문서의 주장과 구현 증거를 대조합니다."
+                f"{target}의 실제 내용을 읽어 구현과 테스트 근거를 확인합니다."
                 if progress_language == "ko"
-                else f"Reading {target} to compare documented claims with implementation evidence."
+                else f"Reading {target} to verify implementation and test evidence."
             )
     justification = arguments.get("justification") if isinstance(arguments, dict) else None
     if (
