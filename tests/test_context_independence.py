@@ -129,3 +129,18 @@ async def test_collaborators_share_one_immutable_pre_dispatch_snapshot(
     }
     assert len({event["snapshot_hash"] for event in projection_events}) == 1
     assert all(event.get("projection_hash") for event in projection_events)
+    assert all(
+        event["snapshot_bytes"] > 0 and event["projection_bytes"] > 0 for event in projection_events
+    )
+    assert all(isinstance(event["dropped_evidence"], list) for event in projection_events)
+    rendered_roles = {
+        item["role"] for item in state.role_context_projections if item.get("rendered_prompt_bytes")
+    }
+    assert {"reasoner", "planner"}.issubset(rendered_roles)
+    measured_invocations = [
+        item for item in state.agent_invocations if item["role"] in {"reasoner", "planner"}
+    ]
+    assert all(
+        item["provider_prompt_tokens"] == item["prompt_tokens"] for item in measured_invocations
+    )
+    assert all(item["snapshot_bytes"] and item["projection_bytes"] for item in measured_invocations)

@@ -389,6 +389,38 @@ def test_role_targets_bound_discretionary_evidence_without_dropping_original_con
     assert planner.provenance.excluded_evidence_ids
 
 
+def test_role_target_keeps_latest_failed_test_over_resolved_history() -> None:
+    source = build_runtime_evidence_snapshot(
+        request_id="priority",
+        objective="fix the regression",
+        runtime_evidence=(
+            runtime_evidence_item(
+                "resolved-history",
+                "failure",
+                {"status": "resolved", "detail": "x" * 50_000},
+                observed_sequence=1,
+            ),
+            runtime_evidence_item(
+                "current-tool",
+                "tool",
+                {"status": "completed", "detail": "x" * 50_000},
+                observed_sequence=2,
+            ),
+            runtime_evidence_item(
+                "latest-failed-test",
+                "test",
+                {"passed": False, "detail": "x" * 50_000},
+                observed_sequence=3,
+            ),
+        ),
+    )
+
+    planner = project_role_context(source, "planner", stage="fanout")
+
+    assert "latest-failed-test" in planner.provenance.included_evidence_ids
+    assert "resolved-history" in planner.provenance.excluded_evidence_ids
+
+
 def test_reasoner_target_drops_old_oversized_inputs_and_keeps_current_objective() -> None:
     source = build_runtime_evidence_snapshot(
         request_id="oversized-history",

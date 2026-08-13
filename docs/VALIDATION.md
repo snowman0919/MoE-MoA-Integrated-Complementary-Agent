@@ -9102,3 +9102,43 @@ with the production bearer credential. One intermediate manual restart hit the
 configured systemd start-rate limit after repeated deployment restarts; the
 rate-limit latch was reset, and the same checked-in service then started and
 passed the checks above.
+
+### Runtime completion 재감사 기준선 — 2026-08-14
+
+기존 완료 표시는 사용하지 않고 clean `dev@43826ccee`와 실제 fixed gateway를 다시
+측정했다. Production checkout과 실행 프로세스는 clean `main@59bcb54e5`였고
+`ffdf006a4`, `fd658a1e8`, `a1ea6d7b2`, `269313420`, `90e838742`를 모두 포함한다.
+Gateway는 PID `235390`, restart `0`, `0.0.0.0:9000`이며 unauthenticated
+`/v1/models`는 `401`, authenticated health/models/ready는 모두 성공했다. Candidate A만
+`127.0.0.1:19301`에 bind됐다.
+
+Git 기준선은 local branch `13`, registered worktree `10`, stash `5`다. Root local
+`main@60921c3f3`은 fetched `origin/main@59bcb54e5`보다 `37` commit 뒤이고,
+`origin/main...dev`는 `47/42`로 갈라져 있다. Production checkout은
+`origin/main@59bcb54e5`와 일치한다. 고유 commit 수는
+`archive/local-main-before-normalization=1`, `auto/controller/IMP-2026-0001=1`,
+`auto/evaluation/frontier-noninferiority-v1=2`, `auto/integration/sglang-topology-v1=9`,
+`auto/runtime/sglang-gemma4-v1=294`, `codex/pre-rebase-dynamic-moa=2`이며 삭제하지 않았다.
+
+실제 production DB의 content-free 집계는 canonical snapshot `279`, role projection
+`297`, ExecutionGraph `164`, attempt `797`, checkpoint `1998`, tool request `3632`,
+stream complete/abort `3270/96`, review `232`, Judge `7`이다. 일곱 projection role이
+모두 존재하지만 기존 invocation `5402`건 중 `provider_prompt_tokens` 명시 기록은
+`0`이었다. 기존 projection은 `reasoner`에서 evidence `9`건을 drop했지만 이유를
+저장하지 않았다. 따라서 Role Context 전달은 `PARTIALLY_WIRED`로 재분류했다.
+
+Production override는 현재 repository policy와 달리 Loop Engineering, Runtime
+Skills/Knowledge/Evolution, training, weekly jobs를 enable한다. 이 차이는 삭제하거나
+현재 권위로 재해석하지 않았고 production 변경 승인 전까지 policy/security finding으로
+보존한다. 현재 key 집계는 active environment admin `1`, environment general `3`,
+managed general `3`; evaluation-scoped short-TTL kind는 production에 없다.
+
+격리 branch `auto/audit/runtime-completion-20260814`는 단순 순서 기반 evidence drop을
+관측 순서가 있는 deterministic priority selector로 교체하고 snapshot/projection/rendered
+prompt/provider prompt token/drop reason을 기존 state manifest에 기록한다. 기존 operator
+key API에는 5분 이상 short-TTL `evaluation` kind와 Chat/Responses/model-list allowlist를
+추가했다. Raw token은 한 번만 반환되고 SQLite에는 hash/mask만 남으며 revoke 직후
+`401`이 되는 테스트를 추가했다. 누락된 CI는 formatting, Ruff, strict mypy, full pytest,
+schema JSON을 강제한다. Candidate 결과는 Ruff/format/schema/workflow PASS, strict mypy
+`51` source PASS, full pytest `1146` PASS다. 이 증거는 isolated source validation이며 아직
+배포·실 client matrix·canary·rollback 승인이 아니므로 상태는 `IN_PROGRESS`다.

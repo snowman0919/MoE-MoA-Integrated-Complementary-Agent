@@ -808,7 +808,7 @@ class Controller:
     ) -> RuntimeEvidenceSnapshot:
         """Freeze one bounded, redacted Runtime-owned evidence space."""
         observed = []
-        for node in state.evidence_nodes[-64:]:
+        for sequence, node in enumerate(state.evidence_nodes[-64:]):
             kind = str(node.get("kind", ""))
             trust = str(node.get("trust_class", ""))
             evidence_kind: RuntimeEvidenceKind | None = (
@@ -832,6 +832,7 @@ class Controller:
                     evidence_id,
                     evidence_kind,
                     node.get("payload"),
+                    observed_sequence=sequence,
                 )
             )
         if state.execution_checkpoint_id:
@@ -844,6 +845,7 @@ class Controller:
                         "graph_hash": state.execution_graph_hash,
                         "template_id": state.execution_graph_template,
                     },
+                    observed_sequence=len(observed),
                 )
             )
         inputs = [
@@ -875,7 +877,14 @@ class Controller:
                 ).hexdigest()[:24]
                 evidence_id = f"{evidence_kind}-runtime-{digest}"
                 if evidence_id not in observed_ids:
-                    observed.append(runtime_evidence_item(evidence_id, evidence_kind, safe))
+                    observed.append(
+                        runtime_evidence_item(
+                            evidence_id,
+                            evidence_kind,
+                            safe,
+                            observed_sequence=len(observed),
+                        )
+                    )
                     observed_ids.add(evidence_id)
         snapshot = build_runtime_evidence_snapshot(
             request_id=state.current_request_id or state.session_id,
@@ -943,11 +952,17 @@ class Controller:
             "included_categories": list(projection.provenance.included_categories),
             "source_evidence_ids": list(projection.provenance.included_evidence_ids),
             "excluded_evidence_ids": list(projection.provenance.excluded_evidence_ids),
+            "dropped_evidence": [
+                {"evidence_id": evidence_id, "reason": "target_bytes"}
+                for evidence_id in projection.provenance.excluded_evidence_ids
+            ],
             "source_attempt_ids": list(projection.provenance.source_attempt_ids),
             "target_attempt_id": projection.provenance.target_attempt_id,
             "causal_parent_attempt_ids": list(projection.provenance.causal_parent_attempt_ids),
             "join_node_id": projection.provenance.join_node_id,
             "target_bytes": projection.provenance.target_bytes,
+            "snapshot_bytes": len(snapshot.model_dump_json().encode()),
+            "projection_bytes": len(projection.model_dump_json().encode()),
             "encoded_bytes": len(projection.model_dump_json().encode()),
             "created_at": now(),
         }
@@ -955,6 +970,27 @@ class Controller:
         state.role_context_projections = state.role_context_projections[-64:]
         self.store.event(state.session_id, "collaboration_context_projected", manifest)
         return projection
+
+    def record_rendered_prompt(
+        self,
+        state: SessionState,
+        projection: RoleContextProjection,
+        rendered: str,
+    ) -> None:
+        rendered_bytes = len(rendered.encode())
+        for manifest in reversed(state.role_context_projections):
+            if manifest.get("projection_id") == projection.projection_id:
+                manifest["rendered_prompt_bytes"] = rendered_bytes
+                break
+        self.store.event(
+            state.session_id,
+            "collaboration_prompt_rendered",
+            {
+                "role": projection.role,
+                "projection_id": projection.projection_id,
+                "rendered_prompt_bytes": rendered_bytes,
+            },
+        )
 
     def independent_runtime_projection(
         self,
@@ -1140,6 +1176,22 @@ class Controller:
         *,
         account_loop_usage: bool = True,
     ) -> None:
+        role = str(invocation["role"])
+        projection_role = "frontier_a" if role == "frontier" else role
+        manifest = next(
+            (
+                item
+                for item in reversed(state.role_context_projections)
+                if item.get("role") == projection_role
+            ),
+            None,
+        )
+        if manifest is not None:
+            for field in ("snapshot_bytes", "projection_bytes", "rendered_prompt_bytes"):
+                if field in manifest:
+                    invocation.setdefault(field, manifest[field])
+        if "prompt_tokens" in invocation:
+            invocation.setdefault("provider_prompt_tokens", invocation["prompt_tokens"])
         state.agent_invocations.append(invocation)
         state.agent_invocations = state.agent_invocations[-self.settings.limits.max_steps :]
         if account_loop_usage:
@@ -1150,7 +1202,6 @@ class Controller:
             )
         if self.usage is None:
             return
-        role = str(invocation["role"])
         model = (
             str(invocation["model"])
             if invocation.get("model")
@@ -2468,7 +2519,7 @@ class Controller:
         )
         if prompt_artifact is not None:
             state.prompt_versions[role] = f"{prompt_artifact.artifact_id}@{prompt_artifact.version}"
-        return "\n\n".join(
+        rendered = "\n\n".join(
             (
                 "IMMUTABLE ROLE POLICY\n"
                 + (registered_policy or f"{role} policy applies; read-only unless executor."),
@@ -2504,6 +2555,9 @@ class Controller:
                 f"FINAL REQUIRED OUTPUT\n{final_output}",
             )
         )
+        if runtime_projection is not None:
+            self.record_rendered_prompt(state, runtime_projection, rendered)
+        return rendered
 
     def executor_tokens(self, request: dict[str, Any]) -> int:
         requested_tokens = int(request.get("max_tokens") or self.settings.limits.executor_tokens)
@@ -3093,7 +3147,7 @@ class Controller:
             )
             reasoner_started = time.monotonic()
             reasoner_record_started = reasoner_started
-            reasoner_provider = reasoner.provider
+            reasoner_provider: str = reasoner.provider
             reasoner_model = reasoner.served_name
             try:
                 for attempt in range(2):
@@ -4132,7 +4186,7 @@ class Controller:
             try:
                 arguments = json.loads(arguments)
             except ValueError:
-                return arguments.lower()
+                return str(arguments).lower()
         return str(arguments.get("cmd", "") if isinstance(arguments, dict) else "").lower()
 
     @classmethod

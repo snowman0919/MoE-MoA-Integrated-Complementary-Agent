@@ -128,6 +128,7 @@ class RuntimeEvidenceItem(BaseModel):
     payload_json: str = Field(min_length=1, max_length=400_000)
     source_attempt_id: str | None = Field(default=None, min_length=1, max_length=256)
     parent_evidence_ids: tuple[str, ...] = ()
+    observed_sequence: int | None = Field(default=None, ge=0, le=1_000_000)
 
     @field_validator("payload_json")
     @classmethod
@@ -436,6 +437,7 @@ def runtime_evidence_item(
     *,
     source_attempt_id: str | None = None,
     parent_evidence_ids: Iterable[str] = (),
+    observed_sequence: int | None = None,
 ) -> RuntimeEvidenceItem:
     return RuntimeEvidenceItem(
         evidence_id=evidence_id,
@@ -443,6 +445,7 @@ def runtime_evidence_item(
         payload_json=_canonical(payload),
         source_attempt_id=source_attempt_id,
         parent_evidence_ids=_bounded_unique(parent_evidence_ids),
+        observed_sequence=observed_sequence,
     )
 
 
@@ -482,7 +485,16 @@ def build_runtime_evidence_snapshot(
         "request_inputs": tuple(request_inputs),
         "request_constraints_json": tuple(_canonical(item) for item in request_constraints),
         "acceptance_criteria_json": tuple(_canonical(item) for item in acceptance_criteria),
-        "runtime_evidence": tuple(sorted(runtime_evidence, key=lambda item: item.evidence_id)),
+        "runtime_evidence": tuple(
+            sorted(
+                runtime_evidence,
+                key=lambda item: (
+                    item.observed_sequence is None,
+                    item.observed_sequence or 0,
+                    item.evidence_id,
+                ),
+            )
+        ),
         "model_contributions": tuple(
             sorted(model_contributions, key=lambda item: item.contribution_id)
         ),
@@ -592,7 +604,11 @@ def project_role_context(
     projection = build()
     # ponytail: at most 512 bounded items; replace with cumulative sizing if this becomes hot.
     while len(_canonical(projection).encode()) > target_bytes and evidence:
-        evidence = evidence[:-1]
+        drop_index = min(
+            range(len(evidence)),
+            key=lambda index: _evidence_priority(evidence[index], index),
+        )
+        evidence = evidence[:drop_index] + evidence[drop_index + 1 :]
         projection = build()
     while len(_canonical(projection).encode()) > target_bytes and contributions:
         contributions = contributions[:-1]
@@ -601,3 +617,36 @@ def project_role_context(
         request_inputs = request_inputs[1:]
         projection = build()
     return projection
+
+
+def _evidence_priority(item: RuntimeEvidenceItem, fallback_sequence: int) -> tuple[int, int]:
+    """Higher values survive projection pressure first."""
+    payload = item.payload()
+    text = _canonical(payload).lower()
+    resolved = any(
+        marker in text
+        for marker in ('"status":"resolved"', '"status":"passed"', '"status":"completed"')
+    )
+    failed = any(
+        marker in text for marker in ('"passed":false', '"status":"failed"', '"status":"rejected"')
+    )
+    rank = (
+        9
+        if item.kind == "policy"
+        else 8
+        if item.kind == "test" and failed
+        else 7
+        if (item.kind == "failure" and not resolved) or failed
+        else 6
+        if item.kind == "diff"
+        else 5
+        if item.kind == "tool"
+        else 4
+        if item.kind in {"test", "build"}
+        else 2
+        if item.kind == "checkpoint"
+        else 1
+    )
+    if resolved:
+        rank = min(rank, 1)
+    return rank, item.observed_sequence or fallback_sequence
