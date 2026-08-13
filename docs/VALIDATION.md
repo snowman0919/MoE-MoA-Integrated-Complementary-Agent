@@ -8818,3 +8818,14 @@ the fixed gateway restart, authenticated `/v1/admin/frontier-auth` returned
 `test_frontier_config` passed. A direct CLI canary was intentionally rejected
 before model invocation because the safety boundary requires a registered
 isolated `frontier/*` worktree; it is not evidence of an inference failure.
+
+The external Codex custom-provider model is `dgx-moa-orchestrated`; internal
+Frontier A remains `gpt-5.6-sol`/high and is not a gateway client model. With
+the external model set correctly, production Responses session
+`prod-harness-stream-fix-20260813` emitted `HARNESS_STREAM_OK` and a terminal
+`response.completed`. Frontier OAuth failover now covers auth, usage, rate,
+busy, timeout, and provider-unavailable failures across the configured
+`primary`, `secondary`, then `default` profiles. If all Frontier profiles are
+unavailable, ordinary orchestration continues with available roles at low
+derived confidence; only an explicit policy `frontier_required=true` remains
+fail-closed. Ruff and format checks passed, and the full suite passed `1096`.

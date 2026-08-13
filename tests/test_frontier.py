@@ -952,7 +952,7 @@ async def test_codex_oauth_timeout_opens_circuit(tmp_path, monkeypatch: pytest.M
         await runner._run("architecture", {"objective": "x"}, "one")
     with pytest.raises(RuntimeError, match="FRONTIER_CIRCUIT_OPEN"):
         await runner._run("architecture", {"objective": "x"}, "two")
-    assert profiles == ["primary"]
+    assert profiles == ["primary", "secondary"]
 
 
 @pytest.mark.asyncio
@@ -979,7 +979,9 @@ async def test_codex_oauth_e2big_is_typed_and_not_retried(
     assert attempts == 1
 
 
-@pytest.mark.parametrize("primary_failure", ["not logged in", "usage limit", "rate limit"])
+@pytest.mark.parametrize(
+    "primary_failure", ["not logged in", "usage limit", "rate limit", "503 unavailable"]
+)
 @pytest.mark.asyncio
 async def test_codex_oauth_falls_back_to_secondary_profile(
     tmp_path, monkeypatch: pytest.MonkeyPatch, primary_failure: str
@@ -1304,10 +1306,14 @@ async def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
 
 
 @pytest.mark.parametrize(
-    ("primary_failure", "failure_class"),
+    ("primary_failure", "failure_class", "expected_profiles"),
     [
-        ("connection refused", "FRONTIER_PROVIDER_UNAVAILABLE"),
-        ("malformed response", "FRONTIER_PROTOCOL_ERROR"),
+        (
+            "connection refused",
+            "FRONTIER_PROVIDER_UNAVAILABLE",
+            ["primary", "secondary"],
+        ),
+        ("malformed response", "FRONTIER_PROTOCOL_ERROR", ["primary"]),
     ],
 )
 @pytest.mark.asyncio
@@ -1316,6 +1322,7 @@ async def test_codex_oauth_does_not_fail_over_unapproved_failures(
     monkeypatch: pytest.MonkeyPatch,
     primary_failure: str,
     failure_class: str,
+    expected_profiles: list[str],
 ) -> None:  # type: ignore[no-untyped-def]
     profiles: list[str] = []
 
@@ -1340,7 +1347,7 @@ async def test_codex_oauth_does_not_fail_over_unapproved_failures(
     with pytest.raises(RuntimeError, match=failure_class):
         await runner._run("architecture", {"objective": "x"}, "no-fallback")
 
-    assert profiles == ["primary"]
+    assert profiles == expected_profiles
 
 
 @pytest.mark.asyncio

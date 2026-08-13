@@ -2903,7 +2903,7 @@ class Controller:
                     {"status": state.judge_status},
                 )
                 return
-            required = bool(metadata.get("frontier_required") or "judge" in roles)
+            required = bool(metadata.get("frontier_required"))
             if self.frontier is None:
                 self.store.event(
                     state.session_id,
@@ -3555,7 +3555,7 @@ class Controller:
                     },
                 )
                 state.derived_confidence = "low"
-                if request.get("metadata", {}).get("frontier_required") or "judge" in roles:
+                if request.get("metadata", {}).get("frontier_required"):
                     raise FrontierRequiredUnavailable("required Frontier unavailable") from error
             else:
                 artifact = frontier_result.model_dump()

@@ -78,14 +78,15 @@ PROFILE_FAILOVER_FAILURES = frozenset(
     {
         "FRONTIER_AUTH_ERROR",
         "FRONTIER_CONTEXT_LIMIT",
+        "FRONTIER_PROVIDER_TIMEOUT",
+        "FRONTIER_PROVIDER_UNAVAILABLE",
         "FRONTIER_USAGE_LIMIT",
         "FRONTIER_RATE_LIMIT",
         "FRONTIER_PROFILE_BUSY",
+        "FRONTIER_TIMEOUT",
     }
 )
-PAID_FALLBACK_FAILURES = PROFILE_FAILOVER_FAILURES | frozenset(
-    {"FRONTIER_PROVIDER_UNAVAILABLE", "FRONTIER_PROVIDER_TIMEOUT", "FRONTIER_TIMEOUT"}
-)
+PAID_FALLBACK_FAILURES = PROFILE_FAILOVER_FAILURES
 
 MAX_CODEX_PROCESS_OUTPUT_BYTES = 2_000_000
 
@@ -1187,10 +1188,15 @@ class CodexOAuthCollaboration:
                                 selected_transport = "codex_exec"
                     except RuntimeError as error:
                         failure_code = str(error)
+                        has_fallback = profile_index + 1 < len(self.providers)
+                        if failure_code in PROFILE_FAILOVER_FAILURES:
+                            final_failure = failure_code
+                            completed = None
+                            try_next_profile = has_fallback
+                            break
                         if failure_code in {
                             "FRONTIER_INPUT_TRANSPORT_TOO_LARGE",
                             "FRONTIER_PROCESS_SPAWN_FAILED",
-                            "FRONTIER_PROVIDER_TIMEOUT",
                         }:
                             final_failure = failure_code
                             completed = None

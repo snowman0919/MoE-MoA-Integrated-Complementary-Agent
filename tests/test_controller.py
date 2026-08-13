@@ -11,6 +11,7 @@ import pytest
 from dgx_moa.controller import (
     Controller,
     DuplicateFailedCall,
+    FrontierRequiredUnavailable,
     JudgeRequired,
     LoopAdmissionError,
     ReasonerUnavailable,
@@ -577,7 +578,7 @@ async def test_optional_frontier_unavailable_keeps_derived_confidence_low(
         session_id="frontier-disabled-confidence",
         objective="Design a bounded service architecture",
         runtime_mode="orchestrated",
-        roles_required=["reasoner", "executor"],
+        roles_required=["reasoner", "executor", "judge"],
     )
 
     await controller.prepare_executor(
@@ -591,7 +592,7 @@ async def test_optional_frontier_unavailable_keeps_derived_confidence_low(
                 "changed_paths": ["gateway/auth.py"],
             },
         },
-        ("reasoner", "executor"),
+        ("reasoner", "executor", "judge"),
     )
 
     assert state.derived_confidence == "low"
@@ -629,7 +630,7 @@ async def test_optional_frontier_failure_does_not_fail_executor_turn(
         objective="Design a bounded service architecture",
         runtime_mode="orchestrated",
         request_class="explicit_orchestrated",
-        roles_required=["reasoner", "executor"],
+        roles_required=["reasoner", "executor", "judge"],
     )
 
     await controller.prepare_executor(
@@ -639,7 +640,7 @@ async def test_optional_frontier_failure_does_not_fail_executor_turn(
             "messages": [{"role": "user", "content": state.objective}],
             "metadata": {"architecture": True},
         },
-        ("reasoner", "executor"),
+        ("reasoner", "executor", "judge"),
     )
 
     assert state.derived_confidence == "low"
@@ -648,6 +649,39 @@ async def test_optional_frontier_failure_does_not_fail_executor_turn(
         and event["payload"]["failure_class"] == str(failure)
         for event in store.events(state.session_id)
     )
+
+
+@pytest.mark.asyncio
+async def test_explicitly_required_frontier_still_fails_closed(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class FailingFrontier:
+        config = FrontierConfig(enabled=True, max_invocations_per_task=3)
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            raise RuntimeError("FRONTIER_PROVIDER_UNAVAILABLE")
+
+    controller = Controller(
+        settings, StateStore(settings.state_db), stub_provider, FailingFrontier()
+    )
+    state = SessionState(
+        session_id="frontier-explicitly-required",
+        objective="Review a mandatory Frontier decision",
+        runtime_mode="orchestrated",
+        request_class="explicit_orchestrated",
+        roles_required=["reasoner", "executor", "frontier"],
+    )
+
+    with pytest.raises(FrontierRequiredUnavailable):
+        await controller.prepare_executor(
+            state,
+            {
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": state.objective}],
+                "metadata": {"architecture": True, "frontier_required": True},
+            },
+            ("reasoner", "executor", "frontier"),
+        )
 
 
 @pytest.mark.asyncio
