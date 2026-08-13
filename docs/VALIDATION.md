@@ -9005,3 +9005,17 @@ session `substantive-progress-canary-v2-20260813` called `ls -la` and emitted
 `현재 작업 디렉터리의 파일 구조를 확인해 실제 평가 대상을 정합니다.` before the
 function call; the rejected generic sentence did not appear. The request ended
 with `response.completed`; the gateway remained active with restart count zero.
+
+### API key dashboard recovery — 2026-08-13
+
+The dashboard now exposes newly created or rotated API key plaintext once in a
+read-only field with an explicit copy action; persisted keys remain masked and
+unrecoverable. Usage charts filter historical invocation rows against the
+runtime's active role/model catalog rather than displaying retired models.
+
+Focused API-key and usage tests passed `42`. After production restart, the
+authenticated catalog contained Qwythos Reasoner, OpenCode Go Planner/Reviewer,
+Kimi Judge, resident Executor, Executor Flash, and Codex OAuth fallback roles.
+An authenticated historical sample retained its raw rows while the chart filter
+excluded `dgx-moa-executor-candidate` and the retired Reviewer use of
+`deepseek-v4-flash`. The gateway was active and bound to `0.0.0.0:9000`.

@@ -140,6 +140,11 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert "frame-ancestors 'none'" in dashboard.headers["content-security-policy"]
         assert 'type="date"' in dashboard.text
         assert "navigator.clipboard" in dashboard.text
+        assert 'id="secret-value"' in dashboard.text
+        assert 'id="copy-secret"' in dashboard.text
+        assert "showSecret(result.api_key" in dashboard.text
+        assert "지금 한 번만 표시됩니다" in dashboard.text
+        assert "키 식별값" in dashboard.text
         assert "payload.error?.message" in dashboard.text
         assert "JSON.parse(text)" in dashboard.text
         assert 'placeholder="무제한"' in dashboard.text
@@ -148,6 +153,8 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert "선택 기간 합계" in dashboard.text
         assert "Fallback 경로" in dashboard.text
         assert "kpi-fallback" in dashboard.text
+        assert "activeRoleModels.has" in dashboard.text
+        assert "activeModels.has" in dashboard.text
         assert 'class="tooltip"' in dashboard.text
         assert all(
             name in dashboard.text for name in ("Mistral-Small-4", "Nemotron-30B", "North-Mini-30B")
@@ -163,7 +170,7 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
                 "served_name": configured.models[role].served_name,
                 "repository": configured.models[role].repository,
             }
-            for role in ("executor", "planner", "reviewer")
+            for role in ("reasoner", "executor", "planner", "reviewer", "judge")
         ]
         assert client.get("/v1/admin/frontier-auth", headers=operator).json() == {
             "enabled": False,

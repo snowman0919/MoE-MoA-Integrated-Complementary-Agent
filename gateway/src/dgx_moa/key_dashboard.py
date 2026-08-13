@@ -38,7 +38,10 @@ color:#090b15;font-weight:750;box-shadow:0 9px 24px #725fff38}button.danger{colo
 form{margin:0}.form-grid{display:grid;grid-template-columns:minmax(170px,1.2fr) repeat(4,minmax(120px,1fr)) auto;
 gap:10px;align-items:end}.form-grid .section-head{grid-column:1/-1;margin-bottom:8px}
 .field{display:grid;min-width:0;gap:6px}.field span{color:var(--muted);font-size:12px}
-#secret{grid-column:1/-1;min-height:20px;color:var(--ok)}.keys{padding:0;overflow:hidden}
+#secret{grid-column:1/-1;display:grid;grid-template-columns:minmax(180px,.7fr) minmax(280px,2fr) auto;
+gap:10px;align-items:center;padding:12px;border:1px solid #5ee6b54d;border-radius:14px;background:#5ee6b50b}
+#secret strong,#secret small{display:block}#secret strong{color:var(--ok)}#secret small{color:var(--muted)}
+#secret-value{width:100%;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.keys{padding:0;overflow:hidden}
 .keys .section-head{padding:22px 24px 10px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;
 min-width:1050px}th,td{padding:14px 12px;border-bottom:1px solid var(--line);text-align:left;
 white-space:nowrap}th{color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
@@ -75,7 +78,7 @@ box-shadow:0 12px 34px #000b;white-space:pre-line;pointer-events:none;transform:
 @media(max-width:700px){main{padding:18px}.grid{grid-template-columns:1fr}.card{border-radius:18px}
 .form-grid{grid-template-columns:1fr}.kpis{grid-template-columns:1fr 1fr}.toolbar{align-items:stretch}
 .toolbar .section-head,.toolbar .field{width:100%}.toolbar input,.toolbar select,.toolbar button{width:100%}
-.bar-row{grid-template-columns:105px 1fr 42px}}
+.bar-row{grid-template-columns:105px 1fr 42px}#secret{grid-template-columns:1fr}#secret button{width:100%}}
 </style>
 <main>
   <header class="topbar">
@@ -102,10 +105,13 @@ box-shadow:0 12px 34px #000b;white-space:pre-line;pointer-events:none;transform:
       <label class="field"><span>토큰 한도</span><input id="token-limit" type="number" min="1"
         placeholder="무제한"></label>
       <button class="primary">생성</button>
-      <span id="secret"></span>
+      <div id="secret" hidden><span><strong id="secret-title"></strong>
+        <small>이 원문은 지금 한 번만 표시됩니다.</small></span>
+        <input id="secret-value" type="text" readonly autocomplete="off" spellcheck="false"
+          aria-label="새 API 키 원문"><button id="copy-secret" type="button">원문 복사</button></div>
     </form>
     <section class="card keys"><div class="section-head"><h2>키</h2></div><div class="table-wrap"><table>
-      <thead><tr><th>이름</th><th>권한</th><th>API key 원문</th><th>상태</th><th>만료</th>
+      <thead><tr><th>이름</th><th>권한</th><th>키 식별값</th><th>상태</th><th>만료</th>
       <th>요청/한도</th><th>토큰/한도</th><th>관리</th></tr></thead>
       <tbody id="keys"></tbody></table></div></section>
     <section class="card">
@@ -146,7 +152,7 @@ box-shadow:0 12px 34px #000b;white-space:pre-line;pointer-events:none;transform:
 const $=id=>document.getElementById(id);
 const fmtTime=value=>value?new Date(value*1000).toLocaleString():"없음";
 const optional=id=>$(id).value?Number($(id).value):null;
-let modelCatalog=new Map();
+let modelCatalog=new Map(),activeModels=new Set(),activeRoleModels=new Set();
 const modelNames=new Map([["dgx-moa-executor","Mistral-Small-4"],
   ["dgx-moa-planner","Nemotron-30B"],["dgx-moa-reviewer","North-Mini-30B"]]);
 const modelLabel=model=>modelNames.get(model)||model;
@@ -180,6 +186,12 @@ const copy=async text=>{
   else{const area=document.createElement("textarea");area.value=text;document.body.append(area);
     area.select();document.execCommand("copy");area.remove()}
 };
+const showSecret=(token,action)=>{$("secret-value").value=token;
+  $("secret-title").textContent="API 키가 "+action+"되었습니다.";$("secret").hidden=false;
+  $("secret-value").focus();$("secret-value").select()};
+$("copy-secret").onclick=async()=>{try{await copy($("secret-value").value);
+  $("copy-secret").textContent="복사됨";setTimeout(()=>$("copy-secret").textContent="원문 복사",1500)}
+  catch(error){alert("복사하지 못했습니다: "+error.message)}};
 const keyCell=(row,key)=>{
   const cell=document.createElement("td");const wrap=document.createElement("div");
   wrap.className="key-value";const value=document.createElement("code");value.textContent=key.masked_key;
@@ -229,6 +241,8 @@ const stacked=(rows,start,end)=>{
 async function load(){
   const data=await api("/v1/admin/api-keys");$("content").hidden=false;$("login").hidden=true;
   modelCatalog=new Map(data.model_catalog.map(item=>[item.served_name,item.repository]));
+  activeModels=new Set(data.model_catalog.map(item=>item.served_name));
+  activeRoleModels=new Set(data.model_catalog.map(item=>item.role+"\0"+item.served_name));
   $("model-catalog").replaceChildren();
   data.model_catalog.forEach(item=>{const line=document.createElement("span");
     line.textContent=modelLabel(item.served_name);
@@ -264,16 +278,19 @@ async function loadCharts(){
   $("kpi-failed").textContent=(summary.failed||0).toLocaleString();
   bars("tasks",data.tasks,item=>item.request_class+" · "+item.model_alias,item=>item.requests,
     item=>"요청 "+item.requests.toLocaleString()+"회\\n토큰 "+item.total_tokens.toLocaleString());
-  bars("models",data.models,item=>item.role+" · "+modelLabel(item.model),item=>item.invocations,
+  const models=data.models.filter(item=>activeRoleModels.has(item.role+"\0"+item.model));
+  const fallbacks=data.fallbacks.filter(item=>activeRoleModels.has(item.role+"\0"+item.model));
+  const dailyModels=data.daily_models.filter(item=>activeModels.has(item.model));
+  bars("models",models,item=>item.role+" · "+modelLabel(item.model),item=>item.invocations,
     item=>modelLabel(item.model)+"\\n"+item.provider+" · "+item.invocations.toLocaleString()+
       "회\\n토큰 "+item.total_tokens.toLocaleString());
-  bars("fallbacks",data.fallbacks,item=>item.role+" · "+reasonLabel(item.reason),
+  bars("fallbacks",fallbacks,item=>item.role+" · "+reasonLabel(item.reason),
     item=>item.invocations,item=>modelLabel(item.model)+"\\n"+reasonLabel(item.reason)+" · "+
       item.provider+"\\n"+item.invocations.toLocaleString()+"회 · 토큰 "+
       item.total_tokens.toLocaleString());
   bars("daily",data.daily,item=>item.day,item=>item.requests,
     item=>item.day+"\\n요청 "+item.requests.toLocaleString()+"회");
-  stacked(data.daily_models,$("graph-start").value,$("graph-end").value);
+  stacked(dailyModels,$("graph-start").value,$("graph-end").value);
 }
 async function loadFrontierAuth(){
   const data=await api("/v1/admin/frontier-auth");
@@ -316,8 +333,7 @@ async function change(key,action){
       "/v1/admin/api-keys/"+key.name+"/"+action;
     const result=await api(path,
       {method:action==="delete"?"DELETE":"POST",body:body?JSON.stringify(body):undefined});
-    $("secret").textContent=result&&result.api_key?"키가 회전되었습니다. 목록에서 확인하세요.":"";
-    await load()}
+    await load();if(result&&result.api_key)showSecret(result.api_key,"회전")}
   catch(error){alert(error.message)}
 }
 $("login-form").onsubmit=async event=>{event.preventDefault();
@@ -329,13 +345,13 @@ $("create-form").onsubmit=async event=>{event.preventDefault();try{
     name:$("name").value.trim().toLowerCase(),kind:$("kind").value,
     expires_in_days:Number($("days").value),
     request_limit:optional("request-limit"),token_limit:optional("token-limit")})});
-  $("secret").textContent="키가 생성되었습니다. 목록에서 확인하세요.";
-  $("name").value="";await load()}
+  $("name").value="";await load();showSecret(result.api_key,"생성")}
   catch(error){alert(error.message)}};
 $("name").oninput=event=>event.target.value=event.target.value.toLowerCase();
 $("graph-filter").onsubmit=async event=>{event.preventDefault();try{await loadCharts()}
   catch(error){alert(error.message)}};
 $("logout").onclick=async()=>{await api("/v1/admin/session",{method:"DELETE"});
+  $("secret-value").value="";$("secret").hidden=true;
   $("content").hidden=true;$("login").hidden=false};
 const localDate=date=>new Date(date-date.getTimezoneOffset()*60000)
   .toISOString().slice(0,10);
