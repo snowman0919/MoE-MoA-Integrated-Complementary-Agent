@@ -141,6 +141,29 @@ def is_progress_only(text: str) -> bool:
     )
 
 
+def is_context_starved_response(
+    text: str,
+    usage: dict[str, object] | None,
+    context_length: int | None,
+    objective: str,
+) -> bool:
+    if not usage or not context_length:
+        return False
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+    stripped = text.strip()
+    return (
+        isinstance(input_tokens, int)
+        and not isinstance(input_tokens, bool)
+        and isinstance(output_tokens, int)
+        and not isinstance(output_tokens, bool)
+        and input_tokens * 100 >= context_length * 85
+        and output_tokens <= 4
+        and len(stripped) <= 64
+        and (not stripped or stripped.casefold() not in objective.casefold())
+    )
+
+
 def _log_token(value: str) -> str:
     return "".join(character if character.isprintable() else "?" for character in value)[:256]
 
@@ -440,6 +463,8 @@ async def responses_sse(
     goal_already_loaded: bool = False,
     goal_prerequisites: tuple[str, ...] = (),
     require_tool_action: bool = False,
+    context_length: int | None = None,
+    objective: str = "",
 ) -> AsyncGenerator[bytes, None]:
     """Translate Chat Completions SSE into Responses text and function-call events."""
     response_id = f"resp_{uuid.uuid4().hex}"
@@ -580,7 +605,11 @@ async def responses_sse(
                 len(goal_prerequisites),
             )
         text = "".join(text_parts)
-        if not tool_calls and (require_tool_action or is_progress_only(text)):
+        if not tool_calls and (
+            require_tool_action
+            or is_progress_only(text)
+            or is_context_starved_response(text, usage, context_length, objective)
+        ):
             raise ProgressOnlyResponse
         if tool_calls:
             text = tool_progress_text(tool_calls, progress_language)

@@ -404,3 +404,23 @@ def test_reasoner_target_drops_old_oversized_inputs_and_keeps_current_objective(
     assert len(reasoner.model_dump_json().encode()) <= ROLE_CONTEXT_TARGET_BYTES["reasoner"]
     assert reasoner.objective == "current objective"
     assert reasoner.request_inputs[-1].input_id == "input-7"
+
+
+def test_role_projection_deduplicates_harness_messages_with_new_ids() -> None:
+    source = build_runtime_evidence_snapshot(
+        request_id="repeated-harness",
+        objective="current objective",
+        request_inputs=(
+            canonical_request_input(
+                "old", {"id": "old", "type": "message", "role": "developer", "content": "same"}
+            ),
+            canonical_request_input(
+                "new", {"id": "new", "type": "message", "role": "developer", "content": "same"}
+            ),
+            canonical_request_input("user", {"role": "user", "content": "current objective"}),
+        ),
+    )
+
+    projection = project_role_context(source, "executor", stage="fanout")
+
+    assert [item.input_id for item in projection.request_inputs] == ["new", "user"]

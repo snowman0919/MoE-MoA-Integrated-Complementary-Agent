@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .compression import message_fingerprint
 from .security import redact
 
 SNAPSHOT_SCHEMA_VERSION: Literal["runtime-evidence-snapshot-v1"] = "runtime-evidence-snapshot-v1"
@@ -515,7 +516,20 @@ def project_role_context(
         if item.role in policy.allowed_contribution_roles
         and (not causal_parents or item.source_attempt_id in causal_parents)
     )
-    request_inputs = snapshot.request_inputs
+    request_inputs_reversed: list[CanonicalRequestInput] = []
+    seen_inputs: set[str] = set()
+    for item in reversed(snapshot.request_inputs):
+        payload = item.payload()
+        fingerprint = (
+            message_fingerprint(payload)
+            if isinstance(payload, dict) and payload.get("role") in {"developer", "system", "user"}
+            else item.payload_json
+        )
+        if fingerprint in seen_inputs:
+            continue
+        seen_inputs.add(fingerprint)
+        request_inputs_reversed.append(item)
+    request_inputs = tuple(reversed(request_inputs_reversed))
     target_bytes = ROLE_CONTEXT_TARGET_BYTES[role]
 
     def build() -> RoleContextProjection:

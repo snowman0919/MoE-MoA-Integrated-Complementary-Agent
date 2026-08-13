@@ -69,6 +69,19 @@ def test_repeated_messages_are_deduplicated() -> None:
     assert len(compress_messages(messages, limits)) == 1
 
 
+def test_repeated_harness_messages_ignore_transient_response_ids() -> None:
+    limits = Limits(max_retained_observations=4)
+    messages = [
+        {"id": "old", "type": "message", "role": "developer", "content": "same"},
+        {"id": "new", "type": "message", "role": "developer", "content": "same"},
+        {"id": "user", "type": "message", "role": "user", "content": "current"},
+    ]
+
+    compressed = compress_messages(messages, limits)
+
+    assert [message["id"] for message in compressed] == ["new", "user"]
+
+
 def test_compression_keeps_assistant_preceding_retained_tool_results() -> None:
     limits = Limits(max_retained_observations=2)
     messages = [

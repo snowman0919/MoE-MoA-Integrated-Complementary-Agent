@@ -4869,6 +4869,10 @@ def create_app(
                                         require_tool_action=goal_requires_tool_action(
                                             response_state
                                         ),
+                                        context_length=configured.models["executor"].context_length,
+                                        objective=(
+                                            response_state.objective if response_state else ""
+                                        ),
                                     ),
                                     heartbeat=b"event: ping\ndata: {}\n\n",
                                 ):
@@ -4965,6 +4969,8 @@ def create_app(
                                     else ()
                                 ),
                                 require_tool_action=goal_requires_tool_action(response_state),
+                                context_length=configured.models["executor"].context_length,
+                                objective=response_state.objective if response_state else "",
                             ):
                                 yield chunk
                             return
