@@ -355,6 +355,29 @@ def batch_workspace_read(
     return True
 
 
+def normalize_workspace_validation_call(
+    tool_calls: dict[int, dict[str, object]], inventory_paths: tuple[str, ...]
+) -> bool:
+    if len(tool_calls) != 1 or not any(
+        path.rsplit("/", 1)[-1].startswith("test_") and path.endswith(".py")
+        for path in inventory_paths
+    ):
+        return False
+    call = next(iter(tool_calls.values()))
+    if call.get("name") != "exec_command":
+        return False
+    try:
+        arguments = json.loads(str(call.get("_arguments") or "{}"))
+    except ValueError:
+        return False
+    command = str(arguments.get("cmd") or "")
+    if not re.search(r"(?:^|\n)python(?:3)?\s+-\s+<<", command) or "assert " not in command:
+        return False
+    arguments["cmd"] = "python -m pytest -q"
+    call["_arguments"] = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+    return True
+
+
 def has_read_only_evaluation_mutation(
     tool_calls: dict[int, dict[str, object]], objective: str
 ) -> bool:
@@ -940,6 +963,11 @@ async def responses_sse(
                 "responses_workspace_reads_batched session_id=%s count=%d",
                 _log_token(session_id),
                 len(workspace_inventory_paths),
+            )
+        if normalize_workspace_validation_call(tool_calls, workspace_inventory_paths):
+            LOGGER.info(
+                "responses_workspace_validation_normalized session_id=%s",
+                _log_token(session_id),
             )
         if tool_calls and any(
             tool_call_fingerprint(call) in successful_tool_fingerprints
