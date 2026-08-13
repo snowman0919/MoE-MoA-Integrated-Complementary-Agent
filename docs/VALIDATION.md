@@ -9223,3 +9223,9 @@ parser는 이번 diff에서 유지하고, `capture-opencode-physical.py`, `captu
 `run-opencode-staging.py`의 client model만 canonical `dgx-moa`로 교체했다. 문서 계약 테스트가
 세 launcher에 retired alias가 없는지 검사한다. Focused test `10`건, Ruff, 세 script strict
 mypy가 통과했다. 이 변경은 candidate source에만 있고 production은 변경하지 않았다.
+
+README도 public model path를 `dgx-moa`와 `dgx-moa-fast` 둘로 정정했다. 2026-08-14
+inspection과 달리 production lifecycle이 adaptive라는 문구를 제거하고 실제 `disabled` + empty
+unit map, external Reasoner tailnet endpoint와 gated production override 차이를 audit finding으로
+명시했다. Historical lifecycle/model-path evidence는 삭제하지 않았다. 문서 계약 focused test
+`10`건과 Ruff가 통과했다.

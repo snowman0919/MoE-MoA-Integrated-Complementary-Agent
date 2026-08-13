@@ -8,9 +8,8 @@ adds Planner, Reviewer, Codex OAuth Frontier collaboration, or the mutually
 exclusive Heavy Judge only when the task and evidence require them.
 
 `dgx-moa-fast` is the explicitly named Executor-only compatibility path.
-`dgx-moa-agent` keeps the Reasoner + Executor core while the external client owns
-the tool loop. `dgx-moa-orchestrated` enables dynamic local specialists and
-frequent Frontier architecture/review collaboration.
+These are the only public model paths; `dgx-moa` dynamically selects bounded
+specialist and Frontier collaboration when configured and permitted.
 
 ```bash
 uv sync
@@ -25,33 +24,21 @@ the stable `main` runtime.
 
 The authenticated gateway binds `0.0.0.0:9000`, so tailnet clients use
 `http://<DGX_TAILSCALE_IP>:9000/v1`, LAN clients use the host LAN address, and
-local clients use `http://127.0.0.1:9000/v1`. Role-model inference endpoints
-remain loopback-only. Tailscale Serve and Funnel are not required.
+local clients use `http://127.0.0.1:9000/v1`. Managed role-model inference
+endpoints remain loopback-only. The currently configured external Reasoner uses
+a tailnet address and is preserved as a topology audit finding, not an approved
+exception. Tailscale Serve and Funnel are not required.
 
 See `docs/API_CLIENT_MODES.md` for the model aliases, standard request and SSE
 contracts, typed errors, curl/OpenAI SDK/OpenCode examples, and output limits.
 See `docs/HERMES_AGENT.md` for the environment-only Hermes configuration.
 
 The production `main` runtime implements the MoA contracts and role-aware
-request statistics. Its lifecycle policy keeps the 65,536-token
-Executor resident and keeps the separately started loopback Ollama Reasoner available;
-Planner and Reviewer may unload after bounded role-local idle periods. With
-specialist routing disabled, a cold managed local role returns retryable `503`
-state, generation, weight progress, overall progress, and ETA fields while one
-load owns the role. With validated specialist routing enabled, cold Planner and
-Reviewer calls run remotely while that same singleflight local load proceeds in
-the background. An isolated user-systemd run physically passed the four-role
-control path, idle unload/reload, circuit breaker, and idempotent rollback. It
-used fake weights to avoid duplicating the active 45G production executor, so it
-does not add a new real-weight memory claim. Safe checked-in defaults remain
-`disabled` with an empty unit map; the ignored 0600 production environment uses
-reviewed `adaptive` control for Executor, Planner, and Reviewer and enables
-Codex OAuth Frontier. Physical evidence covers the core, real clients, Planner,
-Reviewer, Frontier, and the exclusive Heavy Judge resume path. The 2026-07-21
-Heavy Judge validation rejected a drifted 12-GB KV configuration, then passed
-the approved 4-GB readiness gate, normal adjudication, guard errors, teardown,
-and fixed-resident restoration. Production enablement and later Responses
-compatibility fixes were promoted through reviewed `dev`-to-`main` PRs.
+request statistics. Safe checked-in lifecycle control is `disabled` with an
+empty unit map, and the 2026-08-14 production inspection observed the same
+state. Optional-role on-demand loading is therefore not a current runtime
+capability. Historical fixed/adaptive lifecycle experiments remain evidence in
+`docs/VALIDATION.md`; they do not override the inspected configuration.
 
 `dev` also contains disabled, unit-tested bounded Loop Engineering, runtime
 Skills and canaries, a separate Runtime Knowledge registry, OpenCode Go GLM-5.2
@@ -60,6 +47,9 @@ Reviewer specialists, declarative policy, typed Evidence Graph/replay, safe
 Telegram observation, privacy-filtered training candidates, and Seoul
 weekly 7z packaging/retention workflows. These are not production capabilities
 until the physical client/provider/archive gates in `docs/VALIDATION.md` pass.
+The inspected production override currently enables several of these gated
+features contrary to repository policy; that mismatch is an audit finding, not
+promotion evidence.
 
 See `docs/MODEL_LIFECYCLE.md` for model states, role policies and statistics,
 retryable loading responses, blockers, status routes, circuit breaker, and

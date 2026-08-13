@@ -197,6 +197,7 @@ def test_lifecycle_docs_link_canonical_contract_and_keep_evidence_pending() -> N
 
 
 def test_api_client_mode_documentation() -> None:
+    readme = Path("README.md").read_text()
     api_modes = Path("docs/API_CLIENT_MODES.md").read_text()
     hermes = Path("docs/HERMES_AGENT.md").read_text()
     client_scripts = "\n".join(
@@ -213,6 +214,8 @@ def test_api_client_mode_documentation() -> None:
         assert retired_alias not in api_modes
         assert retired_alias not in client_scripts
     assert "dgx-moa/dgx-moa" in client_scripts
+    assert "These are the only public model paths" in readme
+    assert "production inspection observed the same" in readme
     assert "http://100.125.239.72:9000/v1" in hermes
     assert "DGX_MOA_API_KEY" in hermes
     assert "127.0.0.1:9000" not in hermes
