@@ -29,6 +29,7 @@ from dgx_moa.execution_graph import (
     compile_execution_graph,
 )
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
+from dgx_moa.loop_engineering import new_loop
 from dgx_moa.schemas import PlannerPlan, ReasonerContribution, ReviewResult
 from dgx_moa.state import Phase, SessionState, StateStore
 from dgx_moa.usage import UsageStore
@@ -224,6 +225,27 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
     )
     assert codex["exit_code"] == 1
     assert codex["stdout"].endswith("FAILED (failures=1)")
+    running = normalize_tool_result(
+        {
+            "role": "tool",
+            "name": "exec_command",
+            "content": json.dumps({"output": "test started ...", "session_id": 123}),
+        }
+    )
+    assert running["exit_code"] == 1
+    assert running["session_id"] == 123
+    running_text = normalize_tool_result(
+        {
+            "role": "tool",
+            "name": "exec_command",
+            "content": (
+                "Chunk ID: abc123\nWall time: 10 seconds\n"
+                "Process running with session ID 123\nOutput:\ntest started ..."
+            ),
+        }
+    )
+    assert running_text["exit_code"] == 1
+    assert "Process running with session ID 123" in running_text["stdout"]
     failed_patch = normalize_tool_result(
         {
             "role": "tool",
@@ -232,6 +254,14 @@ def test_normalize_tool_result_preserves_hermes_output() -> None:
         }
     )
     assert failed_patch["exit_code"] == 1
+    failed_stdin = normalize_tool_result(
+        {
+            "role": "tool",
+            "name": "write_stdin",
+            "content": "write_stdin failed: Unknown process id 0",
+        }
+    )
+    assert failed_stdin["exit_code"] == 1
 
 
 def test_role_schemas_discard_hidden_reasoning_and_require_structured_findings() -> None:
@@ -359,8 +389,10 @@ async def test_planner_and_frontier_are_concurrent_and_frontier_evidence_survive
 
         def __init__(self) -> None:
             self.started = asyncio.Event()
+            self.evidence = None
 
         async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            self.evidence = evidence
             self.started.set()
             await asyncio.wait_for(reasoner_started.wait(), timeout=1)
             await asyncio.sleep(0.01)
@@ -614,6 +646,52 @@ async def test_optional_frontier_failure_does_not_fail_executor_turn(
     assert any(
         event["event_type"] == "frontier_unavailable"
         and event["payload"]["failure_class"] == str(failure)
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_architecture_reserves_last_frontier_call_for_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class Frontier:
+        config = FrontierConfig(enabled=True, max_invocations_per_task=3)
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            raise AssertionError("reserved review slot was consumed by architecture")
+
+    store = StateStore(settings.state_db)
+    frontier = Frontier()
+    controller = Controller(settings, store, stub_provider, frontier)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="frontier-review-slot",
+        objective="Implement the bounded change",
+        runtime_mode="orchestrated",
+        request_class="explicit_orchestrated",
+        roles_required=["reasoner", "executor", "reviewer"],
+        frontier_invocations=2,
+        engineering_loop=new_loop("frontier-review-slot", "Implement the bounded change"),
+    )
+
+    await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-orchestrated",
+            "messages": [{"role": "user", "content": state.objective}],
+            "metadata": {"architecture": True},
+        },
+        ("reasoner", "executor", "reviewer", "frontier"),
+    )
+
+    assert frontier.calls == 0
+    assert state.frontier_invocations == 2
+    assert any(
+        event["event_type"] == "frontier_unavailable"
+        and event["payload"]["failure_class"] == "FRONTIER_REVIEW_SLOT_RESERVED"
         for event in store.events(state.session_id)
     )
 
@@ -1082,6 +1160,9 @@ async def test_duplicate_unavailable_mcp_replans_without_409_and_removes_read_to
     assert "call the required tool in the same response" in executor_prompt
     assert "never return only a progress marker" in executor_prompt
     assert "Never request elevated permissions" in executor_prompt
+    assert "exec_command has no `timeout` argument" in executor_prompt
+    assert "unless pipefail is enabled" in executor_prompt
+    assert "A yielded or still-running process is pending" in executor_prompt
     assert any(
         event["event_type"] == "replan_requested" for event in store.events(state.session_id)
     )
@@ -1477,6 +1558,154 @@ def test_frontier_correction_latch_requires_a_new_file_change(
         event["event_type"] == "frontier_correction_applied"
         for event in store.events(python_state.session_id)
     )
+
+
+def test_frontier_missing_test_latch_accepts_fresh_validation(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="frontier-missing-test",
+        review_status="rejected_frontier",
+        review_deferred=True,
+        frontier_correction_required=True,
+        agent_artifacts=[
+            {
+                "role": "frontier",
+                "output": {
+                    "verdict": "revise",
+                    "critical": [],
+                    "important": ["No successful test evidence was supplied."],
+                    "missing_tests": ["Run python -m unittest discover -s tests -v."],
+                },
+            }
+        ],
+    )
+
+    controller._observe(
+        state,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "validate-after-frontier",
+                        "type": "function",
+                        "function": {
+                            "name": "shell",
+                            "arguments": json.dumps(
+                                {"cmd": ("timeout 120s python -m unittest discover -s tests -v")}
+                            ),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "validate-after-frontier",
+                "content": '{"exit_code":0,"stdout":"Ran 3 tests in 0.1s\\n\\nOK"}',
+            },
+        ],
+    )
+
+    assert state.frontier_correction_required is False
+    assert state.frontier_correction_pending_verification is True
+    assert state.review_status == "deferred"
+    assert any(
+        event["event_type"] == "frontier_correction_applied"
+        and event["payload"]["reason"] == "requested_validation_completed_after_frontier_rejection"
+        for event in store.events(state.session_id)
+    )
+
+    state.frontier_correction_required = True
+    state.frontier_correction_pending_verification = False
+    state.agent_artifacts.append(
+        {
+            "role": "frontier",
+            "output": {
+                "verdict": "reject",
+                "critical": ["The implementation is still incorrect."],
+                "missing_tests": ["Repeat the test after fixing it."],
+            },
+        }
+    )
+    assert controller.frontier_rejection_requests_validation(state) is False
+
+
+def test_frontier_evidence_latch_accepts_bounded_file_inspection(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="frontier-missing-evidence",
+        review_status="rejected_frontier",
+        review_deferred=True,
+        frontier_correction_required=True,
+        agent_artifacts=[
+            {
+                "role": "frontier",
+                "output": {
+                    "verdict": "revise",
+                    "critical": [],
+                    "important": [
+                        "`bounded_diff` is empty, so the implementation cannot be inspected. "
+                        "Passing tests alone is insufficient code evidence for approval."
+                    ],
+                    "missing_tests": [],
+                },
+            }
+        ],
+    )
+
+    controller._observe(
+        state,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "inspect-after-frontier",
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "arguments": json.dumps({"cmd": "sed -n '1,220p' atomic_store.py"}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "inspect-after-frontier",
+                "content": '{"exit_code":0,"stdout":"class AtomicJSONStore:\\n    pass\\n"}',
+            },
+        ],
+    )
+
+    assert state.frontier_correction_required is False
+    assert state.frontier_correction_pending_verification is True
+    assert state.review_status == "deferred"
+    assert any(
+        event["event_type"] == "frontier_correction_applied"
+        and event["payload"]["reason"] == "requested_evidence_completed_after_frontier_rejection"
+        for event in store.events(state.session_id)
+    )
+
+    state.frontier_correction_required = True
+    state.frontier_correction_pending_verification = False
+    state.agent_artifacts.append(
+        {
+            "role": "frontier",
+            "output": {
+                "verdict": "reject",
+                "critical": ["The implementation is still incorrect."],
+                "important": ["The bounded diff also omits the required fix."],
+                "missing_tests": [],
+            },
+        }
+    )
+    assert controller.frontier_rejection_requests_evidence(state) is False
 
 
 def test_successful_output_can_describe_failures(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -2578,6 +2807,33 @@ async def test_planner_retries_one_malformed_structured_response(  # type: ignor
 
 
 @pytest.mark.asyncio
+async def test_optional_planner_failure_degrades_without_failing_executor(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    async def malformed_planner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "planner":
+            stub_provider.calls.append(role)
+            return {"choices": [{"message": {"content": None}}]}
+        return await StubProvider().complete(role, model, request, **kwargs)
+
+    stub_provider.complete = malformed_planner  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session("degraded-plan", [{"role": "user", "content": "task"}])
+
+    await controller.prepare_executor(
+        state, {"model": "dgx-moa-agent", "messages": []}, ("planner", "executor")
+    )
+
+    assert stub_provider.calls == ["planner", "planner"]
+    assert state.plan == []
+    assert state.observability_status == "degraded"
+    assert any(
+        event["event_type"] == "planner_degraded" for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
 async def test_reviewer_retries_one_malformed_structured_response(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
@@ -2615,6 +2871,10 @@ async def test_reviewer_retries_one_malformed_structured_response(
     )
     assert stub_provider.requests[-1]["max_tokens"] == 1024
     assert "bounded evidence" in stub_provider.requests[-1]["messages"][0]["content"]
+    assert "every documented constructor" in stub_provider.requests[-1]["messages"][0]["content"]
+    assert (
+        "callable parameters and defaults" in stub_provider.requests[-1]["messages"][0]["content"]
+    )
     assert [
         invocation["mode"]
         for invocation in state.agent_invocations
@@ -3209,6 +3469,12 @@ def test_implementation_completion_requires_change_validation_and_review(
         objective="Modify tests/test_controller.py. Do not modify any other file.",
     )
     assert controller.requires_implementation_tool_action(scoped_change, {}) is True
+
+    korean_scoped_change = SessionState(
+        session_id="korean-scoped-change",
+        objective="webhook.py만 구현하라. 테스트나 요구사항 파일은 수정하지 마라.",
+    )
+    assert controller.requires_implementation_tool_action(korean_scoped_change, {}) is True
 
     unrelated = SessionState(
         session_id="request-scoped-tool-evidence",

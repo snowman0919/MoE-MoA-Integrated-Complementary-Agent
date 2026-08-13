@@ -80,6 +80,7 @@ from .remote_judge import (
 )
 from .review_evidence import (
     changed_paths_evidence,
+    is_successful_validation_execution,
     review_contract_evidence,
     review_tool_executions,
     review_tool_results,
@@ -187,6 +188,13 @@ IMPLEMENTATION_QUALITY_CONTRACT = (
     "explicitly disables them. Collection, sample, and selection counts may be zero when zero "
     "naturally means none; reject negative values. Do not invent a stronger boundary than the "
     "written contract. "
+    "Validation commands that can block on concurrency, subprocesses, network, or long-running "
+    "services must be started with an OS-level finite timeout appropriate to the task. Put the "
+    "timeout executable inside the `cmd` string (for example, `timeout 120s python -m unittest "
+    "...`); exec_command has no `timeout` argument, so never invent one. Avoid validation "
+    "pipelines unless pipefail "
+    "is enabled so an earlier command failure cannot appear successful. A yielded or still-running "
+    "process is pending, not successful evidence; poll or cancel it before starting a duplicate. "
     "Do not claim completion merely because the supplied tests pass."
 )
 
@@ -198,6 +206,8 @@ REVIEWER_QUALITY_CONTRACT = (
     "value < 0 does not reject booleans. Reject unused auxiliary state, long-lived structures "
     "that grow with total historical requests without contract-required retention, and "
     "input-ordering or monotonicity restrictions absent from the written contract. "
+    "Enumerate every documented constructor and public parameter plus every explicit rejection "
+    "clause; verify each one in the bounded code, including callable parameters and defaults. "
     "Explicitly verify bool rejection for integer version, "
     "expected_version, revision, sequence, count, index, limit, and names ending in _limit. "
     "Require TypeError or "
@@ -364,7 +374,11 @@ def argument_paths(arguments: Any) -> set[str]:
 
 def clean_tool_output(value: object) -> str:
     text = str(value)
-    if text.startswith("Chunk ID: ") and "\nOutput:\n" in text:
+    if (
+        "Process running with session ID " not in text
+        and text.startswith("Chunk ID: ")
+        and "\nOutput:\n" in text
+    ):
         text = text.split("\nOutput:\n", 1)[1]
     return "".join(
         line
@@ -377,7 +391,9 @@ def clean_tool_output(value: object) -> str:
 
 def embedded_tool_exit_code(value: object) -> int:
     text = str(value)
-    if text.startswith("apply_patch verification failed:"):
+    if "Process running with session ID " in text:
+        return 1
+    if re.match(r"^[A-Za-z_][A-Za-z0-9_]* (?:verification )?failed:", text):
         return 1
     match = re.search(r"(?m)^Process exited with code (-?\d+)\s*$", text)
     return int(match.group(1)) if match else 0
@@ -459,6 +475,13 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
         }
         stdout = json.dumps(evidence, ensure_ascii=False, sort_keys=True) if evidence else ""
     stderr = parsed.get("stderr", parsed.get("error", ""))
+    running_session = parsed.get("session_id")
+    if (
+        isinstance(running_session, bool)
+        or not isinstance(running_session, int)
+        or running_session < 1
+    ):
+        running_session = None
     result = {
         "tool_name": str(
             parsed.get(
@@ -472,11 +495,15 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
         "exit_code": int(
             parsed["exit_code"]
             if parsed.get("exit_code") is not None
+            else 1
+            if running_session is not None
             else embedded_tool_exit_code(stdout)
         ),
         "duration_ms": int(parsed.get("duration_ms", 0)),
         "truncated": bool(parsed.get("truncated", False)),
     }
+    if running_session is not None:
+        result["session_id"] = running_session
     for key in ("changed_paths", "created_paths", "deleted_paths"):
         if isinstance(parsed.get(key), list):
             result[key] = [str(path) for path in parsed[key]]
@@ -1731,6 +1758,42 @@ class Controller:
                         "verification": "pending",
                     },
                 )
+            elif (
+                state.frontier_correction_required
+                and is_successful_validation_execution(execution)
+                and self.frontier_rejection_requests_validation(state)
+            ):
+                state.frontier_correction_required = False
+                state.frontier_correction_pending_verification = True
+                state.review_status = "deferred"
+                state.review_deferred = True
+                self.store.event(
+                    state.session_id,
+                    "frontier_correction_applied",
+                    {
+                        "reason": "requested_validation_completed_after_frontier_rejection",
+                        "verification": "pending",
+                    },
+                )
+            elif (
+                state.frontier_correction_required
+                and not failed
+                and result["stdout"].strip()
+                and argument_paths(arguments)
+                and self.frontier_rejection_requests_evidence(state)
+            ):
+                state.frontier_correction_required = False
+                state.frontier_correction_pending_verification = True
+                state.review_status = "deferred"
+                state.review_deferred = True
+                self.store.event(
+                    state.session_id,
+                    "frontier_correction_applied",
+                    {
+                        "reason": "requested_evidence_completed_after_frontier_rejection",
+                        "verification": "pending",
+                    },
+                )
             elif changed_files and state.review_status == "approved":
                 state.review_status = "deferred"
                 state.review_deferred = True
@@ -2832,14 +2895,27 @@ class Controller:
                 if required:
                     raise FrontierRequiredUnavailable("required Frontier unavailable")
                 return
+            frontier_limit = self.frontier.config.max_invocations_per_task
+            review_slot_reserved = (
+                mode == "architecture" and state.engineering_loop is not None and frontier_limit > 1
+            )
+            if review_slot_reserved:
+                frontier_limit -= 1
             if (
-                state.frontier_invocations >= self.frontier.config.max_invocations_per_task
+                state.frontier_invocations >= frontier_limit
                 and not state.frontier_correction_pending_verification
             ):
                 self.store.event(
                     state.session_id,
                     "frontier_unavailable",
-                    {"failure_class": "FRONTIER_INVOCATION_LIMIT", "required": False},
+                    {
+                        "failure_class": (
+                            "FRONTIER_REVIEW_SLOT_RESERVED"
+                            if review_slot_reserved
+                            else "FRONTIER_INVOCATION_LIMIT"
+                        ),
+                        "required": False,
+                    },
                 )
                 frontier_degraded = True
                 return
@@ -3261,6 +3337,15 @@ class Controller:
                     "planner_failed",
                     {"failure_class": type(error).__name__},
                 )
+                if isinstance(error, ValueError) and state.request_class != "high_risk_task":
+                    planner_error = None
+                    state.observability_degraded = True
+                    state.observability_status = "degraded"
+                    self.store.event(
+                        state.session_id,
+                        "planner_degraded",
+                        {"reason": "optional_planner_failed"},
+                    )
             finally:
                 state.timings_ms["planner"] = round((time.monotonic() - planner_started) * 1000, 3)
             if planner is not None and planner_error is None:
@@ -3817,6 +3902,9 @@ class Controller:
                 "do not modify any other",
                 "don't edit any other",
                 "don't modify any other",
+                "만 구현",
+                "만 수정",
+                "만 변경",
             )
         )
         if read_only and not scoped_change:
@@ -3945,6 +4033,44 @@ class Controller:
     @staticmethod
     def material_frontier_review(result: dict[str, Any]) -> bool:
         return has_material_frontier_review(result)
+
+    @staticmethod
+    def frontier_rejection_requests_validation(state: SessionState) -> bool:
+        for artifact in reversed(state.agent_artifacts):
+            if artifact.get("role") != "frontier":
+                continue
+            output = artifact.get("output")
+            return bool(
+                isinstance(output, dict)
+                and not output.get("critical")
+                and output.get("missing_tests")
+            )
+        return False
+
+    @staticmethod
+    def frontier_rejection_requests_evidence(state: SessionState) -> bool:
+        markers = ("bounded_diff", "bounded diff", "bounded code evidence", "code evidence")
+        for artifact in reversed(state.agent_artifacts):
+            if artifact.get("role") != "frontier":
+                continue
+            output = artifact.get("output")
+            if (
+                not isinstance(output, dict)
+                or output.get("critical")
+                or output.get("missing_tests")
+            ):
+                return False
+            important = output.get("important")
+            return bool(
+                isinstance(important, list)
+                and important
+                and all(
+                    isinstance(finding, str)
+                    and any(marker in finding.lower() for marker in markers)
+                    for finding in important
+                )
+            )
+        return False
 
     def remote_judge_invocation_reasons(
         self,
@@ -4121,7 +4247,8 @@ class Controller:
                                 "required schema. Example: "
                                 '{"status":"approved","findings":[]}. '
                                 "Reject when the evidence shows defects. No prose; fewer than 300 "
-                                f"tokens.\nBounded evidence:\n{retry_evidence}"
+                                "tokens. Apply the same reviewer quality contract: "
+                                f"{REVIEWER_QUALITY_CONTRACT}\nBounded evidence:\n{retry_evidence}"
                             ),
                         }
                     ]

@@ -566,7 +566,7 @@ async def test_responses_sse_keeps_exec_command_inside_current_sandbox() -> None
 
 
 @pytest.mark.asyncio
-async def test_responses_sse_replaces_invented_write_stdin_session_id() -> None:
+async def test_responses_sse_rewrites_invented_write_stdin_session_id() -> None:
     async def upstream():  # type: ignore[no-untyped-def]
         yield (
             b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
@@ -595,8 +595,43 @@ async def test_responses_sse_replaces_invented_write_stdin_session_id() -> None:
         for event in events
         if event["type"] == "response.output_item.done" and event["output_index"] == 1
     )
-    assert output["item"]["name"] == "write_stdin"
-    assert json.loads(done["arguments"])["session_id"] == 0
+    assert output["item"]["name"] == "exec_command"
+    assert "No active process session" in json.loads(done["arguments"])["cmd"]
+
+
+@pytest.mark.asyncio
+async def test_responses_sse_converts_write_stdin_file_schema_to_patch() -> None:
+    async def upstream():  # type: ignore[no-untyped-def]
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            b'"id":"call-write","function":{"name":"write_stdin",'
+            b'"arguments":"{\\"path\\":\\"rate_limiter.py\\",'
+            b'\\"content\\":\\"import time\\\\n\\"}"}}]},'
+            b'"finish_reason":"tool_calls"}]}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    events = [
+        json.loads(line[6:])
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa-agent",
+            custom_tool_names={"apply_patch"},
+            function_tool_names={"write_stdin"},
+        )
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+
+    output = next(
+        event
+        for event in events
+        if event["type"] == "response.output_item.done" and event["output_index"] == 1
+    )
+    assert output["item"]["name"] == "apply_patch"
+    assert "*** Delete File: rate_limiter.py" in output["item"]["input"]
+    assert "*** Add File: rate_limiter.py" in output["item"]["input"]
+    assert "+import time" in output["item"]["input"]
 
 
 @pytest.mark.asyncio

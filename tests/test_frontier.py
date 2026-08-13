@@ -1187,6 +1187,28 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
 
 
 @pytest.mark.asyncio
+async def test_executor_preserves_oauth_failure_without_openrouter_key(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    async def oauth_context_failure(command, **kwargs):  # type: ignore[no-untyped-def]
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="context window exceeded")
+
+    monkeypatch.setattr("dgx_moa.frontier.run_codex_exec", oauth_context_failure)
+    runner = CodexOAuthCollaboration(
+        FrontierConfig(
+            enabled=True,
+            collaboration_retries=0,
+            openrouter_fallback_enabled=True,
+        ),
+        tmp_path / "run",
+        tmp_path,
+    )
+
+    with pytest.raises(RuntimeError, match="FRONTIER_CONTEXT_LIMIT"):
+        await runner.execute({"messages": [{"role": "user", "content": "x"}]}, "request")
+
+
+@pytest.mark.asyncio
 async def test_direct_openrouter_collaboration_fails_closed_when_disabled(tmp_path) -> None:
     runner = CodexOAuthCollaboration(FrontierConfig(), tmp_path / "run", tmp_path)
 

@@ -3201,6 +3201,15 @@ def create_app(
                 and request.app.state.frontier is not None
                 and any(count >= 2 for count in state.failure_families.values())
             )
+            pending_process = (
+                not executor_remote
+                and request.app.state.frontier is not None
+                and any(
+                    "Process running with session ID "
+                    in str(execution.get("stdout_summary", ""))
+                    for execution in state.tool_executions[-1:]
+                )
+            )
             executor_provider, selected_reason = (
                 ("frontier" if executor_remote else "local", executor_routing_reason)
                 if configured.executor_scheduling.enabled
@@ -3212,6 +3221,7 @@ def create_app(
                     output_budget_exceeded=output_budget_exceeded,
                     frontier_correction=frontier_correction,
                     completion_stalled=completion_stalled,
+                    pending_process=pending_process,
                     repeated_failure=repeated_failure,
                     stalled=stalled,
                 )
