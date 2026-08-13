@@ -1406,3 +1406,12 @@ release redeploy canary도 동일 해시로 통과했다. 단, high-risk correct
 Judge/Frontier B 호출 후 300초를 넘고 fail-closed됐으므로 상태는 계속
 `PILOT_ACTIVE`이며 `COMPLETE`가 아니다. 세부 증거는
 `docs/DYNAMIC_MOA_PILOT_CONTEXT_EPOCH_20260813.md`가 우선한다.
+
+## Pilot feedback epoch — 2026-08-13
+
+Production is `PILOT_ACTIVE` on runtime code `fd658a1e8`; the fixed gateway is
+authenticated on `0.0.0.0:9000` with restart count zero. Candidate A alone
+listens on loopback `127.0.0.1:19301`; Reasoner remains external at
+`100.90.167.128`. The seven-role Static Graph Skeleton plus runtime-created
+request subgraph was exercised by a final authenticated high-risk request.
+Post-Pilot beta/stable, training, weekly, and retention gates remain deferred.

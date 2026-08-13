@@ -1079,3 +1079,11 @@ Judge production mapping is `kimi-k3`; `glm-5.2` is rejected stale override
 evidence. A structured Judge probe can pass while a multi-iteration high-risk
 request still exceeds the client deadline. Keep that path fail-closed and do
 not promote beyond `PILOT_ACTIVE` until its bounded termination gate passes.
+
+The feedback epoch runtime release `fd658a1e8` supersedes that open termination
+gate. Production high-risk requests use one iteration, at most two Reviewer and
+Frontier calls, one Judge call, and 240 wall-clock seconds. A nonterminal final
+iteration is explicitly closed as `BUDGET_EXHAUSTED`; late provider accounting
+cannot replace an existing terminal verdict. The measured rollback pair is now
+`90e838742` → `fd658a1e8`. Live observation remains disabled until its external
+credential is rotated; do not re-enable it from repository configuration.

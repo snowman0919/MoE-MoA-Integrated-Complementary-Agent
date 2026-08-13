@@ -18,3 +18,11 @@ completion validation, and mutually exclusive resident/judge profiles.
   resolution evidence with strict runtime provenance.
 - Keep `main` stable, accumulate validated work on `dev`, and isolate recursive
   experiments in `auto/*` worktrees driven by the stable main runtime.
+
+## Pilot qualification — 2026-08-13
+
+The Dynamic MoA Pilot acceptance scope is achieved by runtime release
+`fd658a1e8`. Measured role, graph, authenticated API, cancellation, isolation,
+rollback, and Frontier evidence is recorded in
+`docs/DYNAMIC_MOA_PILOT_FEEDBACK_EPOCH_20260813.md`. This does not promote the
+runtime to post-Pilot beta or stable status.

@@ -8752,3 +8752,14 @@ content hash at PID 2985816 with restart 0. A separate high-risk request did
 not pass: Reviewer rejected insufficient evidence, Judge and Frontier B ran,
 but correction exceeded 300 seconds and finalized failed. This is a preserved
 long-path latency/termination gap, not a success claim.
+
+### Pilot feedback closure — 2026-08-13
+
+Runtime release `fd658a1e8` closes that gap and three real-use failures:
+non-stream cancellation reaches the owner task, terminal usage cannot overwrite
+a verdict, Flash overflow requires public content, and the final allowed loop
+iteration records `BUDGET_EXHAUSTED`. The final high-risk production canary
+returned exact `CRITICAL_FINAL_OK`; Frontier A `gpt-5.6-sol`/Codex OAuth
+completed in 14,808.631 ms, Reviewer approved, and Judge approved. Rollback to
+`90e838742` and redeploy produced an identical authenticated canary hash. Full
+details are in `docs/DYNAMIC_MOA_PILOT_FEEDBACK_EPOCH_20260813.md`.
