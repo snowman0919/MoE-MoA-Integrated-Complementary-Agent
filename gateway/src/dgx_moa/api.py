@@ -457,11 +457,8 @@ def _chat_response_payload(response: Response) -> dict[str, Any] | None:
     if not raw_body:
         return None
     try:
-        return cast(
-            dict[str, Any],
-            _public_completion_payload(
-                json.loads(raw_body.decode() if isinstance(raw_body, bytes) else raw_body)
-            ),
+        return _public_completion_payload(
+            json.loads(raw_body.decode() if isinstance(raw_body, bytes) else raw_body)
         )
     except ValueError:
         return None
