@@ -3028,11 +3028,15 @@ class Controller:
             self.store.event(
                 state.session_id,
                 "reasoner_started",
-                {"role": "reasoner", "provider": "local", "model": reasoner.served_name},
+                {
+                    "role": "reasoner",
+                    "provider": reasoner.provider,
+                    "model": reasoner.served_name,
+                },
             )
             reasoner_started = time.monotonic()
             reasoner_record_started = reasoner_started
-            reasoner_provider = "local"
+            reasoner_provider = reasoner.provider
             reasoner_model = reasoner.served_name
             try:
                 for attempt in range(2):
