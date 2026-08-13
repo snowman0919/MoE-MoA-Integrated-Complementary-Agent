@@ -7,11 +7,11 @@ environment reference, not the credential itself.
 
 ```yaml
 model:
-  default: dgx-moa-agent
+  default: dgx-moa
   provider: custom
   base_url: http://100.125.239.72:9000/v1
   api_key: ${DGX_MOA_API_KEY}
-  context_length: 65536
+  context_length: 131072
   max_tokens: 16384
 
 platform_toolsets:
@@ -21,8 +21,7 @@ platform_toolsets:
 
 Hermes owns the native tool loop: it supplies tool schemas, executes returned
 native tool calls, and sends each matching tool result in the next request. The
-`dgx-moa-agent` uses the always-active Reasoner + Executor core; the gateway does not insert a
-planner or reviewer into that loop.
+`dgx-moa` uses the Reasoner + Executor core with runtime-selected optional roles.
 
 This exact configuration was measured on 2026-07-18 with Hermes Agent `0.18.2`.
 A documented one-shot invocation returned `HERMES_OK` in one streaming API call.

@@ -3989,20 +3989,15 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert client.get("/v1/models").status_code == 401
         headers = {"Authorization": "Bearer test-secret", "X-Session-ID": "session-1"}
         models = client.get("/v1/models", headers=headers).json()
-        aliases = [
-            "dgx-moa",
-            "dgx-moa-fast",
-            "dgx-moa-agent",
-            "dgx-moa-orchestrated",
-            "dgx-moa-chat",
-        ]
+        aliases = ["dgx-moa", "dgx-moa-fast"]
+        context_length = settings.models["executor"].context_length
         assert models["data"] == [
             {
                 "id": alias,
                 "object": "model",
                 "created": 0,
                 "owned_by": "local",
-                "context_length": 65536,
+                "context_length": context_length,
             }
             for alias in aliases
         ]
@@ -4047,7 +4042,7 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert all(codex_required <= model.keys() for model in models["models"])
         assert all(model["apply_patch_tool_type"] == "freeform" for model in models["models"])
         assert all(model["shell_type"] == "shell_command" for model in models["models"])
-        assert all(model["context_window"] == 65536 for model in models["models"])
+        assert all(model["context_window"] == context_length for model in models["models"])
         assert all(model["supports_reasoning_summaries"] is False for model in models["models"])
         assert all(model["tool_mode"] == "direct" for model in models["models"])
         assert all(
@@ -4082,7 +4077,9 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             and "optional argv-style entry points" in model["base_instructions"]
             for model in models["models"]
         )
-        assert all(model["comp_hash"] == "dgx-moa-65536-v1" for model in models["models"])
+        assert all(
+            model["comp_hash"] == f"dgx-moa-{context_length}-v1" for model in models["models"]
+        )
         response = client.post(
             "/v1/chat/completions",
             headers=headers,

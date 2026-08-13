@@ -8840,3 +8840,13 @@ Production release `f28f879` then returned exact `PUBLIC_HARNESS_OK` through
 `https://aipi.kotori9.dev/v1/responses` with terminal `response.completed` for
 session `prod-public-harness-final-v2-20260813`. The gateway remained active
 with restart count zero.
+
+The pre-cleanup authenticated `/v1/models` response advertised five historical
+aliases and hard-coded every context to 65,536. Direct Candidate A evidence
+reported `dgx-moa-executor` with `max_model_len=131072`, matching the checked-in
+Executor configuration and running vLLM command. The catalog now derives its
+context from that runtime configuration and exposes only the production
+`dgx-moa` and Executor-only `dgx-moa-fast` aliases. Historical input aliases
+remain accepted only for existing continuation compatibility and are not
+discoverable. Ruff, format, focused catalog tests `17 passed`, and the complete
+suite `1097 passed` succeeded before deployment.

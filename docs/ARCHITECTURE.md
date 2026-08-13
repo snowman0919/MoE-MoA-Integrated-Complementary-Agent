@@ -16,18 +16,16 @@ projection through the Judge Evidence Package, and returns strict structured
 corrections.
 
 OpenCode connects over tailnet or local-LAN TCP to the authenticated gateway.
-The controller stores session state in SQLite and calls loopback-only local role servers. The
-Reasoner is a separately started Ollama service bound only to `127.0.0.1:11435`;
-no role-model endpoint is exposed by this gateway.
+The controller stores session state in SQLite and calls loopback-only local role servers.
+The Reasoner is the agreed Qwythos service at `100.90.167.128`; no local
+Reasoner service is installed and no role-model endpoint is exposed by this gateway.
 Resident and judge profiles remain mutually exclusive systemd targets.
 
-The primary `dgx-moa` and external-tool-loop `dgx-moa-agent` aliases invoke the
-Reasoner before every Executor turn. `dgx-moa-fast` alone bypasses the Reasoner.
-`dgx-moa-orchestrated` asks the Executor for a structured routing decision, then
-applies deterministic safety overrides to select Planner, Reviewer, Frontier,
-or Heavy Judge. The Executor alone emits native tool calls and client-visible
-content. Standard OpenAI fields are forwarded to it; project metadata remains
-optional.
+The public catalog exposes only `dgx-moa` and `dgx-moa-fast`. The primary
+`dgx-moa` invokes the Reasoner before the Executor and applies deterministic
+safety overrides to select optional Planner, Reviewer, Frontier, or Heavy Judge.
+`dgx-moa-fast` alone bypasses the Reasoner. The Executor alone emits native tool
+calls and client-visible content.
 
 Reasoner, Planner, and Frontier A start concurrently from the same immutable
 pre-dispatch snapshot and cannot observe one another's output. Their independent

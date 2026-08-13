@@ -9,9 +9,9 @@
         "apiKey": "{env:DGX_MOA_API_KEY}"
       },
       "models": {
-        "dgx-moa-agent": {"name": "DGX MoA Agent"}
+        "dgx-moa": {"name": "DGX MoA"}
       }
     }
   },
-  "model": "dgx-moa/dgx-moa-agent"
+  "model": "dgx-moa/dgx-moa"
 }
