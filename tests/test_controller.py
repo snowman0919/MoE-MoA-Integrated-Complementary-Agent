@@ -3551,6 +3551,22 @@ def test_implementation_completion_requires_change_validation_and_review(
     read_only_audit.tool_executions.append({"tool_name": "exec_command", "exit_code": 0})
     assert controller.requires_explicit_tool_evidence(read_only_audit) is False
 
+    workspace_evaluation = SessionState(
+        session_id="workspace-evaluation",
+        objective="rust-mcu-ide 플랫폼을 확인하고 평가해봐",
+    )
+    assert controller.requires_explicit_tool_evidence(workspace_evaluation) is True
+    workspace_evaluation.tool_executions.append(
+        {"tool_name": "exec_command", "exit_code": 0}
+    )
+    assert controller.requires_explicit_tool_evidence(workspace_evaluation) is False
+
+    general_question = SessionState(
+        session_id="general-question",
+        objective="Rust의 ownership을 설명해봐",
+    )
+    assert controller.requires_explicit_tool_evidence(general_question) is False
+
     scoped_change = SessionState(
         session_id="scoped-change",
         objective="Modify tests/test_controller.py. Do not modify any other file.",

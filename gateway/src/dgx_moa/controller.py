@@ -3883,7 +3883,53 @@ class Controller:
         )
         if instruction is None and state.explicit_tool_instruction_hash is None:
             objective = effective_objective(state)
-            instruction = objective if "exec_command" in objective else None
+            normalized = objective.lower()
+            requests_inspection = any(
+                marker in normalized
+                for marker in (
+                    "inspect",
+                    "evaluate",
+                    "audit",
+                    "analyze",
+                    "check",
+                    "verify",
+                    "확인",
+                    "평가",
+                    "감사",
+                    "검토",
+                    "분석",
+                    "점검",
+                )
+            )
+            targets_workspace = any(
+                marker in normalized
+                for marker in (
+                    "repository",
+                    "repo",
+                    "codebase",
+                    "project",
+                    "platform",
+                    "directory",
+                    "folder",
+                    "workspace",
+                    "저장소",
+                    "프로젝트",
+                    "플랫폼",
+                    "디렉터리",
+                    "폴더",
+                    "작업 공간",
+                )
+            )
+            instruction = (
+                objective
+                if "exec_command" in objective
+                or (
+                    state.runtime_mode != "fast"
+                    and requests_inspection
+                    and targets_workspace
+                )
+                else None
+            )
         if instruction is not None:
             instruction_hash = hashlib.sha256(instruction.encode()).hexdigest()
             if instruction_hash != state.explicit_tool_instruction_hash:
