@@ -5,6 +5,7 @@ import json
 import pytest
 from dgx_moa.context_projection import (
     MAX_CONTEXT_BYTES,
+    ROLE_CONTEXT_TARGET_BYTES,
     CanonicalRequestInput,
     ModelContribution,
     RuntimeEvidenceItem,
@@ -361,3 +362,28 @@ def test_snapshot_rejects_aggregate_context_above_byte_ceiling() -> None:
                 for index in range(3)
             ),
         )
+
+
+def test_role_targets_bound_discretionary_evidence_without_dropping_original_contract() -> None:
+    source = build_runtime_evidence_snapshot(
+        request_id="budgeted",
+        objective="original objective",
+        request_inputs=(canonical_request_input("input", {"content": "original request"}),),
+        request_constraints=("hard constraint",),
+        acceptance_criteria=("acceptance criterion",),
+        runtime_evidence=tuple(
+            runtime_evidence_item(f"evidence-{index:03d}", "tool", {"output": "x" * 20_000})
+            for index in range(30)
+        ),
+    )
+
+    planner = project_role_context(source, "planner", stage="fanout")
+    executor = project_role_context(source, "executor", stage="fanout")
+
+    assert len(planner.model_dump_json().encode()) <= ROLE_CONTEXT_TARGET_BYTES["planner"]
+    assert len(executor.model_dump_json().encode()) <= ROLE_CONTEXT_TARGET_BYTES["executor"]
+    assert len(planner.runtime_evidence) < len(executor.runtime_evidence)
+    assert planner.request_inputs[0].payload()["content"] == "original request"
+    assert json.loads(planner.request_constraints_json[0]) == "hard constraint"
+    assert json.loads(planner.acceptance_criteria_json[0]) == "acceptance criterion"
+    assert planner.provenance.excluded_evidence_ids

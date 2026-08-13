@@ -894,10 +894,13 @@ class Controller:
             "projection_hash": projection.projection_hash,
             "included_categories": list(projection.provenance.included_categories),
             "source_evidence_ids": list(projection.provenance.included_evidence_ids),
+            "excluded_evidence_ids": list(projection.provenance.excluded_evidence_ids),
             "source_attempt_ids": list(projection.provenance.source_attempt_ids),
             "target_attempt_id": projection.provenance.target_attempt_id,
             "causal_parent_attempt_ids": list(projection.provenance.causal_parent_attempt_ids),
             "join_node_id": projection.provenance.join_node_id,
+            "target_bytes": projection.provenance.target_bytes,
+            "encoded_bytes": len(projection.model_dump_json().encode()),
             "created_at": now(),
         }
         state.role_context_projections.append(manifest)

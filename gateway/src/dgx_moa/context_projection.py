@@ -14,6 +14,15 @@ from .security import redact
 SNAPSHOT_SCHEMA_VERSION: Literal["runtime-evidence-snapshot-v1"] = "runtime-evidence-snapshot-v1"
 PROJECTION_SCHEMA_VERSION: Literal["role-context-projection-v1"] = "role-context-projection-v1"
 MAX_CONTEXT_BYTES = 1_000_000
+ROLE_CONTEXT_TARGET_BYTES: dict[ProjectionRole, int] = {
+    "reasoner": 96 * 1024,
+    "planner": 80 * 1024,
+    "frontier_a": 192 * 1024,
+    "executor": 524 * 1024,
+    "reviewer": 128 * 1024,
+    "judge": 80 * 1024,
+    "frontier_b": 128 * 1024,
+}
 
 RuntimeEvidenceKind = Literal[
     "tool",
@@ -232,8 +241,11 @@ class ProjectionProvenance(BaseModel):
     source_attempt_ids: tuple[str, ...] = ()
     included_evidence_ids: tuple[str, ...] = ()
     included_contribution_ids: tuple[str, ...] = ()
+    excluded_evidence_ids: tuple[str, ...] = ()
+    excluded_contribution_ids: tuple[str, ...] = ()
     included_categories: tuple[str, ...] = ()
     excluded_contribution_roles: tuple[ContributionRole, ...] = ()
+    target_bytes: int = Field(gt=0, le=MAX_CONTEXT_BYTES)
 
 
 class RoleContextProjection(BaseModel):
@@ -503,49 +515,71 @@ def project_role_context(
         if item.role in policy.allowed_contribution_roles
         and (not causal_parents or item.source_attempt_id in causal_parents)
     )
-    source_attempt_values = [
-        item.source_attempt_id for item in evidence if item.source_attempt_id is not None
-    ]
-    source_attempt_values.extend(item.source_attempt_id for item in contributions)
-    source_attempt_ids = _bounded_unique(source_attempt_values)
-    included_roles = {item.role for item in contributions}
-    excluded_roles = tuple(
-        role_name for role_name in _ALL_CONTRIBUTION_ROLES if role_name not in included_roles
-    )
-    provenance = ProjectionProvenance(
-        policy_id=policy.policy_id,
-        snapshot_id=snapshot.snapshot_id,
-        snapshot_hash=snapshot.snapshot_hash,
-        graph_id=snapshot.graph_id,
-        target_node_id=target_node_id,
-        target_attempt_id=target_attempt_id,
-        causal_parent_attempt_ids=causal_parents,
-        join_node_id=join_node_id,
-        source_attempt_ids=source_attempt_ids,
-        included_evidence_ids=tuple(item.evidence_id for item in evidence),
-        included_contribution_ids=tuple(item.contribution_id for item in contributions),
-        included_categories=_projection_categories(
-            snapshot.request_inputs,
-            snapshot.request_constraints_json,
-            snapshot.acceptance_criteria_json,
-            evidence,
-            contributions,
-        ),
-        excluded_contribution_roles=excluded_roles,
-    )
-    raw: dict[str, Any] = {
-        "schema_version": PROJECTION_SCHEMA_VERSION,
-        "role": role,
-        "stage": stage,
-        "request_id": snapshot.request_id,
-        "objective": snapshot.objective,
-        "request_inputs": snapshot.request_inputs,
-        "request_constraints_json": snapshot.request_constraints_json,
-        "acceptance_criteria_json": snapshot.acceptance_criteria_json,
-        "runtime_evidence": evidence,
-        "model_contributions": contributions,
-        "provenance": provenance,
-    }
-    raw["projection_hash"] = _hash(raw)
-    raw["projection_id"] = f"projection_{raw['projection_hash'][:24]}"
-    return RoleContextProjection.model_validate(raw)
+    target_bytes = ROLE_CONTEXT_TARGET_BYTES[role]
+
+    def build() -> RoleContextProjection:
+        source_attempt_values = [
+            item.source_attempt_id for item in evidence if item.source_attempt_id is not None
+        ]
+        source_attempt_values.extend(item.source_attempt_id for item in contributions)
+        included_roles = {item.role for item in contributions}
+        provenance = ProjectionProvenance(
+            policy_id=policy.policy_id,
+            snapshot_id=snapshot.snapshot_id,
+            snapshot_hash=snapshot.snapshot_hash,
+            graph_id=snapshot.graph_id,
+            target_node_id=target_node_id,
+            target_attempt_id=target_attempt_id,
+            causal_parent_attempt_ids=causal_parents,
+            join_node_id=join_node_id,
+            source_attempt_ids=_bounded_unique(source_attempt_values),
+            included_evidence_ids=tuple(item.evidence_id for item in evidence),
+            included_contribution_ids=tuple(item.contribution_id for item in contributions),
+            excluded_evidence_ids=tuple(
+                item.evidence_id for item in snapshot.runtime_evidence if item not in evidence
+            ),
+            excluded_contribution_ids=tuple(
+                item.contribution_id
+                for item in snapshot.model_contributions
+                if item.role in policy.allowed_contribution_roles and item not in contributions
+            ),
+            included_categories=_projection_categories(
+                snapshot.request_inputs,
+                snapshot.request_constraints_json,
+                snapshot.acceptance_criteria_json,
+                evidence,
+                contributions,
+            ),
+            excluded_contribution_roles=tuple(
+                role_name
+                for role_name in _ALL_CONTRIBUTION_ROLES
+                if role_name not in included_roles
+            ),
+            target_bytes=target_bytes,
+        )
+        raw: dict[str, Any] = {
+            "schema_version": PROJECTION_SCHEMA_VERSION,
+            "role": role,
+            "stage": stage,
+            "request_id": snapshot.request_id,
+            "objective": snapshot.objective,
+            "request_inputs": snapshot.request_inputs,
+            "request_constraints_json": snapshot.request_constraints_json,
+            "acceptance_criteria_json": snapshot.acceptance_criteria_json,
+            "runtime_evidence": evidence,
+            "model_contributions": contributions,
+            "provenance": provenance,
+        }
+        raw["projection_hash"] = _hash(raw)
+        raw["projection_id"] = f"projection_{raw['projection_hash'][:24]}"
+        return RoleContextProjection.model_validate(raw)
+
+    projection = build()
+    # ponytail: at most 512 bounded items; replace with cumulative sizing if this becomes hot.
+    while len(_canonical(projection).encode()) > target_bytes and evidence:
+        evidence = evidence[:-1]
+        projection = build()
+    while len(_canonical(projection).encode()) > target_bytes and contributions:
+        contributions = contributions[:-1]
+        projection = build()
+    return projection
