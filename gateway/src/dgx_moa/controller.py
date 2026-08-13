@@ -559,11 +559,16 @@ class Controller:
                 timeout_seconds=getattr(self.settings.limits, f"{role}_timeout_seconds"),
                 stage=role,
             )
-            return response, {
+            decision = {
                 "specialist_role": role,
                 "selected_provider": "local",
                 "routing_reason": "specialist_router_disabled",
             }
+            state.specialist_routing.append(
+                cast(dict[str, Any], self.safe_payload(state, decision))
+            )
+            state.specialist_routing = state.specialist_routing[-self.settings.limits.max_steps :]
+            return response, decision
         response, decision = await self.specialists.complete(
             role,
             request,
@@ -2379,8 +2384,11 @@ class Controller:
         language_constraint = (
             "Reason internally in English. Reply in the natural language of the user's actual "
             "objective; when a wrapper points to an objective file, use the language of that "
-            "file rather than the wrapper."
-            if role == "executor"
+            "file rather than the wrapper. If objective language is Korean, output only Korean "
+            "for prose. No code blocks, identifiers, or JSON should switch language. Do not "
+            "mix languages. Do not use Chinese unless the user explicitly requested Chinese in "
+            "the objective."
+            if role in {"executor", "planner", "reviewer"}
             else ""
         )
         mcp_fallback_constraint = (

@@ -120,6 +120,7 @@ def test_busy_executor_routes_new_session_to_frontier(
 
     assert response.status_code == 200
     assert response.json()["choices"][0]["message"]["content"] == "원격 처리 완료"
+    assert "provider_provenance" not in response.json()
     assert "executor" not in stub_provider.calls
     assert active.active_request_count == 1
     started = next(event for event in events if event["event_type"] == "executor_started")
