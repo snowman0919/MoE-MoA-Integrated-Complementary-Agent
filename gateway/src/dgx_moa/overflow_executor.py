@@ -68,12 +68,17 @@ class OpenCodeGoExecutorProvider:
             body["messages"] = [
                 {**message, "role": "system"}
                 if isinstance(message, dict) and message.get("role") == "developer"
+                else {**message, "reasoning_content": ""}
+                if isinstance(message, dict)
+                and message.get("role") == "assistant"
+                and message.get("tool_calls")
+                and "reasoning_content" not in message
                 else message
                 for message in messages
             ]
         if body.get("tool_choice") == "required":
             body["tool_choice"] = "auto"
-        body["max_tokens"] = max(int(body.get("max_tokens", 0) or 0), 1_024)
+        body["max_tokens"] = max(int(body.get("max_tokens", 0) or 0), 4_096)
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 async with managed_http_client(timeout=None, transport=self.transport) as client:
