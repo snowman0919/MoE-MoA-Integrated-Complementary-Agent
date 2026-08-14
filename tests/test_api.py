@@ -1486,6 +1486,7 @@ def test_selective_remote_judge_rejects_unbuffered_high_risk_stream(
             json={
                 "model": "dgx-moa-fast",
                 "stream": True,
+                "stream_options": {"include_usage": True},
                 "messages": [{"role": "user", "content": "deploy"}],
                 "metadata": {"production_deployment": True},
             },
@@ -4796,11 +4797,12 @@ def test_executor_request_fields_are_preserved(settings, stub_provider: StubProv
         "max_tokens": 4096,
         "stop": ["END"],
         "parallel_tool_calls": False,
-        "stream_options": {"include_usage": True},
         "response_format": {"type": "text"},
         "seed": 7,
     }
     assert expected.items() <= stub_provider.requests[-1].items()
+    assert stub_provider.requests[-1]["stream"] is False
+    assert "stream_options" not in stub_provider.requests[-1]
 
 
 def test_default_executor_output_budget_is_4096(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -5443,7 +5445,7 @@ def test_reviewer_rejection_hands_correction_to_client_tool(
             },
             json={
                 "model": "dgx-moa-orchestrated",
-                "messages": [{"role": "user", "content": "fix rate_limiter.py"}],
+                "messages": [{"role": "user", "content": "Review this bounded change."}],
                 "tools": [
                     {
                         "type": "function",
@@ -6730,6 +6732,71 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         assert usage.streaming is True
         assert usage.first_byte_at is not None
         assert usage.total_tokens == 1
+
+
+def test_streaming_required_tool_retries_as_buffered_completion(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+    executor_calls = 0
+
+    async def terminal_then_tool(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal executor_calls
+        if role == "executor":
+            executor_calls += 1
+            if executor_calls == 1:
+                stub_provider.calls.append(role)
+                stub_provider.requests.append(request)
+                return {
+                    "choices": [
+                        {
+                            "message": {"role": "assistant", "content": "done"},
+                            "finish_reason": "length",
+                        }
+                    ]
+                }
+        return await original(role, model, request, **kwargs)
+
+    async def unexpected_stream(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("required tool requests must use buffered completion")
+
+    stub_provider.complete = terminal_then_tool  # type: ignore[method-assign]
+    stub_provider.stream = unexpected_stream  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "stream-required-tool",
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "stream": True,
+                "messages": [{"role": "user", "content": "Implement app.py in this repository."}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "apply_patch",
+                            "description": "patch a file",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+            },
+        )
+        events = client.app.state.store.events("stream-required-tool")
+
+    assert response.status_code == 200
+    assert '"finish_reason":"tool_calls"' in response.text
+    assert "call-preserved" in response.text
+    assert executor_calls == 2
+    assert all(request["tool_choice"] == "required" for request in stub_provider.requests)
+    assert all(request["stream"] is False for request in stub_provider.requests)
+    assert all("stream_options" not in request for request in stub_provider.requests)
+    assert any(event["event_type"] == "executor_required_tool_retry_completed" for event in events)
+    assert sum(event["event_type"] == "stream_completed" for event in events) == 1
+    assert not any(event["event_type"] == "stream_aborted" for event in events)
 
 
 def test_streaming_preserves_completed_pre_review(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

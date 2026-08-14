@@ -40,13 +40,13 @@ from .controller import (
     IMPLEMENTATION_QUALITY_CONTRACT,
     Controller,
     DuplicateFailedCall,
+    ExecutorToolCallRequired,
     FrontierRequiredUnavailable,
     JudgeCorrectionRequired,
     JudgeRequired,
     LoopAdmissionError,
     PolicyBlocked,
     ReasonerUnavailable,
-    ReviewerCorrectionRequired,
     pending_goal_prerequisites,
 )
 from .evolution import PromptRegistry
@@ -3083,16 +3083,18 @@ def create_app(
                 )
                 return cast(dict[str, Any], response)
 
-            async def remote_executor_correction(
-                executor_request: dict[str, Any], stage: str
+            async def executor_tool_correction(
+                executor_request: dict[str, Any],
+                stage: str,
+                complete: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]],
+                *,
+                correction_required: bool,
+                event_prefix: str,
+                provider_name: str,
+                error_type: type[RuntimeError],
             ) -> dict[str, Any]:
-                if executor_flash and state.frontier_correction_required:
-                    raise OverflowExecutorUnavailable(
-                        "pinned Executor Flash cannot satisfy required Frontier correction"
-                    )
-                response = await remote_executor_complete(executor_request, stage)
-                tool_call_required = executor_request.get("tool_choice") == "required"
-                if not state.frontier_correction_required and not tool_call_required:
+                response = await complete(executor_request, stage)
+                if not correction_required and executor_request.get("tool_choice") != "required":
                     return response
                 message = (response.get("choices") or [{}])[0].get("message", {})
                 if message.get("tool_calls"):
@@ -3101,12 +3103,10 @@ def create_app(
                 if not isinstance(tools, list) or not tools:
                     request.app.state.store.event(
                         state_session_id,
-                        "frontier_correction_tool_unavailable",
+                        f"{event_prefix}_tool_unavailable",
                         {"reason": "client_tools_unavailable"},
                     )
-                    raise FrontierRequiredUnavailable(
-                        "required Frontier correction cannot run without client tools"
-                    )
+                    raise error_type("required Executor correction cannot run without client tools")
                 tool_names = sorted(
                     {
                         str(tool.get("name") or tool.get("function", {}).get("name"))
@@ -3124,7 +3124,7 @@ def create_app(
                         "content": (
                             (
                                 "A required code correction remains unresolved. "
-                                if state.frontier_correction_required
+                                if correction_required
                                 else "The client requires a tool call before this turn can finish. "
                             )
                             + "The prior response did not call a tool and cannot complete this "
@@ -3142,28 +3142,72 @@ def create_app(
                 ]
                 request.app.state.store.event(
                     state_session_id,
-                    "frontier_correction_tool_retry_requested",
-                    {"provider": "frontier", "tools": tool_names},
+                    f"{event_prefix}_tool_retry_requested",
+                    {"provider": provider_name, "tools": tool_names},
                 )
-                response = await remote_executor_complete(
-                    retry_request, f"{stage}_correction_tool_retry"
-                )
+                response = await complete(retry_request, f"{stage}_correction_tool_retry")
                 retry_message = (response.get("choices") or [{}])[0].get("message", {})
                 if not retry_message.get("tool_calls"):
                     request.app.state.store.event(
                         state_session_id,
-                        "frontier_correction_tool_retry_failed",
-                        {"provider": "frontier", "reason": "tool_call_missing"},
+                        f"{event_prefix}_tool_retry_failed",
+                        {"provider": provider_name, "reason": "tool_call_missing"},
                     )
-                    raise FrontierRequiredUnavailable(
-                        "required Frontier correction did not produce a client tool call"
+                    raise error_type(
+                        "required Executor correction did not produce a client tool call"
                     )
                 request.app.state.store.event(
                     state_session_id,
-                    "frontier_correction_tool_retry_completed",
-                    {"provider": "frontier"},
+                    f"{event_prefix}_tool_retry_completed",
+                    {"provider": provider_name},
                 )
                 return response
+
+            async def remote_executor_correction(
+                executor_request: dict[str, Any], stage: str
+            ) -> dict[str, Any]:
+                if executor_flash and state.frontier_correction_required:
+                    raise OverflowExecutorUnavailable(
+                        "pinned Executor Flash cannot satisfy required Frontier correction"
+                    )
+                return await executor_tool_correction(
+                    executor_request,
+                    stage,
+                    remote_executor_complete,
+                    correction_required=state.frontier_correction_required,
+                    event_prefix="frontier_correction",
+                    provider_name="frontier",
+                    error_type=FrontierRequiredUnavailable,
+                )
+
+            async def local_executor_complete(
+                executor_request: dict[str, Any], stage: str
+            ) -> dict[str, Any]:
+                return cast(
+                    dict[str, Any],
+                    await request.app.state.provider.complete(
+                        "executor",
+                        configured.models["executor"],
+                        executor_request,
+                        timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                        stage=stage,
+                    ),
+                )
+
+            async def local_executor_correction(
+                executor_request: dict[str, Any], stage: str
+            ) -> dict[str, Any]:
+                buffered_request = {**executor_request, "stream": False}
+                buffered_request.pop("stream_options", None)
+                return await executor_tool_correction(
+                    buffered_request,
+                    stage,
+                    local_executor_complete,
+                    correction_required=False,
+                    event_prefix="executor_required",
+                    provider_name="local",
+                    error_type=ExecutorToolCallRequired,
+                )
 
             async def remote_reasoner_complete(
                 reasoner_request: dict[str, Any], stage: str
@@ -3526,13 +3570,24 @@ def create_app(
                             require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
                         )
                     )
-                    upstream = await request.app.state.provider.stream(
-                        "executor",
-                        configured.models["executor"],
-                        prepared,
-                        timeout_seconds=configured.limits.executor_first_byte_timeout_seconds,
-                        stage="executor_first_byte",
-                    )
+                    if prepared.get("tool_choice") == "required":
+
+                        async def required_tool_upstream() -> AsyncIterator[bytes]:
+                            required_response = await local_executor_correction(
+                                prepared, "executor_required_tool"
+                            )
+                            async for chunk in completed_chat_sse(required_response):
+                                yield chunk
+
+                        upstream = keepalive_sse(required_tool_upstream(), interval_seconds=10)
+                    else:
+                        upstream = await request.app.state.provider.stream(
+                            "executor",
+                            configured.models["executor"],
+                            prepared,
+                            timeout_seconds=(configured.limits.executor_first_byte_timeout_seconds),
+                            stage="executor_first_byte",
+                        )
                 state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
                 stage_status["executor_first_byte"] = "completed"
                 observation = StreamObservation(configured.limits.max_stream_capture_bytes)
@@ -3824,13 +3879,7 @@ def create_app(
             response = (
                 await remote_executor_correction(prepared, "executor_total")
                 if executor_remote
-                else await request.app.state.provider.complete(
-                    "executor",
-                    configured.models["executor"],
-                    prepared,
-                    timeout_seconds=configured.limits.executor_total_timeout_seconds,
-                    stage="executor_total",
-                )
+                else await local_executor_correction(prepared, "executor_total")
             )
             state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
             state.timings_ms["executor_total"] = round(
@@ -4060,12 +4109,8 @@ def create_app(
                                 correction_request, "review_correction"
                             )
                             if executor_remote
-                            else await request.app.state.provider.complete(
-                                "executor",
-                                configured.models["executor"],
-                                correction_request,
-                                timeout_seconds=(configured.limits.executor_total_timeout_seconds),
-                                stage="review_correction",
+                            else await local_executor_correction(
+                                correction_request, "review_correction"
                             )
                         )
                         token_usage.update(reported_usage(response.get("usage")))
@@ -4086,7 +4131,7 @@ def create_app(
                                 "review_correction_failed",
                                 {"reason": "tool_call_missing"},
                             )
-                            raise ReviewerCorrectionRequired(
+                            raise ExecutorToolCallRequired(
                                 "Reviewer correction did not produce a client tool call"
                             )
                         for call in assistant_tool_calls:
@@ -4594,12 +4639,12 @@ def create_app(
                 error.verdict,
                 headers={"X-Session-ID": state_session_id},
             )
-        except ReviewerCorrectionRequired as error:
-            finalize_request("reviewer", "failed", downstream_started=True)
+        except ExecutorToolCallRequired as error:
+            finalize_request("executor", "failed", downstream_started=True)
             return error_response(
                 status.HTTP_409_CONFLICT,
                 str(error),
-                "reviewer_correction_required",
+                "executor_tool_call_required",
                 "tool_call_missing",
                 headers={"X-Session-ID": state_session_id},
             )
