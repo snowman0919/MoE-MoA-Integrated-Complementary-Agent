@@ -494,6 +494,7 @@ class FrontierCollaborationResult(BaseModel):
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    rendered_prompt_bytes: int | None = None
     cost_usd: float | None = None
     latency_ms: float
     transmitted_categories: list[str]
@@ -1272,6 +1273,7 @@ class CodexOAuthCollaboration:
             total_tokens=(
                 prompt + completion if prompt is not None and completion is not None else None
             ),
+            rendered_prompt_bytes=len(prompt_text.encode()),
             cost_usd=self._cost(prompt, completion),
             latency_ms=round((time.monotonic() - started) * 1000, 3),
             transmitted_categories=categories,
@@ -1453,6 +1455,14 @@ class CodexOAuthCollaboration:
             total_tokens=(
                 prompt + completion if prompt is not None and completion is not None else None
             ),
+            rendered_prompt_bytes=len(
+                json.dumps(
+                    body,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ),
             cost_usd=cost,
             latency_ms=round((time.monotonic() - started) * 1000, 3),
             transmitted_categories=sorted(bounded),
@@ -1566,6 +1576,7 @@ class CodexOAuthCollaboration:
                 "latency_ms": result.latency_ms,
                 "cost_usd": result.cost_usd,
                 "sanitized_absolute_workdirs": sanitized_paths,
+                "rendered_prompt_bytes": result.rendered_prompt_bytes,
             },
         }
 

@@ -3276,6 +3276,10 @@ def create_app(
                 ),
                 execution_runtime=execution_runtime,
             )
+            executor_projection_manifest = state.role_context_projections[-1]
+            if executor_projection_manifest.get("role") != "executor":
+                raise ValueError("Executor provider input is missing its Runtime projection")
+            executor_projection_id = str(executor_projection_manifest["projection_id"])
             if execution_runtime is not None:
                 try:
                     preparation_node = next(
@@ -3509,13 +3513,21 @@ def create_app(
             )
             if body.stream:
                 remote_failure: list[str] = []
+                remote_rendered_prompt_bytes: int | None = None
                 if executor_remote:
 
                     async def remote_upstream() -> AsyncIterator[bytes]:
+                        nonlocal remote_rendered_prompt_bytes
                         try:
                             remote_response = await remote_executor_correction(
                                 prepared, "executor_first_byte"
                             )
+                            provenance = remote_response.get("provider_provenance")
+                            if (
+                                isinstance(provenance, dict)
+                                and type(provenance.get("rendered_prompt_bytes")) is int
+                            ):
+                                remote_rendered_prompt_bytes = provenance["rendered_prompt_bytes"]
                         except Exception as error:
                             remote_failure.append(type(error).__name__)
                             request.app.state.controller.record_provider_failure(
@@ -3652,6 +3664,22 @@ def create_app(
                                     "status": "completed" if terminal else terminal_status,
                                 },
                                 account_loop_usage=False,
+                            )
+                            request.app.state.controller.record_context_invocation(
+                                state,
+                                executor_projection_id,
+                                rendered_prompt=(
+                                    prepared
+                                    if executor_remote
+                                    else request.app.state.controller.rendered_model_request(
+                                        "executor", prepared
+                                    )
+                                    | {"stream": True}
+                                ),
+                                rendered_prompt_bytes=remote_rendered_prompt_bytes,
+                                provider_prompt_tokens=observation.usage.get("prompt_tokens"),
+                                status="completed" if terminal else terminal_status,
+                                mode="final_synthesis",
                             )
                             if terminal:
                                 state.final_output = "".join(observation.assistant_content)
@@ -3880,6 +3908,12 @@ def create_app(
                 executor_started,
                 mode="final_synthesis",
                 fallback_reason=executor_routing_reason if executor_remote else None,
+                projection_id=executor_projection_id,
+                rendered_prompt=(
+                    prepared
+                    if executor_remote
+                    else request.app.state.controller.rendered_model_request("executor", prepared)
+                ),
             )
             validate_assistant_response(response)
             assistant_message = response.get("choices", [{}])[0].get("message", {})
@@ -4130,6 +4164,13 @@ def create_app(
                                         "status": "completed",
                                     },
                                 )
+                                request.app.state.controller.record_context_invocation(
+                                    state,
+                                    frontier_b_projection.projection_id,
+                                    rendered_prompt_bytes=frontier_result.rendered_prompt_bytes,
+                                    provider_prompt_tokens=frontier_result.prompt_tokens,
+                                    mode="disagreement",
+                                )
                                 request.app.state.controller.record_evidence(
                                     state,
                                     "external_expert_finding",
@@ -4238,6 +4279,14 @@ def create_app(
                             correction_started,
                             mode="judge_correction",
                             fallback_reason=executor_routing_reason if executor_remote else None,
+                            projection_id=executor_projection_id,
+                            rendered_prompt=(
+                                correction_request
+                                if executor_remote
+                                else request.app.state.controller.rendered_model_request(
+                                    "executor", correction_request
+                                )
+                            ),
                         )
                         validate_assistant_response(response)
                         assistant_message = response.get("choices", [{}])[0].get("message", {})

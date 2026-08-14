@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from typing import Any, cast
 
@@ -113,5 +114,13 @@ class OpenCodeGoExecutorProvider:
             "model": self.model,
             "correlation_id": correlation_id,
             "transport": "openai_compatible_http",
+            "rendered_prompt_bytes": len(
+                json.dumps(
+                    body,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ),
         }
         return payload

@@ -17,6 +17,7 @@ import httpx
 from .compression import compress_messages, compress_text
 from .config import Settings
 from .context_projection import (
+    ROLE_PROJECTION_POLICIES,
     ContributionRole,
     ModelContribution,
     ProjectionRole,
@@ -933,6 +934,9 @@ class Controller:
             causal_parent_attempt_ids=causal_parent_attempt_ids,
             join_node_id=join_node_id,
         )
+        allowed_kinds = set(ROLE_PROJECTION_POLICIES[(role, stage)].allowed_runtime_kinds)
+        included_evidence_ids = set(projection.provenance.included_evidence_ids)
+        projection_bytes = len(projection.model_dump_json().encode())
         manifest = {
             "role": role,
             "stage": stage,
@@ -943,18 +947,97 @@ class Controller:
             "included_categories": list(projection.provenance.included_categories),
             "source_evidence_ids": list(projection.provenance.included_evidence_ids),
             "excluded_evidence_ids": list(projection.provenance.excluded_evidence_ids),
+            "dropped_evidence": [
+                {
+                    "evidence_id": item.evidence_id,
+                    "reason": ("byte_budget" if item.kind in allowed_kinds else "role_policy"),
+                }
+                for item in snapshot.runtime_evidence
+                if item.evidence_id not in included_evidence_ids
+            ],
             "source_attempt_ids": list(projection.provenance.source_attempt_ids),
             "target_attempt_id": projection.provenance.target_attempt_id,
             "causal_parent_attempt_ids": list(projection.provenance.causal_parent_attempt_ids),
             "join_node_id": projection.provenance.join_node_id,
             "target_bytes": projection.provenance.target_bytes,
-            "encoded_bytes": len(projection.model_dump_json().encode()),
+            "snapshot_bytes": len(snapshot.model_dump_json().encode()),
+            "projection_bytes": projection_bytes,
+            "encoded_bytes": projection_bytes,
+            "rendered_prompt_bytes": None,
+            "provider_prompt_tokens": None,
+            "provider_invocations": [],
             "created_at": now(),
         }
         state.role_context_projections.append(manifest)
         state.role_context_projections = state.role_context_projections[-64:]
         self.store.event(state.session_id, "collaboration_context_projected", manifest)
         return projection
+
+    def record_context_invocation(
+        self,
+        state: SessionState,
+        projection_id: str,
+        *,
+        rendered_prompt: Any = None,
+        rendered_prompt_bytes: object = None,
+        provider_prompt_tokens: object = None,
+        status: str = "completed",
+        mode: str = "default",
+    ) -> None:
+        if not (
+            type(rendered_prompt_bytes) is int and 0 <= rendered_prompt_bytes <= SQLITE_MAX_INTEGER
+        ):
+            rendered_prompt_bytes = len(
+                json.dumps(
+                    redact(rendered_prompt),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode()
+            )
+        prompt_tokens = (
+            provider_prompt_tokens
+            if type(provider_prompt_tokens) is int
+            and 0 <= provider_prompt_tokens <= SQLITE_MAX_INTEGER
+            else None
+        )
+        for manifest in reversed(state.role_context_projections):
+            if manifest.get("projection_id") != projection_id:
+                continue
+            invocation = {
+                "invocation_id": f"context_invocation_{uuid.uuid4().hex[:24]}",
+                "rendered_prompt_bytes": rendered_prompt_bytes,
+                "provider_prompt_tokens": prompt_tokens,
+                "status": status,
+                "mode": mode,
+                "created_at": now(),
+            }
+            manifest["rendered_prompt_bytes"] = rendered_prompt_bytes
+            manifest["provider_prompt_tokens"] = prompt_tokens
+            invocations = manifest.setdefault("provider_invocations", [])
+            if isinstance(invocations, list):
+                invocations.append(invocation)
+                manifest["provider_invocations"] = invocations[-16:]
+            self.store.event(
+                state.session_id,
+                "role_context_provider_invoked",
+                {"projection_id": projection_id, **invocation},
+            )
+            return
+        self.store.event(
+            state.session_id,
+            "role_context_provider_invocation_unlinked",
+            {"projection_id": projection_id, "status": status, "mode": mode},
+        )
+
+    def rendered_model_request(self, role: str, request: dict[str, Any]) -> dict[str, Any]:
+        model = self.settings.models[role]
+        return (
+            ModelProvider.ollama_body(model, request)
+            if model.provider == "ollama"
+            else ModelProvider.body(role, model, request)
+        )
 
     def independent_runtime_projection(
         self,
@@ -1095,6 +1178,8 @@ class Controller:
         mode: str = "default",
         provider: str | None = None,
         fallback_reason: str | None = None,
+        projection_id: str | None = None,
+        rendered_prompt: Any = None,
     ) -> None:
         raw_usage = response.get("usage")
         usage = cast(dict[str, Any], raw_usage) if isinstance(raw_usage, dict) else {}
@@ -1108,6 +1193,18 @@ class Controller:
         )
         provenance = response.get("provider_provenance")
         provenance = cast(dict[str, Any], provenance) if isinstance(provenance, dict) else {}
+        rendered_prompt_bytes = response.pop(
+            "_rendered_prompt_bytes", provenance.get("rendered_prompt_bytes")
+        )
+        if projection_id is not None:
+            self.record_context_invocation(
+                state,
+                projection_id,
+                rendered_prompt=rendered_prompt,
+                rendered_prompt_bytes=rendered_prompt_bytes,
+                provider_prompt_tokens=usage.get("prompt_tokens"),
+                mode=mode,
+            )
         self.record_observed_invocation(
             state,
             {
@@ -2833,10 +2930,12 @@ class Controller:
         frontier_degraded = False
         planner_task: asyncio.Task[tuple[dict[str, Any], dict[str, Any]]] | None = None
         planner_request: dict[str, Any] | None = None
+        planner_projection: RoleContextProjection | None = None
         planner_graph_attempt: str | None = None
         planner_decision_id: str | None = None
         planner_started: float | None = None
         collaboration_context = ""
+        frontier_projection: RoleContextProjection | None = None
         fanout_started = False
         fanout_contributions: list[ModelContribution] = []
         fanout_snapshot = self.runtime_evidence_snapshot(
@@ -2856,7 +2955,8 @@ class Controller:
         async def start_fanout() -> None:
             nonlocal collaboration_context, fanout_started, frontier_degraded
             nonlocal frontier_graph_attempt, frontier_task, planner_decision_id
-            nonlocal planner_graph_attempt, planner_request, planner_started, planner_task, roles
+            nonlocal frontier_projection, planner_graph_attempt, planner_projection
+            nonlocal planner_request, planner_started, planner_task, roles
             if fanout_started:
                 return
             fanout_started = True
@@ -3201,7 +3301,14 @@ class Controller:
                         "latency_ms": round((time.monotonic() - reasoner_record_started) * 1000, 3),
                     },
                 )
-            self.record_invocation(state, "reasoner", reasoner_response, reasoner_record_started)
+            self.record_invocation(
+                state,
+                "reasoner",
+                reasoner_response,
+                reasoner_record_started,
+                projection_id=reasoner_projection.projection_id,
+                rendered_prompt=self.rendered_model_request("reasoner", reasoner_request),
+            )
             reasoner_contribution = contribution
             contribution_data = contribution.model_dump()
             safe_contribution = cast(dict[str, Any], self.safe_payload(state, contribution_data))
@@ -3429,6 +3536,7 @@ class Controller:
             finally:
                 state.timings_ms["planner"] = round((time.monotonic() - planner_started) * 1000, 3)
             if planner is not None and planner_error is None:
+                assert planner_projection is not None
                 self.record_invocation(
                     state,
                     "planner",
@@ -3440,6 +3548,8 @@ class Controller:
                         if planner_routing.get("selected_provider") == "remote"
                         else None
                     ),
+                    projection_id=planner_projection.projection_id,
+                    rendered_prompt=self.rendered_model_request("planner", planner_request),
                 )
                 policy_planner = {
                     key: value for key, value in parsed.items() if key != "ordered_steps"
@@ -3518,6 +3628,21 @@ class Controller:
                         ),
                     }
                     frontier_graph_attempt = graph_start(NodeType.FRONTIER_A)
+                    frontier_projection = self.project_runtime_context(
+                        state,
+                        self.runtime_evidence_snapshot(
+                            state,
+                            request_inputs=cast(list[dict[str, Any]], body.get("messages", [])),
+                            metadata=cast(dict[str, Any], frozen_metadata),
+                            contributions=tuple(fanout_contributions),
+                        ),
+                        "frontier_a",
+                        "fanout",
+                        target_attempt_id=frontier_graph_attempt,
+                    )
+                    frontier_review_evidence["shared_evidence"] = frontier_projection.model_dump(
+                        mode="json"
+                    )
                     frontier_task = asyncio.create_task(
                         self._frontier_collaborate(state, "code_review", frontier_review_evidence)
                     )
@@ -3621,6 +3746,23 @@ class Controller:
                                 ),
                             }
                             frontier_graph_attempt = graph_start(NodeType.FRONTIER_A)
+                            frontier_projection = self.project_runtime_context(
+                                state,
+                                self.runtime_evidence_snapshot(
+                                    state,
+                                    request_inputs=cast(
+                                        list[dict[str, Any]], body.get("messages", [])
+                                    ),
+                                    metadata=cast(dict[str, Any], frozen_metadata),
+                                    contributions=tuple(fanout_contributions),
+                                ),
+                                "frontier_a",
+                                "fanout",
+                                target_attempt_id=frontier_graph_attempt,
+                            )
+                            frontier_review_evidence["shared_evidence"] = (
+                                frontier_projection.model_dump(mode="json")
+                            )
                             frontier_task = asyncio.create_task(
                                 self._frontier_collaborate(
                                     state, "code_review", frontier_review_evidence
@@ -3686,6 +3828,14 @@ class Controller:
                         "status": "completed",
                     },
                 )
+                if frontier_projection is not None:
+                    self.record_context_invocation(
+                        state,
+                        frontier_projection.projection_id,
+                        rendered_prompt_bytes=frontier_result.rendered_prompt_bytes,
+                        provider_prompt_tokens=frontier_result.prompt_tokens,
+                        mode=frontier_result.mode,
+                    )
                 frontier_evidence_id = self.record_evidence(
                     state,
                     "external_expert_finding",
@@ -4670,6 +4820,8 @@ class Controller:
                         if reviewer_routing.get("selected_provider") == "remote"
                         else None
                     ),
+                    projection_id=runtime_projection.projection_id,
+                    rendered_prompt=self.rendered_model_request("reviewer", request),
                 )
                 try:
                     result = ReviewResult.model_validate(parse_json_content(response)).model_dump()
@@ -4721,6 +4873,8 @@ class Controller:
                             if reviewer_routing.get("selected_provider") == "remote"
                             else None
                         ),
+                        projection_id=runtime_projection.projection_id,
+                        rendered_prompt=self.rendered_model_request("reviewer", retry_request),
                     )
                     result = ReviewResult.model_validate(parse_json_content(response)).model_dump()
             finally:
@@ -4856,7 +5010,14 @@ class Controller:
             timeout_seconds=self.settings.limits.judge_timeout_seconds,
             stage="judge",
         )
-        self.record_invocation(state, "judge", response, judge_started)
+        self.record_invocation(
+            state,
+            "judge",
+            response,
+            judge_started,
+            projection_id=runtime_projection.projection_id,
+            rendered_prompt=self.rendered_model_request("judge", request),
+        )
         verdict = JudgeVerdict.model_validate(parse_json_content(response))
         result = verdict.model_dump()
         safe_result = cast(dict[str, Any], self.safe_payload(state, result))
@@ -5079,9 +5240,11 @@ class Controller:
         )
         self.admit_loop_action(state, "judge_calls")
         started = time.monotonic()
+        provider_status = "completed"
         try:
             verdict: RemoteJudgeVerdict = await self.remote_judge.judge(package)
         except JudgeProviderError as error:
+            provider_status = "failed"
             failure_class = (
                 "PROVIDER_TIMEOUT"
                 if isinstance(error, JudgeTimeout)
@@ -5153,6 +5316,15 @@ class Controller:
                 "status": "completed",
             },
         )
+        if package.projection_id is not None:
+            self.record_context_invocation(
+                state,
+                package.projection_id,
+                rendered_prompt=package.sanitized().model_dump(mode="json"),
+                provider_prompt_tokens=judge_usage.get("prompt_tokens"),
+                status=provider_status,
+                mode="remote_judge",
+            )
         self.store.event(
             state.session_id,
             "judge_completed",

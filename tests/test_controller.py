@@ -8,6 +8,10 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from dgx_moa.context_projection import (
+    build_runtime_evidence_snapshot,
+    runtime_evidence_item,
+)
 from dgx_moa.controller import (
     Controller,
     DuplicateFailedCall,
@@ -161,6 +165,53 @@ def test_invocation_usage_accumulates_calls_and_preserves_cache_unknown_vs_zero(
             "SELECT total_tokens, cached_tokens FROM model_invocation_usage ORDER BY rowid"
         ).fetchall()
     assert rows == [(5, None), (18, 0)]
+
+
+def test_role_context_manifest_links_provider_input_usage_and_dropped_evidence(
+    settings, stub_provider: StubProvider, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(tmp_path / "state.db"), stub_provider)
+    state = SessionState(session_id="context-invocation")
+    snapshot = build_runtime_evidence_snapshot(
+        request_id="context-invocation",
+        objective="retain the contract",
+        acceptance_criteria=("provider input is measured",),
+        runtime_evidence=tuple(
+            runtime_evidence_item(f"tool-{index}", "tool", {"output": "x" * 20_000})
+            for index in range(8)
+        ),
+    )
+    projection = controller.project_runtime_context(state, snapshot, "planner", "fanout")
+    rendered = {"messages": [{"role": "user", "content": "measured input"}]}
+
+    controller.record_invocation(
+        state,
+        "planner",
+        {
+            "model": "planner",
+            "usage": {"prompt_tokens": 321, "completion_tokens": 2, "total_tokens": 323},
+        },
+        time.monotonic(),
+        projection_id=projection.projection_id,
+        rendered_prompt=rendered,
+    )
+
+    manifest = state.role_context_projections[-1]
+    assert manifest["snapshot_bytes"] == len(snapshot.model_dump_json().encode())
+    assert manifest["projection_bytes"] == len(projection.model_dump_json().encode())
+    assert manifest["rendered_prompt_bytes"] == len(
+        json.dumps(
+            rendered,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    )
+    assert manifest["provider_prompt_tokens"] == 321
+    assert "acceptance_criteria" in manifest["included_categories"]
+    assert manifest["dropped_evidence"]
+    assert {item["reason"] for item in manifest["dropped_evidence"]} == {"byte_budget"}
+    assert manifest["provider_invocations"][0]["provider_prompt_tokens"] == 321
 
 
 def test_normalize_tool_result_preserves_hermes_output() -> None:

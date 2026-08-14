@@ -300,7 +300,7 @@ async def test_local_specialist_completion_fits_served_context(settings, monkeyp
         lambda **kwargs: async_client(transport=transport, **kwargs),
     )
 
-    await ModelProvider().complete(
+    result = await ModelProvider().complete(
         "reviewer",
         settings.models["reviewer"].model_copy(update={"reasoning_parser": "cohere_command4"}),
         {"messages": [{"role": "system", "content": "review"}], "max_tokens": 1500},
@@ -308,6 +308,14 @@ async def test_local_specialist_completion_fits_served_context(settings, monkeyp
 
     assert completion_bodies[0]["max_tokens"] == 1491
     assert completion_bodies[0]["chat_template_kwargs"] == {"reasoning": False}
+    assert result["_rendered_prompt_bytes"] == len(
+        json.dumps(
+            completion_bodies[0],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    )
 
 
 @pytest.mark.asyncio
@@ -395,6 +403,17 @@ async def test_nemotron_planner_separates_reasoning_from_final_json(settings, mo
         "completion_tokens": 788,
         "total_tokens": 998,
     }
+    assert result["_rendered_prompt_bytes"] == sum(
+        len(
+            json.dumps(
+                body,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        )
+        for body in completion_bodies
+    )
 
 
 def test_missing_structured_content_is_controlled_error() -> None:

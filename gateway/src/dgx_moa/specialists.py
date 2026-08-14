@@ -143,7 +143,21 @@ class _RemoteProvider:
                         json=body,
                     )
                     response.raise_for_status()
-                    return cast(dict[str, Any], response.json())
+                    payload = cast(dict[str, Any], response.json())
+                    raw_provenance = payload.get("provider_provenance")
+                    provenance = raw_provenance if isinstance(raw_provenance, dict) else {}
+                    payload["provider_provenance"] = {
+                        **provenance,
+                        "rendered_prompt_bytes": len(
+                            json.dumps(
+                                body,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode()
+                        ),
+                    }
+                    return payload
         except (TimeoutError, httpx.TimeoutException) as error:
             raise StageTimeout(f"remote_{self.role}") from error
 

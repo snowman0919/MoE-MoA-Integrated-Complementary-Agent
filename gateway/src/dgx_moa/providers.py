@@ -277,6 +277,17 @@ class ModelProvider:
         if isinstance(usage, dict) and isinstance(analysis_usage, dict):
             for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
                 usage[key] = int(usage.get(key, 0) or 0) + int(analysis_usage.get(key, 0) or 0)
+        final_payload["_rendered_prompt_bytes"] = sum(
+            len(
+                json.dumps(
+                    item,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            )
+            for item in (analysis_body, final_body)
+        )
         return final_payload
 
     @staticmethod
@@ -335,9 +346,10 @@ class ModelProvider:
             async with asyncio.timeout(timeout_seconds):
                 async with managed_http_client(timeout=None) as client:
                     if model.provider == "ollama":
+                        body = self.ollama_body(model, request)
                         response = await client.post(
                             f"{model.base_url.rstrip('/')}/api/chat",
-                            json=self.ollama_body(model, request),
+                            json=body,
                         )
                     else:
                         body = self.body(role, model, request)
@@ -351,7 +363,18 @@ class ModelProvider:
                         )
                     response.raise_for_status()
                     payload = cast(dict[str, Any], response.json())
-                    return self.ollama_response(payload) if model.provider == "ollama" else payload
+                    result = (
+                        self.ollama_response(payload) if model.provider == "ollama" else payload
+                    )
+                    result["_rendered_prompt_bytes"] = len(
+                        json.dumps(
+                            body,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode()
+                    )
+                    return result
         except (TimeoutError, httpx.TimeoutException) as error:
             raise StageTimeout(stage or role) from error
 
