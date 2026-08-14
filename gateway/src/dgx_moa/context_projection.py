@@ -479,13 +479,17 @@ def build_runtime_evidence_snapshot(
         "request_id": request_id,
         "graph_id": graph_id,
         "objective": str(redact(objective)),
-        "request_inputs": tuple(request_inputs),
-        "request_constraints_json": tuple(_canonical(item) for item in request_constraints),
-        "acceptance_criteria_json": tuple(_canonical(item) for item in acceptance_criteria),
-        "runtime_evidence": tuple(sorted(runtime_evidence, key=lambda item: item.evidence_id)),
-        "model_contributions": tuple(
-            sorted(model_contributions, key=lambda item: item.contribution_id)
-        ),
+        "request_inputs": [item.model_dump(mode="json") for item in request_inputs],
+        "request_constraints_json": [_canonical(item) for item in request_constraints],
+        "acceptance_criteria_json": [_canonical(item) for item in acceptance_criteria],
+        "runtime_evidence": [
+            item.model_dump(mode="json")
+            for item in sorted(runtime_evidence, key=lambda item: item.evidence_id)
+        ],
+        "model_contributions": [
+            item.model_dump(mode="json")
+            for item in sorted(model_contributions, key=lambda item: item.contribution_id)
+        ],
     }
     raw["snapshot_hash"] = _hash(raw)
     raw["snapshot_id"] = f"snapshot_{raw['snapshot_hash'][:24]}"
