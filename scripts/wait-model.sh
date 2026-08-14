@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 role=${1:?role required}
 case "$role" in
-  executor) port=19301; minimum=5368709120 ;;
+  executor) port=9001; minimum=5368709120 ;;
   planner) port=8102; minimum=5368709120 ;;
   reviewer) port=8103; minimum=5368709120 ;;
   reasoner) port=11435; minimum=10737418240 ;;

@@ -5,7 +5,7 @@ timeout=${2:-1200}
 case "$profile" in
   resident)
     services=(executor planner reviewer)
-    ports=(19301)
+    ports=(9001)
     minimum=5368709120
     ;;
   judge)

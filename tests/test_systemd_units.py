@@ -73,12 +73,14 @@ def test_executor_uses_qualified_cuda_allocator() -> None:
 
 def test_profile_scripts_wait_for_executor_and_verify_all_resident_roles_stop() -> None:
     wait = (ROOT / "scripts/wait-profile.sh").read_text()
+    wait_model = (ROOT / "scripts/wait-model.sh").read_text()
     verify_stopped = (ROOT / "scripts/verify-profile-stopped.sh").read_text()
 
     assert "services=(executor planner reviewer)" in wait
-    assert "ports=(19301)" in wait
+    assert "ports=(9001)" in wait
+    assert "executor) port=9001;" in wait_model
     assert (
-        "resident) services=(executor planner reviewer); ports=(19301 8102 8103) ;;"
+        "resident) services=(executor planner reviewer); ports=(9001 8102 8103) ;;"
     ) in verify_stopped
 
 
