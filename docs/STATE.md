@@ -15,8 +15,8 @@ this section, they are not current implementation authority.
 | CUDA execution | Production qualification requires an active, physically measured CUDA Graph path and acceptable long-decode performance | `cudagraph_mode=NONE` proves memory/readiness/API compatibility only; it is not the final optimized NVFP4 runtime |
 | Backend | Keep vLLM explicit B12x as production candidate A. SGLang native candidate B passed SM121 FP4 load, FlashInfer MLA, CUDA Graph, Chat/tools/stream/cancel, but failed verbatim tool continuation and standard Responses input semantics; MARLIN remains rollback only | Do not generalize either rejected auto-CUTLASS path or SGLang API regressions into a claim that MARLIN is optimal on Blackwell |
 | Flash overflow | Checked-in safe defaults remain disabled. The reviewed production override intentionally enables only `deepseek-v4-flash` Executor scheduling while the local Executor is operator-stopped. | Do not describe specialist routing, Remote Judge, Loop Engineering, Runtime Skills/Knowledge/Evolution, training, weekly jobs, or ExecutionGraph as active; they are disabled in the inspected runtime. |
-| Client quality | The current DeepSeek fallback replay is protocol-stable only on isolated candidate `8c600126c`. OpenCode and Codex both fail the deterministic `rate-limiter` hidden constructor contract after public tests pass. | Protocol recovery is not task-quality qualification and does not authorize the unseen task, wider client batch, integration, or release. |
-| Goal status | `IN_PROGRESS`: production canaries and rollback passed, but client-quality, branch/worktree cleanup, full client batches, and candidate promotion gates remain open. | Do not mark complete from historical matrices, checkbox state, or protocol-only success. |
+| Client quality | Isolated candidate `8a997b666` made unavailable local review fall back to bounded Codex OAuth `code_review` and allowed DeepSeek Flash to apply the resulting correction. Codex passed the failed `rate-limiter` replay and unseen `atomic-store`; OpenCode then passed both validators for `rate-limiter` but failed its terminal/harness gate when DeepSeek returned no public final output. | A passing implementation validator is not a passing client run. The failed independent-client comparison blocks the wider batch, integration, and release. |
+| Goal status | `IN_PROGRESS`: production canaries and rollback passed, and Codex replay/unseen gates passed, but the OpenCode comparison, full client batches, branch/worktree cleanup, and candidate promotion gates remain open. | Do not mark complete from historical matrices, checkbox state, validator-only success, or protocol-only success. |
 
 ### Runtime completion audit overlay — 2026-08-14
 
@@ -30,7 +30,7 @@ rollback code commit is `c461637e7`.
 | Path | Audit state | Measured basis |
 | --- | --- | --- |
 | Chat/Responses common execution | `PHYSICALLY_VERIFIED` | Production Chat, Responses, SSE usage/terminal, cancellation, and recovery canaries passed. |
-| Codex/OpenCode/Hermes compatibility | `PARTIALLY_WIRED` | OpenCode and Codex reached real tools through DeepSeek, but both failed the deterministic hidden quality gate; the current Hermes coding batch was not started. |
+| Codex/OpenCode/Hermes compatibility | `PARTIALLY_WIRED` | Codex passed failed-task replay and unseen `atomic-store` through DeepSeek. OpenCode produced a validator-passing correction but failed to emit a terminal public result; the current Hermes coding batch was not started. |
 | ExecutionGraph | `DISABLED_BY_POLICY` | Source/tests and historical state exist; the inspected production override disables it. |
 | Role Context projection | `PHYSICALLY_VERIFIED` | Isolated physical epochs recorded role-specific snapshot/projection/rendered-prompt bytes, token counts, included categories, and zero dropped evidence; the richer audit instrumentation remains undeployed. |
 | Evidence persistence | `PHYSICALLY_VERIFIED` | Production trace/session evidence and isolated canonical snapshot/projection lineage were queried from SQLite. |
@@ -41,7 +41,7 @@ rollback code commit is `c461637e7`.
 | Streaming/cancellation/recovery | `PHYSICALLY_VERIFIED` | Production SSE, cancellation persistence, and following-request recovery passed. |
 | Dashboard/WebSocket/trace | `PHYSICALLY_VERIFIED` | Protected Dashboard/session/trace canaries passed; unauthenticated access remained denied. |
 | Logging/training candidate | `PARTIALLY_WIRED` | Runtime logging persists; training collection and weekly jobs remain disabled by policy. |
-| Deployment/rollback | `PHYSICALLY_VERIFIED` | Code rollback/redeploy and authenticated canaries passed twice; the later DeepSeek protocol candidate was not deployed. |
+| Deployment/rollback | `PHYSICALLY_VERIFIED` | Code rollback/redeploy and authenticated canaries passed twice; the later DeepSeek review/correction candidate was not deployed because its OpenCode comparison gate failed. |
 | Retired public model aliases | `PARTIALLY_WIRED` | Public catalog is canonical, but historical compatibility selectors and fixtures still reference retired labels. |
 
 The physical Role Context ranges from the preserved isolated audit are:
@@ -53,13 +53,14 @@ bytes, with provider prompt tokens `4029..12613`. Objective, original input,
 request constraints, and applicable tool/model evidence were included; dropped
 evidence was `0`. Hidden reasoning and raw remote review output were not stored.
 
-Git cleanup is not complete. The current repository has `12` local branches,
+Git cleanup is not complete. After removing the finished candidate worktree, the current
+repository has `13` local branches,
 `11` registered worktrees, and `5` non-empty stashes. Five auxiliary worktrees
 contain dirty or untracked user evidence, and the remaining experiment branches
 retain unique commits. They were not destructively removed. The production and
-root worktrees are clean; the finished DeepSeek candidate worktree was removed
-while its commits remain isolated on
-`auto/audit/deepseek-developer-role-20260814`.
+root worktrees are clean; the finished DeepSeek candidate worktrees were removed
+while their commits remain isolated on `auto/audit/deepseek-developer-role-20260814`
+and `auto/audit/reviewer-frontier-fallback-20260814`.
 
 ### Dashboard validation overlay — 2026-08-13
 
