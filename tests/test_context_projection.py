@@ -8,6 +8,7 @@ from dgx_moa.context_projection import (
     ROLE_CONTEXT_TARGET_BYTES,
     CanonicalRequestInput,
     ModelContribution,
+    RoleContextProjection,
     RuntimeEvidenceItem,
     RuntimeEvidenceSnapshot,
     build_runtime_evidence_snapshot,
@@ -165,7 +166,10 @@ def test_snapshot_hash_is_stable_for_redacted_source_in_tool_evidence() -> None:
         ),
     )
 
+    projection = project_role_context(source, "executor", stage="fanout")
+
     assert RuntimeEvidenceSnapshot.model_validate(source.model_dump(mode="json")) == source
+    assert RoleContextProjection.model_validate(projection.model_dump(mode="json")) == projection
 
 
 def test_role_projections_share_original_runtime_space_without_prompt_contamination() -> None:

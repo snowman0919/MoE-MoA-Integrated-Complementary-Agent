@@ -582,12 +582,12 @@ def project_role_context(
             "stage": stage,
             "request_id": snapshot.request_id,
             "objective": snapshot.objective,
-            "request_inputs": request_inputs,
-            "request_constraints_json": snapshot.request_constraints_json,
-            "acceptance_criteria_json": snapshot.acceptance_criteria_json,
-            "runtime_evidence": evidence,
-            "model_contributions": contributions,
-            "provenance": provenance,
+            "request_inputs": [item.model_dump(mode="json") for item in request_inputs],
+            "request_constraints_json": list(snapshot.request_constraints_json),
+            "acceptance_criteria_json": list(snapshot.acceptance_criteria_json),
+            "runtime_evidence": [item.model_dump(mode="json") for item in evidence],
+            "model_contributions": [item.model_dump(mode="json") for item in contributions],
+            "provenance": provenance.model_dump(mode="json"),
         }
         raw["projection_hash"] = _hash(raw)
         raw["projection_id"] = f"projection_{raw['projection_hash'][:24]}"
