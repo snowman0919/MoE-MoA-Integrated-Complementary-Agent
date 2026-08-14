@@ -2,15 +2,19 @@
 
 ## Dynamic MoA operational boundary
 
-Current Executor operations follow the decision table at the top of
-`docs/STATE.md`. In particular, 96 GiB is a steady-state optimization target,
-not a hard runtime limit. Set each isolated experiment watchdog from measured
-host availability and the headroom required to protect the gateway and unrelated
-processes; record both its threshold and the observed peak. Candidate A is the
-qualified vLLM Blackwell-native profile: fixed revision, 131072 context, seq1,
-3.4 GB KV, FlashInfer B12x dense/MoE, TRITON_MLA, and
-`FULL_DECODE_ONLY`. MARLIN and `cudagraph_mode=NONE` are rollback/diagnostic
-profiles, not production defaults.
+Current operations follow `docs/STATE.md`. The fixed authenticated Gateway is a
+`PILOT_ACTIVE` release on `0.0.0.0:9000`; the overall project is
+`IN_PROGRESS`. The operator intentionally stopped the local Executor, so the
+active low/medium-risk Executor path is the reviewed
+`opencode_go/deepseek-v4-flash` fallback. Lifecycle mode, ExecutionGraph,
+specialist routing, and Remote Judge are disabled in the inspected production
+override. Do not start port `19301` as part of documentation or audit work.
+
+The public catalog reports context `131072`. If the local candidate is later
+approved for reactivation, its checked-in target is the qualified fixed-revision
+131K/seq1/3.4-GB-KV B12x profile. Phase 3 65K/1.7-GB-KV MARLIN remains the
+preserved rollback baseline. Neither inactive local profile is the current
+production provider.
 
 Before starting the checked-in Executor for a Pilot, verify the unit resolves
 `MemoryHigh=12G`, `MemoryMax=16G`, `MemorySwapMax=4G`, `OOMPolicy=stop`, and
@@ -119,7 +123,12 @@ journalctl --user -u dgx-moa-gateway.service -f
 scripts/healthcheck.sh
 ```
 
-### Limited Pilot endpoint
+### Superseded limited Pilot endpoint (historical evidence)
+
+This `:19000` transient was an earlier Pilot validation epoch. It is not the
+current public endpoint or runtime authority; use the authenticated fixed
+`:9000` Gateway described above. The commands below remain rollback evidence
+for that isolated transient only.
 
 The active `PILOT_ACTIVE` canary is release
 `2a3afdce826b7fbc4e5cf3d682085b427ebcfa22`, transient unit
@@ -572,13 +581,10 @@ started separately. The loopback Ollama Reasoner is also started separately and
 must be healthy for default product readiness; stop verification checks its
 `11435` listener together with Executor, Planner, and Reviewer.
 
-The reviewed target and exact adaptive unit map are installed in production;
-safe checked-in lifecycle defaults remain disabled. Do not change the installed
-target or unit map in place. Any later topology change still requires a reviewed
-PR/deployment that verifies the installed diff, daemon reload, profile
-transition, readiness, typed cold-role behavior, and rollback. A cold required
-optional role currently receives the typed retryable loading/unavailable `503`
-contract.
+The inspected production override uses lifecycle mode `disabled` with an empty
+unit map. Safe checked-in defaults match that state. Any later topology change
+requires a reviewed PR/deployment that verifies the installed diff, daemon
+reload, profile transition, readiness, typed cold-role behavior, and rollback.
 
 Rollback uses the one-config atomic disabled/empty-map path documented above,
 then restores and verifies the fixed resident services. A production rollback
@@ -1056,7 +1062,11 @@ as failure evidence. Do not treat `Do not modify any other file` as global
 read-only intent; it scopes an explicit write. Accept completion only after a
 successful change-capable tool, post-change validation, and configured review.
 
-## Current fixed production release — 2026-08-13
+## Superseded fixed production release — 2026-08-13
+
+This section preserves the 2026-08-13 operational epoch. It is not current
+release authority; use `docs/STATE.md` and the 2026-08-14 append-only evidence
+in `docs/VALIDATION.md`.
 
 The authenticated fixed gateway runs production `main@ffdf006a4` directly on
 `0.0.0.0:9000`; role inference endpoints must remain non-wildcard. The former

@@ -154,7 +154,13 @@ def test_lifecycle_docs_link_canonical_contract_and_keep_evidence_pending() -> N
     checked_in = yaml.safe_load(Path("config/models.yaml").read_text())["gateway"]
     assert checked_in["lifecycle_mode"] == "disabled"
     assert checked_in["lifecycle_unit_map"] == {}
-    assert "527 passed" in related["docs/STATE.md"]
+    for current_status in (
+        "Runtime Completion audit = COMPLETE_WITH_EXCEPTIONS",
+        "Gateway release = PILOT_ACTIVE",
+        "Dynamic MoA 프로젝트 = IN_PROGRESS",
+        "PRODUCTION_BETA / STABLE = 미달성",
+    ):
+        assert current_status in related["docs/STATE.md"]
     for variable in (
         "DGX_MOA_LIFECYCLE_MODE",
         "DGX_MOA_LIFECYCLE_POLL_SECONDS",
@@ -203,6 +209,9 @@ def test_api_client_mode_documentation() -> None:
         assert alias in api_modes
     for retired_alias in ("dgx-moa-agent", "dgx-moa-orchestrated", "dgx-moa-chat"):
         assert retired_alias not in api_modes
+    assert "context_length: 131072" in api_modes
+    assert "public executor context is\n131,072 tokens" in api_modes
+    assert "PILOT_ACTIVE" in api_modes
     assert "http://100.125.239.72:9000/v1" in hermes
     assert "DGX_MOA_API_KEY" in hermes
     assert "127.0.0.1:9000" not in hermes

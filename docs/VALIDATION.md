@@ -9332,3 +9332,68 @@ Skills/Knowledge/Evolution, training collection, and weekly jobs remain
 `DISABLED_BY_POLICY`; this release neither promotes nor deletes them. GitHub still reports
 main protection absent, and the prior bounded protection update remains rejected by the
 available token with `403`; CI itself is checked in and green on both long-lived branches.
+
+## Runtime Completion closeout authority normalization — 2026-08-14
+
+This documentation-only closeout started from clean local/remote `main` and `dev`
+at `6e050aa53`, a clean separate production checkout at the same documentation
+commit, and the preserved runtime code epoch `304f9b1c2`. No runtime code,
+configuration, service, model, trace, rollback asset, archive tag, or frozen
+evaluation artifact was changed.
+
+Read-only production inspection found fixed Gateway PID `1701209`,
+`NRestarts=0`, health `200`, unauthenticated models `401`, and authenticated
+models `200`. Only `0.0.0.0:9000` listened; local Executor port `19301` and the
+other local role ports were absent. The catalog returned only `dgx-moa` and
+`dgx-moa-fast`, each with `context_length: 131072`.
+
+The fully loaded ignored production override reported `runtime_channel=main`,
+`trace_origin=production`, lifecycle `disabled` with an empty unit map,
+ExecutionGraph disabled, specialist routing disabled, Remote Judge disabled,
+and training/weekly/Runtime Skills/Knowledge/Evolution disabled. Dashboard and
+Codex OAuth Frontier remained configured. Executor scheduling alone was enabled
+with pinned `opencode_go/deepseek-v4-flash`. The configured
+`controller_commit=9d4045b` is stale provenance metadata; the deploy and
+rollback Git evidence remains authoritative for the running `304f9b1c2` code.
+Because correcting that value would change runtime configuration, it was left
+for a separately approved restart-bearing deployment.
+
+Current authority now separates four states:
+
+```text
+2026-08-14 Runtime Completion audit = COMPLETE_WITH_EXCEPTIONS
+현재 Gateway release = PILOT_ACTIVE
+전체 Dynamic MoA 프로젝트 = IN_PROGRESS
+PRODUCTION_BETA / STABLE = 미달성
+```
+
+`docs/STATE.md` now contains current operating facts only, while `goal.md`
+contains final direction and staged gates only. The pre-closeout versions remain
+reachable at `6e050aa53`; measured history remains in this append-only file,
+frozen plan documents, pushed `archive/20260814/*` tags, production traces, and
+rollback history. README and API guidance now expose only the two catalog
+aliases, context `131072`, client-owned tool execution, the active DeepSeek
+fallback, and policy-disabled features. Superseded `:19000`, adaptive-lifecycle,
+and 2026-08-13 fixed-release operations are explicitly historical.
+
+No launcher, wrapper, internal alias, or adapter was deleted. Reference and test
+inspection found the historical aliases still used by durable continuation,
+compatibility tests, evaluation history, or rollback assets. The audited code
+counts therefore remain `50/6/62` files and `35344/492/5429` lines for
+source/config/wrappers at the runtime release. Git/worktree cleanup is complete;
+structural codebase reduction is not. Large `api.py`/`controller.py`
+decomposition remains an independent post-Pilot backlog.
+
+The closeout candidate passed `uv sync --frozen --dev`, Ruff format/check, strict
+mypy on 51 source files, all schema JSON parsing, and the complete suite at
+`1154 passed, 1 warning`. The focused documentation contract passed `10` tests.
+The latest pre-closeout GitHub CI runs were green for both `dev@6e050aa53`
+(`31775822033`) and `main@6e050aa53` (`31775917979`).
+
+GitHub still returned `404` for `main` branch protection. The already recorded
+bounded protection update returned `403 Resource not accessible by personal
+access token`; no setting changed. Required CI, force-push/delete protection,
+and review enforcement remain `EXTERNAL_PERMISSION_REQUIRED` and a
+`STABLE` release-integrity gate. This exception does not cancel the narrow
+Runtime audit result. Since the closeout changed documentation and one
+documentation contract test only, production was not restarted.
