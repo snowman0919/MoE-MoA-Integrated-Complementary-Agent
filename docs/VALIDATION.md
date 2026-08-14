@@ -9230,3 +9230,105 @@ attempt to require the green `check` context, enforce protection for
 administrators, and prohibit force-push/delete was rejected by GitHub with
 `403 Resource not accessible by personal access token`. No protection setting
 was changed; additional repository-administration authority is required.
+
+## Runtime Completion final release and cleanup — 2026-08-14
+
+This section supersedes the immediately preceding undeployed-candidate conclusion. The
+audit started from development `11052cfbd`, production checkout `af372a2`, and running
+code epoch `080679490`. The final deployed code is merge release `304f9b1c2`; later
+documentation-only commits do not require a gateway restart. The local Executor was
+operator-stopped throughout, and no process ever listened on `19301`.
+
+Five shared failures were fixed without prompt/task hardcoding:
+
+- `PROTOCOL/RECOVERY`: empty Flash public output now alone uses the existing bounded
+  Codex OAuth Executor fallback; authorization, region, and transport unavailability
+  remain typed fail-closed.
+- `CONTEXT_SELECTION`: canonical snapshot and role projection hash inputs now use the
+  same JSON-native list/dict shape used by persistence validation. Exact failed
+  OpenCode webhook states replayed successfully after both fixes.
+- `PROTOCOL`: full-width DeepSeek DSML tool markup is rejected as invalid public output
+  and routed through the same bounded fallback; the gateway never parses or executes it.
+- `REVIEW_QUALITY`: an unavailable local Reviewer uses bounded Codex OAuth `code_review`,
+  and the already tool-authorized Flash Executor can apply the resulting correction.
+- `CONTEXT_SELECTION`: over-budget projections retain policy, failed tests, unresolved
+  failures, actual diff/source, current results, checkpoints, then resolved history.
+  System/developer and request-metadata inputs survive before old ordinary user history.
+
+Ruff format/check, strict mypy on `51` source files, every schema JSON, and the complete
+suite passed at `1154 passed, 1 warning`. GitHub Actions passed the identical gate on
+`dev@a962b40e7` in run `31774482011` and `main@304f9b1c2` in run `31774788250`.
+
+The isolated client results were:
+
+| Client | Passing tasks | Measured seconds | Deterministic result |
+| --- | --- | --- | --- |
+| OpenCode `1.17.18` | rate-limiter, atomic-store, webhook-verifier, unseen dag-runner | `122.167`, `113.735`, `130.409`, `110.248` | each passed public/hidden tests, exact one-source mutation, native tool evidence, terminal/Korean output, and Docker isolation |
+| Codex CLI `0.146.0` | rate-limiter replay, unseen atomic-store, webhook cross-check | `226.465`, `174.326`, `268.614` | each passed the same deterministic client gate; webhook exercised the shared hash/output fixes |
+| Hermes `f67aae323` | rate-limiter, atomic-store, webhook-verifier | `191.246`, `152.113`, `220.854` | all ten checks passed for every task |
+| Raw OpenAI-compatible | Chat, native Responses tool continuation, tool-error recovery, long-context retention | bounded live calls | every request returned `200`, preserved session/tool identity, and matched its exact marker |
+
+The preserved failures remain first-class evidence: OpenCode webhook timed out at `300`
+and `600` seconds before the snapshot/projection hash fixes; its first unseen DAG run
+passed both validators but emitted DSML as public text and failed Korean-final. Both were
+replayed after the common fixes, and a distinct unseen DAG task passed. Historical
+representative rows already cover read-only, multi-file, architecture, recovery, review,
+and security classes for the real clients; the current small batches revalidated the
+changed common paths and do not claim a new full cross-product.
+
+Role Context was read directly from isolated SQLite, not inferred. A representative
+Hermes webhook session had a `29515`-byte snapshot; Executor projections ranged
+`13669..32080`, Reasoner `12910..30538`, and Reviewer was `41400` bytes, with zero
+excluded evidence. Provider prompt tokens in that session were Reasoner
+`3871..10388`, Flash Executor `16875..39228`, and Codex OAuth Frontier `18209`.
+The final over-budget physical request stored a `102611`-byte snapshot and a `77293`-byte
+Reasoner projection, retained the system/current constraint and request metadata,
+excluded oldest user history, used `10872` Reasoner and `27598` Flash Executor prompt
+tokens, and returned the required marker. Original input, request constraints, tool,
+failure, diff/test evidence, and model contributions remained distinct; raw secrets,
+raw remote output, and hidden reasoning were not stored.
+
+Every evaluation credential was a separately named short-TTL `evaluation` key. Models,
+Chat, and Responses were allowed; metrics, Dashboard session creation, and admin key
+operations were denied. Runs revoked keys immediately, then observed models `401`.
+Production SQLite records `length(token)=0`, `length(token_hash)=64`, and non-null
+`revoked_at` for the release key. No raw key appears in Git or validation artifacts.
+
+Production `304f9b1c2` started as PID `1697727` and passed unauthenticated models `401`,
+authenticated models `200` with only `dgx-moa`/`dgx-moa-fast`, Chat, Responses, SSE
+terminal plus usage, one native function call and same-session result continuation,
+stream cancellation persistence, same-session recovery, Dashboard operator session,
+and a `36`-event completed trace. The selected Executor provider/model were physically
+`opencode_go`/`deepseek-v4-flash`. The fixed gateway alone listened on `0.0.0.0:9000`.
+
+Rollback physically switched the clean production checkout to `af372a2`, restarted PID
+`1701062`, and returned `PROD_ROLLBACK_OK`. Redeploy switched back to `main@304f9b1c2`,
+restarted PID `1701209`, and returned `PROD_REDEPLOY_OK`; `NRestarts=0`, health stayed
+`200`, and `19301` remained absent.
+
+Git cleanup began with `13` local branches, `12` registered development worktrees, two
+auxiliary remote branches, and `5` stashes. It ended with only local/remote `main` and
+`dev`, one clean registered development worktree, one separate clean production clone,
+and zero stashes. Exact auxiliary branch, detached HEAD, and stash commits were pushed as
+`archive/20260814/*` tags before ref deletion. Dirty overlays were not committed; their
+mode-`0600` local archives and hashes are:
+
+- `imp-9054f57a3-dirty.tar.gz`: `4f243cc923117c3ab413d20f7d3f95b9603bf6861d27dff9e2231a232cf5292e`
+- `long-v35-652cfa17b-dirty.tar.gz`: `bbfb5a2099d970799ad8673ecadcb382d0daebdd95203b6b6ff7b78c666f9cd6`
+- `observability-fc892f94e-dirty.tar.gz`: `babb07639a49ced0e02789197e10038c9557ccc4b8f61ecc40dbc6bacd582278`
+- `pilot-b0749c991-diagnostics.tar.gz`: `043ba2dc977cfb7f5caee36f73a519123922d4273deffc3a33fc7f7258c9cef0`
+- `pilot-write-40fddc0b2-dirty.tar.gz`: `edab028d4a58e065ca492d6398c9972321c7761ae428313891f2d3a5055bf616`
+
+Source/config/wrapper counts from `11052cfbd` to `304f9b1c2` are respectively
+`50/6/62 -> 50/6/62` files and `35215/492/5429 -> 35344/492/5429` lines. There is no
+fabricated code-size reduction: the release added `129` source lines for shared safety
+and recovery boundaries. The stale external `dgx-moa-orchestrated` wiring was removed
+from Codex/Hermes evaluation paths, while internal historical aliases and rollback assets
+were retained because live continuation compatibility and physical rollback still depend
+on them. Ephemeral branch/worktree/stash state is the material net cleanup.
+
+ExecutionGraph, specialist routing, Remote Judge, Loop Engineering, Runtime
+Skills/Knowledge/Evolution, training collection, and weekly jobs remain
+`DISABLED_BY_POLICY`; this release neither promotes nor deletes them. GitHub still reports
+main protection absent, and the prior bounded protection update remains rejected by the
+available token with `403`; CI itself is checked in and green on both long-lived branches.

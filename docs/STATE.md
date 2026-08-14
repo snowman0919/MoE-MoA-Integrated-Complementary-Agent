@@ -15,14 +15,14 @@ this section, they are not current implementation authority.
 | CUDA execution | Production qualification requires an active, physically measured CUDA Graph path and acceptable long-decode performance | `cudagraph_mode=NONE` proves memory/readiness/API compatibility only; it is not the final optimized NVFP4 runtime |
 | Backend | Keep vLLM explicit B12x as production candidate A. SGLang native candidate B passed SM121 FP4 load, FlashInfer MLA, CUDA Graph, Chat/tools/stream/cancel, but failed verbatim tool continuation and standard Responses input semantics; MARLIN remains rollback only | Do not generalize either rejected auto-CUTLASS path or SGLang API regressions into a claim that MARLIN is optimal on Blackwell |
 | Flash overflow | Checked-in safe defaults remain disabled. The reviewed production override intentionally enables only `deepseek-v4-flash` Executor scheduling while the local Executor is operator-stopped. | Do not describe specialist routing, Remote Judge, Loop Engineering, Runtime Skills/Knowledge/Evolution, training, weekly jobs, or ExecutionGraph as active; they are disabled in the inspected runtime. |
-| Client quality | Isolated candidate `8a997b666` made unavailable local review fall back to bounded Codex OAuth `code_review` and allowed DeepSeek Flash to apply the resulting correction. Codex passed the failed `rate-limiter` replay and unseen `atomic-store`; OpenCode then passed both validators for `rate-limiter` but failed its terminal/harness gate when DeepSeek returned no public final output. | A passing implementation validator is not a passing client run. The failed independent-client comparison blocks the wider batch, integration, and release. |
-| Goal status | `IN_PROGRESS`: production canaries and rollback passed, and Codex replay/unseen gates passed, but the OpenCode comparison, full client batches, branch/worktree cleanup, and candidate promotion gates remain open. | Do not mark complete from historical matrices, checkbox state, validator-only success, or protocol-only success. |
+| Client quality | Frozen DeepSeek-fallback runtime completed OpenCode `4/4`, Codex `3/3`, Hermes `3/3`, and raw-client Chat/tool/recovery/long-context checks. Every scored coding task passed public and hidden validators, exact mutation scope, tool evidence, terminal/Korean output, and Docker isolation. | Validator-only success remains insufficient; the preserved empty-output, projection-hash, and DSML-terminal failures were replayed only after their shared Runtime fixes. |
+| Goal status | `COMPLETE` for the 2026-08-14 Runtime Completion audit: static/unit/CI, isolated clients, key isolation, production deployment, canary, rollback/redeploy, and Git/worktree cleanup passed. Policy-disabled post-Pilot systems remain disabled and are not promoted by this result. | Historical matrices or Goal checkbox state alone are not completion evidence. |
 
 ### Runtime completion audit overlay — 2026-08-14
 
-The final inspected production code/CI epoch is `main@326357cab`; later audit-only
+The final deployed production code/CI epoch is `main@304f9b1c2`; later audit-only
 documentation commits do not change that code. The running fixed
-gateway is the `080679490` code epoch at PID `1374049`, `NRestarts=0`, bound
+gateway is PID `1701209`, `NRestarts=0`, bound
 only as the authenticated gateway on `0.0.0.0:9000`. `/healthz` returns `200`.
 The local Executor and port `19301` remain absent by operator instruction. The
 rollback code commit is `c461637e7`.
@@ -30,9 +30,9 @@ rollback code commit is `c461637e7`.
 | Path | Audit state | Measured basis |
 | --- | --- | --- |
 | Chat/Responses common execution | `PHYSICALLY_VERIFIED` | Production Chat, Responses, SSE usage/terminal, cancellation, and recovery canaries passed. |
-| Codex/OpenCode/Hermes compatibility | `PARTIALLY_WIRED` | Codex passed failed-task replay and unseen `atomic-store` through DeepSeek. OpenCode produced a validator-passing correction but failed to emit a terminal public result; the current Hermes coding batch was not started. |
+| Codex/OpenCode/Hermes compatibility | `PHYSICALLY_VERIFIED` | Current frozen-runtime batches passed OpenCode `rate-limiter`, `atomic-store`, `webhook-verifier`, and unseen `dag-runner`; Codex three-task lineage and Hermes three-task batch also passed. |
 | ExecutionGraph | `DISABLED_BY_POLICY` | Source/tests and historical state exist; the inspected production override disables it. |
-| Role Context projection | `PHYSICALLY_VERIFIED` | Isolated physical epochs recorded role-specific snapshot/projection/rendered-prompt bytes, token counts, included categories, and zero dropped evidence; the richer audit instrumentation remains undeployed. |
+| Role Context projection | `PHYSICALLY_VERIFIED` | Physical epochs recorded role-specific snapshot/projection/rendered-prompt bytes and provider tokens. A 102,611-byte long-context snapshot became a 77,293-byte Reasoner projection while retaining system/current constraints and dropping the oldest ordinary user history. |
 | Evidence persistence | `PHYSICALLY_VERIFIED` | Production trace/session evidence and isolated canonical snapshot/projection lineage were queried from SQLite. |
 | Planner/Reviewer/Judge specialist routing | `DISABLED_BY_POLICY` | Specialist routing and Remote Judge are disabled in the inspected production override. |
 | Codex OAuth Frontier | `PHYSICALLY_VERIFIED` | Existing production role epoch completed through the `primary` OAuth profile without an OpenAI API key. |
@@ -40,9 +40,9 @@ rollback code commit is `c461637e7`.
 | Native tool call and continuation | `PHYSICALLY_VERIFIED` | Production function call and same-session continuation passed; isolated Codex executed inventory, patch, and validation tools. |
 | Streaming/cancellation/recovery | `PHYSICALLY_VERIFIED` | Production SSE, cancellation persistence, and following-request recovery passed. |
 | Dashboard/WebSocket/trace | `PHYSICALLY_VERIFIED` | Protected Dashboard/session/trace canaries passed; unauthenticated access remained denied. |
-| Logging/training candidate | `PARTIALLY_WIRED` | Runtime logging persists; training collection and weekly jobs remain disabled by policy. |
-| Deployment/rollback | `PHYSICALLY_VERIFIED` | Code rollback/redeploy and authenticated canaries passed twice; the later DeepSeek review/correction candidate was not deployed because its OpenCode comparison gate failed. |
-| Retired public model aliases | `PARTIALLY_WIRED` | Public catalog is canonical, but historical compatibility selectors and fixtures still reference retired labels. |
+| Logging/training candidate | `DISABLED_BY_POLICY` | Runtime logging remains physically verified; training collection and weekly jobs stay disabled pending their independent physical gates. |
+| Deployment/rollback | `PHYSICALLY_VERIFIED` | `304f9b1c2` passed production Chat, Responses, SSE, tool continuation, cancellation/recovery, Dashboard/trace, rollback to `af372a2`, and redeploy. |
+| Retired public model aliases | `PHYSICALLY_VERIFIED` | Public catalog and Codex/Hermes evaluation harnesses use canonical `dgx-moa`; historical input aliases remain only for existing continuation compatibility and are undiscoverable. |
 
 The physical Role Context ranges from the preserved isolated audit are:
 Executor snapshot `12704..30263`, projection `13472..31741`, rendered prompt
@@ -53,14 +53,22 @@ bytes, with provider prompt tokens `4029..12613`. Objective, original input,
 request constraints, and applicable tool/model evidence were included; dropped
 evidence was `0`. Hidden reasoning and raw remote review output were not stored.
 
-Git cleanup is not complete. After removing the finished candidate worktree, the current
-repository has `13` local branches,
-`11` registered worktrees, and `5` non-empty stashes. Five auxiliary worktrees
-contain dirty or untracked user evidence, and the remaining experiment branches
-retain unique commits. They were not destructively removed. The production and
-root worktrees are clean; the finished DeepSeek candidate worktrees were removed
-while their commits remain isolated on `auto/audit/deepseek-developer-role-20260814`
-and `auto/audit/reviewer-frontier-fallback-20260814`.
+The final long-context check added snapshot/projection/provider measures of
+`102611`/`77293` bytes and `10872` Reasoner prompt tokens. Its DeepSeek Executor
+used `27598` prompt tokens, retained `message-0000` system and current
+`message-0005` plus request metadata, excluded oldest user `message-0001`, and
+returned the required marker. Under-budget projections retain canonical order;
+over-budget selection now retains policy, failed tests, unresolved failures,
+diff/source, current results, checkpoints, then resolved history.
+
+Git cleanup is complete. Local and remote branches are only `main` and `dev`,
+the registered development worktree is the clean `dev` checkout, the separate
+production clone is clean `main`, and stash count is `0`. Exact auxiliary branch,
+detached-worktree, and stash commits remain recoverable through pushed
+`archive/20260814/*` tags. Five dirty overlays were preserved outside Git as
+mode-`0600` archives below
+`~/.codex/archives/runtime-completion-20260814`; their SHA-256 values are recorded
+in `docs/VALIDATION.md`. No secret-bearing overlay was committed.
 
 ### Dashboard validation overlay — 2026-08-13
 
