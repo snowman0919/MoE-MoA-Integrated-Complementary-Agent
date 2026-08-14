@@ -9174,9 +9174,10 @@ bounded iteration rule, no hidden-test prompt patch, unseen task, Hermes batch,
 integration, canary, or deployment followed. Every evaluation key was revoked, returned
 models `401`, and retained plaintext length `0`/hash length `64` in isolated SQLite.
 
-The candidate remains undeployed. The final source checkouts are clean
-`main@326357cab` and `dev@1728e7cc7`; the gateway remains PID `1374049`, restart count
-`0`, `0.0.0.0:9000`, health `200`, with no listeners on `19016`, `19156`, or `19301`.
+The candidate remains undeployed. The final code/test/CI epochs are
+`main@326357cab` and `dev@1728e7cc7`; later audit-only documentation commits preserve
+the same code. The gateway remains PID `1374049`, restart count `0`,
+`0.0.0.0:9000`, health `200`, with no listeners on `19016`, `19156`, or `19301`.
 A behavior-neutral strict-mypy repair passed Ruff, format, strict mypy on `51` source
 files, and `1146` tests. The new checked-in CI enforces frozen dependency sync, Ruff,
 format, strict mypy, full pytest, and schema JSON on both long-lived branches. Its first
