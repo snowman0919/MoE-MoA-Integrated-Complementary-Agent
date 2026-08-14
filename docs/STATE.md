@@ -20,7 +20,8 @@ this section, they are not current implementation authority.
 
 ### Runtime completion audit overlay — 2026-08-14
 
-The final inspected production checkout is clean `main@326357cab`; the running fixed
+The final inspected production code/CI epoch is `main@326357cab`; later audit-only
+documentation commits do not change that code. The running fixed
 gateway is the `080679490` code epoch at PID `1374049`, `NRestarts=0`, bound
 only as the authenticated gateway on `0.0.0.0:9000`. `/healthz` returns `200`.
 The local Executor and port `19301` remain absent by operator instruction. The
