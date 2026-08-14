@@ -9149,3 +9149,9 @@ and had plaintext length `0` and hash length `64` in SQLite. This is preserved a
 `MODEL_CAPABILITY/REVIEW_QUALITY` plus provider-specific `PROTOCOL` evidence. Unseen
 tasks and the Hermes batch were not started after the failed-task gate, so the overall
 Runtime Completion goal remains `IN_PROGRESS` rather than complete.
+
+A final five-tool shape probe reused Codex's tool names with bounded simple JSON schemas
+and completed one native function call plus `response.completed`. The incompatibility is
+therefore specific to Codex's richer tool schema, not the tool count, names, Responses
+translation, or DeepSeek function calling in general. No speculative schema weakening was
+deployed.
