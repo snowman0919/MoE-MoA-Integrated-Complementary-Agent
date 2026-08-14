@@ -9182,6 +9182,39 @@ bounded iteration rule, no hidden-test prompt patch, unseen task, Hermes batch,
 integration, canary, or deployment followed. Every evaluation key was revoked, returned
 models `401`, and retained plaintext length `0`/hash length `64` in isolated SQLite.
 
+A completion-path investigation then queried the preserved candidate SQLite state. The
+Runtime had recorded implementation and validation evidence and did request Reviewer, but
+the isolated local Reviewer returned `ConnectError`. The low-risk request failed open,
+suppressed implementation tools as complete, and accepted an Executor final that explicitly
+listed unverified non-finite inputs. Candidate `c7e3ce7c3` reuses the existing bounded Codex
+OAuth `code_review` only when local review is unavailable; no specialist route, recursive
+collaboration, direct Frontier mutation, or hidden reasoning was introduced. Candidate
+`8a997b666` additionally removes the obsolete four-line guard that prevented the already
+tool-capable DeepSeek Flash Executor from applying a structured Frontier correction. Ruff,
+format, strict mypy, focused checks, schema validation, and the full suite passed; the final
+suite was `1148 passed, 1 warning`.
+
+The first Codex replay on `c7e3ce7c3` proved the review fallback: Codex independently found
+non-finite `now` inputs, the Frontier review identified non-finite `window_seconds` and
+unvalidated injected-clock output, and rejected an invented restriction on fractional time.
+The run then stopped at the old Flash-correction guard, so it was not counted as a pass. On
+`8a997b666`, the same pinned Codex `0.146.0` replay completed in `226.465` seconds with exit
+`0`; public and hidden validators, Korean terminal, tool evidence, source-only mutation, and
+Docker isolation all passed. The unseen `atomic-store` task independently passed the same
+gate in `174.326` seconds, including its hidden validator.
+
+The independent OpenCode `1.17.18` comparison did not pass the client gate. Its corrected
+`rate_limiter.py` passed both public and hidden validators, source-only mutation, tool, and
+isolation checks, but after `165.974` seconds DeepSeek returned no public final output. The
+harness exited `1`, with terminal, Korean-final, and no-bad-terminal checks false. This is a
+provider output/terminal failure, not an implementation-quality failure, and it repeats the
+previous reasoning-only/no-public-output family. Per the bounded iteration rule, no further
+token or prompt tuning, Hermes/raw batch, integration, deployment, or production canary was
+attempted. All three new evaluation keys were immediately revoked, returned models `401`,
+and stored plaintext length `0` with a `64`-character hash. Candidate `8a997b666` remains
+isolated and undeployed; rollback is its parent `c7e3ce7c3`, then protocol baseline
+`8c600126c`.
+
 The candidate remains undeployed. The final code/test/CI epochs are
 `main@326357cab` and `dev@1728e7cc7`; later audit-only documentation commits preserve
 the same code. The gateway remains PID `1374049`, restart count `0`,
