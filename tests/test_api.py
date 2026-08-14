@@ -182,7 +182,11 @@ def test_api_key_scheduler_pins_cross_key_turn_to_flash_and_projects_graph(
         api_key_env="OPENCODE_GO_API_KEY",
         transport=httpx.MockTransport(handler),
     )
-    app = create_app(controlled, overflow_executor=flash)
+    app = create_app(
+        controlled,
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
+        overflow_executor=flash,
+    )
 
     with TestClient(app) as client:
         app.state.provider = stub_provider
@@ -1379,6 +1383,7 @@ def test_frontier_b_adjudication_is_in_the_judge_repair_graph(
 
     app = create_app(
         settings,
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
         overflow_executor=AvailableOverflow(),  # type: ignore[arg-type]
     )
     provider = CorrectingProvider()
@@ -3438,6 +3443,73 @@ def test_disabled_local_executor_routes_low_risk_request_to_flash(
 
     assert response.status_code == 200
     assert response.json()["choices"][0]["message"]["content"] == "FLASH_FALLBACK_OK"
+    scheduled = next(
+        event
+        for event in app.state.store.events(response.headers["X-Session-ID"])
+        if event["event_type"] == "executor_scheduled"
+    )
+    assert scheduled["payload"]["selected_executor"] == "opencode_go"
+    assert scheduled["payload"]["reason"] == "local_unavailable"
+    assert stub_provider.calls == []
+
+
+def test_disabled_lifecycle_probes_executor_before_scheduling(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "disabled",
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            },
+        }
+    )
+    probed: list[str] = []
+
+    async def unavailable(role: str) -> bool:
+        probed.append(role)
+        return False
+
+    class Flash:
+        async def available(self) -> bool:
+            return True
+
+        async def execute(self, request, correlation_id):  # type: ignore[no-untyped-def]
+            del request, correlation_id
+            return {
+                "model": "deepseek-v4-flash",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "FLASH_FALLBACK_OK"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"total_tokens": 1},
+            }
+
+    app = create_app(
+        controlled,
+        lifecycle_health_probe=unavailable,
+        overflow_executor=Flash(),  # type: ignore[arg-type]
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "FLASH_FALLBACK_OK"
+    assert probed == ["executor"]
     scheduled = next(
         event
         for event in app.state.store.events(response.headers["X-Session-ID"])
