@@ -1112,7 +1112,7 @@ def codex_moa_command(args: argparse.Namespace, workspace: Path, task: Task) -> 
         "--strict-config",
         "--ignore-user-config",
         "-c",
-        'model="dgx-moa-orchestrated"',
+        'model="dgx-moa"',
         "-c",
         "model_context_window=131072",
         "-c",
@@ -1147,9 +1147,9 @@ def write_codex_model_catalog(gateway: str, key: str, path: Path) -> None:
         payload = json.loads(response.read())
     models = payload.get("models")
     if not isinstance(models, list) or not any(
-        isinstance(model, dict) and model.get("slug") == "dgx-moa-orchestrated" for model in models
+        isinstance(model, dict) and model.get("slug") == "dgx-moa" for model in models
     ):
-        raise RuntimeError("gateway model catalog is missing dgx-moa-orchestrated")
+        raise RuntimeError("gateway model catalog is missing dgx-moa")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.write_text(json.dumps({"models": models}, indent=2) + "\n")
     path.chmod(0o600)
@@ -1341,7 +1341,7 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             "--provider",
             "custom:dgx-moa-agent",
             "--model",
-            "dgx-moa-orchestrated",
+            "dgx-moa",
             "--pass-session-id",
         ]
         command = (

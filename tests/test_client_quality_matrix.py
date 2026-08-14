@@ -68,6 +68,7 @@ def test_codex_command_uses_explicit_model_catalog(tmp_path: Path) -> None:
     )
 
     assert 'model_catalog_json="/state/model-catalog.json"' in command
+    assert 'model="dgx-moa"' in command
     assert "model_context_window=131072" in command
 
 
@@ -85,7 +86,7 @@ def test_codex_catalog_is_pinned_from_authenticated_gateway(tmp_path: Path) -> N
                 {
                     "models": [
                         {
-                            "slug": "dgx-moa-orchestrated",
+                            "slug": "dgx-moa",
                             "tool_mode": "direct",
                             "context_window": 131072,
                         }
