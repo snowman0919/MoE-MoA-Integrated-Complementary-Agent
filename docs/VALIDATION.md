@@ -9247,3 +9247,30 @@ Reviewer rejection과 available client tools를 관측하면 client-visible term
 protocol 모두 다음 tool-result continuation으로 진행한다는 것이다. 대상은 `gateway/src/dgx_moa/api.py`
 Chat review boundary, 기대 효과는 rejected review의 실제 correction handoff, regression risk는
 duplicate tool call, streaming shape, repeated review다. rollback commit은 `709340987`이다.
+
+첫 Runtime 수정 `e674680a1`은 post-synthesis Reviewer rejection 뒤 동일 Executor의 client tool
+call을 한 번 요구했다. Focused review/Responses tests, strict mypy와 full pytest `1147`은
+통과했다. Codex v4는 client 요청 전 공통 gateway key 변수 오해로 중단됐고 request `0`, key
+plaintext `0`/hash `64`/revoked true를 확인했다. Codex v5는 5분 key가 390.885초에 만료되어
+마지막 recovery가 `401`로 끊겼으므로 수정 효과 판정에서 제외한다. OpenCode v2는 checked-in
+`--specialists-enabled`가 disabled base를 그대로 복사해 local Reviewer `ConnectError`가 났다.
+플래그가 기존 endpoint/model을 보존하면서 `enabled=true/provider=opencode_go`를 명시하도록
+HARNESS 수정 `dda6cdf85`를 적용했고 focused `13`, strict mypy, Ruff/format을 통과했다.
+
+OpenCode v3는 provider credential을 격리 gateway에만 메모리로 전달하고 client container에는
+evaluation key만 전달했다. Remote Reviewer는 structured retry 후 실제 `rejected`와 concurrency,
+float/finite validation, non-mutating `remaining()` correction을 기록했다. Public tests는 통과했지만
+Executor는 correction phase의 streaming required-tool 요청에서 tool call 대신 `length` 응답을
+반환했고 hidden float validator가 다시 실패했다. `review_correction_*` event는 `0`이었다. 이는
+Reviewer가 post-synthesis가 아니라 pre-synthesis에서 이미 state를 correction으로 전환했기 때문에
+첫 수정 지점을 우회한 물리 증거다.
+
+두 번째 수정 전 hypothesis는 local streaming Executor가 `tool_choice=required`일 때 Remote
+Executor와 동일하게 completion을 buffer하고, tool call이 없으면 같은 Executor를 한 번만 재호출한
+뒤 native tool call을 SSE로 변환하면 pre/post-synthesis 양쪽 correction handoff가 수렴한다는
+것이다. 대상은 `chat()`의 local Executor stream/non-stream provider boundary다. 기대 효과는
+`length`/prose false completion 제거와 실제 tool-result continuation이고, regression risk는
+first-byte latency 증가, SSE shape, duplicate tool call, timeout/abort 처리다. 첫 Runtime 수정 후
+같은 root cause에 대한 마지막 일반화 시도이며 이 replay도 개선되지 않으면 자동 수정을 중단한다.
+rollback commit은 `dda6cdf85`다. Candidate는 focused test `3`, Ruff/format, strict mypy `51`
+source와 full pytest `1148`을 통과했으며 아직 physical replay 전이다.
