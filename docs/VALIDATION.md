@@ -9357,3 +9357,29 @@ worktree는 origin/main 대비 고유 commit `9..294`개, dirty detached worktre
 `7/1`, `38/9`로 비어 있지 않다. 따라서 사용자 변경이나 고유 history를 추측해 제거하지 않았다.
 Production checkout은 clean `main@59bcb54e5`로 그대로이고, merge/deploy/systemd 변경은 하지
 않았다.
+
+후속 production policy 대조는 running user unit PID `235390`의 선택된 비밀 무관 환경값과
+실제 cwd/SQLite를 read-only로 검사했다. Unit은 `active/running`, restart `0`, gateway는
+`0.0.0.0:9000`, Candidate A는 `127.0.0.1:19301`, Ollama는 `127.0.0.1:11434`에만 listen했고
+`GET /healthz`는 `200`이었다. Process는 `runtime_channel=main`, `trace_origin=production`,
+Graph `shadow`, `DGX_MOA_STATE_DB=data/state/gateway.db`를 사용했다. Cwd가
+`/home/kotori9/dgx-moa-agent`이므로 실제 inode는 production
+`data/state/gateway.db` (`172318720` bytes)이며 graph/attempt/checkpoint/active-state row는
+각각 `164/797/1998/164`다. 권위 문서가 지정한 isolated Dashboard overlay DB 경로는 실제로
+존재하지 않았다.
+
+같은 process inspection에서 checked-in disabled default와 달리 Loop Engineering, Runtime
+Skills, Runtime Knowledge, Runtime Evolution, OpenCode Go specialist routing, Remote Judge,
+Executor scheduling, declarative policy, training collection, weekly jobs가 모두 enabled였고
+Dashboard와 Frontier도 enabled였다. Live observation은 disabled, lifecycle은 disabled와 empty
+unit map이었다. 비밀 값은 읽거나 기록하지 않았다. Repository gate가 명시적으로 disabled를
+요구하는 기능과 production Graph state target은 deployment drift로 판정한다. 이를 고치려면
+environment 변경, fixed gateway restart와 상태/rollback 확인이 필요하므로 별도 deployment
+approval 없이 mutation하지 않았다.
+
+Retired model alias도 source 기준으로 재분류했다. 외부 `/v1/models`와 canonical launcher는
+`dgx-moa`/`dgx-moa-fast`만 노출하지만 routing의 `MODEL_MODES`, Chat schema와 API/controller
+tests는 `dgx-moa-agent`/`dgx-moa-orchestrated`를 여전히 실행 가능한 mode 선택자로 사용한다.
+Usage schema는 historical model label도 읽어야 한다. 따라서 현재 상태는 dead code가 아니라
+`PARTIALLY_WIRED` compatibility debt이며, 대량 fixture를 기계적으로 바꾸거나 history read를
+깨뜨리는 삭제는 수행하지 않았다.
