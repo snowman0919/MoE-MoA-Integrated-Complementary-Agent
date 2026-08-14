@@ -133,7 +133,9 @@ def start_gateway(
                 update={"enabled": False, "provider": "disabled"}
             ),
             "specialist_routing": (
-                base.specialist_routing
+                base.specialist_routing.model_copy(
+                    update={"enabled": True, "provider": "opencode_go"}
+                )
                 if specialists_enabled
                 else base.specialist_routing.model_copy(
                     update={"enabled": False, "provider": "disabled"}

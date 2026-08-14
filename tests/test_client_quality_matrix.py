@@ -136,6 +136,7 @@ def test_frontier_validation_gateway_enables_operator_admin_path() -> None:
     assert '"expires_in_minutes": 5' in source
     assert "rejected_after_revoke=rejected.status_code == 401" in source
     assert "specialists_enabled=args.specialists_enabled" in source
+    assert 'update={"enabled": True, "provider": "opencode_go"}' in source
 
 
 def test_docker_command_has_stable_unique_name(tmp_path: Path) -> None:
