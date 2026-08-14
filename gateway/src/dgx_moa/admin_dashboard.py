@@ -15,6 +15,7 @@ h1{margin:0 0 6px;font-size:26px}h2{font-size:16px}.muted{color:var(--muted)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}
 a{color:var(--accent)}input,select,textarea,button{border:1px solid var(--line);border-radius:8px;
 padding:9px 11px;background:#0e1528;color:var(--text)}button{cursor:pointer}
+button:disabled{cursor:not-allowed;opacity:.45}
 button.primary{background:var(--accent);color:#071022}form{display:flex;gap:8px;flex-wrap:wrap}
 progress{width:100%;accent-color:var(--ok)}
 textarea{width:100%;min-height:90px;resize:vertical}.chat{margin-top:16px}.messages{min-height:260px;
@@ -45,6 +46,7 @@ word-break:break-word;border-radius:10px;padding:11px}.user{background:#20304f}.
         <p id="executor-state" class="muted">상태 확인 중...</p>
         <progress id="executor-progress" max="100" aria-label="Mistral 가중치 로드율"></progress>
         <p id="executor-progress-label" class="muted">가중치 로드율: 확인 중</p>
+        <p id="executor-control" class="muted">제어 상태 확인 중...</p>
         <form><button id="executor-on" type="button">ON</button>
           <button id="executor-off" type="button">OFF · Flash 전환</button></form></section>
     </div>
@@ -94,11 +96,13 @@ async function loadExecutor(){try{const data=await api("/v1/admin/executor"),loa
     .includes(data.state),percent=data.weight_load_percent;
   $("executor-state").textContent=(data.operator_enabled?"ON":"OFF")+" · "+data.state+
     " · 저·중위험: "+data.active_executor+" · 고위험: "+data.high_risk_executor;
-  if(percent==null)$("executor-progress").removeAttribute("value");
-  else $("executor-progress").value=percent;
+  $("executor-progress").hidden=percent==null;
+  if(percent!=null)$("executor-progress").value=percent;
   $("executor-progress-label").textContent="가중치 로드율: "+
     (percent==null?"측정 불가":percent.toFixed(1)+"%")+
     (data.estimated_ready_seconds==null?"":" · ETA "+Math.ceil(data.estimated_ready_seconds)+"초");
+  $("executor-control").textContent=data.control_available?"Executor 제어 가능":
+    "제어 불가 · "+data.control;
   $("executor-on").disabled=!data.control_available||data.state==="ready"||loading;
   $("executor-off").disabled=!data.control_available||!data.operator_enabled;
 }catch(error){$("executor-state").textContent=error.message}}

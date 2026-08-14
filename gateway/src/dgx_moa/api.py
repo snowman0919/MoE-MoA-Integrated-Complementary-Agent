@@ -5286,25 +5286,41 @@ def create_app(
             managed_roles=tuple(configured.lifecycle_unit_map),
         )
 
-    def executor_control_status(request: Request) -> dict[str, Any]:
+    def executor_control_available() -> bool:
+        return bool(
+            configured.lifecycle_mode in {"fixed", "adaptive"}
+            and "executor" in configured.lifecycle_unit_map
+            and configured.executor_scheduling.enabled
+            and app.state.overflow_executor is not None
+        )
+
+    async def executor_control_status(request: Request) -> dict[str, Any]:
         record = request.app.state.lifecycle_store.get("executor")
         fallback_configured = bool(
             configured.executor_scheduling.enabled
             and request.app.state.overflow_executor is not None
         )
-        fallback_active = fallback_configured and record.state != "ready"
+        control_available = executor_control_available()
+        local_available = record.state == "ready"
+        if not control_available:
+            try:
+                local_available = await asyncio.wait_for(
+                    (lifecycle_health_probe or default_lifecycle_health_probe)("executor"),
+                    timeout=2,
+                )
+            except Exception:
+                local_available = False
+        fallback_active = fallback_configured and not local_available
         return status_lifecycle_record("executor") | {
-            "operator_enabled": record.state != "disabled",
-            "control_available": bool(
-                configured.lifecycle_mode in {"fixed", "adaptive"}
-                and "executor" in configured.lifecycle_unit_map
-                and fallback_configured
-            ),
+            "operator_enabled": record.state != "disabled"
+            if control_available
+            else local_available,
+            "control_available": control_available,
             "active_executor": (
                 configured.executor_scheduling.flash_model
                 if fallback_active
                 else "local_mistral"
-                if record.state == "ready"
+                if local_available
                 else "unavailable"
             ),
             "fallback_model": configured.executor_scheduling.flash_model,
@@ -5313,13 +5329,13 @@ def create_app(
                 request.app.state.frontier.config.model
                 if fallback_active and request.app.state.frontier is not None
                 else "local_mistral"
-                if record.state == "ready"
+                if local_available
                 else "unavailable"
             ),
         }
 
-    def require_executor_control(request: Request) -> None:
-        if not executor_control_status(request)["control_available"]:
+    def require_executor_control() -> None:
+        if not executor_control_available():
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Executor control requires fixed/adaptive lifecycle and configured Flash fallback",
@@ -5327,20 +5343,20 @@ def create_app(
 
     @app.get("/v1/admin/executor", dependencies=[Depends(admin_auth)])
     async def admin_executor_status(request: Request) -> dict[str, Any]:
-        return executor_control_status(request)
+        return await executor_control_status(request)
 
     @app.post("/v1/admin/executor/on", dependencies=[Depends(admin_auth)])
     async def admin_executor_on(request: Request) -> dict[str, Any]:
-        require_executor_control(request)
+        require_executor_control()
         record = await request.app.state.lifecycle.set_enabled("executor", True)
         request.app.state.store.event(
             "runtime-executor", "executor_operator_enabled", {"generation": record.generation}
         )
-        return executor_control_status(request)
+        return await executor_control_status(request)
 
     @app.post("/v1/admin/executor/off", dependencies=[Depends(admin_auth)])
     async def admin_executor_off(request: Request) -> dict[str, Any]:
-        require_executor_control(request)
+        require_executor_control()
         record = await request.app.state.lifecycle.set_enabled("executor", False)
         if record.state != "disabled":
             raise HTTPException(
@@ -5350,7 +5366,7 @@ def create_app(
         request.app.state.store.event(
             "runtime-executor", "executor_operator_disabled", {"generation": record.generation}
         )
-        return executor_control_status(request)
+        return await executor_control_status(request)
 
     @app.get("/v1/admin/drain", dependencies=[Depends(admin_auth)])
     async def admin_drain_status(request: Request) -> dict[str, Any]:

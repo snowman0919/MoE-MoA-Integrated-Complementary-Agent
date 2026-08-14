@@ -9404,3 +9404,22 @@ gate. `dev` was then fast-forwarded to that merge commit and CI `31779001426`
 passed. The clean production checkout fast-forwarded documentation only from
 `6e050aa53` to `f2620eeea`; Gateway PID remained `1701209`, `NRestarts=0`, and
 health/authenticated models returned `200`. No gateway restart occurred.
+
+### Unmanaged Executor dashboard truth fix — 2026-08-14
+
+The production admin status physically reproduced a stale-state defect while
+the local Executor was operator-stopped: `state=unmanaged` and
+`control_available=false` were paired with `operator_enabled=true`,
+`active_executor=local_mistral`, and `fallback_active=false`. The dashboard also
+rendered an indeterminate progress bar beside `weight_load_percent=null`, and
+custom button styling made disabled controls look actionable.
+
+The development fix uses the existing bounded local health probe whenever the
+Executor is unmanaged, while managed fixed/adaptive mode continues to use its
+lifecycle record. The dashboard hides progress without a measured percentage,
+visually distinguishes disabled buttons, and states why control is unavailable.
+It does not enable lifecycle control, start the Executor, or change systemd or
+production configuration. The new stale-`ready` regression passed together
+with all three admin-dashboard tests. Ruff format/check, strict mypy on 51
+source files, and the full suite passed at `1155 passed, 1 warning`. This
+candidate is `IMPLEMENTED_NOT_DEPLOYED`; production was not restarted.
