@@ -9397,3 +9397,10 @@ and review enforcement remain `EXTERNAL_PERMISSION_REQUIRED` and a
 `STABLE` release-integrity gate. This exception does not cancel the narrow
 Runtime audit result. Since the closeout changed documentation and one
 documentation contract test only, production was not restarted.
+
+The closeout candidate `fafce2121` passed dev push CI `31778779269`. PR `#113`
+merged it to `main@f2620eeea`; main CI `31778884810` passed the same complete
+gate. `dev` was then fast-forwarded to that merge commit and CI `31779001426`
+passed. The clean production checkout fast-forwarded documentation only from
+`6e050aa53` to `f2620eeea`; Gateway PID remained `1701209`, `NRestarts=0`, and
+health/authenticated models returned `200`. No gateway restart occurred.
