@@ -30,8 +30,9 @@ DASHBOARD_SESSION_SECONDS = 86_400
 
 class ApiKeyRequest(BaseModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
-    kind: Literal["general", "admin"] = "general"
+    kind: Literal["general", "admin", "evaluation"] = "general"
     expires_in_days: int = Field(default=90, ge=1, le=365)
+    expires_in_minutes: int | None = Field(default=None, ge=5, le=1_440)
     request_limit: int | None = Field(default=None, ge=1)
     token_limit: int | None = Field(default=None, ge=1)
 
@@ -185,6 +186,17 @@ class ApiKeyStore:
             row = database.execute("SELECT kind FROM api_keys WHERE name = ?", (name,)).fetchone()
         return bool(row and row["kind"] == "admin")
 
+    def allows_path(self, name: str, path: str) -> bool:
+        with self._connect() as database:
+            row = database.execute("SELECT kind FROM api_keys WHERE name = ?", (name,)).fetchone()
+        return bool(
+            row
+            and (
+                row["kind"] != "evaluation"
+                or path in {"/v1/models", "/v1/chat/completions", "/v1/responses"}
+            )
+        )
+
     def create(
         self,
         request: ApiKeyRequest,
@@ -196,7 +208,11 @@ class ApiKeyStore:
             raise ValueError("invalid API key name")
         token = "moa_" + secrets.token_urlsafe(32)
         now = self.clock()
-        expires_at = now + request.expires_in_days * 86_400
+        expires_at = now + (
+            request.expires_in_minutes * 60
+            if request.expires_in_minutes is not None
+            else request.expires_in_days * 86_400
+        )
         with self._connect() as database:
             exists = database.execute(
                 "SELECT kind, expires_at, revoked_at FROM api_keys WHERE name = ?", (name,)
@@ -480,6 +496,11 @@ def auth_dependency(
                 if matched is None:
                     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid bearer token")
                 request.state.api_token_id = matched
+                if not keys.allows_path(matched, request.url.path):
+                    raise HTTPException(
+                        status.HTTP_403_FORBIDDEN,
+                        "API key is not permitted for this endpoint",
+                    )
                 if limit_error := keys.limit_error(matched):
                     raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, limit_error)
         else:

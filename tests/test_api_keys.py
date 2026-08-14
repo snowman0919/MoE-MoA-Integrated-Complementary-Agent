@@ -104,11 +104,25 @@ def test_key_store_enforces_expiry_limits_admin_cap_and_file_mode(tmp_path: Path
     assert store.verify_admin_session(session_token) == "operator"
     store.delete_admin_session(session_token)
     assert store.verify_admin_session(session_token) is None
+    evaluation_token, evaluation = store.create(
+        ApiKeyRequest(
+            name="evaluation",
+            kind="evaluation",
+            expires_in_minutes=5,
+            request_limit=5,
+        )
+    )
+    assert evaluation["expires_at"] == now[0] + 300
+    assert store.allows_path("evaluation", "/v1/responses")
+    assert not store.allows_path("evaluation", "/v1/admin/runtime-status")
+    store.revoke("evaluation")
+    assert store.verify(evaluation_token) is None
     database_bytes = b"".join(file.read_bytes() for file in tmp_path.glob("state.db*"))
     assert token.encode() not in database_bytes
     assert b"operator-secret-value" not in database_bytes
     assert b"client-secret-value" not in database_bytes
     assert session_token.encode() not in database_bytes
+    assert evaluation_token.encode() not in database_bytes
 
 
 def test_admin_key_api_separates_permissions_and_returns_no_store(
@@ -213,6 +227,27 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
             client.get("/v1/models", headers={"Authorization": f"Bearer {new_token}"}).status_code
             == 200
         )
+        evaluation = client.post(
+            "/v1/admin/api-keys",
+            headers=operator,
+            json={
+                "name": "evaluation-client",
+                "kind": "evaluation",
+                "expires_in_minutes": 5,
+                "request_limit": 3,
+            },
+        )
+        assert evaluation.status_code == 200
+        evaluation_token = evaluation.json()["api_key"]
+        evaluation_auth = {"Authorization": f"Bearer {evaluation_token}"}
+        assert client.get("/v1/models", headers=evaluation_auth).status_code == 200
+        assert client.get("/metrics", headers=evaluation_auth).status_code == 403
+        assert client.post("/v1/dashboard/session", headers=evaluation_auth).status_code == 403
+        assert (
+            client.post("/v1/admin/api-keys/evaluation-client/revoke", headers=operator).status_code
+            == 200
+        )
+        assert client.get("/v1/models", headers=evaluation_auth).status_code == 401
         completion = client.post(
             "/v1/chat/completions",
             headers={"Authorization": f"Bearer {new_token}"},
@@ -279,6 +314,8 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
     assert [event["payload"]["action"] for event in audit] == [
         "reveal_denied",
         "create",
+        "create",
+        "revoke",
         "update",
         "revoke",
         "delete",
