@@ -31,7 +31,11 @@ from dgx_moa.lifecycle import (
     continuation_correlation,
 )
 from dgx_moa.loop_engineering import new_loop
-from dgx_moa.overflow_executor import OpenCodeGoExecutorProvider
+from dgx_moa.overflow_executor import (
+    OpenCodeGoExecutorProvider,
+    OverflowExecutorInvalidOutput,
+    OverflowExecutorUnavailable,
+)
 from dgx_moa.remote_judge import MockJudgeProvider, RemoteJudgeVerdict
 from dgx_moa.replay import ReplaySnapshot
 from dgx_moa.schemas import ChatRequest, ResponsesRequest
@@ -3450,6 +3454,92 @@ def test_disabled_local_executor_routes_low_risk_request_to_flash(
     assert scheduled["payload"]["selected_executor"] == "opencode_go"
     assert scheduled["payload"]["reason"] == "local_unavailable"
     assert stub_provider.calls == []
+
+
+@pytest.mark.parametrize(
+    ("flash_error", "expected_status"),
+    [
+        (OverflowExecutorInvalidOutput("no public output"), 200),
+        (OverflowExecutorUnavailable("authorization unavailable"), 503),
+    ],
+)
+def test_flash_invalid_output_alone_falls_back_to_frontier(
+    settings: Settings,
+    stub_provider: StubProvider,
+    flash_error: Exception,
+    expected_status: int,
+) -> None:
+    frontier_config = settings.state_db.parent / "flash-invalid-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "frontier_enabled": True,
+            "frontier_config": frontier_config,
+            "lifecycle_mode": "disabled",
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            },
+        }
+    )
+
+    class Flash:
+        async def available(self) -> bool:
+            return True
+
+        async def execute(self, request, correlation_id):  # type: ignore[no-untyped-def]
+            del request, correlation_id
+            raise flash_error
+
+    app = create_app(
+        controlled,
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=False),
+        overflow_executor=Flash(),  # type: ignore[arg-type]
+    )
+    frontier_calls = 0
+
+    async def remote_execute(request, correlation_id):  # type: ignore[no-untyped-def]
+        nonlocal frontier_calls
+        del request, correlation_id
+        frontier_calls += 1
+        return {
+            "model": "gpt-5.6-sol",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "FRONTIER_FALLBACK_OK"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 1},
+            "provider_provenance": {"provider": "primary"},
+        }
+
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "flash-invalid-output",
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        events = app.state.store.events("flash-invalid-output")
+
+    assert response.status_code == expected_status
+    assert frontier_calls == (1 if expected_status == 200 else 0)
+    assert any(
+        event["event_type"] == "executor_flash_invalid_output_fallback" for event in events
+    ) is (expected_status == 200)
 
 
 def test_flash_executor_applies_required_frontier_correction(
