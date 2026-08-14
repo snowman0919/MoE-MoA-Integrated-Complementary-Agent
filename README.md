@@ -1,16 +1,8 @@
 # DGX MoA Agent 2.0
 
-OpenAI-compatible, Executor-directed dynamic Mixture-of-Agents gateway. OpenCode
-and other clients connect to one authenticated tailnet or LAN endpoint. The primary
-`dgx-moa` path always combines a loopback-only Ollama Reasoner with the local
-Executor. The Executor owns routing, native tool calls, and final synthesis; it
-adds Planner, Reviewer, Codex OAuth Frontier collaboration, or the mutually
-exclusive Heavy Judge only when the task and evidence require them.
-
-`dgx-moa-fast` is the explicitly named Executor-only compatibility path.
-`dgx-moa-agent` keeps the Reasoner + Executor core while the external client owns
-the tool loop. `dgx-moa-orchestrated` enables dynamic local specialists and
-frequent Frontier architecture/review collaboration.
+Authenticated OpenAI-compatible gateway for an Executor-directed Dynamic MoA.
+The current Gateway release is `PILOT_ACTIVE`; the overall project remains
+`IN_PROGRESS`. `PRODUCTION_BETA` and `STABLE` have not been reached.
 
 ```bash
 uv sync
@@ -18,61 +10,58 @@ cp .env.example .env
 uv run dgx-moa
 ```
 
-Production is the human-reviewed `main` branch deployed at
-`/home/kotori9/dgx-moa-agent`. `dev` is integration; recursive experiments use
-isolated `auto/<layer>/<proposal-id>` worktrees created from `dev` and driven by
-the stable `main` runtime.
+## Public API
 
-The authenticated gateway binds `0.0.0.0:9000`, so tailnet clients use
-`http://<DGX_TAILSCALE_IP>:9000/v1`, LAN clients use the host LAN address, and
-local clients use `http://127.0.0.1:9000/v1`. Role-model inference endpoints
-remain loopback-only. Tailscale Serve and Funnel are not required.
+The gateway binds `0.0.0.0:9000`; bearer authentication is mandatory. Tailnet
+or LAN clients use the host address and local clients use
+`http://127.0.0.1:9000/v1`. Role-model endpoints are never exposed on wildcard
+interfaces.
 
-See `docs/API_CLIENT_MODES.md` for the model aliases, standard request and SSE
-contracts, typed errors, curl/OpenAI SDK/OpenCode examples, and output limits.
-See `docs/HERMES_AGENT.md` for the environment-only Hermes configuration.
+The discoverable production catalog contains only:
 
-The production `main` runtime implements the MoA contracts and role-aware
-request statistics. Its lifecycle policy keeps the 65,536-token
-Executor resident and keeps the separately started loopback Ollama Reasoner available;
-Planner and Reviewer may unload after bounded role-local idle periods. With
-specialist routing disabled, a cold managed local role returns retryable `503`
-state, generation, weight progress, overall progress, and ETA fields while one
-load owns the role. With validated specialist routing enabled, cold Planner and
-Reviewer calls run remotely while that same singleflight local load proceeds in
-the background. An isolated user-systemd run physically passed the four-role
-control path, idle unload/reload, circuit breaker, and idempotent rollback. It
-used fake weights to avoid duplicating the active 45G production executor, so it
-does not add a new real-weight memory claim. Safe checked-in defaults remain
-`disabled` with an empty unit map; the ignored 0600 production environment uses
-reviewed `adaptive` control for Executor, Planner, and Reviewer and enables
-Codex OAuth Frontier. Physical evidence covers the core, real clients, Planner,
-Reviewer, Frontier, and the exclusive Heavy Judge resume path. The 2026-07-21
-Heavy Judge validation rejected a drifted 12-GB KV configuration, then passed
-the approved 4-GB readiness gate, normal adjudication, guard errors, teardown,
-and fixed-resident restoration. Production enablement and later Responses
-compatibility fixes were promoted through reviewed `dev`-to-`main` PRs.
+| Alias | Policy | Tool-loop owner | Context |
+| --- | --- | --- | --- |
+| `dgx-moa` | primary Reasoner + Executor path | client | `131072` |
+| `dgx-moa-fast` | Executor-only compatibility path | client | `131072` |
 
-`dev` also contains disabled, unit-tested bounded Loop Engineering, runtime
-Skills and canaries, a separate Runtime Knowledge registry, OpenCode Go GLM-5.2
-Remote Judge transport, remote-first cold-start routing for local Planner and
-Reviewer specialists, declarative policy, typed Evidence Graph/replay, safe
-Telegram observation, privacy-filtered training candidates, and Seoul
-weekly 7z packaging/retention workflows. These are not production capabilities
-until the physical client/provider/archive gates in `docs/VALIDATION.md` pass.
+The client executes native tool calls and returns matching tool results. The
+Executor owns routing authority and client-visible final synthesis. Historical
+`dgx-moa-agent`, `dgx-moa-orchestrated`, and `dgx-moa-chat` inputs are retained
+internally for durable continuation and rollback compatibility, but are not
+public aliases.
 
-See `docs/MODEL_LIFECYCLE.md` for model states, role policies and statistics,
-retryable loading responses, blockers, status routes, circuit breaker, and
-rollback. Safe checked-in lifecycle control is deliberately `disabled` with an
-empty unit map; production authorization remains an ignored operator-owned
-override and must never be copied into Git.
+See `docs/API_CLIENT_MODES.md` for requests, streaming, tools, errors, and client
+examples. See `docs/HERMES_AGENT.md` for Hermes configuration.
 
-Authoritative references: `docs/STATE.md` for current state,
-`docs/OPERATIONS.md` for operation, `docs/VALIDATION.md` for measured evidence,
-`docs/MOA_ORCHESTRATION.md` for collaboration, `docs/FRONTIER.md` for Codex OAuth,
-`docs/TRACE_SCHEMA.md` for logging, `docs/LOOP_ENGINEERING.md` for the disabled
-loop foundation, `docs/SKILLS.md`, `docs/KNOWLEDGE_BASE.md`,
-`docs/REMOTE_JUDGE.md`, `docs/SPECIALIST_ROUTING.md`, `docs/LIVE_OBSERVATION.md`,
-`docs/TRAINING_DATA.md`, and `docs/WEEKLY_PACKAGING.md` for the new disabled
-workflows, `docs/RUNTIME_SELF_IMPROVEMENT.md` for governed Prompt/Policy/Routing
-candidates, and `docs/RECURSIVE_IMPROVEMENT.md` for the branch workflow.
+## Current production topology
+
+The operator intentionally stopped the local Mistral Executor. The active
+production Executor is the reviewed `opencode_go/deepseek-v4-flash` fallback.
+The public context remains `131072`; the Phase 3 65K/MARLIN profile is retained
+as rollback evidence, not advertised as the active backend.
+
+Production currently enables Dashboard, Codex OAuth Frontier, and DeepSeek
+Flash Executor scheduling. Lifecycle control uses `disabled` with an empty unit
+map. ExecutionGraph control, specialist routing, Remote Judge, Loop Engineering,
+Runtime Skills/Knowledge/Evolution, declarative policy, training collection,
+and weekly jobs are disabled. Their source or historical evidence is not a
+production-capability claim.
+
+## Development and release
+
+Production source is the reviewed `main` branch at
+`/home/kotori9/dgx-moa-agent`; `dev` is integration. Experiments use isolated
+`auto/<layer>/<proposal-id>` worktrees from `dev`. Production changes require
+reviewed promotion and rollback evidence.
+
+Safe checked-in lifecycle and optional-feature defaults remain disabled. See
+`docs/MODEL_LIFECYCLE.md` for lifecycle semantics. Do not copy ignored
+operator-owned overrides or credentials into Git.
+
+Current authorities:
+
+- `docs/STATE.md` — current operating facts and release status
+- `goal.md` — final direction and staged gates
+- `docs/OPERATIONS.md` — operations
+- `docs/VALIDATION.md` — append-only measured evidence
+- `docs/TRACE_SCHEMA.md` — trace contract

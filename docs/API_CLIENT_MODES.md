@@ -4,6 +4,10 @@ The authenticated gateway exposes one OpenAI-compatible API at
 `http://100.125.239.72:9000/v1` on the tailnet. Keep `DGX_MOA_API_KEY` in the
 client environment and discover the available aliases before selecting one:
 
+The current Gateway release is `PILOT_ACTIVE`; the overall Dynamic MoA project
+is `IN_PROGRESS`. This public contract does not claim `PRODUCTION_BETA` or
+`STABLE`.
+
 Clients on the gateway host may instead use `http://127.0.0.1:9000/v1`. The
 loopback socket proxies to the same gateway, so authentication is still
 required.
@@ -36,6 +40,12 @@ valid evidence and lowers confidence; a required Frontier/review failure fails
 closed with a typed error. Streaming review remains deferred from the response
 path.
 
+In the inspected production override, the operator-stopped local Mistral
+Executor is unavailable and low/medium-risk Executor work uses the pinned
+`opencode_go/deepseek-v4-flash` fallback. ExecutionGraph control, specialist
+routing, and Remote Judge are disabled. These facts do not change the two public
+aliases or their context window.
+
 ## Request contract
 
 `POST /v1/chat/completions` requires `model` and a non-empty `messages` list. It
@@ -58,10 +68,11 @@ executor. `tool_choice` and `parallel_tool_calls` require `tools`, while
 
 Project `metadata` and `X-Session-ID`/provenance headers are optional. Standard
 clients do not need them. The executor output budget defaults to 4,096 tokens;
-`max_tokens` may raise it to at most 16,384. The public executor context remains
-65,536 tokens.
+`max_tokens` may raise it to at most 16,384. The public executor context is
+131,072 tokens.
 
-Training eligibility is the exception: clients must send a stable
+Training collection is currently disabled. If it is separately promoted,
+eligibility requires clients to send a stable
 `X-Workspace-ID` plus `X-Workspace-Path`, and the operator must map that exact
 ID to `training_allowed` in `gateway.training_data.repository_policies`.
 Requests without those headers remain the shared `external-api` identity and
