@@ -16,6 +16,10 @@ class OverflowExecutorUnavailable(RuntimeError):
     pass
 
 
+class OverflowExecutorInvalidOutput(OverflowExecutorUnavailable):
+    pass
+
+
 class OpenCodeGoExecutorProvider:
     def __init__(
         self,
@@ -103,7 +107,7 @@ class OpenCodeGoExecutorProvider:
         if not isinstance(message, dict) or not (
             message.get("content") or message.get("tool_calls")
         ):
-            raise OverflowExecutorUnavailable("Executor Flash returned no public output")
+            raise OverflowExecutorInvalidOutput("Executor Flash returned no public output")
         payload["provider_provenance"] = {
             "provider": "opencode_go",
             "model": self.model,

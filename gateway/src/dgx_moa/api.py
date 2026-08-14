@@ -93,7 +93,11 @@ from .observation import (
     ObservationProvider,
     TelegramProvider,
 )
-from .overflow_executor import OpenCodeGoExecutorProvider, OverflowExecutorUnavailable
+from .overflow_executor import (
+    OpenCodeGoExecutorProvider,
+    OverflowExecutorInvalidOutput,
+    OverflowExecutorUnavailable,
+)
 from .policy import PolicyEngine
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
@@ -3075,9 +3079,23 @@ def create_app(
                         raise OverflowExecutorUnavailable(
                             "pinned Executor Flash provider is unavailable"
                         )
-                    response = await flash_provider.execute(
-                        scoped_request, f"{usage_request_id}:{stage}"
-                    )
+                    try:
+                        response = await flash_provider.execute(
+                            scoped_request, f"{usage_request_id}:{stage}"
+                        )
+                    except OverflowExecutorInvalidOutput:
+                        frontier_provider = request.app.state.frontier
+                        if frontier_provider is None:
+                            raise
+                        request.app.state.store.event(
+                            state_session_id,
+                            "executor_flash_invalid_output_fallback",
+                            {"stage": stage, "provider": "frontier"},
+                        )
+                        response = await frontier_provider.execute(
+                            scoped_request,
+                            f"{usage_request_id}:{stage}",
+                        )
                 else:
                     frontier_provider = request.app.state.frontier
                     if frontier_provider is None:
