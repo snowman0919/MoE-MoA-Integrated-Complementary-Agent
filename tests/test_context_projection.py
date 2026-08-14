@@ -152,6 +152,22 @@ def test_snapshot_is_immutable_deterministic_and_causally_valid() -> None:
         RuntimeEvidenceSnapshot.model_validate(tampered)
 
 
+def test_snapshot_hash_is_stable_for_redacted_source_in_tool_evidence() -> None:
+    source = build_runtime_evidence_snapshot(
+        request_id="redacted-source",
+        objective="inspect source",
+        runtime_evidence=(
+            runtime_evidence_item(
+                "tool-source",
+                "tool",
+                {"stdout": 'self.secret = b"synthetic"\nprint("done")'},
+            ),
+        ),
+    )
+
+    assert RuntimeEvidenceSnapshot.model_validate(source.model_dump(mode="json")) == source
+
+
 def test_role_projections_share_original_runtime_space_without_prompt_contamination() -> None:
     source = snapshot()
     reviewer = project_role_context(
