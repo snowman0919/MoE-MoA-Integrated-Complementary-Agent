@@ -2549,10 +2549,25 @@ def create_app(
                 cancel_on_disconnect(), name=f"client-disconnect-{usage_request_id}"
             )
 
+        executor_endpoint_unavailable = False
+        if (
+            configured.executor_scheduling.enabled
+            and request.app.state.overflow_executor is not None
+            and "executor" in candidate_roles
+            and configured.lifecycle_mode not in {"fixed", "adaptive"}
+        ):
+            try:
+                executor_endpoint_unavailable = not await asyncio.wait_for(
+                    (lifecycle_health_probe or default_lifecycle_health_probe)("executor"),
+                    timeout=2,
+                )
+            except Exception:
+                executor_endpoint_unavailable = True
         executor_local_unavailable = bool(
             (loading_record is not None and loading_record.role == "executor")
             or (unavailable_record is not None and unavailable_record.role == "executor")
             or unmanaged_role == "executor"
+            or executor_endpoint_unavailable
         )
         executor_frontier_fallback = bool(
             request_class == "high_risk_task"
