@@ -31,7 +31,11 @@ from dgx_moa.lifecycle import (
     continuation_correlation,
 )
 from dgx_moa.loop_engineering import new_loop
-from dgx_moa.overflow_executor import OpenCodeGoExecutorProvider
+from dgx_moa.overflow_executor import (
+    OpenCodeGoExecutorProvider,
+    OverflowExecutorInvalidOutput,
+    OverflowExecutorUnavailable,
+)
 from dgx_moa.remote_judge import MockJudgeProvider, RemoteJudgeVerdict
 from dgx_moa.replay import ReplaySnapshot
 from dgx_moa.schemas import ChatRequest, ResponsesRequest
@@ -3450,6 +3454,198 @@ def test_disabled_local_executor_routes_low_risk_request_to_flash(
     assert scheduled["payload"]["selected_executor"] == "opencode_go"
     assert scheduled["payload"]["reason"] == "local_unavailable"
     assert stub_provider.calls == []
+
+
+@pytest.mark.parametrize(
+    ("flash_error", "expected_status"),
+    [
+        (OverflowExecutorInvalidOutput("no public output"), 200),
+        (
+            {
+                "model": "deepseek-v4-flash",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke>",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+            200,
+        ),
+        (OverflowExecutorUnavailable("authorization unavailable"), 503),
+    ],
+)
+def test_flash_invalid_output_alone_falls_back_to_frontier(
+    settings: Settings,
+    stub_provider: StubProvider,
+    flash_error: Exception | dict[str, object],
+    expected_status: int,
+) -> None:
+    frontier_config = settings.state_db.parent / "flash-invalid-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "frontier_enabled": True,
+            "frontier_config": frontier_config,
+            "lifecycle_mode": "disabled",
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            },
+        }
+    )
+
+    class Flash:
+        async def available(self) -> bool:
+            return True
+
+        async def execute(self, request, correlation_id):  # type: ignore[no-untyped-def]
+            del request, correlation_id
+            if isinstance(flash_error, Exception):
+                raise flash_error
+            return flash_error
+
+    app = create_app(
+        controlled,
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=False),
+        overflow_executor=Flash(),  # type: ignore[arg-type]
+    )
+    frontier_calls = 0
+
+    async def remote_execute(request, correlation_id):  # type: ignore[no-untyped-def]
+        nonlocal frontier_calls
+        del request, correlation_id
+        frontier_calls += 1
+        return {
+            "model": "gpt-5.6-sol",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "FRONTIER_FALLBACK_OK"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 1},
+            "provider_provenance": {"provider": "primary"},
+        }
+
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "flash-invalid-output",
+            },
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        events = app.state.store.events("flash-invalid-output")
+
+    assert response.status_code == expected_status
+    assert frontier_calls == (1 if expected_status == 200 else 0)
+    assert any(
+        event["event_type"] == "executor_flash_invalid_output_fallback" for event in events
+    ) is (expected_status == 200)
+
+
+def test_flash_executor_applies_required_frontier_correction(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "disabled",
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            },
+        }
+    )
+
+    class Flash:
+        async def available(self) -> bool:
+            return True
+
+        async def execute(self, request, correlation_id):  # type: ignore[no-untyped-def]
+            del request, correlation_id
+            return {
+                "model": "deepseek-v4-flash",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-flash-correction",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "apply_patch",
+                                        "arguments": '{"patch":"bounded correction"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"total_tokens": 1},
+            }
+
+    app = create_app(
+        controlled,
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=False),
+        overflow_executor=Flash(),  # type: ignore[arg-type]
+    )
+    session_id = "flash-frontier-correction"
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.store.save(
+            SessionState(
+                session_id=session_id,
+                objective="Implement app.py in this repository.",
+                review_status="rejected_frontier",
+                review_deferred=True,
+                frontier_correction_required=True,
+            )
+        )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "apply the required correction"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "apply_patch",
+                            "description": "Apply a bounded patch.",
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["choices"][0]["finish_reason"] == "tool_calls"
+    assert response.json()["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == (
+        "apply_patch"
+    )
 
 
 def test_disabled_lifecycle_probes_executor_before_scheduling(

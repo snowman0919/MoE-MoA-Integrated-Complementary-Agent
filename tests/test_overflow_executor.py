@@ -50,7 +50,16 @@ async def test_opencode_go_executor_preserves_native_tools_and_strips_private_fi
     result = await provider.execute(
         {
             "model": "dgx-moa",
-            "messages": [{"role": "user", "content": "inspect"}],
+            "messages": [
+                {"role": "developer", "content": "Follow the request."},
+                {"role": "user", "content": "inspect"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{"id": "prior-call", "type": "function"}],
+                },
+                {"role": "tool", "tool_call_id": "prior-call", "content": "done"},
+            ],
             "tools": [{"type": "function", "function": {"name": "read_file"}}],
             "tool_choice": "required",
             "parallel_tool_calls": True,
@@ -63,10 +72,12 @@ async def test_opencode_go_executor_preserves_native_tools_and_strips_private_fi
     )
 
     assert captured["model"] == "deepseek-v4-flash"
+    assert captured["messages"][0]["role"] == "system"
+    assert captured["messages"][2]["reasoning_content"] == ""
     assert captured["tool_choice"] == "auto"
     assert captured["parallel_tool_calls"] is True
     assert captured["stream"] is False
-    assert captured["max_tokens"] == 1024
+    assert captured["max_tokens"] == 4096
     assert not {"metadata", "stream_options", "_client_workspace_path"} & captured.keys()
     assert result["provider_provenance"]["provider"] == "opencode_go"
 

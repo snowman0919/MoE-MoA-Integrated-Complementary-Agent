@@ -3492,6 +3492,44 @@ class Controller:
                     review_error = error
                 state.observability_degraded = True
                 state.observability_status = "degraded"
+                if (
+                    not state.review_fail_closed
+                    and frontier_task is None
+                    and self.frontier is not None
+                    and state.frontier_invocations < self.frontier.config.max_invocations_per_task
+                ):
+                    frontier_review_evidence = {
+                        "objective": effective_objective(state),
+                        "acceptance_criteria": state.acceptance_criteria,
+                        "changed_paths": changed_paths_evidence(state, request.get("metadata", {})),
+                        "bounded_diff": request.get("metadata", {}).get(
+                            "diff_summary",
+                            request.get("metadata", {}).get("relevant_diff", ""),
+                        ),
+                        "test_results": request.get("metadata", {}).get("validation_results", []),
+                        "tool_results": review_tool_results(state),
+                        "tool_executions": review_tool_executions(state),
+                        "local_reviewer_findings": {
+                            "status": "unavailable",
+                            "error_type": type(error).__name__,
+                        },
+                        "known_limitations": request.get("metadata", {}).get(
+                            "known_limitations", []
+                        ),
+                    }
+                    frontier_graph_attempt = graph_start(NodeType.FRONTIER_A)
+                    frontier_task = asyncio.create_task(
+                        self._frontier_collaborate(state, "code_review", frontier_review_evidence)
+                    )
+                    self.store.event(
+                        state.session_id,
+                        "frontier_collaboration_started",
+                        {
+                            "mode": "code_review",
+                            "parallel": False,
+                            "trigger": "local_reviewer_unavailable",
+                        },
+                    )
             else:
                 safe_reviewer = state.agent_artifacts[-1]
                 review_decision_id = next(

@@ -8,6 +8,7 @@ from dgx_moa.context_projection import (
     ROLE_CONTEXT_TARGET_BYTES,
     CanonicalRequestInput,
     ModelContribution,
+    RoleContextProjection,
     RuntimeEvidenceItem,
     RuntimeEvidenceSnapshot,
     build_runtime_evidence_snapshot,
@@ -150,6 +151,25 @@ def test_snapshot_is_immutable_deterministic_and_causally_valid() -> None:
     tampered["objective"] = "tampered"
     with pytest.raises(ValidationError, match="snapshot hash mismatch"):
         RuntimeEvidenceSnapshot.model_validate(tampered)
+
+
+def test_snapshot_hash_is_stable_for_redacted_source_in_tool_evidence() -> None:
+    source = build_runtime_evidence_snapshot(
+        request_id="redacted-source",
+        objective="inspect source",
+        runtime_evidence=(
+            runtime_evidence_item(
+                "tool-source",
+                "tool",
+                {"stdout": 'self.secret = b"synthetic"\nprint("done")'},
+            ),
+        ),
+    )
+
+    projection = project_role_context(source, "executor", stage="fanout")
+
+    assert RuntimeEvidenceSnapshot.model_validate(source.model_dump(mode="json")) == source
+    assert RoleContextProjection.model_validate(projection.model_dump(mode="json")) == projection
 
 
 def test_role_projections_share_original_runtime_space_without_prompt_contamination() -> None:
@@ -389,6 +409,33 @@ def test_role_targets_bound_discretionary_evidence_without_dropping_original_con
     assert planner.provenance.excluded_evidence_ids
 
 
+def test_role_budget_retains_policy_failure_and_diff_before_resolved_history() -> None:
+    payload = "x" * 15_000
+    source = build_runtime_evidence_snapshot(
+        request_id="prioritized",
+        objective="preserve critical evidence",
+        runtime_evidence=(
+            runtime_evidence_item("policy", "policy", {"rule": payload}),
+            runtime_evidence_item("failed-test", "test", {"status": "failed", "output": payload}),
+            runtime_evidence_item("unresolved", "failure", {"status": "active", "detail": payload}),
+            runtime_evidence_item("diff", "diff", {"source": payload}),
+            runtime_evidence_item("tool", "tool", {"output": payload}),
+            runtime_evidence_item("checkpoint", "checkpoint", {"plan": payload}),
+            runtime_evidence_item("resolved", "failure", {"status": "resolved", "detail": payload}),
+            *(
+                runtime_evidence_item(f"old-{index}", "checkpoint", {"plan": payload})
+                for index in range(8)
+            ),
+        ),
+    )
+
+    planner = project_role_context(source, "planner", stage="fanout")
+    included = set(planner.provenance.included_evidence_ids)
+
+    assert {"policy", "failed-test", "unresolved", "diff"} <= included
+    assert "resolved" not in included
+
+
 def test_reasoner_target_drops_old_oversized_inputs_and_keeps_current_objective() -> None:
     source = build_runtime_evidence_snapshot(
         request_id="oversized-history",
@@ -404,6 +451,31 @@ def test_reasoner_target_drops_old_oversized_inputs_and_keeps_current_objective(
     assert len(reasoner.model_dump_json().encode()) <= ROLE_CONTEXT_TARGET_BYTES["reasoner"]
     assert reasoner.objective == "current objective"
     assert reasoner.request_inputs[-1].input_id == "input-7"
+
+
+def test_role_budget_keeps_system_constraint_while_dropping_old_user_history() -> None:
+    source = build_runtime_evidence_snapshot(
+        request_id="bounded-inputs",
+        objective="current objective",
+        request_inputs=(
+            canonical_request_input(
+                "system", {"role": "system", "content": "IMMUTABLE" + "x" * 30_000}
+            ),
+            *(
+                canonical_request_input(
+                    f"user-{index}", {"role": "user", "content": f"history-{index}" + "x" * 30_000}
+                )
+                for index in range(7)
+            ),
+        ),
+    )
+
+    reasoner = project_role_context(source, "reasoner", stage="fanout")
+    input_ids = {item.input_id for item in reasoner.request_inputs}
+
+    assert "system" in input_ids
+    assert "user-6" in input_ids
+    assert "user-0" not in input_ids
 
 
 def test_role_projection_deduplicates_harness_messages_with_new_ids() -> None:

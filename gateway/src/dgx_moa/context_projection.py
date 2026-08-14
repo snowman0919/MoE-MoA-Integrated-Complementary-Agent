@@ -425,6 +425,44 @@ def _projection_categories(
     return tuple(categories)
 
 
+def _evidence_retention_key(item: RuntimeEvidenceItem) -> tuple[int, str]:
+    payload = item.payload()
+    status = ""
+    exit_code: Any = None
+    if isinstance(payload, dict):
+        status = str(payload.get("resolution_status", payload.get("status", ""))).lower()
+        exit_code = payload.get("exit_code")
+    if item.kind == "policy":
+        priority = 0
+    elif item.kind == "test" and (
+        status in {"failed", "failure", "error"} or (exit_code is not None and exit_code != 0)
+    ):
+        priority = 1
+    elif item.kind == "failure" and status not in {"resolved", "passed", "success", "completed"}:
+        priority = 2
+    elif item.kind == "diff":
+        priority = 3
+    elif item.kind in {"tool", "test", "build"}:
+        priority = 4
+    elif item.kind == "checkpoint":
+        priority = 5
+    else:
+        priority = 6
+    return priority, item.evidence_id
+
+
+def _request_input_retention_key(item: CanonicalRequestInput, index: int) -> tuple[int, int]:
+    payload = item.payload()
+    role = payload.get("role") if isinstance(payload, dict) else None
+    if role in {"system", "developer"} or item.input_id == "request-metadata":
+        priority = 0
+    elif role == "user":
+        priority = 2
+    else:
+        priority = 1
+    return priority, -index
+
+
 def canonical_request_input(input_id: str, payload: Any) -> CanonicalRequestInput:
     return CanonicalRequestInput(input_id=input_id, payload_json=_canonical(payload))
 
@@ -479,13 +517,17 @@ def build_runtime_evidence_snapshot(
         "request_id": request_id,
         "graph_id": graph_id,
         "objective": str(redact(objective)),
-        "request_inputs": tuple(request_inputs),
-        "request_constraints_json": tuple(_canonical(item) for item in request_constraints),
-        "acceptance_criteria_json": tuple(_canonical(item) for item in acceptance_criteria),
-        "runtime_evidence": tuple(sorted(runtime_evidence, key=lambda item: item.evidence_id)),
-        "model_contributions": tuple(
-            sorted(model_contributions, key=lambda item: item.contribution_id)
-        ),
+        "request_inputs": [item.model_dump(mode="json") for item in request_inputs],
+        "request_constraints_json": [_canonical(item) for item in request_constraints],
+        "acceptance_criteria_json": [_canonical(item) for item in acceptance_criteria],
+        "runtime_evidence": [
+            item.model_dump(mode="json")
+            for item in sorted(runtime_evidence, key=lambda item: item.evidence_id)
+        ],
+        "model_contributions": [
+            item.model_dump(mode="json")
+            for item in sorted(model_contributions, key=lambda item: item.contribution_id)
+        ],
     }
     raw["snapshot_hash"] = _hash(raw)
     raw["snapshot_id"] = f"snapshot_{raw['snapshot_hash'][:24]}"
@@ -578,12 +620,12 @@ def project_role_context(
             "stage": stage,
             "request_id": snapshot.request_id,
             "objective": snapshot.objective,
-            "request_inputs": request_inputs,
-            "request_constraints_json": snapshot.request_constraints_json,
-            "acceptance_criteria_json": snapshot.acceptance_criteria_json,
-            "runtime_evidence": evidence,
-            "model_contributions": contributions,
-            "provenance": provenance,
+            "request_inputs": [item.model_dump(mode="json") for item in request_inputs],
+            "request_constraints_json": list(snapshot.request_constraints_json),
+            "acceptance_criteria_json": list(snapshot.acceptance_criteria_json),
+            "runtime_evidence": [item.model_dump(mode="json") for item in evidence],
+            "model_contributions": [item.model_dump(mode="json") for item in contributions],
+            "provenance": provenance.model_dump(mode="json"),
         }
         raw["projection_hash"] = _hash(raw)
         raw["projection_id"] = f"projection_{raw['projection_hash'][:24]}"
@@ -592,12 +634,19 @@ def project_role_context(
     projection = build()
     # ponytail: at most 512 bounded items; replace with cumulative sizing if this becomes hot.
     while len(_canonical(projection).encode()) > target_bytes and evidence:
-        evidence = evidence[:-1]
+        drop_index = max(
+            range(len(evidence)), key=lambda index: _evidence_retention_key(evidence[index])
+        )
+        evidence = evidence[:drop_index] + evidence[drop_index + 1 :]
         projection = build()
     while len(_canonical(projection).encode()) > target_bytes and contributions:
         contributions = contributions[:-1]
         projection = build()
     while len(_canonical(projection).encode()) > target_bytes and request_inputs:
-        request_inputs = request_inputs[1:]
+        drop_index = max(
+            range(len(request_inputs)),
+            key=lambda index: _request_input_retention_key(request_inputs[index], index),
+        )
+        request_inputs = request_inputs[:drop_index] + request_inputs[drop_index + 1 :]
         projection = build()
     return projection

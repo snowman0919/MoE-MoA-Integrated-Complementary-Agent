@@ -93,7 +93,11 @@ from .observation import (
     ObservationProvider,
     TelegramProvider,
 )
-from .overflow_executor import OpenCodeGoExecutorProvider, OverflowExecutorUnavailable
+from .overflow_executor import (
+    OpenCodeGoExecutorProvider,
+    OverflowExecutorInvalidOutput,
+    OverflowExecutorUnavailable,
+)
 from .policy import PolicyEngine
 from .profiles import ProfileManager
 from .providers import ModelProvider, StageTimeout, validate_assistant_response
@@ -142,6 +146,7 @@ from .streaming import (
     compatible_edit_call,
     completed_chat_sse,
     forward_sse,
+    has_internal_protocol_leak,
     keepalive_sse,
     reported_usage,
     response_usage,
@@ -3075,9 +3080,29 @@ def create_app(
                         raise OverflowExecutorUnavailable(
                             "pinned Executor Flash provider is unavailable"
                         )
-                    response = await flash_provider.execute(
-                        scoped_request, f"{usage_request_id}:{stage}"
-                    )
+                    try:
+                        response = await flash_provider.execute(
+                            scoped_request, f"{usage_request_id}:{stage}"
+                        )
+                        message = (response.get("choices") or [{}])[0].get("message", {})
+                        content = message.get("content") if isinstance(message, dict) else None
+                        if isinstance(content, str) and has_internal_protocol_leak(content):
+                            raise OverflowExecutorInvalidOutput(
+                                "Executor Flash returned internal protocol markup"
+                            )
+                    except OverflowExecutorInvalidOutput:
+                        frontier_provider = request.app.state.frontier
+                        if frontier_provider is None:
+                            raise
+                        request.app.state.store.event(
+                            state_session_id,
+                            "executor_flash_invalid_output_fallback",
+                            {"stage": stage, "provider": "frontier"},
+                        )
+                        response = await frontier_provider.execute(
+                            scoped_request,
+                            f"{usage_request_id}:{stage}",
+                        )
                 else:
                     frontier_provider = request.app.state.frontier
                     if frontier_provider is None:
@@ -3100,10 +3125,6 @@ def create_app(
             async def remote_executor_correction(
                 executor_request: dict[str, Any], stage: str
             ) -> dict[str, Any]:
-                if executor_flash and state.frontier_correction_required:
-                    raise OverflowExecutorUnavailable(
-                        "pinned Executor Flash cannot satisfy required Frontier correction"
-                    )
                 response = await remote_executor_complete(executor_request, stage)
                 tool_call_required = executor_request.get("tool_choice") == "required"
                 if not state.frontier_correction_required and not tool_call_required:

@@ -16,6 +16,10 @@ class OverflowExecutorUnavailable(RuntimeError):
     pass
 
 
+class OverflowExecutorInvalidOutput(OverflowExecutorUnavailable):
+    pass
+
+
 class OpenCodeGoExecutorProvider:
     def __init__(
         self,
@@ -64,9 +68,21 @@ class OpenCodeGoExecutorProvider:
             if not key.startswith("_") and key not in {"metadata", "stream_options"}
         }
         body.update({"model": self.model, "stream": False})
+        if isinstance(messages := body.get("messages"), list):
+            body["messages"] = [
+                {**message, "role": "system"}
+                if isinstance(message, dict) and message.get("role") == "developer"
+                else {**message, "reasoning_content": ""}
+                if isinstance(message, dict)
+                and message.get("role") == "assistant"
+                and message.get("tool_calls")
+                and "reasoning_content" not in message
+                else message
+                for message in messages
+            ]
         if body.get("tool_choice") == "required":
             body["tool_choice"] = "auto"
-        body["max_tokens"] = max(int(body.get("max_tokens", 0) or 0), 1_024)
+        body["max_tokens"] = max(int(body.get("max_tokens", 0) or 0), 4_096)
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 async with managed_http_client(timeout=None, transport=self.transport) as client:
@@ -91,7 +107,7 @@ class OpenCodeGoExecutorProvider:
         if not isinstance(message, dict) or not (
             message.get("content") or message.get("tool_calls")
         ):
-            raise OverflowExecutorUnavailable("Executor Flash returned no public output")
+            raise OverflowExecutorInvalidOutput("Executor Flash returned no public output")
         payload["provider_provenance"] = {
             "provider": "opencode_go",
             "model": self.model,
