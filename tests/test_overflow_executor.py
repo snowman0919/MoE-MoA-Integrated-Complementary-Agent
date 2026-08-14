@@ -50,7 +50,10 @@ async def test_opencode_go_executor_preserves_native_tools_and_strips_private_fi
     result = await provider.execute(
         {
             "model": "dgx-moa",
-            "messages": [{"role": "user", "content": "inspect"}],
+            "messages": [
+                {"role": "developer", "content": "Follow the request."},
+                {"role": "user", "content": "inspect"},
+            ],
             "tools": [{"type": "function", "function": {"name": "read_file"}}],
             "tool_choice": "required",
             "parallel_tool_calls": True,
@@ -63,6 +66,7 @@ async def test_opencode_go_executor_preserves_native_tools_and_strips_private_fi
     )
 
     assert captured["model"] == "deepseek-v4-flash"
+    assert captured["messages"][0]["role"] == "system"
     assert captured["tool_choice"] == "auto"
     assert captured["parallel_tool_calls"] is True
     assert captured["stream"] is False

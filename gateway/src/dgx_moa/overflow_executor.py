@@ -64,6 +64,13 @@ class OpenCodeGoExecutorProvider:
             if not key.startswith("_") and key not in {"metadata", "stream_options"}
         }
         body.update({"model": self.model, "stream": False})
+        if isinstance(messages := body.get("messages"), list):
+            body["messages"] = [
+                {**message, "role": "system"}
+                if isinstance(message, dict) and message.get("role") == "developer"
+                else message
+                for message in messages
+            ]
         if body.get("tool_choice") == "required":
             body["tool_choice"] = "auto"
         body["max_tokens"] = max(int(body.get("max_tokens", 0) or 0), 1_024)
