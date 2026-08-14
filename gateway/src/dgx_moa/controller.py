@@ -3093,7 +3093,7 @@ class Controller:
             )
             reasoner_started = time.monotonic()
             reasoner_record_started = reasoner_started
-            reasoner_provider = reasoner.provider
+            reasoner_provider: str = reasoner.provider
             reasoner_model = reasoner.served_name
             try:
                 for attempt in range(2):
@@ -4132,7 +4132,7 @@ class Controller:
             try:
                 arguments = json.loads(arguments)
             except ValueError:
-                return arguments.lower()
+                return str(arguments).lower()
         return str(arguments.get("cmd", "") if isinstance(arguments, dict) else "").lower()
 
     @classmethod
