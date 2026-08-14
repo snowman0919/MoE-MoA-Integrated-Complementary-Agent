@@ -9183,3 +9183,9 @@ files, and `1146` tests. The new checked-in CI enforces frozen dependency sync, 
 format, strict mypy, full pytest, and schema JSON on both long-lived branches. Its first
 portable runs passed on `dev` (GitHub Actions `31767073999`) and `main`
 (`31767184782`).
+
+The repository reported `main` branch protection as absent (`404`). A bounded
+attempt to require the green `check` context, enforce protection for
+administrators, and prohibit force-push/delete was rejected by GitHub with
+`403 Resource not accessible by personal access token`. No protection setting
+was changed; additional repository-administration authority is required.
