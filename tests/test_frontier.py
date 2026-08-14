@@ -1095,7 +1095,6 @@ async def test_executor_uses_paid_fallback_only_after_oauth_profiles_fail(
     key_path = tmp_path / "openrouter_api"
     key_path.write_text("synthetic-openrouter-key")
     key_path.chmod(0o600)
-    key_path.chmod(0o600)
 
     async def oauth_context_failure(command, **kwargs):  # type: ignore[no-untyped-def]
         profiles.append(Path(kwargs["environment"]["CODEX_HOME"]).name)
@@ -1227,6 +1226,7 @@ async def test_required_review_uses_paid_fallback_while_oauth_circuit_is_open(
 ) -> None:  # type: ignore[no-untyped-def]
     key_path = tmp_path / "openrouter_api"
     key_path.write_text("synthetic-openrouter-key")
+    key_path.chmod(0o600)
     requests = 0
     sent_requests: list[dict[str, object]] = []
 
