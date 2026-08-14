@@ -9102,3 +9102,42 @@ with the production bearer credential. One intermediate manual restart hit the
 configured systemd start-rate limit after repeated deployment restarts; the
 rate-limit latch was reset, and the same checked-in service then started and
 passed the checks above.
+### Executor-off DeepSeek fallback production audit — 2026-08-14
+
+The operator intentionally stopped the local Executor and approved bounded production
+changes, gateway restarts, and direct `main` deployment for this goal. Production policy
+drift was reduced before testing: ExecutionGraph, specialist routing, Remote Judge, Loop
+Engineering, Runtime Skills/Knowledge/Evolution, declarative policy, training collection,
+and weekly jobs were disabled. Dashboard and Codex OAuth Frontier remained configured;
+only the existing `deepseek-v4-flash` Executor scheduling override was enabled. The
+Executor listener stayed absent throughout.
+
+Four measured release changes were deployed: `ccc2782b2` probes an unmanaged local
+Executor before overflow admission, `30d220a81` removes `stream_options` when the pinned
+overflow transport forces `stream=false`, `c461637e7` maps DeepSeek-incompatible
+`tool_choice=required` to `auto` while the gateway retains its required-tool retry check,
+and `080679490` adds hash-only short-TTL `evaluation` keys restricted to models, Chat, and
+Responses. Each code epoch passed focused tests, Ruff, format, strict mypy, and the full
+suite; the final measured suite was `1146 passed, 1 warning`.
+
+Authenticated production canaries on `:9000` passed Chat, Responses, Chat SSE with usage
+and `[DONE]`, required native function call plus same-session tool-result continuation,
+client cancellation persisted as `cancelled`, a following recovery request, private
+Dashboard access, `15` trace events, and Dashboard-session deletion. Unauthenticated
+models returned `401`; the authenticated catalog exposed only `dgx-moa` and
+`dgx-moa-fast`. A physical rollback/redeploy passed first for `c461637e7 → 30d220a81 →
+c461637e7`, then for the final release `080679490 → c461637e7 → 080679490`. The final
+rollback Chat returned `FINAL_ROLLBACK_OK`; after redeploy an evaluation key returned
+models `200`, metrics `403`, and models `401` immediately after revoke.
+
+The isolated pinned-Docker DeepSeek client replay remains a release gate. OpenCode
+`1.17.18` completed `rate-limiter` in `47.282` seconds and passed public tests, tool,
+terminal, Korean-final, mutation, and isolation checks, but the hidden validator rejected
+its missing non-finite `window_seconds` validation. Codex CLI `0.146.0` made no workspace
+change: six real Responses attempts were cancelled after the DeepSeek upstream rejected
+the five-tool payload with HTTP `400`; a minimal Responses SSE request without that tool
+set completed normally. Both per-client evaluation keys were revoked, returned `401`,
+and had plaintext length `0` and hash length `64` in SQLite. This is preserved as
+`MODEL_CAPABILITY/REVIEW_QUALITY` plus provider-specific `PROTOCOL` evidence. Unseen
+tasks and the Hermes batch were not started after the failed-task gate, so the overall
+Runtime Completion goal remains `IN_PROGRESS` rather than complete.
