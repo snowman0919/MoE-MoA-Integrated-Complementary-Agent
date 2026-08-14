@@ -9142,8 +9142,40 @@ and had plaintext length `0` and hash length `64` in SQLite. This is preserved a
 tasks and the Hermes batch were not started after the failed-task gate, so the overall
 Runtime Completion goal remains `IN_PROGRESS` rather than complete.
 
-A final five-tool shape probe reused Codex's tool names with bounded simple JSON schemas
-and completed one native function call plus `response.completed`. The incompatibility is
-therefore specific to Codex's richer tool schema, not the tool count, names, Responses
-translation, or DeepSeek function calling in general. No speculative schema weakening was
-deployed.
+A later exact-body bisect supersedes the initial schema hypothesis. Each real Codex tool,
+the complete six-tool schema (`6327` bytes), and every five-of-six subset returned `200`.
+The original Codex body still failed even without tools because Responses `instructions`
+became a Chat `developer` message, which DeepSeek rejects. No schema weakening was deployed.
+
+Isolated branch `auto/audit/deepseek-developer-role-20260814` first normalized only that
+provider-boundary role. Focused tests and the full `1146`-test suite passed. A direct
+DeepSeek canary returned `ROLE_NORMALIZATION_OK`. The pinned Codex replay then completed
+two tool turns, proving the role fix, before six responses returned no public output.
+Safe metadata recorded `completion_tokens=max_tokens=2048`, `finish_reason=length`,
+reasoning present, and zero public content/tool calls on every failure; model text and
+hidden reasoning were not stored.
+
+Raising the existing provider minimum to `4096` let Codex inspect, patch, and pass the
+public and hidden validators, but its next tool-result continuation returned provider
+`400`. A second content-free structural capture recorded the exact error: thinking-mode
+tool continuation requires a `reasoning_content` field. A direct two-turn physical probe
+proved an empty compatibility field is accepted (`200`) without retaining or exposing
+hidden reasoning. Candidate `8c600126c` therefore combines developer-to-system mapping,
+the `4096` minimum, and an empty missing field on assistant tool-call history. Ruff,
+format, strict mypy, and full pytest passed (`1146 passed, 1 warning`).
+
+The final pinned Codex `rate-limiter` replay used five all-`200` provider turns and exited
+`0` in `49.734` seconds. It changed only `rate_limiter.py`, ran the requested unit tests,
+returned a Korean terminal answer, and had no reconnect or bad-terminal signal. The
+deterministic hidden validator still failed `invalid constructor input accepted`.
+OpenCode had independently missed the same non-finite `window_seconds` contract. This is
+cross-client `MODEL_CAPABILITY/REVIEW_QUALITY`, not a remaining transport failure. Per the
+bounded iteration rule, no hidden-test prompt patch, unseen task, Hermes batch,
+integration, canary, or deployment followed. Every evaluation key was revoked, returned
+models `401`, and retained plaintext length `0`/hash length `64` in isolated SQLite.
+
+The candidate remains undeployed. Production stayed clean `main@97578b0fe`, gateway PID
+`1374049`, restart count `0`, `0.0.0.0:9000`, health `200`, with no listeners on
+`19016`, `19156`, or `19301`. A separate behavior-neutral strict-mypy repair was committed
+and pushed only to `dev@4e4f177f5`; it passed Ruff, format, strict mypy on `51` source
+files, and `1146` tests.
