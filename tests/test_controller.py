@@ -837,6 +837,80 @@ async def test_local_review_escalates_to_frontier_code_review(
 
 
 @pytest.mark.asyncio
+async def test_unavailable_local_review_falls_back_to_frontier_code_review(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class ReviewFrontier:
+        config = FrontierConfig(enabled=True, max_invocations_per_task=3)
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            self.calls.append((mode, evidence))
+            return FrontierCollaborationResult(
+                mode="code_review",
+                output={
+                    "verdict": "revise",
+                    "critical": [],
+                    "important": ["reject non-finite window values"],
+                    "suggestions": [],
+                    "missing_tests": ["non-finite window validation"],
+                    "confidence": 0.95,
+                },
+                latency_ms=1,
+                transmitted_categories=sorted(evidence),
+            )
+
+    original = stub_provider.complete
+
+    async def unavailable_review(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reviewer":
+            raise httpx.ConnectError("reviewer unavailable")
+        return await original(role, model, request, **kwargs)
+
+    frontier = ReviewFrontier()
+    stub_provider.complete = unavailable_review  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider, frontier)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="unavailable-review-fallback",
+        objective="Implement the bounded change",
+        runtime_mode="moa",
+        request_class="native_agent_turn",
+        roles_required=["reasoner", "executor"],
+        tool_results=[{"stdout": "tests passed"}],
+    )
+    request = {
+        "model": "dgx-moa",
+        "messages": [{"role": "user", "content": state.objective}],
+        "metadata": {
+            "changed_paths": ["rate_limiter.py"],
+            "diff_summary": "bounded implementation diff",
+            "validation_results": [{"name": "unit", "passed": True}],
+        },
+    }
+
+    prepared = await controller.prepare_executor(
+        state, request, ("reasoner", "executor", "reviewer")
+    )
+
+    assert [mode for mode, _ in frontier.calls] == ["code_review"]
+    assert frontier.calls[0][1]["local_reviewer_findings"] == {
+        "status": "unavailable",
+        "error_type": "ConnectError",
+    }
+    assert state.review_status == "rejected_frontier"
+    assert state.frontier_correction_required is True
+    assert "reject non-finite window values" in json.dumps(prepared["messages"])
+    assert any(
+        event["event_type"] == "frontier_collaboration_started"
+        and event["payload"].get("trigger") == "local_reviewer_unavailable"
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
 async def test_frontier_correction_is_reverified_past_invocation_limit(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
