@@ -3100,10 +3100,6 @@ def create_app(
             async def remote_executor_correction(
                 executor_request: dict[str, Any], stage: str
             ) -> dict[str, Any]:
-                if executor_flash and state.frontier_correction_required:
-                    raise OverflowExecutorUnavailable(
-                        "pinned Executor Flash cannot satisfy required Frontier correction"
-                    )
                 response = await remote_executor_complete(executor_request, stage)
                 tool_call_required = executor_request.get("tool_choice") == "required"
                 if not state.frontier_correction_required and not tool_call_required:

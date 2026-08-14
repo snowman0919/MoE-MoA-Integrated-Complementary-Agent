@@ -3452,6 +3452,95 @@ def test_disabled_local_executor_routes_low_risk_request_to_flash(
     assert stub_provider.calls == []
 
 
+def test_flash_executor_applies_required_frontier_correction(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "disabled",
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            },
+        }
+    )
+
+    class Flash:
+        async def available(self) -> bool:
+            return True
+
+        async def execute(self, request, correlation_id):  # type: ignore[no-untyped-def]
+            del request, correlation_id
+            return {
+                "model": "deepseek-v4-flash",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-flash-correction",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "apply_patch",
+                                        "arguments": '{"patch":"bounded correction"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"total_tokens": 1},
+            }
+
+    app = create_app(
+        controlled,
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=False),
+        overflow_executor=Flash(),  # type: ignore[arg-type]
+    )
+    session_id = "flash-frontier-correction"
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.store.save(
+            SessionState(
+                session_id=session_id,
+                objective="Implement app.py in this repository.",
+                review_status="rejected_frontier",
+                review_deferred=True,
+                frontier_correction_required=True,
+            )
+        )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "apply the required correction"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "apply_patch",
+                            "description": "Apply a bounded patch.",
+                            "parameters": {"type": "object"},
+                        },
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["choices"][0]["finish_reason"] == "tool_calls"
+    assert response.json()["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == (
+        "apply_patch"
+    )
+
+
 def test_disabled_lifecycle_probes_executor_before_scheduling(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
