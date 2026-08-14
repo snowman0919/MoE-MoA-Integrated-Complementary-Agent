@@ -53,10 +53,11 @@ request constraints, and applicable tool/model evidence were included; dropped
 evidence was `0`. Hidden reasoning and raw remote review output were not stored.
 
 Git cleanup is not complete. The current repository has `12` local branches,
-`12` registered worktrees, and `5` non-empty stashes. Five auxiliary worktrees
+`11` registered worktrees, and `5` non-empty stashes. Five auxiliary worktrees
 contain dirty or untracked user evidence, and the remaining experiment branches
 retain unique commits. They were not destructively removed. The production and
-root worktrees are clean; the DeepSeek protocol candidate remains isolated on
+root worktrees are clean; the finished DeepSeek candidate worktree was removed
+while its commits remain isolated on
 `auto/audit/deepseek-developer-role-20260814`.
 
 ### Dashboard validation overlay — 2026-08-13
