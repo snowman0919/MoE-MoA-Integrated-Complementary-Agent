@@ -60,9 +60,9 @@ def test_resident_target_requires_only_gateway_and_executor() -> None:
     assert "reasoner" not in requires
 
 
-def test_executor_uses_qualified_cuda_allocator() -> None:
+def test_executor_uses_qualified_native_cuda_allocator() -> None:
     executor = (SYSTEMD / "dgx-moa-executor.service").read_text()
-    assert "Environment=PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync" in executor
+    assert "PYTORCH_CUDA_ALLOC_CONF" not in executor
     assert "Environment=VLLM_NVFP4_GEMM_BACKEND=flashinfer-b12x" in executor
     assert "Environment=VLLM_ALLOW_LONG_MAX_MODEL_LEN=1" in executor
     assert "MemoryHigh=12G" in executor

@@ -16,7 +16,6 @@ Environment=VLLM_BIN=/home/kotori9/.pyenv/shims/vllm
 Environment=XDG_CACHE_HOME=/home/kotori9/.cache
 Environment=MAX_JOBS=1
 Environment=CMAKE_BUILD_PARALLEL_LEVEL=1
-Environment=PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync
 Environment=VLLM_NVFP4_GEMM_BACKEND=flashinfer-b12x
 Environment=VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 MemoryHigh=12G
