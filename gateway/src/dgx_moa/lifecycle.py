@@ -2155,7 +2155,28 @@ class LifecycleCoordinator:
                     )
                 return record
         if record.state != "ready":
-            return record
+            task = self._tasks.pop(role, None)
+            if task is not None:
+                if not task.done():
+                    task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
+            await asyncio.to_thread(self.driver.stop, role)
+            if await asyncio.to_thread(self.driver.status, role) != "inactive":
+                return self.store.get(role)
+            async with lock:
+                record = self.store.get(role)
+                if record.state == "disabled":
+                    return record
+                return self.store.transition(
+                    role,
+                    "disabled",
+                    expected_transition_id=record.transition_id,
+                )
         await self._unload_role(role, record, disable=True)
         return self.store.get(role)
 

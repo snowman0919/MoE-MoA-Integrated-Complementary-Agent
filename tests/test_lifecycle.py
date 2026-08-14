@@ -2467,6 +2467,38 @@ async def test_twenty_concurrent_cold_checks_share_one_load(
 
 
 @pytest.mark.asyncio
+async def test_operator_disable_cancels_an_incomplete_load(tmp_path: Path) -> None:
+    module = lifecycle()
+    loading = asyncio.Event()
+    blocked = asyncio.Event()
+    store = module.LifecycleStore(tmp_path / "disable-loading.db", ("executor",))
+    driver = module.FakeLifecycleDriver({"executor": "inactive"})
+
+    async def sleeper(seconds: float) -> None:
+        assert seconds == 0.25
+        loading.set()
+        await blocked.wait()
+
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=lambda role: asyncio.sleep(0, result=False),
+        timeout_seconds=10.0,
+        poll_seconds=0.25,
+        sleeper=sleeper,
+    )
+
+    await coordinator.ensure_ready("executor")
+    await asyncio.wait_for(loading.wait(), timeout=1.0)
+    disabled = await coordinator.set_enabled("executor", False)
+
+    assert disabled.state == "disabled"
+    assert driver.calls.count(("stop", "executor")) == 1
+    assert coordinator._tasks == {}
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("kind", "failure_class"),
     [("timeout", "start_timeout"), ("command_failed", "start_command_failed")],
