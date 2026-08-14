@@ -9423,3 +9423,21 @@ production configuration. The new stale-`ready` regression passed together
 with all three admin-dashboard tests. Ruff format/check, strict mypy on 51
 source files, and the full suite passed at `1155 passed, 1 warning`. This
 candidate is `IMPLEMENTED_NOT_DEPLOYED`; production was not restarted.
+
+PR `#115` merged the candidate as `main@f46667f8f`; main CI `31788399420`
+passed. After explicit deployment approval, the authenticated drain reached
+zero active requests and the clean production checkout fast-forwarded from
+`2900a7249` to `f46667f8f`. The fixed Gateway restarted once by exact service
+stop/start as PID `2573715` with `NRestarts=0`; health and authenticated models
+returned `200`, unauthenticated models returned `401`, and only
+`0.0.0.0:9000` listened.
+
+The production admin endpoint then reported `state=unmanaged`,
+`operator_enabled=false`, `control_available=false`, `control=disabled`,
+`active_executor=deepseek-v4-flash`, `fallback_active=true`, high-risk Executor
+`gpt-5.6-sol`, and null weight progress. The unavailable OFF operation remained
+fail-closed with `409`; served Dashboard source contained the hidden-unmeasured
+progress and disabled-control styling. A real `dgx-moa-fast` completion returned
+exactly `PROD_DASHBOARD_DEPLOY_OK` from `deepseek-v4-flash`. Local role ports,
+including `19301`, remained absent. Rollback remains the prior production
+revision `2900a7249`.
