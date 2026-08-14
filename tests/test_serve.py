@@ -46,7 +46,9 @@ def test_executor_defaults_to_qualified_128k_profile(
     monkeypatch.delenv("DGX_MOA_EXECUTOR_LINEAR_BACKEND", raising=False)
     monkeypatch.setattr("dgx_moa.serve.load_settings", lambda: settings)
     settings.models["executor"].context_length = 131072
+    settings.models["executor"].base_url = "http://127.0.0.1:9001"
     arguments = command("executor")
+    assert arguments[arguments.index("--port") + 1] == "9001"
     assert arguments[arguments.index("--max-model-len") + 1] == "131072"
     assert arguments[arguments.index("--kv-cache-memory-bytes") + 1] == "3400000000"
     assert "--linear-backend" not in arguments

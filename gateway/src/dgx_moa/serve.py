@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from urllib.parse import urlsplit
 
 from .config import load_settings, parse_bool
 
@@ -45,7 +46,7 @@ def command(role: str) -> list[str]:
         "--host",
         "127.0.0.1",
         "--port",
-        str(PORTS[role]),
+        str(urlsplit(model.base_url).port or PORTS[role]),
         "--served-model-name",
         model.served_name,
         "--max-model-len",

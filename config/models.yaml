@@ -224,7 +224,7 @@ models:
     repository: mistralai/Mistral-Small-4-119B-2603-NVFP4
     revision: b1a9048590131d38491bd23a7c9f6ed0962f0358
     classification: official
-    base_url: http://127.0.0.1:19301
+    base_url: http://127.0.0.1:9001
     served_name: dgx-moa-executor
     destination: /home/kotori9/models/.hf-cache/models--mistralai--Mistral-Small-4-119B-2603-NVFP4/snapshots/b1a9048590131d38491bd23a7c9f6ed0962f0358
     context_length: 131072
