@@ -52,7 +52,7 @@ async def test_opencode_go_executor_preserves_native_tools_and_strips_private_fi
             "model": "dgx-moa",
             "messages": [{"role": "user", "content": "inspect"}],
             "tools": [{"type": "function", "function": {"name": "read_file"}}],
-            "tool_choice": "auto",
+            "tool_choice": "required",
             "parallel_tool_calls": True,
             "stream": True,
             "stream_options": {"include_usage": True},

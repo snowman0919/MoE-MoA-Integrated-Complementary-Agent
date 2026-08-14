@@ -64,6 +64,8 @@ class OpenCodeGoExecutorProvider:
             if not key.startswith("_") and key not in {"metadata", "stream_options"}
         }
         body.update({"model": self.model, "stream": False})
+        if body.get("tool_choice") == "required":
+            body["tool_choice"] = "auto"
         body["max_tokens"] = max(int(body.get("max_tokens", 0) or 0), 1_024)
         try:
             async with asyncio.timeout(self.timeout_seconds):
