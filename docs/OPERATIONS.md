@@ -6,9 +6,9 @@ Current operations follow `docs/STATE.md`. The fixed authenticated Gateway is a
 `PILOT_ACTIVE` release on `0.0.0.0:9000`; the overall project is
 `IN_PROGRESS`. The operator intentionally stopped the local Executor, so the
 active low/medium-risk Executor path is the reviewed
-`opencode_go/deepseek-v4-flash` fallback. Lifecycle mode, ExecutionGraph,
-specialist routing, and Remote Judge are disabled in the inspected production
-override. Do not start port `19301` as part of documentation or audit work.
+`opencode_go/deepseek-v4-flash` fallback. Lifecycle is fixed and maps only the
+Executor service; ExecutionGraph, specialist routing, and Remote Judge remain
+disabled. Dashboard ON/OFF controls the loopback Executor on port `9001`.
 
 The public catalog reports context `131072`. If the local candidate is later
 approved for reactivation, its checked-in target is the qualified fixed-revision
@@ -170,7 +170,7 @@ false-completion prevention.
 
 Gateway binds `0.0.0.0:9000` directly. Tailnet, LAN, and loopback clients reach
 that single authenticated listener without systemd socket proxies. Local model
-servers bind only ports `19301`, `8102`, `8103`, `8110`, and Ollama Reasoner
+servers bind only ports `9001`, `8102`, `8103`, `8110`, and Ollama Reasoner
 port `11435` on loopback. The gateway does not expose or proxy any native role
 API.
 

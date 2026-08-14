@@ -1,6 +1,6 @@
 # State
 
-Updated: 2026-08-14
+Updated: 2026-08-15
 
 ## Current decision authority
 
@@ -25,20 +25,20 @@ policy-disabled MoA paths or satisfy later release stages.
 
 | Item | Current fact |
 | --- | --- |
-| Source | Runtime code `main@304f9b1c2`; checkout `6e050aa53` adds documentation only |
-| Rollback | Final physical rollback target `af372a20f`; earlier rollback epochs remain in `docs/VALIDATION.md` |
-| Gateway | PID `1701209`, `NRestarts=0`, healthy authenticated listener on `0.0.0.0:9000` |
+| Source | Runtime code `main@22424effe`; production checkout contains it plus the current evidence update |
+| Rollback | Pre-toggle source `0905d3880`; exact ignored environment/unit backup under `~/.local/state/dgx-moa/rollback-executor-toggle-20260815` |
+| Gateway | PID `2888487`, `NRestarts=0`, healthy authenticated listener on `0.0.0.0:9000` |
 | Public catalog | only `dgx-moa` and `dgx-moa-fast`, both `context_length: 131072` |
 | Active Executor | `opencode_go/deepseek-v4-flash` through the reviewed production scheduling override |
-| Local Executor | operator-stopped; no listener on `19301` |
-| Lifecycle | `disabled`, empty unit map |
+| Local Executor | operator-disabled after a physical ON/canary/OFF cycle; no listener on loopback `9001` |
+| Lifecycle | `fixed`, exact map `executor -> dgx-moa-executor.service`; operator control is active |
 | Enabled integration | Dashboard, Codex OAuth Frontier, DeepSeek Flash Executor scheduling |
 | Disabled policy paths | ExecutionGraph control, specialist routing, Remote Judge, Loop Engineering, Runtime Skills/Knowledge/Evolution, declarative policy, training collection, weekly jobs |
 
 The ignored production environment reports `runtime_channel=main`,
 `trace_origin=production`, and `controller_commit=9d4045b`. That last value is
 stale configuration metadata, not source-deployment authority; Git history and
-the physical deploy/rollback record establish `304f9b1c2` as the running code
+the physical deploy/rollback record establish `22424effe` as the running code
 epoch. Correcting the metadata would require a runtime configuration change and
 restart, so it is not part of this documentation-only closeout.
 
@@ -48,10 +48,10 @@ restart, so it is not part of this documentation-only closeout.
 | --- | --- |
 | Active production request path | DeepSeek V4 Flash Executor; low/medium-risk fallback while local Mistral is operator-stopped |
 | Public API context | `131072`, as returned by `/v1/models` and loaded production config |
-| Inactive checked-in local candidate | Mistral Small 4, `131072`, seq1, 3.4 GB KV, explicit FlashInfer B12x dense/MoE, TRITON_MLA, `FULL_DECODE_ONLY` |
+| Operator-disabled local candidate | Mistral Small 4 on loopback `9001`, `131072`, seq1, 3.4 GB KV, native allocator, explicit FlashInfer B12x dense/MoE, TRITON_MLA, `FULL_DECODE_ONLY` |
 | Preserved rollback baseline | Phase 3 `65536`, seq1, 1.7 GB KV, `gpu_memory_utilization=0.5`, MARLIN |
 
-The inactive local candidate is not described as the active Executor. The 65K
+The operator-disabled local candidate is not described as the active Executor. The 65K
 MARLIN profile remains safety/rollback evidence, not the public context or the
 current production provider.
 
@@ -89,9 +89,9 @@ See `docs/API_CLIENT_MODES.md` for the public request contract and
 
 ## Repository state
 
-Local and remote long-lived branches are only `main` and `dev`, both at
-`6e050aa53` at closeout start. The registered development worktree is clean
-`dev`; the separate production clone is clean `main`; stash count is zero.
+Local and remote long-lived branches remain only `main` and `dev`. The
+registered development worktree and separate production checkout are clean;
+stash count is zero.
 Twenty-one `archive/20260814/*` tags preserve auxiliary branch, detached
 worktree, and stash commits. Dirty overlays remain in the mode-`0600` archive
 recorded by hash in `docs/VALIDATION.md`.

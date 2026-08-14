@@ -9441,3 +9441,52 @@ progress and disabled-control styling. A real `dgx-moa-fast` completion returned
 exactly `PROD_DASHBOARD_DEPLOY_OK` from `deepseek-v4-flash`. Local role ports,
 including `19301`, remained absent. Rollback remains the prior production
 revision `2900a7249`.
+
+### Production Executor dashboard control on loopback 9001 — 2026-08-15
+
+The operator superseded the historical local-Executor port decision and fixed
+the production contract at authenticated Gateway `0.0.0.0:9000` plus local
+Executor `127.0.0.1:9001`. The launcher had duplicated its listener map and
+ignored the configured model URL, while readiness/profile scripts still polled
+`19301`. Commits `cac5c3d52` and `5b9c374ef` made the existing model URL the
+launcher authority and aligned all checked-in Executor readiness checks with
+`9001`. Focused tests passed `47` configuration/model/serve cases and `18`
+serve/systemd cases; Ruff, strict mypy on 50 source files, Bash syntax, and
+systemd verification passed. The earlier complete suite passed `1155` tests.
+
+Installed inspection also found two stale Executor drop-ins that selected an
+experimental Qwen SGLang container and removed cgroup limits. They were moved,
+not deleted, into the mode-`0600` rollback tree
+`~/.local/state/dgx-moa/rollback-executor-toggle-20260815`; the checked-in unit
+then resolved with no drop-ins, 12/16/4-GiB cgroup limits, and `OOMPolicy=stop`.
+The production lifecycle override now uses fixed mode with the exact map
+`executor -> dgx-moa-executor.service`; the old MARLIN override was removed.
+The automation latch was reset without deleting 23 retained failure events.
+
+The first physical ON loaded all 13 shards in 473.87 seconds with dense
+`FlashInferB12xNvFp4LinearKernel` and MoE `FLASHINFER_B12X`, but failed before
+readiness at CUDA graph capture with `CUDA driver error: invalid argument`.
+This reproduced the recorded cudaMallocAsync failure class. Commit
+`22424effe` removed only the stale `PYTORCH_CUDA_ALLOC_CONF=backend:cudaMallocAsync`
+unit override, restoring the physically qualified native allocator; the
+regression asserts that the override stays absent.
+
+The second physical ON loaded weights in 450.20 seconds, used 66.09 GiB model
+memory, reserved the exact 3.17-GiB KV pool for 147,568 tokens, completed warmup
+in 30.66 seconds, and captured the decode graph in 11 seconds using 0.10 GiB.
+The unit became `active/running` with `NRestarts=0`; loopback `9001 /v1/models`
+returned `200` and only `dgx-moa-executor`. Admin status reported `ready`,
+`operator_enabled=true`, `control_available=true`,
+`active_executor=local_mistral`, and `fallback_active=false`. A scheduled local
+canary recorded `selected_executor=local_mistral` and returned exactly
+`LOCAL_EXECUTOR_OK` from model `dgx-moa-executor`.
+
+The same admin OFF endpoint then returned `200`, `state=disabled`,
+`operator_enabled=false`, `active_executor=deepseek-v4-flash`, and
+`fallback_active=true`. The exact unit ended `inactive/dead`, port `9001` and
+all Executor GPU compute were absent, and the Gateway remained PID `2888487`,
+`NRestarts=0`, with only `0.0.0.0:9000` exposed. The user-supplied previously
+revoked test token was reactivated hash-only as general key `toggle-test` with
+a 24-hour TTL, 100-request limit, and one-million-token limit; it returned
+`FALLBACK_AFTER_OFF` from `deepseek-v4-flash`. No raw token was stored in the DB
+or committed.
