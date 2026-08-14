@@ -37,6 +37,55 @@ class StubFlashExecutor:
         }
 
 
+def test_admin_dashboard_uses_live_probe_for_unmanaged_executor(settings: Settings) -> None:
+    configured = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "api_key": None,
+            "api_keys": {"operator": "operator-secret-value"},
+            "admin_api_enabled": True,
+            "admin_token_ids": ["operator"],
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            },
+        }
+    )
+    app = create_app(
+        configured,
+        overflow_executor=StubFlashExecutor(),  # type: ignore[arg-type]
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=False),
+    )
+    operator = {"Authorization": "Bearer operator-secret-value"}
+
+    with TestClient(app) as client:
+        app.state.lifecycle_store.recover_state("executor", "ready")
+        status = client.get("/v1/admin/executor", headers=operator)
+        dashboard = client.get("/admin").text
+
+    assert status.status_code == 200
+    payload = status.json()
+    assert {
+        key: payload[key]
+        for key in (
+            "state",
+            "operator_enabled",
+            "control_available",
+            "active_executor",
+            "fallback_active",
+        )
+    } == {
+        "state": "unmanaged",
+        "operator_enabled": False,
+        "control_available": False,
+        "active_executor": "deepseek-v4-flash",
+        "fallback_active": True,
+    }
+    assert "button:disabled" in dashboard
+    assert '$("executor-progress").hidden=percent==null' in dashboard
+
+
 def test_admin_dashboard_controls_executor_and_uses_flash_while_off(
     settings: Settings,
 ) -> None:
