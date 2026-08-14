@@ -3460,13 +3460,28 @@ def test_disabled_local_executor_routes_low_risk_request_to_flash(
     ("flash_error", "expected_status"),
     [
         (OverflowExecutorInvalidOutput("no public output"), 200),
+        (
+            {
+                "model": "deepseek-v4-flash",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke>",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+            200,
+        ),
         (OverflowExecutorUnavailable("authorization unavailable"), 503),
     ],
 )
 def test_flash_invalid_output_alone_falls_back_to_frontier(
     settings: Settings,
     stub_provider: StubProvider,
-    flash_error: Exception,
+    flash_error: Exception | dict[str, object],
     expected_status: int,
 ) -> None:
     frontier_config = settings.state_db.parent / "flash-invalid-frontier.yaml"
@@ -3493,7 +3508,9 @@ def test_flash_invalid_output_alone_falls_back_to_frontier(
 
         async def execute(self, request, correlation_id):  # type: ignore[no-untyped-def]
             del request, correlation_id
-            raise flash_error
+            if isinstance(flash_error, Exception):
+                raise flash_error
+            return flash_error
 
     app = create_app(
         controlled,

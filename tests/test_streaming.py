@@ -225,13 +225,12 @@ async def test_responses_sse_retries_truncated_or_internal_output() -> None:
 
     with pytest.raises(ProgressOnlyResponse, match="truncated_response"):
         _ = [chunk async for chunk in responses_sse(upstream("평가 결과", "length"), "dgx-moa")]
-    with pytest.raises(ProgressOnlyResponse, match="invalid_output"):
-        _ = [
-            chunk
-            async for chunk in responses_sse(
-                upstream("평가 결과</function_response>", "stop"), "dgx-moa"
-            )
-        ]
+    for text in (
+        "평가 결과</function_response>",
+        '<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="bash">',
+    ):
+        with pytest.raises(ProgressOnlyResponse, match="invalid_output"):
+            _ = [chunk async for chunk in responses_sse(upstream(text, "stop"), "dgx-moa")]
 
 
 @pytest.mark.asyncio

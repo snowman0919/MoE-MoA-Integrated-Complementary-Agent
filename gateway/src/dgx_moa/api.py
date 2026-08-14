@@ -146,6 +146,7 @@ from .streaming import (
     compatible_edit_call,
     completed_chat_sse,
     forward_sse,
+    has_internal_protocol_leak,
     keepalive_sse,
     reported_usage,
     response_usage,
@@ -3083,6 +3084,12 @@ def create_app(
                         response = await flash_provider.execute(
                             scoped_request, f"{usage_request_id}:{stage}"
                         )
+                        message = (response.get("choices") or [{}])[0].get("message", {})
+                        content = message.get("content") if isinstance(message, dict) else None
+                        if isinstance(content, str) and has_internal_protocol_leak(content):
+                            raise OverflowExecutorInvalidOutput(
+                                "Executor Flash returned internal protocol markup"
+                            )
                     except OverflowExecutorInvalidOutput:
                         frontier_provider = request.app.state.frontier
                         if frontier_provider is None:

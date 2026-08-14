@@ -198,7 +198,12 @@ def has_korean_script_leak(text: str, progress_language: str, objective: str) ->
 def has_internal_protocol_leak(text: str) -> bool:
     prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     return bool(
-        re.search(r"</?(?:function|tool|assistant|response)[_:-]", prose, re.IGNORECASE)
+        re.search(
+            r"</?[|｜]{2}DSML[|｜]{2}(?:tool_calls?|invoke|parameter)\b",
+            prose,
+            re.IGNORECASE,
+        )
+        or re.search(r"</?(?:function|tool|assistant|response)[_:-]", prose, re.IGNORECASE)
         or re.search(r"<\|(?:tool|assistant|function)[^|>]*\|>", prose, re.IGNORECASE)
         or re.search(
             r"\b(?:INNER_THINKING|AgentFinish|RETURN_VALIDATED_OUTPUT|"
