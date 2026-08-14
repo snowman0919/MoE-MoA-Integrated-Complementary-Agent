@@ -21,15 +21,15 @@ test, SQLite와 실제 listener를 기준으로 한다. 세부 물리 수치와 
 | 기능 | 시작 상태 | candidate 상태 | route → runtime → provider/tool → persistence → client → test 근거와 남은 경계 |
 | --- | --- | --- | --- |
 | Chat/Responses common execution | `PHYSICALLY_VERIFIED` | `PHYSICALLY_VERIFIED` | `/v1/responses`가 동일 `chat()` core로 변환된다. Production authenticated Chat/Responses와 격리 raw/Codex smoke가 성공했고 protocol/tool/stream tests가 존재한다. |
-| Codex/OpenCode/Hermes compatibility | `PARTIALLY_WIRED` | `PARTIALLY_WIRED` | 네 client smoke는 성공했다. 세 legacy OpenCode launcher는 canonical `dgx-moa`로 수정됐다. 그러나 v3 Codex coding task는 public test만 통과하고 hidden validator와 clean-terminal gate가 실패했으며 OpenCode/Hermes 3~5 task batch는 미실행이다. |
+| Codex/OpenCode/Hermes compatibility | `PARTIALLY_WIRED` | `PARTIALLY_WIRED` | 네 client smoke와 canonical launcher 정리는 성공했다. v6 OpenCode는 public/terminal/protocol gate를 회복했지만 hidden float validator가 실패했다. Codex의 유효한 post-fix replay, Hermes 3~5 task batch와 broader client matrix는 미실행이다. |
 | ExecutionGraph | `PARTIALLY_WIRED` | `PARTIALLY_WIRED` | Compiler/runtime/store가 fan-out/join/retry/fallback/tool continuation/approval/checkpoint를 구현하고 production DB에 graph `164`, attempt `797`, checkpoint `1998`이 있다. Checked-in default는 `disabled`, production은 `shadow`; client control authority가 아니므로 완료가 아니다. |
-| Role Context projection | `PARTIALLY_WIRED` | `IMPLEMENTED_NOT_DEPLOYED` | 시작 production invocation은 explicit provider token/drop reason이 없었다. Candidate는 deterministic priority selector와 byte/token/drop telemetry를 구현했다. v3에서 Executor `31`, Reasoner `7`, Reviewer projection `12`건이 실제 provider 호출까지 전달됐고 drop은 `0`이었다. |
+| Role Context projection | `PARTIALLY_WIRED` | `IMPLEMENTED_NOT_DEPLOYED` | 시작 production invocation은 explicit provider token/drop reason이 없었다. Candidate는 deterministic priority selector와 byte/token/drop telemetry를 구현했다. v6 최종 candidate에서 Executor/Reasoner/Reviewer projection `10/1/4`, provider token 기록 `10/1/5`, drop `0`을 실제 호출까지 확인했다. |
 | Canonical evidence persistence | `PHYSICALLY_VERIFIED` | `PHYSICALLY_VERIFIED` | Runtime snapshot/projection, session/event, tool execution과 Graph state가 SQLite에 durable 저장된다. Candidate는 기존 schema 안에서 context 전달량을 보강했지만 아직 production에는 없다. |
-| Planner/Reviewer/Judge/Frontier routing | `PARTIALLY_WIRED` | `PARTIALLY_WIRED` | Production DB와 과거 canary에 모든 role이 있고 v3 remote Reviewer `21`회가 실제 완료됐다. Checked-in specialist/Judge는 disabled다. Production override는 현재 정책과 달리 둘을 enable하며 v3 review→correction이 수렴하지 않았다. Provider별 release gate가 닫히지 않았다. |
-| API-key isolation | `PARTIALLY_WIRED` | `IMPLEMENTED_NOT_DEPLOYED` | General/admin hash-only store와 cross-key isolation은 production 증거가 있다. Candidate는 short-TTL `evaluation` kind와 inference-only allowlist를 추가했다. Smoke 네 key와 v3 key 모두 revoke 후 `401`, plaintext `0`, hash `64`를 확인했으나 main/production에는 없다. |
+| Planner/Reviewer/Judge/Frontier routing | `PARTIALLY_WIRED` | `PARTIALLY_WIRED` | Production DB와 과거 canary에 모든 role이 있다. v6 remote Reviewer 5회와 rejection→Executor tool handoff 3회가 완료됐지만 마지막 Reviewer가 hidden defect를 놓친 코드를 잘못 승인했다. Checked-in specialist/Judge는 disabled이고 provider별 quality gate는 닫히지 않았다. |
+| API-key isolation | `PARTIALLY_WIRED` | `IMPLEMENTED_NOT_DEPLOYED` | General/admin hash-only store와 cross-key isolation은 production 증거가 있다. Candidate는 short-TTL `evaluation` kind와 inference-only allowlist를 추가했다. Smoke 네 key와 v3/v6 key 모두 revoke 후 `401`, plaintext `0`, hash `64`를 확인했으나 main/production에는 없다. |
 | Overflow Executor | `PHYSICALLY_VERIFIED` | `PHYSICALLY_VERIFIED` | OpenCode Go `deepseek-v4-flash` completion/tool continuation/stream/cancel/fairness/recovery/high-risk fail-closed 증거와 scheduler tests가 있다. Checked-in default는 정책상 disabled이고 production override만 enabled다. |
 | Tool call과 continuation | `PHYSICALLY_VERIFIED` | `PHYSICALLY_VERIFIED` | Chat/Responses native function/custom tool, matching call/session, continuation lease, expiry와 bounded budget이 source/test/production canary에 연결된다. Executor만 client-visible tool authority를 가진다. |
-| Streaming/cancellation/recovery | `PARTIALLY_WIRED` | `PARTIALLY_WIRED` | Core SSE translation, cancellation, partial EOF, model-loading wait, session recovery는 test와 과거 production canary를 통과했다. v3에서는 reconnect `2`, progress retry `10`, stream abort `11`이 생겨 real client quality gate가 실패했다. |
+| Streaming/cancellation/recovery | `PARTIALLY_WIRED` | `PARTIALLY_WIRED` | Core SSE translation, cancellation, partial EOF, loading wait와 session recovery가 test된다. v6 required-tool buffer는 stream complete/abort `10/0`, retry `3/3`, reconnect `0`으로 v3 protocol failure를 회복했지만 task hidden gate는 실패했고 다른 client replay는 남았다. |
 | Dashboard/WebSocket | `PHYSICALLY_VERIFIED` | `PHYSICALLY_VERIFIED` | Cookie-scoped HTTP/WebSocket, cross-key redaction, Graph event/snapshot과 topology tests가 있다. 현재 production private session `204`, snapshot/runtime `200`, role `7`, Graph `shadow`, session delete `204`를 재확인했다. |
 | Logging/trace | `PHYSICALLY_VERIFIED` | `PHYSICALLY_VERIFIED` | Production request/event/tool/stream/review/Judge 집계가 존재하고 raw secret/hidden reasoning 제외 계약이 test된다. Candidate context telemetry는 `IMPLEMENTED_NOT_DEPLOYED` 하위 항목이다. |
 | Training candidate/weekly/retention | `DISABLED_BY_POLICY` | `DISABLED_BY_POLICY` | Separate store, sanitization, opt-out/tombstone/hold, dry-run retention과 packaging code/tests는 있다. 현재 권위는 physical gates 전 disable이다. Production override가 training/weekly를 enable한 것은 policy finding이며 현재 권위로 인정하지 않는다. |
@@ -55,13 +55,13 @@ fixed/adaptive on-demand loading이 현재 활성이라는 주장은 이번 물�
 ## 크기와 정리 상태
 
 동일한 tracked-file 기준으로 Python source는 시작/현재 모두 `50`, config `6`, script `53`이다.
-Gateway Python LOC는 `35177 → 35301`로 `124` 증가했다. Candidate 전체 diff는 CI, tests와
+Gateway Python LOC는 `35177 → 35505`로 `328` 증가했다. Candidate 전체 diff는 CI, tests와
 물리 증거 문서를 포함하므로 아직 실질 순감축 조건을 만족하지 않는다. 새 framework, ORM,
 broker, orchestration dependency는 추가하지 않았다.
 
 ## 현재 release 판정
 
-`IN_PROGRESS`다. Codex deterministic hidden validator/terminal gate, OpenCode/Hermes/raw의
-3~5 task batch, review-correction 재현, Graph control authority 여부, policy override 정리,
+`IN_PROGRESS`다. OpenCode v6는 review-correction protocol을 회복했지만 hidden validator와
+Reviewer quality gate가 실패했다. Codex/Hermes/raw의 3~5 task batch, Graph control authority 여부, policy override 정리,
 전체 회귀, dev integration, protected CI, bounded production canary와 rollback rehearsal이 남았다.
 Merge, deploy, systemd/security topology 변경은 승인 전 수행하지 않는다.

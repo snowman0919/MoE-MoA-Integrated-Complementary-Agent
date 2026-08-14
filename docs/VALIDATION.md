@@ -9274,3 +9274,41 @@ first-byte latency 증가, SSE shape, duplicate tool call, timeout/abort 처리�
 같은 root cause에 대한 마지막 일반화 시도이며 이 replay도 개선되지 않으면 자동 수정을 중단한다.
 rollback commit은 `dda6cdf85`다. Candidate는 focused test `3`, Ruff/format, strict mypy `51`
 source와 full pytest `1148`을 통과했으며 아직 physical replay 전이다.
+
+두 번째 수정의 첫 physical 시도 OpenCode v4는 buffered completion에 원래 `stream=true`를
+남겨 provider SSE를 JSON으로 파싱했고, v5는 `stream=false`로 바꾼 뒤에도
+`stream_options`를 남겨 Candidate A가 정확히 `400`을 반환했다. Candidate A 직접 대조는
+같은 required-tool 요청이 `stream_options` 없을 때 `200`과 native tool call, 있을 때
+`Stream options can only be defined when stream=True`를 재현했다. 두 run은 hypothesis를
+실행하지 못한 protocol implementation evidence로 폐기하고 exact container/gateway를 종료했다.
+Gateway 종료 후 남은 isolated evaluation row는 plaintext `0`, hash `64`를 확인한 뒤 직접
+revoke했다. Buffer가 `stream=false`를 강제하고 `stream_options`를 제거하는 assertion을 추가해
+최종 두 번째 수정 commit을 `8cce5d36c`로 고정했다. Ruff/format, strict mypy `51` source와
+full pytest `1148`이 다시 통과했다.
+
+OpenCode v6는 새 workspace/DB와 loopback `127.0.0.1:19010`, 10분 evaluation key에서
+`8cce5d36c`를 replay했다. Runtime은 pre-synthesis Reviewer rejection 뒤 local required-tool
+retry를 request별 한 번으로 제한해 requested/completed `3/3`을 기록했고 client가 세 tool을
+실제로 continuation했다. Stream은 completed/abort `10/0`; ASGI/400/reconnect가 없었다.
+OpenCode는 `394.782`초, exit `0`, public unit test, Korean final, terminal,
+`no_bad_terminal`, source-only, test immutability와 tool evidence를 모두 통과했다. Key는
+revoke `200`, 이후 models `401`, plaintext `0`, hash `64`, raw DB/WAL 검출 false이고 gateway
+exit `0`이었다. Production health `200`, clean `main@59bcb54e5`, PID `235390`은 변하지 않았다.
+
+그러나 hidden validator는 여전히 positive float `window_seconds`가 거절되어 실패했다. Reviewer는
+네 cycle 중 앞의 세 번 concurrency correction을 요구했지만 float acceptance는 이번 run에서
+찾지 못했고, 마지막에는 lock이 없고 float를 거절하는 코드에 `approved`를 반환했다. 따라서
+review→tool handoff와 protocol recovery는 물리 개선됐지만 deterministic task quality는 개선되지
+않았다. 분류는 `MODEL_CAPABILITY/REVIEW_QUALITY`; 같은 root cause에 두 번의 Runtime 수정 후
+일반화 품질 gate가 닫히지 않았으므로 추가 자동 수정을 중단했다. Failed-task replay가 통과하지
+않아 unseen task, broader client batch, candidate noninferiority, dev integration, canary와 rollback은
+시작하지 않았다.
+
+v6 Role Context는 Executor `10`, Reasoner `1`, Reviewer projection `4`건이다. Executor의
+snapshot/projection/rendered prompt는 각각 `12704..30263`, `13472..31741`,
+`20928..39447` bytes이고 provider prompt token은 10건 합계 `142167`
+(`10322..17745`)이다. Reasoner는 `12098/12762/16116`, token `3968`; Reviewer는
+`34257..44432`, `34950..36783`, `41602..43463`, provider invocation 5건 token 합계
+`53680` (`4029..12613`)이다. 모든 projection은 objective/original input/request constraint를
+포함했고 Executor/Reviewer에는 해당 tool와 model contribution evidence가 포함됐으며 dropped
+evidence는 `0`이었다. Raw remote review output과 hidden reasoning은 Git에 기록하지 않았다.
