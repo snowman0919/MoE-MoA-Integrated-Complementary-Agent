@@ -9312,3 +9312,48 @@ snapshot/projection/rendered prompt는 각각 `12704..30263`, `13472..31741`,
 `53680` (`4029..12613`)이다. 모든 projection은 objective/original input/request constraint를
 포함했고 Executor/Reviewer에는 해당 tool와 model contribution evidence가 포함됐으며 dropped
 evidence는 `0`이었다. Raw remote review output과 hidden reasoning은 Git에 기록하지 않았다.
+
+최종 candidate `097ed711f`의 client-family 교차 확인으로 Codex v7을 새 workspace/DB와
+loopback `127.0.0.1:19011`, 30분 evaluation key에서 동일 frozen `rate-limiter`에 실행했다.
+30분 TTL은 이전 5분 expiry confound를 제거하면서 평가 종료 즉시 revoke하는 bounded scope다.
+Client container는 pinned image, Codex `0.146.0`, Git/ripgrep, workspace/state와 evaluation
+key만 받았고 provider credential은 gateway process에만 메모리 전달됐다.
+
+Codex v7은 정확히 harness limit `1800.111`초에 return `124`로 timeout됐다. Runtime required
+local tool retry는 requested/completed `5/5`, stream completed/abort `47/1`이었고 유일한 abort는
+timeout cancellation이었다. ASGI/400/JSON decode/reconnect는 없었다. 그러나 request `53`,
+tool call/execution `48/41`, progress retry `6`, Reasoner structured retry `6` 뒤에도 Reviewer는
+한 번도 시작되지 않았다. 최종 source는 계약의 `allow/remaining` API를 `check`와
+`window_and_remaining`으로 바꾸고 constructor parameter도 변경해 public tests가 thread별
+`AttributeError`로 실패했으며 hidden positive-float contract도 실패했다. Source-only와 tool
+evidence만 통과했고 deterministic/public/terminal/Korean gate는 실패했다.
+
+Codex v7 key도 종료 시 revoke `200`, 이후 models `401`, plaintext `0`, hash `64`, raw DB/WAL
+검출 false이고 isolated gateway exit `0`이었다. Production health `200`, clean
+`main@59bcb54e5`, PID `235390`, restart `0`은 변하지 않았다. 분류는
+`MODEL_CAPABILITY/LOOP_CONVERGENCE`; OpenCode v6와 함께 common required-tool protocol은
+작동하지만 두 client family 모두 deterministic quality를 통과하지 못했다는 교차 증거다.
+
+Codex v7 Role Context는 Executor/Reasoner projection `48/15`, dropped evidence `0`이다.
+Executor snapshot/projection/rendered prompt는 `11093..58451`, `11860..60971`,
+`19796..69408` bytes이고 completed invocation 47건의 provider prompt token 합계는
+`773164` (`7600..23936`)다. Reasoner는 `10289..58397`, `10953..60856`,
+`14315..64761`, invocation 14건 token 합계 `178598` (`3435..19769`)이다. Timeout 전에
+Reviewer projection은 생성되지 않았다. 같은 root의 두 Runtime 수정 뒤 client-family replay도
+품질을 회복하지 못했으므로 추가 자동 Runtime 수정과 unseen/broader batch는 계속 중단한다.
+
+Git 정규화는 canonical origin을 다시 fetch한 뒤 read-only containment를 먼저 확인했다. Local
+main에는 고유 commit이 없고 origin/main이 `37` commit 앞서 있어 fast-forward했으며 최종
+main/origin-main과 dev/origin-dev divergence는 모두 `0/0`이다. Dev와 origin/main에 완전히
+포함되고 연결 worktree가 없던 `archive/dev-before-realign-20260807-041020`,
+`auto/cleanup/shared-runtime-core`, `auto/integration/pilot-current-source-v1`만 `git branch -d`로
+삭제했다. 시작 `13` branch/`10` worktree/`5` stash, audit worktree 추가 시점 `14/11/5`, 안전
+정리 후 현재 `11/11/5`다.
+
+`git worktree prune --dry-run --verbose`는 제거 대상을 반환하지 않았다. Origin/main에 완전히
+포함된 auxiliary worktree 세 개도 각각 dirty/untracked `6/1/1`개라 보존했고, 나머지 clean
+worktree는 origin/main 대비 고유 commit `9..294`개, dirty detached worktree는 고유 commit
+`65`개를 가진다. Stash 다섯 개도 각각 tracked/untracked 파일 수가 `122/0`, `8/4`, `2/1`,
+`7/1`, `38/9`로 비어 있지 않다. 따라서 사용자 변경이나 고유 history를 추측해 제거하지 않았다.
+Production checkout은 clean `main@59bcb54e5`로 그대로이고, merge/deploy/systemd 변경은 하지
+않았다.
