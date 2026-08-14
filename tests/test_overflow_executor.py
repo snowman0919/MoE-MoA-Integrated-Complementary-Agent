@@ -54,6 +54,8 @@ async def test_opencode_go_executor_preserves_native_tools_and_strips_private_fi
             "tools": [{"type": "function", "function": {"name": "read_file"}}],
             "tool_choice": "auto",
             "parallel_tool_calls": True,
+            "stream": True,
+            "stream_options": {"include_usage": True},
             "metadata": {"secret": "never-forward"},
             "_client_workspace_path": "/private/path",
         },
@@ -63,8 +65,9 @@ async def test_opencode_go_executor_preserves_native_tools_and_strips_private_fi
     assert captured["model"] == "deepseek-v4-flash"
     assert captured["tool_choice"] == "auto"
     assert captured["parallel_tool_calls"] is True
+    assert captured["stream"] is False
     assert captured["max_tokens"] == 1024
-    assert "metadata" not in captured and "_client_workspace_path" not in captured
+    assert not {"metadata", "stream_options", "_client_workspace_path"} & captured.keys()
     assert result["provider_provenance"]["provider"] == "opencode_go"
 
 
