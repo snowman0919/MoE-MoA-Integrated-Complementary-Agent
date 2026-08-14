@@ -195,7 +195,12 @@ def matrix_args(tmp_path: Path, *, gateway: str = "http://gateway.invalid:9000")
     )
 
 
-def test_fixture_manifest_pins_gateway_runner_and_prompt(tmp_path: Path) -> None:
+def test_fixture_manifest_pins_gateway_runner_and_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(
+        GLOBALS, "runtime_fingerprint", lambda harness: {"client": harness, "version": "test"}
+    )
     args = matrix_args(tmp_path)
     task = GLOBALS["TASKS"][0]
 
@@ -238,7 +243,12 @@ def test_partial_summary_does_not_claim_noninferiority(tmp_path: Path) -> None:
     }
 
 
-def test_schedule_is_complete_deterministic_and_manifest_bound(tmp_path: Path) -> None:
+def test_schedule_is_complete_deterministic_and_manifest_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(
+        GLOBALS, "runtime_fingerprint", lambda harness: {"client": harness, "version": "test"}
+    )
     args = matrix_args(tmp_path)
     for harness in GLOBALS["HARNESSES"]:
         for task in GLOBALS["TASKS"]:
