@@ -27,7 +27,7 @@ worktree cleanup is not complete. This does not promote policy-disabled paths.
 
 | Item | Current fact |
 | --- | --- |
-| Source | Runtime code and clean production checkout `main@10f8248fc` |
+| Source | Runtime code `main@10f8248fc`; the clean production checkout also includes the current evidence update |
 | Rollback | Code rollback `a030d51e7`; physical source rollback/redeploy also passed against `c9bf3e3d8` |
 | Gateway | PID `3209048`, `NRestarts=0`, healthy authenticated listener on `0.0.0.0:9000` |
 | Public catalog | only `dgx-moa` and `dgx-moa-fast`, both `context_length: 131072` |
