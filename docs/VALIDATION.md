@@ -9491,6 +9491,36 @@ a 24-hour TTL, 100-request limit, and one-million-token limit; it returned
 `FALLBACK_AFTER_OFF` from `deepseek-v4-flash`. No raw token was stored in the DB
 or committed.
 
+### Production OpenCode Go specialist reactivation — 2026-08-15
+
+The operator superseded the Executor-off audit's scope-only specialist disable.
+Production commit `10f8248fc` retained the checked-in disabled default and fixed
+Executor-only lifecycle unit map, while the ignored production override changed
+only `DGX_MOA_SPECIALIST_ROUTING` from disabled to enabled with provider
+`opencode_go`. The existing credential remained environment-only. Gateway restart
+changed PID `3189012` to `3209048`; health and authenticated models returned `200`,
+`NRestarts=0`, and only the authenticated Gateway listened on `0.0.0.0:9000`.
+
+An orchestrated architecture canary returned HTTP `200` in `97.353` seconds and
+recorded remote Planner `deepseek-v4-pro` completed once. The orchestrated review
+canary recorded remote Reviewer `glm-5.2` completed once; the Dashboard usage API
+returned logical role `reviewer`, provider `remote`, model `glm-5.2`, one invocation,
+and 2,524 total tokens. Its final request honestly returned `503`: both Reviewer and
+Frontier code review produced material findings, Flash produced invalid output, the
+bounded Frontier Executor fallback completed, and correction could not proceed
+without a client tool. This is downstream correction/tool evidence, not a specialist
+availability failure; no full review-task pass is claimed.
+
+All three short-TTL evaluation keys were revoked immediately, then returned models
+`401`; SQLite stored plaintext length `0`, hash length `64`, and non-null
+`revoked_at`. Validation requests triggered the fixed local Executor start path, so
+the operator used exact service stop. The first OFF timed out after 180 seconds and
+left the unit failed with no process or `9001` listener; reset-failed followed by an
+idempotent OFF returned `200`, `state=disabled`, generation `25`. Final state was
+Gateway PID `3209048`, Executor/Planner/Reviewer units inactive, no listeners on
+`9001`, `8102`, or `8103`, and only `0.0.0.0:9000` exposed. The mode-`0600` rollback
+copy is `~/.local/state/dgx-moa/specialist-routing-reactivation-20260815.env.local`.
+
 ## Runtime provider-input and isolated-client re-audit — 2026-08-15
 
 The re-audit started at `c9bf3e3d8`, promoted four focused releases, and ended

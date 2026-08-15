@@ -2928,6 +2928,7 @@ class Controller:
         frontier_task: asyncio.Task[FrontierCollaborationResult] | None = None
         frontier_graph_attempt: str | None = None
         frontier_degraded = False
+        frontier_replaces_reviewer = False
         planner_task: asyncio.Task[tuple[dict[str, Any], dict[str, Any]]] | None = None
         planner_request: dict[str, Any] | None = None
         planner_projection: RoleContextProjection | None = None
@@ -3608,6 +3609,7 @@ class Controller:
                     and self.frontier is not None
                     and state.frontier_invocations < self.frontier.config.max_invocations_per_task
                 ):
+                    frontier_replaces_reviewer = True
                     frontier_review_evidence = {
                         "objective": effective_objective(state),
                         "acceptance_criteria": state.acceptance_criteria,
@@ -3812,11 +3814,17 @@ class Controller:
                 self.record_observed_invocation(
                     state,
                     {
-                        "role": "frontier",
+                        "role": "reviewer" if frontier_replaces_reviewer else "frontier",
+                        "model": self.frontier.config.model,
                         "provider": (
                             "openrouter"
                             if frontier_result.profile.startswith("openrouter:")
                             else "codex"
+                        ),
+                        **(
+                            {"fallback_reason": "local_reviewer_unavailable"}
+                            if frontier_replaces_reviewer
+                            else {}
                         ),
                         "mode": frontier_result.mode,
                         "latency_ms": frontier_result.latency_ms,

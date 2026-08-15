@@ -2499,6 +2499,15 @@ def create_app(
                     record_trace_safely(request, current, task_id)
                 if usage_started:
                     completed_at = time.time()
+                    role_failures = dict(degraded_roles)
+                    if current is not None and any(
+                        invocation.get("role") == "reviewer"
+                        and invocation.get("fallback_reason") == "local_reviewer_unavailable"
+                        and invocation.get("status") == "completed"
+                        for invocation in current.agent_invocations
+                    ):
+                        role_failures.pop("reviewer", None)
+                        stage_status["reviewer"] = "completed"
                     request.app.state.usage.finalize(
                         usage_request_id,
                         RequestUsageFinalization(
@@ -2526,7 +2535,7 @@ def create_app(
                             )
                             for role in tracked_roles
                         },
-                        role_failures=degraded_roles,
+                        role_failures=role_failures,
                     )
             finally:
                 if disconnect_watcher is not None:

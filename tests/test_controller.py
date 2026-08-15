@@ -953,11 +953,95 @@ async def test_unavailable_local_review_falls_back_to_frontier_code_review(
     }
     assert state.review_status == "rejected_frontier"
     assert state.frontier_correction_required is True
+    assert any(
+        invocation.get("role") == "reviewer"
+        and invocation.get("provider") == "codex"
+        and invocation.get("fallback_reason") == "local_reviewer_unavailable"
+        and invocation.get("status") == "completed"
+        for invocation in state.agent_invocations
+    )
     assert "reject non-finite window values" in json.dumps(prepared["messages"])
     assert any(
         event["event_type"] == "frontier_collaboration_started"
         and event["payload"].get("trigger") == "local_reviewer_unavailable"
         for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_existing_disagreement_frontier_is_not_attributed_as_reviewer_fallback(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class DisagreementFrontier:
+        config = FrontierConfig(enabled=True, max_invocations_per_task=3)
+
+        def __init__(self) -> None:
+            self.modes: list[str] = []
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            self.modes.append(mode)
+            return FrontierCollaborationResult(
+                mode="disagreement",
+                output={
+                    "preferred_position": "bounded",
+                    "evidence": [],
+                    "rejected_assumptions": [],
+                    "required_follow_up": [],
+                    "confidence": 0.95,
+                },
+                latency_ms=1,
+                transmitted_categories=sorted(evidence),
+            )
+
+    original = stub_provider.complete
+
+    async def unavailable_review(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reviewer":
+            raise httpx.ConnectError("reviewer unavailable")
+        return await original(role, model, request, **kwargs)
+
+    frontier = DisagreementFrontier()
+    stub_provider.complete = unavailable_review  # type: ignore[method-assign]
+    state = SessionState(
+        session_id="disagreement-frontier-not-reviewer",
+        objective="Resolve the bounded implementation disagreement",
+        runtime_mode="orchestrated",
+        request_class="explicit_orchestrated",
+        roles_required=["reasoner", "executor", "reviewer", "frontier"],
+    )
+    controller = Controller(
+        settings,
+        StateStore(settings.state_db),
+        stub_provider,
+        frontier,  # type: ignore[arg-type]
+    )
+
+    await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-orchestrated",
+            "messages": [{"role": "user", "content": state.objective}],
+            "metadata": {
+                "unresolved_disagreement": True,
+                "changed_paths": ["gateway/src/example.py"],
+                "diff_summary": "bounded implementation diff",
+                "validation_results": [{"name": "unit", "passed": True}],
+            },
+        },
+        ("reasoner", "executor", "reviewer", "frontier"),
+    )
+
+    assert frontier.modes == ["disagreement"]
+    assert any(
+        invocation.get("role") == "frontier"
+        and invocation.get("mode") == "disagreement"
+        and invocation.get("status") == "completed"
+        for invocation in state.agent_invocations
+    )
+    assert not any(
+        invocation.get("role") == "reviewer"
+        and invocation.get("fallback_reason") == "local_reviewer_unavailable"
+        for invocation in state.agent_invocations
     )
 
 

@@ -24,7 +24,7 @@ from dgx_moa.api import (
 from dgx_moa.config import Settings
 from dgx_moa.controller import fingerprint
 from dgx_moa.execution_graph import ExecutionGraphRuntime, NodeState, NodeType
-from dgx_moa.frontier import FrontierCollaborationResult
+from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
 from dgx_moa.lifecycle import (
     FakeLifecycleDriver,
     calculate_idle_policy,
@@ -5764,6 +5764,101 @@ def test_executor_only_lifecycle_map_preserves_low_risk_reviewer_degrade(
     assert high_risk.status_code == 503
     assert high_risk.json()["error"]["code"] == "model_not_managed"
     assert high_risk.headers["X-DGX-MOA-Model-Role"] in {"planner", "reviewer"}
+
+
+def test_executor_only_map_attributes_successful_frontier_review_to_reviewer(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    class CleanReviewFrontier:
+        config = FrontierConfig(enabled=True, max_invocations_per_task=3)
+
+        async def collaborate(self, mode, evidence, correlation_id):  # type: ignore[no-untyped-def]
+            return FrontierCollaborationResult(
+                mode="code_review",
+                output={
+                    "verdict": "approve",
+                    "critical": [],
+                    "important": [],
+                    "suggestions": [],
+                    "missing_tests": [],
+                    "confidence": 0.95,
+                },
+                latency_ms=1,
+                transmitted_categories=sorted(evidence),
+            )
+
+    models = dict(settings.models)
+    models["reasoner"] = models["reasoner"].model_copy(
+        update={"provider": "ollama", "lifecycle_control": "external"}
+    )
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "models": models,
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    original = stub_provider.complete
+
+    async def unavailable_review(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor":
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "executor output"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        if role == "reviewer":
+            raise httpx.ConnectError("reviewer unavailable")
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = unavailable_review  # type: ignore[method-assign]
+    app = create_app(
+        controlled,
+        lifecycle_driver=FakeLifecycleDriver({"executor": "active"}),
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        app.state.frontier = CleanReviewFrontier()
+        app.state.controller.frontier = app.state.frontier
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "implement the bounded change"}],
+                "metadata": {
+                    "changed_paths": ["bounded.py"],
+                    "diff_summary": "changed one implementation",
+                    "validation_results": [{"name": "unit", "passed": True}],
+                },
+            },
+        )
+        request_id = app.state.usage.recent_requests()[0].request_id
+
+    assert response.status_code == 200
+    with sqlite3.connect(controlled.state_db) as database:
+        assert database.execute(
+            "SELECT success, failure_class FROM role_request_usage "
+            "WHERE request_id = ? AND role = 'reviewer'",
+            (request_id,),
+        ).fetchone() == (1, None)
+        assert database.execute(
+            "SELECT role, model, provider, fallback_reason, status "
+            "FROM model_invocation_usage WHERE request_id = ? AND role = 'reviewer'",
+            (request_id,),
+        ).fetchone() == (
+            "reviewer",
+            app.state.frontier.config.model,
+            "codex",
+            "local_reviewer_unavailable",
+            "completed",
+        )
 
 
 @pytest.mark.parametrize("failure", ["value", "timeout", "http_4xx"])
