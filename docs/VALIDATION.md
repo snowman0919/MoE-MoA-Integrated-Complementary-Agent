@@ -9576,3 +9576,19 @@ not overwritten, stashed, committed, or deployed. Remote main/dev and the clean
 production checkout own the release, but final local cleanup remains open.
 From `c9bf3e3d8` to `10f8248fc`, 11 existing files changed by `+567/-26`; no
 file was added or removed and no net reduction is claimed.
+
+## Executor-owned tool commentary — 2026-08-15
+
+The reported Codex transcript reproduced in `responses_sse`: progress-only or
+language-mismatched Executor text was replaced by `tool_progress_text` with a
+Gateway-authored description derived from the tool name and shell command.
+The replacement and its `substantive_tool_progress` selector were deleted.
+Meaningful Executor commentary is still forwarded unchanged; rejected
+progress, protocol leakage, and language mismatch now produce no synthetic
+Gateway text while the native tool call remains intact.
+
+The regression first failed with the exact `cd /tmp/rust-mcu-ide && sed ...`
+shape and passed after the deletion. Streaming tests passed `81`; related API
+tests passed `29`; Ruff format/check, strict mypy on 51 source files, and the
+complete suite passed at `1151 passed, 1 warning`. This candidate is
+`IMPLEMENTED_NOT_DEPLOYED`.

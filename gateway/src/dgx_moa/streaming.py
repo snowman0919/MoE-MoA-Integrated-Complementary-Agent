@@ -450,126 +450,6 @@ def _log_token(value: str) -> str:
     return "".join(character if character.isprintable() else "?" for character in value)[:256]
 
 
-def tool_progress_text(tool_calls: dict[int, dict[str, object]], progress_language: str) -> str:
-    if len(tool_calls) > 1:
-        names = sorted({str(item.get("name") or "tool") for item in tool_calls.values()})
-        return (
-            f"독립적인 도구 호출 {len(tool_calls)}개({', '.join(names)})를 함께 실행해 "
-            "이번 단계의 근거를 모읍니다."
-            if progress_language == "ko"
-            else f"Running {len(tool_calls)} independent {', '.join(names)} calls together "
-            "to collect this phase's evidence."
-        )
-    first_tool = tool_calls[min(tool_calls)]
-    try:
-        arguments = json.loads(str(first_tool["_arguments"]))
-    except (KeyError, TypeError, ValueError):
-        arguments = {}
-    command = arguments.get("cmd") if isinstance(arguments, dict) else None
-    if isinstance(command, str):
-        if "goal-objective" in command:
-            return (
-                "목표 문서를 확인합니다."
-                if progress_language == "ko"
-                else "Reading the goal objective."
-            )
-        if "AGENTS.md" in command or "docs/STATE.md" in command:
-            return (
-                "저장소 지침과 필수 운영 문서를 확인합니다."
-                if progress_language == "ko"
-                else "Reading the repository instructions and required operational documents."
-            )
-        if command.lstrip().startswith("cd ") and "&&" in command:
-            try:
-                workspace = shlex.split(command.split("&&", 1)[0])[1]
-            except (IndexError, ValueError):
-                workspace = "the target workspace"
-            return (
-                f"{workspace}의 주요 소스와 설정을 한 배치로 읽어 구현 범위와 결함을 판정합니다."
-                if progress_language == "ko"
-                else f"Reading {workspace}'s main sources and configuration as one batch to "
-                "assess scope and defects."
-            )
-        try:
-            words = shlex.split(command)
-        except ValueError:
-            words = command.split()
-        action = words[0].rsplit("/", 1)[-1] if words else "command"
-        positional = [word for word in words[1:] if not word.startswith("-") and word not in {"|"}]
-        target = (
-            positional[0]
-            if action in {"ls", "find"} and positional
-            else positional[-1]
-            if positional
-            else "."
-        )
-        if action in {"ls", "find", "rg"}:
-            target = (
-                "현재 작업 디렉터리"
-                if progress_language == "ko" and target in {".", "./"}
-                else "the current workspace"
-                if target in {".", "./"}
-                else target
-            )
-            return (
-                f"{target}의 파일 구조를 확인해 실제 평가 대상을 정합니다."
-                if progress_language == "ko"
-                else f"Inspecting {target}'s file structure to identify the actual "
-                "evaluation scope."
-            )
-        if action == "git" and "ls-files" in words:
-            return (
-                "추적 파일 전체 목록으로 구현·테스트·빌드 구성의 평가 범위를 확정합니다."
-                if progress_language == "ko"
-                else "Using the complete tracked-file inventory to identify implementation, "
-                "tests, and build configuration."
-            )
-        if action in {"cat", "sed", "head", "tail"}:
-            return (
-                f"{target}의 실제 내용을 읽어 구현과 테스트 근거를 확인합니다."
-                if progress_language == "ko"
-                else f"Reading {target} to verify implementation and test evidence."
-            )
-    justification = arguments.get("justification") if isinstance(arguments, dict) else None
-    if (
-        isinstance(justification, str)
-        and 1 <= len(justification.strip()) <= 200
-        and "\n" not in justification
-        and (progress_language != "ko" or re.search("[가-힣]", justification))
-    ):
-        return justification.strip()
-    name = str(first_tool.get("name") or "tool")
-    return (
-        f"{name} 실행 결과를 이번 단계의 판정 근거로 사용합니다."
-        if progress_language == "ko"
-        else f"Using the {name} result as evidence for this phase's decision."
-    )
-
-
-def substantive_tool_progress(
-    tool_calls: dict[int, dict[str, object]], progress_language: str
-) -> str:
-    if len(tool_calls) > 1:
-        return tool_progress_text(tool_calls, progress_language)
-    call = next(iter(tool_calls.values()))
-    try:
-        arguments = json.loads(str(call.get("_arguments") or "{}"))
-    except ValueError:
-        return ""
-    command = arguments.get("cmd") if isinstance(arguments, dict) else None
-    if not isinstance(command, str):
-        return ""
-    if any(marker in command for marker in ("goal-objective", "AGENTS.md", "docs/STATE.md")):
-        return tool_progress_text(tool_calls, progress_language)
-    if "git" in command and "ls-files" in command:
-        return tool_progress_text(tool_calls, progress_language)
-    if ("\n" in command or "&&" in command or ";" in command) and re.search(
-        r"(?:^|&&|;|\n)\s*(?:cat|sed|head|tail)\b", command
-    ):
-        return tool_progress_text(tool_calls, progress_language)
-    return ""
-
-
 def is_repetitive_response(text: str) -> bool:
     words = re.findall(r"[\w가-힣]+", text.casefold())
     if len(words) < 120:
@@ -1036,7 +916,7 @@ async def responses_sse(
                 or has_internal_protocol_leak(text)
                 or (progress_language == "ko" and not re.search("[가-힣]", text))
             ):
-                text = substantive_tool_progress(tool_calls, progress_language)
+                text = ""
             text_parts = [text]
         for content in text_parts:
             yield event(

@@ -19,9 +19,7 @@ from dgx_moa.streaming import (
     reported_usage,
     response_usage,
     responses_sse,
-    substantive_tool_progress,
     tool_call_fingerprint,
-    tool_progress_text,
 )
 from dgx_moa.usage import SQLITE_MAX_INTEGER
 
@@ -488,7 +486,7 @@ async def test_responses_sse_batches_workspace_reads_from_inventory() -> None:
 
 
 @pytest.mark.asyncio
-async def test_responses_sse_replaces_mixed_language_tool_commentary() -> None:
+async def test_responses_sse_suppresses_mixed_language_tool_commentary() -> None:
     async def upstream():
         payload = {
             "choices": [
@@ -530,7 +528,12 @@ async def test_responses_sse_replaces_mixed_language_tool_commentary() -> None:
     response = b"".join(chunks)
     assert b"INNER_THINKING" not in response
     assert b"tool_call_begin" not in response
-    assert "추적 파일 전체 목록".encode() in response
+    assert not any(
+        json.loads(line[6:]).get("delta")
+        for line in response.decode().splitlines()
+        if line.startswith("data: ")
+        and json.loads(line[6:]).get("type") == "response.output_text.delta"
+    )
 
 
 @pytest.mark.asyncio
@@ -773,13 +776,15 @@ async def test_responses_sse_replaces_malformed_edit_alias_with_feedback() -> No
 
 
 @pytest.mark.asyncio
-async def test_responses_sse_preserves_tool_progress_and_terminates_failures(caplog) -> None:  # type: ignore[no-untyped-def]
+async def test_responses_sse_suppresses_gateway_tool_progress_and_terminates_failures(
+    caplog,
+) -> None:  # type: ignore[no-untyped-def]
     async def tool_upstream():
         yield 'data: {"choices":[{"delta":{"content":"목표 파일을 확인합니다."}}]}\n\n'.encode()
         yield (
             b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
             b'"id":"call-one","function":{"name":"exec_command",'
-            b'"arguments":"{\\"cmd\\":\\"pwd\\"}"}}]},'
+            b'"arguments":"{\\"cmd\\":\\"cd /tmp/rust-mcu-ide && sed -n 1,200p Cargo.toml\\"}"}}]},'
             b'"finish_reason":"tool_calls"}]}\n\n'
         )
 
@@ -941,49 +946,6 @@ async def test_responses_sse_maps_local_mcp_file_to_exec_command() -> None:
     assert all(event.get("item", {}).get("name") != "read_mcp_resource" for event in events)
 
 
-@pytest.mark.parametrize(
-    ("arguments", "expected"),
-    [
-        ({"cmd": "pwd", "justification": "작업 공간을 확인합니다."}, "작업 공간을 확인합니다."),
-        (
-            {"cmd": "ls -la"},
-            "현재 작업 디렉터리의 파일 구조를 확인해 실제 평가 대상을 정합니다.",
-        ),
-        (
-            {"cmd": "cat AGENTS.md docs/STATE.md docs/OPERATIONS.md"},
-            "저장소 지침과 필수 운영 문서를 확인합니다.",
-        ),
-        (
-            {"cmd": "cat app.py"},
-            "app.py의 실제 내용을 읽어 구현과 테스트 근거를 확인합니다.",
-        ),
-        (
-            {"cmd": "find /tmp/rust-mcu-ide -type f | sort"},
-            "/tmp/rust-mcu-ide의 파일 구조를 확인해 실제 평가 대상을 정합니다.",
-        ),
-        (
-            {"cmd": "cd /tmp/rust-mcu-ide && file README.md install.sh"},
-            "/tmp/rust-mcu-ide의 주요 소스와 설정을 한 배치로 읽어 구현 범위와 결함을 판정합니다.",
-        ),
-    ],
-)
-def test_tool_progress_text_describes_immediate_purpose(
-    arguments: dict[str, str], expected: str
-) -> None:
-    calls = {0: {"_arguments": json.dumps(arguments, ensure_ascii=False)}}
-    assert tool_progress_text(calls, "ko") == expected
-
-
-def test_substantive_tool_progress_suppresses_single_validation_command() -> None:
-    calls = {
-        0: {
-            "name": "exec_command",
-            "_arguments": json.dumps({"cmd": "cd /tmp/project && python -m pytest -q"}),
-        }
-    }
-    assert substantive_tool_progress(calls, "ko") == ""
-
-
 def test_repetitive_response_detects_runaway_final_synthesis() -> None:
     assert is_repetitive_response("All requirements met and tests pass. " * 30)
     assert not is_repetitive_response("짧고 구체적인 최종 답변입니다.")
@@ -1021,7 +983,7 @@ def test_workspace_inventory_replaces_filtered_file_search(command: str) -> None
 
 
 @pytest.mark.asyncio
-async def test_responses_sse_replaces_model_commentary_with_document_purpose() -> None:
+async def test_responses_sse_suppresses_language_mismatched_tool_commentary() -> None:
     async def upstream():
         yield (
             b'data: {"choices":[{"delta":{"content":"I will read the required docs first."}}]}\n\n'
@@ -1041,9 +1003,11 @@ async def test_responses_sse_replaces_model_commentary_with_document_purpose() -
         if line.startswith("data: ")
     ]
 
-    deltas = [event.get("delta") for event in events if "delta" in event]
+    deltas = [
+        event.get("delta") for event in events if event.get("type") == "response.output_text.delta"
+    ]
     assert "I will read the required docs first." not in deltas
-    assert "저장소 지침과 필수 운영 문서를 확인합니다." in deltas
+    assert not any(deltas)
 
 
 @pytest.mark.asyncio
