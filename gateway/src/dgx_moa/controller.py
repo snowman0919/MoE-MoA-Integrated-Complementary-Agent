@@ -43,6 +43,7 @@ from .execution_graph import (
 from .execution_graph import (
     project_execution_graph as persist_execution_graph_projection,
 )
+from .executor_backend import ExecutorBackend
 from .frontier import (
     CodexOAuthCollaboration,
     FrontierCollaborationResult,
@@ -69,6 +70,7 @@ from .loop_engineering import (
     set_criterion,
     terminate,
 )
+from .media import media_assets
 from .policy import PolicyEngine, redact_fields
 from .providers import ModelProvider, StageTimeout, parse_json_content
 from .remote_judge import (
@@ -551,7 +553,7 @@ class Controller:
         self,
         settings: Settings,
         store: StateStore,
-        provider: ModelProvider,
+        provider: ExecutorBackend,
         frontier: CodexOAuthCollaboration | None = None,
         usage: UsageStore | None = None,
         skills: SkillRegistry | None = None,
@@ -888,6 +890,7 @@ class Controller:
                     "repository": state.repository,
                     "route": {"name": state.route, "reasons": state.route_reasons},
                     "approved_scope": state.approved_scope,
+                    "media_assets": state.media_assets,
                 },
             ),
             acceptance_criteria=state.acceptance_criteria,
@@ -1193,6 +1196,7 @@ class Controller:
         )
         provenance = response.get("provider_provenance")
         provenance = cast(dict[str, Any], provenance) if isinstance(provenance, dict) else {}
+        model_config = self.settings.models.get(role)
         rendered_prompt_bytes = response.pop(
             "_rendered_prompt_bytes", provenance.get("rendered_prompt_bytes")
         )
@@ -1217,6 +1221,19 @@ class Controller:
                 "total_tokens": usage.get("total_tokens"),
                 "cached_tokens": cached_tokens,
                 "status": "completed",
+                **(
+                    {
+                        "engine": provenance.get("engine", model_config.engine),
+                        "executor_slot": provenance.get(
+                            "executor_slot", model_config.executor_slot
+                        ),
+                        "capabilities": provenance.get(
+                            "capabilities", sorted(model_config.capabilities)
+                        ),
+                    }
+                    if model_config is not None
+                    else {}
+                ),
                 **(
                     {"provider": provider or provenance.get("provider")}
                     if provider or provenance
@@ -1437,6 +1454,13 @@ class Controller:
                 ),
                 "",
             )
+        known_assets = {item.get("asset_id") for item in state.media_assets}
+        for message in messages:
+            for asset in media_assets(message.get("content")):
+                if asset["asset_id"] not in known_assets:
+                    state.media_assets.append(asset)
+                    known_assets.add(asset["asset_id"])
+        state.media_assets = state.media_assets[-64:]
         if objective_was_empty and state.objective:
             self.record_evidence(
                 state,
@@ -1637,7 +1661,7 @@ class Controller:
         metadata: dict[str, Any],
         *,
         executor_provider: Literal[
-            "local_mistral", "opencode_go", "legacy_local_qwen", "codex_frontier"
+            "local_primary", "local_candidate", "remote_overflow", "codex_frontier"
         ],
         scheduling: SchedulingSnapshot | None = None,
         tools_requested: bool,

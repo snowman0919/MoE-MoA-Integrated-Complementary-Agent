@@ -102,10 +102,10 @@ class SchedulingSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     selected_executor: Literal[
-        "local_mistral", "opencode_go", "legacy_local_qwen", "codex_frontier"
+        "local_primary", "local_candidate", "remote_overflow", "codex_frontier"
     ]
     fallback_executor: (
-        Literal["local_mistral", "opencode_go", "legacy_local_qwen", "codex_frontier"] | None
+        Literal["local_primary", "local_candidate", "remote_overflow", "codex_frontier"] | None
     ) = None
     lease_owner_api_key_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,31}$")
     queue_position: int = Field(default=0, ge=0, strict=True)
@@ -1972,7 +1972,7 @@ def project_execution_graph(
     *,
     risk: Literal["low", "medium", "high", "critical"],
     executor_provider: Literal[
-        "local_mistral", "opencode_go", "legacy_local_qwen", "codex_frontier"
+        "local_primary", "local_candidate", "remote_overflow", "codex_frontier"
     ],
     scheduling: SchedulingSnapshot | None = None,
     tools_requested: bool,

@@ -111,7 +111,7 @@ def test_graph_projection_omits_config_disabled_frontier(
     runtime = controller.project_execution_graph(
         state,
         {},
-        executor_provider="local_mistral",
+        executor_provider="local_primary",
         tools_requested=True,
         validation_required=False,
         deadline_seconds=60,
@@ -507,7 +507,7 @@ async def test_planner_and_frontier_are_concurrent_and_frontier_evidence_survive
                 policy_version="test",
                 policy_hash="0" * 64,
                 deadline=(datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
-                scheduling=SchedulingSnapshot(selected_executor="local_mistral"),
+                scheduling=SchedulingSnapshot(selected_executor="local_primary"),
                 reasoner_enabled=True,
                 frontier_enabled=True,
             )

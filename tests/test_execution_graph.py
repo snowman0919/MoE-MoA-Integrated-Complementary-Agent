@@ -36,8 +36,8 @@ def request(complexity: str = "engineering", **overrides: Any) -> GraphCompileIn
         "policy_hash": "0" * 64,
         "deadline": "2099-01-01T00:00:00+00:00",
         "scheduling": SchedulingSnapshot(
-            selected_executor="local_mistral",
-            fallback_executor="opencode_go",
+            selected_executor="local_primary",
+            fallback_executor="remote_overflow",
         ),
         "tools_requested": True,
         "validation_required": True,
@@ -169,7 +169,7 @@ def test_transient_retries_are_bounded_before_separate_fallback_attempt() -> Non
     assert runtime.node_states[primary] == NodeState.DEGRADED
 
     fallback_attempt = runtime.start_attempt(fallback)
-    assert fallback_attempt.provider == "opencode_go"
+    assert fallback_attempt.provider == "remote_overflow"
     assert fallback_attempt.selected_incoming_edge is not None
 
 
@@ -212,7 +212,7 @@ def test_repair_cycle_requires_new_evidence_and_stops_at_bound() -> None:
         compile_execution_graph(
             request(
                 "critical",
-                scheduling=SchedulingSnapshot(selected_executor="local_mistral"),
+                scheduling=SchedulingSnapshot(selected_executor="local_primary"),
             )
         )
     )
@@ -268,7 +268,7 @@ def test_tool_continuation_cycle_stops_at_bound() -> None:
         compile_execution_graph(
             request(
                 "simple",
-                scheduling=SchedulingSnapshot(selected_executor="local_mistral"),
+                scheduling=SchedulingSnapshot(selected_executor="local_primary"),
                 validation_required=False,
                 reasoner_enabled=False,
                 planner_enabled=False,
@@ -333,7 +333,7 @@ def test_failed_tool_fallback_stops_at_bound() -> None:
         compile_execution_graph(
             request(
                 "simple",
-                scheduling=SchedulingSnapshot(selected_executor="local_mistral"),
+                scheduling=SchedulingSnapshot(selected_executor="local_primary"),
                 validation_required=False,
                 reasoner_enabled=False,
                 planner_enabled=False,
@@ -484,7 +484,7 @@ def test_long_session_compacts_active_state_without_deleting_durable_history(
         failures=[{"failure_class": "TEST_FAILURE", "detail": payload} for _ in range(40)],
         agent_artifacts=[{"role": "reviewer", "output": payload} for _ in range(40)],
     )
-    scheduling = SchedulingSnapshot(selected_executor="local_mistral")
+    scheduling = SchedulingSnapshot(selected_executor="local_primary")
     active_state = compact_session_active_state(state, scheduling, limits)
     active_bytes = len(json.dumps(active_state, ensure_ascii=False).encode())
 

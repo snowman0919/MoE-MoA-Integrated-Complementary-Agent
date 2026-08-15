@@ -13,8 +13,9 @@ from typing import Any, Literal, cast
 import httpx
 
 from .config import ModelConfig, SpecialistRoutingConfig
+from .executor_backend import ExecutorBackend
 from .http_client import managed_http_client
-from .providers import ModelProvider, StageTimeout
+from .providers import StageTimeout
 
 SpecialistRole = Literal["planner", "reviewer"]
 WarmupCallback = Callable[[str], Awaitable[Any]]
@@ -50,7 +51,7 @@ class ReviewerProvider(SpecialistProvider):
 class _LocalProvider:
     name = "local"
 
-    def __init__(self, role: SpecialistRole, provider: ModelProvider, model: ModelConfig) -> None:
+    def __init__(self, role: SpecialistRole, provider: ExecutorBackend, model: ModelConfig) -> None:
         self.role = role
         self.provider = provider
         self.model = model
@@ -74,12 +75,12 @@ class _LocalProvider:
 
 
 class LocalPlannerProvider(_LocalProvider, PlannerProvider):
-    def __init__(self, provider: ModelProvider, model: ModelConfig) -> None:
+    def __init__(self, provider: ExecutorBackend, model: ModelConfig) -> None:
         super().__init__("planner", provider, model)
 
 
 class LocalReviewerProvider(_LocalProvider, ReviewerProvider):
-    def __init__(self, provider: ModelProvider, model: ModelConfig) -> None:
+    def __init__(self, provider: ExecutorBackend, model: ModelConfig) -> None:
         super().__init__("reviewer", provider, model)
 
 

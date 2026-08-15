@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Literal
 
-ExecutorSelection = Literal["local_mistral", "opencode_go"]
+ExecutorSelection = Literal["local_primary", "remote_overflow"]
 LeaseState = Literal["acquired", "queued", "overflow"]
 Risk = Literal["low", "medium", "high", "critical"]
 
@@ -149,7 +149,7 @@ class ExecutorScheduler:
                 admission = ExecutorAdmission(
                     request_id,
                     api_key_id,
-                    "opencode_go",
+                    "remote_overflow",
                     self._owner.api_key_id if self._owner else None,
                     self._now(),
                     "overflow",
@@ -164,7 +164,7 @@ class ExecutorScheduler:
                 admission = ExecutorAdmission(
                     request_id,
                     api_key_id,
-                    "local_mistral",
+                    "local_primary",
                     api_key_id,
                     self._now(),
                     "acquired",
@@ -188,7 +188,7 @@ class ExecutorScheduler:
                 admission = ExecutorAdmission(
                     request_id,
                     api_key_id,
-                    "opencode_go",
+                    "remote_overflow",
                     owner_key,
                     self._now(),
                     "overflow",
@@ -218,7 +218,7 @@ class ExecutorScheduler:
             queued = ExecutorAdmission(
                 request_id,
                 api_key_id,
-                "local_mistral",
+                "local_primary",
                 owner_key,
                 None,
                 "queued",
@@ -259,7 +259,7 @@ class ExecutorScheduler:
         admission = ExecutorAdmission(
             entry.request_id,
             api_key_id,
-            "local_mistral",
+            "local_primary",
             api_key_id,
             self._now(),
             "acquired",

@@ -28,11 +28,11 @@ policy-disabled paths or the overall project beyond `PILOT_ACTIVE`.
 
 | Item | Current fact |
 | --- | --- |
-| Source | Runtime code `main@b3c867854`; production checkout `main@a314b9f5f` adds only evidence/graph updates before this final closeout |
+| Source | Inspected Runtime and production checkout `18a7ac6df787`; local `dev` and remote `main`/`dev` match, while local `main@a314b9f5fe2c` is one commit behind |
 | Rollback | `875f35b8d`; physical rollback and redeploy to `5d504f1f4` both passed authenticated canaries |
 | Gateway | PID `3946154`, `NRestarts=0`, healthy authenticated listener on `0.0.0.0:9000`; `/readyz=200` |
 | Public catalog | only `dgx-moa` and `dgx-moa-fast`, both `context_length: 131072` |
-| Active Executor | local Mistral `dgx-moa-executor`, PID `3963445`, loopback `127.0.0.1:9001`, `NRestarts=0` |
+| Active Executor | At the 2026-08-15 backend-neutral inspection the local Executor unit was inactive for training, no `9001` backend was used, and requests selected bounded DeepSeek V4 Flash overflow with `fallback_reason=local_unavailable`; the qualified Mistral profile remains rollback authority |
 | Superseded Pilot | transient `dgx-moa-pilot-v1-release-attempt12.service` was stopped and collected; tailnet `19000` fails closed |
 | Lifecycle | `fixed`, exact map `executor -> dgx-moa-executor.service`; generation `29` is ready at measured weight/overall `100%` |
 | Enabled integration | Dashboard, Codex OAuth Frontier, DeepSeek Flash scheduling, remote Planner/Reviewer specialist routing |
@@ -44,6 +44,11 @@ stale configuration metadata, not source-deployment authority; Git history and
 the physical deploy/rollback record establish `b3c867854` as the running code
 epoch. Correcting the metadata would require a runtime configuration change and
 restart, so it is not part of this documentation-only closeout.
+
+The physical inspection above supersedes the earlier same-day resident state
+only for the training window. It did not change or restart Gateway PID
+`3946154` (`NRestarts=0`). Qwen Executor remains `CANDIDATE`; no Qwen/SGLang
+candidate was deployed by this inspection.
 
 ## Executor authority layers
 

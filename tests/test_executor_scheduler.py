@@ -10,11 +10,11 @@ from dgx_moa.executor_scheduler import ExecutorQueueFull, ExecutorScheduler
 async def test_executor_scheduler_overflow_fairness_and_high_risk_fail_closed() -> None:
     scheduler = ExecutorScheduler(queue_timeout_seconds=1)
     owner = await scheduler.acquire("key-a", "a1", flash_available=True)
-    assert owner.selected_executor == "local_mistral"
+    assert owner.selected_executor == "local_primary"
 
     cross_key = await scheduler.acquire("key-b", "b-flash", flash_available=True)
     assert (cross_key.selected_executor, cross_key.reason) == (
-        "opencode_go",
+        "remote_overflow",
         "cross_key_overflow",
     )
 
@@ -24,7 +24,7 @@ async def test_executor_scheduler_overflow_fairness_and_high_risk_fail_closed() 
     await asyncio.sleep(0)
     overflow = await scheduler.acquire("key-a", "a5", flash_available=True)
     assert (overflow.selected_executor, overflow.reason) == (
-        "opencode_go",
+        "remote_overflow",
         "same_key_queue_limit",
     )
 
@@ -53,7 +53,7 @@ async def test_executor_scheduler_overflow_fairness_and_high_risk_fail_closed() 
     with pytest.raises(ExecutorQueueFull, match="high-risk"):
         await high_risk.acquire("key-a", "risk-4", risk="high", flash_available=True)
     pins = [high_risk.pinned(f"risk-{index}") for index in range(3)]
-    assert all(pin is not None and pin.selected_executor == "local_mistral" for pin in pins)
+    assert all(pin is not None and pin.selected_executor == "local_primary" for pin in pins)
     for task in queued:
         task.cancel()
     await asyncio.gather(*queued, return_exceptions=True)
@@ -79,7 +79,7 @@ async def test_unavailable_local_executor_uses_flash_but_high_risk_fails_closed(
     fallback = await scheduler.acquire(
         "key-a", "fallback", flash_available=True, local_available=False
     )
-    assert (fallback.selected_executor, fallback.reason) == ("opencode_go", "local_unavailable")
+    assert (fallback.selected_executor, fallback.reason) == ("remote_overflow", "local_unavailable")
 
     with pytest.raises(ExecutorQueueFull, match="local Executor is unavailable"):
         await scheduler.acquire(

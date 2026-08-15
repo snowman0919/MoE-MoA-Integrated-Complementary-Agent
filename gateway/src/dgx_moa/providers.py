@@ -10,6 +10,7 @@ from typing import Any, cast
 import httpx
 
 from .config import ModelConfig
+from .executor_backend import ExecutorCapability
 from .http_client import make_http_client, managed_http_client
 
 PLANNER_REASONING_TOKENS = 768
@@ -101,6 +102,60 @@ class OwnedByteStream:
 class ModelProvider:
     def __init__(self, timeout: float = 300.0):
         self.timeout = timeout
+
+    def capabilities(self, model: ModelConfig) -> frozenset[ExecutorCapability]:
+        return model.capabilities
+
+    async def models(self, model: ModelConfig) -> list[str]:
+        resource = "/api/ps" if model.provider == "ollama" else "/v1/models"
+        try:
+            async with managed_http_client(timeout=30) as client:
+                response = await client.get(f"{model.base_url.rstrip('/')}{resource}")
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, TypeError, ValueError):
+            return []
+        entries = (
+            payload.get("models", [])
+            if model.provider == "ollama" and isinstance(payload, dict)
+            else payload.get("data", [])
+            if isinstance(payload, dict)
+            else []
+        )
+        key = "name" if model.provider == "ollama" else "id"
+        return [str(item.get(key)) for item in entries if isinstance(item, dict)]
+
+    async def health(self, model: ModelConfig) -> bool:
+        return model.served_name in await self.models(model)
+
+    async def tokenize(
+        self, model: ModelConfig, request: dict[str, Any], *, role: str = "executor"
+    ) -> dict[str, Any] | None:
+        if model.provider == "ollama":
+            return None
+        body = self.body(role, model, request)
+        try:
+            async with managed_http_client(timeout=30) as client:
+                response = await client.post(
+                    f"{model.base_url.rstrip('/')}/tokenize",
+                    json={
+                        "model": model.served_name,
+                        "messages": body.get("messages", []),
+                        "tools": body.get("tools"),
+                        "chat_template_kwargs": body.get("chat_template_kwargs"),
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, TypeError, ValueError):
+            return None
+        return cast(dict[str, Any], payload) if isinstance(payload, dict) else None
+
+    @staticmethod
+    async def cancel(stream: AsyncIterator[bytes]) -> None:
+        close = getattr(stream, "aclose", None)
+        if close is not None:
+            await close()
 
     @staticmethod
     def body(role: str, model: ModelConfig, request: dict[str, Any]) -> dict[str, Any]:

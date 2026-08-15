@@ -112,6 +112,9 @@ class OpenCodeGoExecutorProvider:
         payload["provider_provenance"] = {
             "provider": "opencode_go",
             "model": self.model,
+            "engine": "remote",
+            "executor_slot": "remote_overflow",
+            "capabilities": ["text", "native_tools", "responses", "streaming"],
             "correlation_id": correlation_id,
             "transport": "openai_compatible_http",
             "rendered_prompt_bytes": len(

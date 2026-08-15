@@ -256,12 +256,12 @@ def test_api_key_scheduler_pins_cross_key_turn_to_flash_and_projects_graph(
     assert response.json()["choices"][0]["message"]["content"] == "Flash 처리 완료"
     assert "executor" not in flash_calls
     scheduled = next(event for event in events if event["event_type"] == "executor_scheduled")
-    assert scheduled["payload"]["selected_executor"] == "opencode_go"
+    assert scheduled["payload"]["selected_executor"] == "remote_overflow"
     assert scheduled["payload"]["lease_owner_api_key_id"] == "key-a"
     assert state is not None and state.execution_graph_id is not None
     graph = app.state.controller.execution_graph_store.load_graph(state.execution_graph_id)
     assert graph.scheduling is not None
-    assert graph.scheduling.selected_executor == "opencode_go"
+    assert graph.scheduling.selected_executor == "remote_overflow"
     assert graph.scheduling.lease_owner_api_key_id == "key-a"
     assert state.execution_checkpoint_id is not None
     assert state.active_state_object_ref is not None
@@ -273,12 +273,12 @@ def test_api_key_scheduler_pins_cross_key_turn_to_flash_and_projects_graph(
         state.active_state_object_ref
     )
     assert active_state["schema_version"] == "session-active-state-v1"
-    assert active_state["scheduling"]["selected_executor"] == "opencode_go"
+    assert active_state["scheduling"]["selected_executor"] == "remote_overflow"
     assert app.state.executor_scheduler.pinned(scheduled["payload"]["request_id"]) is None
     assert early_response.status_code == 200
     assert graph_seen_before_reasoner == {
         "roles": {"reasoner", "planner", "executor"},
-        "executor": "local_mistral",
+        "executor": "local_primary",
     }
     event_types = [event["event_type"] for event in early_events]
     assert event_types.index("execution_graph_shadow_compiled") < event_types.index(
@@ -3451,7 +3451,7 @@ def test_disabled_local_executor_routes_low_risk_request_to_flash(
         for event in app.state.store.events(response.headers["X-Session-ID"])
         if event["event_type"] == "executor_scheduled"
     )
-    assert scheduled["payload"]["selected_executor"] == "opencode_go"
+    assert scheduled["payload"]["selected_executor"] == "remote_overflow"
     assert scheduled["payload"]["reason"] == "local_unavailable"
     assert stub_provider.calls == []
 
@@ -3745,7 +3745,7 @@ def test_disabled_lifecycle_probes_executor_before_scheduling(
         for event in app.state.store.events(response.headers["X-Session-ID"])
         if event["event_type"] == "executor_scheduled"
     )
-    assert scheduled["payload"]["selected_executor"] == "opencode_go"
+    assert scheduled["payload"]["selected_executor"] == "remote_overflow"
     assert scheduled["payload"]["reason"] == "local_unavailable"
     assert stub_provider.calls == []
 
@@ -7793,7 +7793,7 @@ def test_chat_and_responses_share_one_disabled_by_default_graph_shadow_path(
     assert event_counts == [1, 1]
     assert len(graphs) == 2
     assert len({graph.template_id for graph in graphs}) == 1
-    assert all(any(node.provider == "local_mistral" for node in graph.nodes) for graph in graphs)
+    assert all(any(node.provider == "local_primary" for node in graph.nodes) for graph in graphs)
     assert all(graph.nodes[-1].node_type == "FINALIZE" for graph in graphs)
     assert all(
         [attempt.node_type for attempt in graph_attempts]

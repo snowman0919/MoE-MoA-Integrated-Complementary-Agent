@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from .executor_backend import ExecutorCapability, ExecutorEngine, ExecutorSlot
 from .policy import PolicyRule, PolicySet
 
 TRUE_VALUES = {"true", "1", "yes", "on"}
@@ -503,6 +504,9 @@ class ModelConfig(BaseModel):
     trust_remote_code: bool = False
     lora_adapter: Path | None = None
     required: bool = True
+    engine: ExecutorEngine = "vllm"
+    executor_slot: ExecutorSlot | None = None
+    capabilities: frozenset[ExecutorCapability] = frozenset({"text", "streaming"})
 
 
 class Settings(BaseModel):

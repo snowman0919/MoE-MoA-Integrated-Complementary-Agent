@@ -1054,11 +1054,23 @@ the two-repair bound, persist
 compile a new immutable Graph. Do not resume the exhausted Graph and do not
 raise the repair budget to mask the projection error.
 
-Candidate ordering remains: explicit vLLM Blackwell-native NVFP4 candidate A,
-isolated SGLang native candidate B, then MARLIN compatibility rollback. V66 and
-v98 are the preserved SGLang physical epochs for the current pinned runtime;
-do not rerun backend-name permutations without a new supported registry/source
-combination and a separately named protocol epoch.
+The Qwen Executor candidate order is fixed: `Qwen/Qwen3.8-27B`, multimodal LoRA
+qualification, merged target, isolated SGLang plain decode, then
+Chat/Responses/native-tool/image qualification. Only after that contract passes
+may a separately named epoch test NVFP4 and then DSpark. Do not use MTP for this
+Qwen lineage. A DSpark failure falls back to the same Qwen plain-decode slot;
+local candidate failure or busy state falls back through the existing bounded
+DeepSeek V4 Flash overflow. The qualified Mistral service remains the rollback
+Executor. Candidate units and inference listeners stay isolated and loopback-
+only; do not add them to the production lifecycle unit map or restart `:9000`
+until isolated validation, a separately approved bounded canary, and rollback
+rehearsal pass.
+
+Runtime selection and provenance use `engine` (`vllm`, `sglang`, `remote`),
+`executor_slot` (`local_primary`, `local_candidate`, `remote_overflow`), and
+declared capabilities. Model names remain deployment data, not routing
+authority. Media state stores bounded identity/provenance metadata only; never
+copy inline image bytes into durable SessionState.
 
 Treat `apply_patch verification failed:` without an explicit numeric exit code
 as failure evidence. Do not treat `Do not modify any other file` as global

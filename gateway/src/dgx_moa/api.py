@@ -57,6 +57,7 @@ from .execution_graph import (
     SchedulingSnapshot,
     record_shadow_failure,
 )
+from .executor_backend import ExecutorBackend
 from .executor_scheduler import (
     ExecutorAdmission,
     ExecutorQueueFull,
@@ -594,6 +595,7 @@ def create_app(
     lifecycle_sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     lifecycle_memory_probe: Callable[[], int] = runtime_memory_available,
     overflow_executor: OpenCodeGoExecutorProvider | None = None,
+    executor_backend: ExecutorBackend | None = None,
 ) -> FastAPI:
     configured = settings or get_settings()
     api_keys = ApiKeyStore(
@@ -680,7 +682,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         store = StateStore(configured.state_db)
-        provider = ModelProvider()
+        provider = executor_backend or ModelProvider()
         project_root = Path(os.getenv("DGX_MOA_PROJECT_ROOT", ".")).resolve()
         app.state.settings = configured
         app.state.draining = False
@@ -2653,7 +2655,7 @@ def create_app(
                         },
                     ),
                 )
-                executor_flash = executor_admission.selected_executor == "opencode_go"
+                executor_flash = executor_admission.selected_executor == "remote_overflow"
                 executor_remote = executor_flash
                 executor_routing_reason = executor_admission.reason
                 request.app.state.store.event(
@@ -2927,11 +2929,11 @@ def create_app(
                     state,
                     raw["metadata"],
                     executor_provider=(
-                        "opencode_go"
+                        "remote_overflow"
                         if executor_flash
                         else "codex_frontier"
                         if executor_remote
-                        else "local_mistral"
+                        else "local_primary"
                     ),
                     scheduling=(
                         SchedulingSnapshot(
@@ -5404,7 +5406,7 @@ def create_app(
             "active_executor": (
                 configured.executor_scheduling.flash_model
                 if fallback_active
-                else "local_mistral"
+                else "local_primary"
                 if local_available
                 else "unavailable"
             ),
@@ -5413,7 +5415,7 @@ def create_app(
             "high_risk_executor": (
                 request.app.state.frontier.config.model
                 if fallback_active and request.app.state.frontier is not None
-                else "local_mistral"
+                else "local_primary"
                 if local_available
                 else "unavailable"
             ),

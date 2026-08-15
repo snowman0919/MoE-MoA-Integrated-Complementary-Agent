@@ -629,7 +629,7 @@ def test_collector_projects_verified_execution_graph_state_to_routing_data(
             policy_version="policy-1",
             policy_hash="0" * 64,
             deadline="2099-01-01T00:00:00+00:00",
-            scheduling=SchedulingSnapshot(selected_executor="local_mistral"),
+            scheduling=SchedulingSnapshot(selected_executor="local_primary"),
         )
     )
     runtime = ExecutionGraphRuntime(graph, graph_store)

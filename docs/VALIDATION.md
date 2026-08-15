@@ -9802,3 +9802,102 @@ rulesets remain absent because the available credential has administration
 read permission only. That external governance exception does not invalidate
 the runtime gates and does not promote the broader project, disabled policy
 paths, or `PRODUCTION_BETA`/`STABLE` status.
+
+## Backend-neutral Executor and live-client baseline — 2026-08-15
+
+### Measured production facts
+
+The inspected production checkout and Runtime were `18a7ac6df787`. The local
+Executor was inactive for concurrent training, so this epoch did not measure
+local Mistral or Qwen quality. Every completed Executor invocation in the
+measurement window selected `provider=opencode_go`,
+`model=deepseek-v4-flash`, and `fallback_reason=local_unavailable`; the new
+backend-neutral vocabulary classifies that observed path as
+`executor_slot=remote_overflow`. Gateway stayed on PID `3946154`, active
+with `NRestarts=0`; `/healthz` returned `200` before and after the runs. It was
+not restarted or reconfigured.
+
+Fourteen distinct live tasks exercised Codex, OpenCode, Hermes, and Raw API.
+Two preliminary Raw batches were excluded because invalid custom provenance
+header values were rejected before model dispatch. The valid Raw batch had ten
+scenarios: Track A/Track B Chat, Track A/Track B Responses, 110,053-token input,
+image input, Track A/Track B forced native tool calls, stream consumer close,
+and reconnect. Six passed. Track B Chat completed in `3.101 s`, Track B
+Responses in `2.919 s`, Track A Responses in `8.976 s`, the 110,053-token
+prompt in `7.617 s`, first stream data arrived before client close in `3.567 s`,
+and reconnect returned `STREAM_RECOVERED` in `3.561 s`. Track A Chat received
+an upstream `500` and returned `502` after `12.770 s`.
+
+The image scenario returned `400`: DeepSeek overflow accepted only text and
+rejected the `image_url` variant. Both forced-tool scenarios returned `400`
+because the provider's thinking mode did not support that `tool_choice`. These
+are repeated provider-capability failures, not local Qwen evidence. Chat and
+Responses differed intentionally on error transport: Chat used a non-2xx HTTP
+error, while Responses returned HTTP `200` with `status=failed` for an admitted
+internal failure.
+
+| Client/task | Track | First useful API action | Verified completion | Terminal result | Requests/tools | Context evidence |
+| --- | --- | ---: | ---: | --- | --- | --- |
+| Codex 0.146.0 / rate limiter | A | `0.364 s` | `159.924 s` | passed public+hidden validation; one source file changed | 9/9 requests completed; 9 tool calls/results | snapshot `10,266..32,064 B`; projection `10,930..32,023 B`; rendered prompt `9,952..52,304 B`; provider prompt total `188,951` |
+| OpenCode 1.17.18 / webhook verifier | compatibility Track A | `1.252 s` | unavailable | implementation and both validators passed, but final continuation ended `remote Executor fallback unavailable`; overall `verified_completion=false` | 8 completed, 1 cancelled; 9 calls, 13 executions/results; 1 stream abort | snapshot `11,947..47,850 B`; projection `12,611..49,522 B`; rendered `10,861..82,608 B`; provider prompt total `227,437` |
+| OpenCode 1.17.18 / atomic store | B (`dgx-moa-fast`) | `1.209 s` | `50.021 s` | Harness-owned recursion, validation, and terminal contract all passed | 6/6 requests completed; 6 calls, 8 executions/results | snapshot `11,998..29,751 B`; projection `12,663..31,141 B`; rendered `43,037..67,903 B`; provider prompt/output `100,307/2,263` |
+| Hermes `31e571a` / log report | A | about `23.9 s` | unavailable | no terminal result after more than 12 minutes; client-only cancellation, no false completion | 38 completed, 1 cancelled after one failed admission; 39 calls, 46 executions/results; 1 stream abort | snapshot `10,065..74,504 B`; projection `10,729..72,766 B`; rendered `10,918..133,498 B`; provider prompt total `1,355,843` |
+
+Codex recorded 120,106 request prompt tokens and 6,925 output tokens. OpenCode
+recorded 165,550 and 6,860. Hermes recorded 1,114,422 and 36,928 before
+cancellation. The stored projection events did not expose a populated dropped-
+evidence list, so this epoch records that field as unavailable rather than
+claiming zero. The harness logs also lacked timestamped individual tool frames;
+the first-useful-action values therefore use the first accepted Gateway request.
+The scored harnesses produced no false completion. Failed/duplicate-tool,
+repair-iteration, and no-progress counts were not normalized consistently by
+all four clients, so their raw events are retained but those aggregate fields
+remain unavailable rather than inferred.
+
+The Codex result is verified. OpenCode made a correct implementation and passed
+both validators but is not a verified completion because its terminal contract
+failed. Hermes is not a completion and made no client-visible false completion
+claim. The recurring operational failure family is remote-overflow terminal
+continuity/cancellation; the recurring capability failure family is forced
+native tools plus image input on the current text-only overflow. No Runtime
+behavior was changed from these observations.
+
+The direct Track A/Track B exact-response probes both passed through the same
+Flash overflow, but Track A added a Reasoner invocation while Track B remained
+Executor-only. The stronger harness comparison is not an ablation because the
+tasks differ: Codex Track A verified a rate limiter in `159.924 s`; OpenCode
+Track B verified an atomic store in `50.021 s`. It proves ownership boundaries
+and end-to-end viability, not relative model quality. Track B recorded only six
+Executor invocations and no Gateway Planner/Reviewer/Reasoner recursion; retry,
+tool use, verification, and termination remained in OpenCode.
+
+### Development-only seam and checks
+
+The undeployed `dev` change adds the requested backend contract
+(`health`, `models`, `tokenize`, `context_fits`, `complete`, `stream`, `cancel`,
+and capabilities), generic engine/slot provenance, and bounded media identity.
+Inline media bytes are hashed then discarded; remote references lose query and
+fragment data; SessionState retains at most 64 metadata records containing
+asset ID, honest nullable SHA-256, media type, dimensions, source, storage
+reference, and redaction status. Text extraction now retains stable media
+placeholders so routing and context projection cannot silently erase an image.
+
+The change preserves the existing Mistral provider implementation and rollback
+configuration. It does not deploy Qwen, start SGLang, enable DSpark/MTP,
+ExecutionGraph authority, Remote Judge, training collection, or weekly
+promotion. Qwen remains an isolated `local_candidate` plan, not production
+evidence.
+
+Final development gates passed: Ruff format checked 112 files, Ruff lint
+reported no findings, strict mypy passed 53 source files, every checked-in JSON
+schema parsed, the documentation contract passed 10 tests, and the complete
+suite passed `1156` tests with one existing Starlette deprecation warning.
+
+Final status remains:
+
+```text
+Gateway release = PILOT_ACTIVE
+Dynamic MoA = IN_PROGRESS
+Qwen Executor = CANDIDATE
+PRODUCTION_BETA / STABLE = 미달성
+```

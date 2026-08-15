@@ -936,7 +936,10 @@ def prepare_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str,
                             "X-Dirty-State": "clean",
                         },
                     },
-                    "models": {"dgx-moa-agent": {"name": "DGX MoA Agent"}},
+                    "models": {
+                        "dgx-moa-agent": {"name": "DGX MoA Agent"},
+                        "dgx-moa-fast": {"name": "DGX MoA Fast"},
+                    },
                 }
             },
             "model": "dgx-moa/dgx-moa-agent",
@@ -1228,7 +1231,7 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
             "--dir",
             str(workspace),
             "--model",
-            "dgx-moa/dgx-moa-agent",
+            os.getenv("DGX_MOA_OPENCODE_MODEL", "dgx-moa/dgx-moa-agent"),
             prompt(task),
         ]
         command = (

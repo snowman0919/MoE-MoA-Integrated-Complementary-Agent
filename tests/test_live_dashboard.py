@@ -100,7 +100,7 @@ def graph_request() -> GraphCompileInput:
         policy_version="dashboard-test-v1",
         policy_hash="0" * 64,
         deadline="2099-01-01T00:00:00+00:00",
-        scheduling=SchedulingSnapshot(selected_executor="local_mistral"),
+        scheduling=SchedulingSnapshot(selected_executor="local_primary"),
     )
 
 

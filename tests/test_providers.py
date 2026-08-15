@@ -38,6 +38,53 @@ async def test_explicit_none_disables_httpx_default_timeout() -> None:
         await client.aclose()
 
 
+@pytest.mark.asyncio
+async def test_backend_contract_reports_identity_and_supports_cancel(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    model = settings.models["executor"].model_copy(
+        update={
+            "engine": "sglang",
+            "executor_slot": "local_candidate",
+            "capabilities": frozenset({"text", "vision", "streaming"}),
+        }
+    )
+    provider = ModelProvider()
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/v1/models"):
+            return httpx.Response(200, json={"data": [{"id": model.served_name}]})
+        return httpx.Response(200, json={"count": 7, "max_model_len": 65536})
+
+    def client(**kwargs):  # type: ignore[no-untyped-def]
+        kwargs["transport"] = httpx.MockTransport(respond)
+        return httpx.AsyncClient(**kwargs)
+
+    monkeypatch.setattr("dgx_moa.providers.make_http_client", client)
+    monkeypatch.setattr("dgx_moa.http_client.make_http_client", client)
+    assert provider.capabilities(model) == frozenset({"text", "vision", "streaming"})
+    assert await provider.health(model) is True
+    assert await provider.models(model) == [model.served_name]
+    assert await provider.tokenize(model, {"messages": []}) == {
+        "count": 7,
+        "max_model_len": 65536,
+    }
+
+    closed = False
+
+    async def stream():  # type: ignore[no-untyped-def]
+        nonlocal closed
+        try:
+            yield b"x"
+        finally:
+            closed = True
+
+    iterator = stream()
+    await anext(iterator)
+    await provider.cancel(iterator)
+    assert closed is True
+
+
 def tracked_stream_transport(
     monkeypatch: pytest.MonkeyPatch,
     stream: httpx.AsyncByteStream,
