@@ -9591,5 +9591,23 @@ intact.
 The regression first failed with the exact `cd /tmp/rust-mcu-ide && sed ...`
 shape and passed after the deletion. Streaming tests passed `81`; related API
 tests passed `29`; Ruff format/check, strict mypy on 51 source files, and the
-complete suite passed at `1151 passed, 1 warning`. This candidate is
-`IMPLEMENTED_NOT_DEPLOYED`.
+complete suite passed at `1151 passed, 1 warning`. Dev CI `31861140087` and
+`31862128631`, and main CI `31861224375` and `31862203888`, passed.
+
+Production deployed `main@ede8fac0b` after authenticated zero-request drains.
+The final Gateway restart changed PID `3320302` to `3380808`; the local
+Executor remained PID `3229568` throughout. Both units report active with
+`NRestarts=0`; only authenticated Gateway `0.0.0.0:9000` and Executor
+`127.0.0.1:9001` listen. Whole-change rollback is `be3e86601`.
+
+Two real Codex `0.146.0` read-only canaries used separate short-TTL evaluation
+keys against a disposable `rust-mcu-ide` fixture. The first exposed the
+overbroad short-progress suppression and motivated `ede8fac0b`. After that
+fix, the second canary executed three distinct source-read commands and emitted
+no Gateway-authored forbidden phrase, protocol leak, or error event. The
+fixture remained clean. The resident local Mistral repeated those reads and did
+not produce a final verdict before the 300-second client limit, so this is not
+recorded as a task-completion pass. DeepSeek fallback was not forced because
+the operator required the resident Executor and port `9001` to remain active.
+Both evaluation keys were revoked, stored no plaintext, and returned models
+`401` after revocation.
