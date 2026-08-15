@@ -1338,10 +1338,10 @@
     "semantic_hash": "8d0ab2218b8d49eeae451e705b7e6364"
   },
   "docs/OPERATIONS.md": {
-    "mtime": 1786792129.736347,
-    "seen": 1786793721.5561695,
-    "ast_hash": "d112acf8630b955abe7b61f3457a4e97",
-    "semantic_hash": "d112acf8630b955abe7b61f3457a4e97"
+    "mtime": 1786796753.9484015,
+    "seen": 1786797058.2547646,
+    "ast_hash": "35cca9f689cc6ac4ce3fe0a76849060e",
+    "semantic_hash": "35cca9f689cc6ac4ce3fe0a76849060e"
   },
   "docs/PHASE_AUDIT.md": {
     "mtime": 1784596111.1614912,
@@ -1422,10 +1422,10 @@
     "semantic_hash": "d0b24cdbb39eca7ffc242789545e1368"
   },
   "docs/STATE.md": {
-    "mtime": 1786794716.673676,
-    "seen": 1786795257.353517,
-    "ast_hash": "627b97979eb34b5aa2b6254d51d898cb",
-    "semantic_hash": "627b97979eb34b5aa2b6254d51d898cb"
+    "mtime": 1786796753.9464014,
+    "seen": 1786797058.2547722,
+    "ast_hash": "b33d3d2eab73dd1e2f151130ad254153",
+    "semantic_hash": "b33d3d2eab73dd1e2f151130ad254153"
   },
   "docs/SYSTEMD.md": {
     "mtime": 1784596111.1614912,
@@ -1446,10 +1446,10 @@
     "semantic_hash": "770b6f21d95006d0cbe23b2136053843"
   },
   "docs/VALIDATION.md": {
-    "mtime": 1786794780.7194016,
-    "seen": 1786795257.3535192,
-    "ast_hash": "bb260b4c999dd1a454acba4863491844",
-    "semantic_hash": "bb260b4c999dd1a454acba4863491844"
+    "mtime": 1786796753.9514015,
+    "seen": 1786797058.2547743,
+    "ast_hash": "0afb315febb77c0f0e4c9ad1307478cc",
+    "semantic_hash": "0afb315febb77c0f0e4c9ad1307478cc"
   },
   "docs/WEEKLY_PACKAGING.md": {
     "mtime": 1784733046.5028021,

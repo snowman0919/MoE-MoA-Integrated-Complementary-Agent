@@ -130,17 +130,20 @@ current public endpoint or runtime authority; use the authenticated fixed
 `:9000` Gateway described above. The commands below remain rollback evidence
 for that isolated transient only.
 
-The active `PILOT_ACTIVE` canary is release
+The last qualified limited Pilot canary was release
 `2a3afdce826b7fbc4e5cf3d682085b427ebcfa22`, transient unit
 `dgx-moa-pilot-v1-release-attempt12.service`, and authenticated tailnet endpoint
-`http://100.125.239.72:19000`. It has exactly one key ID, `pilot`. The key value
+`http://100.125.239.72:19000`. On 2026-08-15 the superseded transient was
+stopped through the exact rollback below and collected; `:19000` now fails
+closed while production `:9000` remains healthy. It had exactly one key ID,
+`pilot`. The key value
 is not in Git or unit metadata; systemd receives it through `LoadCredential`
 from the mode-0600 volatile file
 `/run/user/1000/dgx-moa/pilot-v1/pilot_api_key`. Do not print, copy into shell
 history, or move that value into a repository file.
 
-The Pilot gateway is capped at 1 GiB high, 2 GiB max, and 512 MiB swap max. It
-uses the preserved Candidate A listener on loopback 19301, durable state at
+The Pilot gateway was capped at 1 GiB high, 2 GiB max, and 512 MiB swap max. It
+used the preserved Candidate A listener on loopback 19301, durable state at
 `~/.local/share/dgx-moa/pilot-v1/state.db`, shadow ExecutionGraph, DeepSeek V4
 Flash overflow availability, and the `pilot-v1` destructive-operation approval
 policy. Runtime Skills, Knowledge, Evolution, training, weekly jobs, remote

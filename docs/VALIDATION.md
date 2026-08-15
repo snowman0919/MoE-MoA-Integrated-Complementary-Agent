@@ -9749,3 +9749,56 @@ qualified baseline was not weakened and the unrelated Pilot was not stopped.
 The Runtime Completion re-audit therefore remains
 `IN_PROGRESS_WITH_EXCEPTIONS` pending an operator decision about Pilot versus
 resident Executor ownership and external branch-protection authority.
+
+## Resident Executor restoration and audit closeout — 2026-08-15
+
+The operator's production-change approval and explicit `9001`/`9000` residency
+decision resolved the prior resource exception. The superseded
+`dgx-moa-pilot-v1-release-attempt12.service` had no remaining `19301` backend
+and returned readiness `503`. Its documented exact rollback stopped and
+collected only that transient: `100.125.239.72:19000` then failed closed while
+Gateway PID `3946154`, `NRestarts=0`, and health `200` were unchanged. Before
+the new load `/proc/meminfo` reported `121310856 KiB` available.
+
+Recovery preserved all 33 lifecycle failure events, reset only the automation
+latch and Executor retry state, recovered durable state from failed to cold,
+and issued one authenticated ON. Generation `29` used the unchanged production
+baseline: context `131072`, one sequence, `3400000000` KV bytes,
+`gpu_memory_utilization=0.5`, native allocator, TRITON_MLA, explicit
+FlashInfer B12x dense/MoE, and `FULL_DECODE_ONLY`. Weight loading took `426.30`
+seconds and `66.09 GiB`; warmup took `31.08` seconds, the manual KV pool held
+`147568` tokens, and graph capture took `11` seconds and `0.08 GiB`. The unit
+became active as PID `3963445`, `NRestarts=0`; loopback `9001 /v1/models`,
+Gateway `/readyz`, and health all returned `200`. Dashboard reported ready,
+operator enabled, local Mistral active, fallback inactive, and measured
+weight/overall progress `100%`.
+
+A separate 30-minute evaluation key `goal-local-0815f` had a 12-request and
+200000-token limit. It received models `200` and admin `403`. Five current
+release `dgx-moa-fast` requests all selected provider `local`, model
+`dgx-moa-executor`, with no fallback reason: Chat returned exactly
+`GOAL_LOCAL_CHAT_OK` in `2.917` seconds, Responses returned exactly
+`GOAL_LOCAL_RESPONSES_OK` in `0.999` seconds, Chat SSE returned exactly
+`GOAL_LOCAL_STREAM_OK` and `[DONE]` in `0.790` seconds, a forced native
+`read_validation_marker` call completed in `1.023` seconds, and its
+same-session tool-result continuation returned exactly `GOAL_LOCAL_TOOL_OK` in
+`1.303` seconds. All five usage rows completed, including one streaming row.
+
+The final local tool projection recorded `1726` snapshot bytes, `2493`
+projection bytes, `11329` rendered prompt bytes, and `2484` provider prompt
+tokens. Included categories were `objective`, `original_inputs`,
+`request_constraints`, and `runtime_evidence:tool`; dropped evidence was empty.
+Four `agent-trace-v3` sessions were finalized as completed excluded validation
+traces. Operator Dashboard session creation returned `204`, identity reported
+`operator=true`, audited private detail returned `200`, the tool session showed
+phase/final/client status completed with one tool result and two projections,
+and ExecutionGraph remained honestly disabled. The evaluation key was revoked,
+then returned models `401`; SQLite stored plaintext length zero, hash length
+64, kind `evaluation`, and retained both limits.
+
+This closes the Runtime Completion re-audit as
+`COMPLETE_WITH_EXTERNAL_GOVERNANCE_EXCEPTION`. GitHub branch protection and
+rulesets remain absent because the available credential has administration
+read permission only. That external governance exception does not invalidate
+the runtime gates and does not promote the broader project, disabled policy
+paths, or `PRODUCTION_BETA`/`STABLE` status.

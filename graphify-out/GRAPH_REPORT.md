@@ -1,12 +1,12 @@
 # Graph Report - MoE-MoA-Integrated-Complementary-Agent  (2026-08-15)
 
 ## Corpus Check
-- 16 files · ~343,833 words
+- 17 files · ~344,202 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 3283 nodes · 9383 edges · 195 communities (142 shown, 53 thin omitted)
-- Extraction: 80% EXTRACTED · 20% INFERRED · 0% AMBIGUOUS · INFERRED: 1866 edges (avg confidence: 0.55)
+- 3263 nodes · 9368 edges · 193 communities (141 shown, 52 thin omitted)
+- Extraction: 80% EXTRACTED · 20% INFERRED · 0% AMBIGUOUS · INFERRED: 1865 edges (avg confidence: 0.55)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -170,14 +170,12 @@
 - Model Lifecycle Coordination
 - Disabled Policy Paths
 - API Client Modes
-- enum
 - run-opencode-staging.py
 - agent-trace-v2.json
 - required
 - evaluate-paired-noninferiority.py
 - failures
 - Human Approval Gate
-- All-Role Storage Estimate
 - Model Compatibility
 - API Client Modes and Streaming Design
 - Unload Mechanism and 64K Design
@@ -195,12 +193,12 @@
 - validate-live-client-matrix.py
 - enum
 - enum
+- All-Role Storage Estimate
+- enum
 - items
 - restart-gateway-drained.sh
-- estimate-model-storage.sh
 - Runtime Completion Audit
 - enum
-- evaluate-frontier-candidate.sh
 - Python Gateway Retention Decision
 
 ## God Nodes (most connected - your core abstractions)
@@ -232,16 +230,16 @@
 
 ## Hyperedges (group relationships)
 - **Controlled Improvement Workflow** — agents_branch_roles, agents_knowledge_graph_refresh, agents_recursive_experiment_worktrees, agents_human_approval_gate [EXTRACTED 1.00]
-- **Current Production Authority** — docs_state_inspected_production_release, docs_state_active_executor, docs_state_overflow_executor, docs_state_fixed_lifecycle [EXTRACTED 1.00]
 - **Executor-Directed Public API Contract** — agents_executor_authority, readme_public_model_catalog, docs_api_client_modes_native_client_tool_loop, docs_architecture_role_projection_pipeline [EXTRACTED 1.00]
 - **Executor Lifecycle Safety Contract** — agents_phase_3_executor_baseline, agents_exact_service_restart_unload, agents_safe_lifecycle_defaults, agents_resident_executor_policy, agents_honest_cold_response_reporting, agents_lifecycle_rollback [EXTRACTED 1.00]
+- **Operational Authority Chain** — docs_operations_operations, docs_state_state, docs_validation_validation [EXTRACTED 1.00]
 - **Primary Reasoner and Executor Runtime Path** — docs_validation_dgx_moa, docs_validation_reasoner, docs_validation_executor [EXTRACTED 1.00]
 - **Runtime Reliability Phases** — docs_superpowers_plans_2026_07_18_api_client_modes_streaming_api_client_modes_plan, docs_superpowers_plans_2026_07_18_lifecycle_usage_trace_lifecycle_usage_plan, docs_superpowers_plans_2026_07_19_memory_unload_64k_memory_unload_plan, docs_superpowers_plans_2026_07_19_phase_4_client_matrix_pr_gate_phase4_client_matrix_plan [EXTRACTED 1.00]
 - **Structured Read-Only Role Contracts** — gateway_src_dgx_moa_prompts_planner_planner_contract, gateway_src_dgx_moa_prompts_reviewer_reviewer_contract, gateway_src_dgx_moa_prompts_judge_judge_contract [EXTRACTED 1.00]
 - **Quality Evidence Gates** — docs_mvp_validation_synthetic_six_shape_suite, docs_quality_evaluation_paired_noninferiority_gate, docs_remote_judge_bounded_remote_quality_gate, docs_phase_audit_local_phase_evidence [INFERRED 0.75]
-- **Current Status Evidence Chain** — docs_state_current_decision_authority, docs_validation_runtime_completion, docs_validation_physical_validation [INFERRED 0.85]
 - **Dynamic MoA Bounded Collaboration** — docs_moa_orchestration_dynamic_moa_orchestration, docs_frontier_frontier_collaboration, docs_moa_orchestration_bounded_artifacts, docs_decisions_executor_authority [INFERRED 0.85]
 - **Governed Promotion Controls** — docs_skill_governance_immutable_skill_promotion_gate, docs_runtime_self_improvement_governed_evolution_registry, docs_recursive_improvement_isolated_improvement_flow, docs_policy_engine_fail_closed_policy_enforcement [INFERRED 0.85]
+- **Production Control Boundary** — docs_operations_authenticated_gateway, docs_operations_executor_lifecycle, docs_state_active_executor, docs_state_overflow_executor [INFERRED 0.85]
 - **Role Lifecycle and Routing** — docs_model_lifecycle_lifecycle_state_machine, docs_specialist_routing_local_remote_specialist_selection [INFERRED 0.85]
 - **Role Model Capacity Planning** — config_models_role_model_topology, data_state_storage_estimate_all_all_role_storage_estimate, data_state_storage_estimate_executor_executor_storage_estimate, data_state_storage_estimate_planner_planner_storage_estimate, data_state_storage_estimate_reviewer_reviewer_storage_estimate, data_state_storage_estimate_judge_judge_storage_estimate [INFERRED 0.85]
 - **Role-Specific Training Gates** — training_executor_readme_executor_training_package, training_planner_readme_planner_training_gate, training_reviewer_readme_reviewer_training_gate, docs_training_data_fail_closed_eligibility [INFERRED 0.85]
@@ -249,7 +247,7 @@
 - **Evidence-Gated Release Governance** — goal_release_stage_gates, goal_completion_rule, docs_benchmarks_measured_benchmarks [INFERRED 0.95]
 - **Phase 3 Executor Safety Contract** — docs_decisions_phase_3_executor_baseline, docs_memory_optimization_memory_optimization, docs_context_tuning_context_tuning, docs_dynamic_moa_concurrent_runtime_incident_20260808_safety_disposition [INFERRED 0.95]
 
-## Communities (195 total, 53 thin omitted)
+## Communities (193 total, 52 thin omitted)
 
 ### Community 0 - "ExecutionGraphRuntime"
 Cohesion: 0.05
@@ -711,10 +709,6 @@ Nodes (9): items, type, additionalProperties, type, changes, validation, items, 
 Cohesion: 0.29
 Nodes (7): Immutable Canonical Evidence Snapshot, Measured Benchmark Registry, CI Pipeline, Bounded Collaboration Contract, Evidence-Based Completion Rule, Dynamic MoA Release Direction, Release Stage Gates
 
-### Community 102 - "enum"
-Cohesion: 0.24
-Nodes (7): DeepSeek V4 Flash, dgx-moa, dgx-moa-fast, Active Executor, Inspected Production Release, Overflow Executor, Public Catalog
-
 ### Community 103 - "run-opencode-staging.py"
 Cohesion: 0.29
 Nodes (7): Declarative Policy Engine, Fail Closed Policy Enforcement, Dry Run Retention, Privacy and Retention, Bounded Remote Quality Gate, Remote Judge, Sanitized Judge Evidence Package
@@ -728,8 +722,8 @@ Cohesion: 0.33
 Nodes (6): Main and Dev Branch Roles, Generated Skills Promotion Gate, Human Approval Gate, Physically Gated Features, Python Gateway Policy, Recursive Experiment Worktrees
 
 ### Community 112 - "evaluate-paired-noninferiority.py"
-Cohesion: 0.27
-Nodes (6): Exact Full Service Stop Start Executor Unload, Phase 3 Executor Baseline, Exact Service Stop/Start, Executor Lifecycle, Phase 3 Rollback Baseline, Fixed Lifecycle
+Cohesion: 0.33
+Nodes (4): Exact Full Service Stop Start Executor Unload, Phase 3 Executor Baseline, Exact Service Stop/Start, Executor Lifecycle
 
 ### Community 113 - "failures"
 Cohesion: 0.33
@@ -738,10 +732,6 @@ Nodes (6): All-Role Storage Estimate, Executor Storage Estimate, Judge Storage A
 ### Community 114 - "Human Approval Gate"
 Cohesion: 0.33
 Nodes (6): Exact Full Service Stop Start, Honest Loading Progress, Lifecycle State Machine, Model Lifecycle Contract, Dynamic Specialist Routing, Local Remote Specialist Selection
-
-### Community 115 - "All-Role Storage Estimate"
-Cohesion: 0.13
-Nodes (6): Authenticated Gateway, Codex OAuth Frontier, Dynamic MoA Operational Boundary, Operations, Bearer Authentication, State
 
 ### Community 123 - "Model Compatibility"
 Cohesion: 0.40
@@ -787,30 +777,34 @@ Nodes (8): Gateway Container Service, API Client Modes, Native Client Tool Loop,
 Cohesion: 0.29
 Nodes (8): Safe Checked-In Model Defaults, Gateway Runtime Configuration, Role Model Topology, Resident Executor Judge Exclusion, Dynamic MoA Architecture, Exact Service Stop Start, Model Lifecycle Coordination, Role Projection Pipeline
 
+### Community 115 - "All-Role Storage Estimate"
+Cohesion: 0.40
+Nodes (5): Authenticated Gateway, Codex OAuth Frontier, Dynamic MoA Operational Boundary, Operations, State
+
+### Community 102 - "enum"
+Cohesion: 0.40
+Nodes (5): DeepSeek V4 Flash, Active Executor, Inspected Production Release, Overflow Executor, Public Catalog
+
 ### Community 97 - "items"
-Cohesion: 0.14
-Nodes (8): Declarative Policy, Execution Graph Shadow, OpenCode Go Specialist, Remote Judge, Runtime Skills, Training Collection, Weekly Packaging, Disabled Policy Paths
+Cohesion: 1.00
+Nodes (3): Execution Graph Shadow, Remote Judge, Disabled Policy Paths
 
 ### Community 134 - "restart-gateway-drained.sh"
-Cohesion: 0.50
-Nodes (4): Audit Exceptions and Remaining Gates, Current Decision Authority, IN_PROGRESS_WITH_EXCEPTIONS, PILOT_ACTIVE
+Cohesion: 0.67
+Nodes (3): Audit Exceptions and Remaining Gates, Current Decision Authority, PILOT_ACTIVE
 
 ### Community 68 - "Runtime Completion Audit"
-Cohesion: 0.40
-Nodes (5): Execution Graph, Physical Validation, Runtime Completion, Typed Evidence Graph, Validation
+Cohesion: 0.50
+Nodes (4): Execution Graph, Physical Validation, Runtime Completion, Validation
 
 ### Community 98 - "enum"
-Cohesion: 0.33
-Nodes (6): Authenticated Gateway, DeepSeek V4 Flash, dgx-moa, dgx-moa-fast, Executor, Reasoner
-
-### Community 140 - "Python Gateway Retention Decision"
-Cohesion: 0.00
-Nodes (3): Exact Service Stop/Start, Local Mistral Executor, Phase 3 Executor Baseline
+Cohesion: 0.50
+Nodes (4): dgx-moa, dgx-moa-fast, Executor, Reasoner
 
 ## Knowledge Gaps
-- **366 isolated node(s):** `type`, `partial`, `blocked`, `completed`, `failed` (+361 more)
+- **350 isolated node(s):** `type`, `partial`, `blocked`, `completed`, `failed` (+345 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **53 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **52 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
@@ -818,7 +812,7 @@ _Questions this graph is uniquely positioned to answer:_
 - **Why does `create_app()` connect `SkillRegistry` to `ExecutionGraphRuntime`, `frontier.py`, `Controller`, `StubProvider`, `EvolutionRegistry`, `SessionState`, `UsageStore`, `Dynamic MoA v2 Model Inventory`, `remote_judge.py`, `test_lifecycle.py`, `main`, `SpecialistRouter`, `observation.py`, `test_streaming.py`, `loop_engineering.py`, `replay.py`, `Dynamic MoA Production Completion Plan`, `ProfileManager`, `asyncio`, `ModelProvider`, `LifecycleStore`, `LifecycleCoordinator`, `properties`, `conftest.py`, `test_state_routing.py`, `policy.py`, `StageTimeout`, `training.py`, `test_specialists.py`, `api.py`, `load_settings`, `required`, `type`, `required`, `required`, `enum`, `test_client_quality_matrix.py`, `LiveDashboardHub`, `RuntimeMetrics`, `ValueError`, `parse_bool`, `Evidence Graph`, `Phase 3 Executor Baseline`, `capture-opencode-sse.py`?**
   _High betweenness centrality (0.072) - this node is a cross-community bridge._
 - **Why does `Controller` connect `Controller` to `ExecutionGraphRuntime`, `frontier.py`, `EvolutionRegistry`, `UsageStore`, `SkillRegistry`, `Dynamic MoA v2 Model Inventory`, `test_lifecycle.py`, `main`, `SpecialistRouter`, `test_streaming.py`, `loop_engineering.py`, `replay.py`, `ProfileManager`, `ModelProvider`, `ApiKeyStore`, `LifecycleStore`, `conftest.py`, `test_usage.py`, `ModelConfig`, `load_settings`, `required`, `LiveDashboardHub`, `Phase 3 Executor Baseline`, `enum`?**
-  _High betweenness centrality (0.032) - this node is a cross-community bridge._
+  _High betweenness centrality (0.033) - this node is a cross-community bridge._
 - **Why does `SessionState` connect `LifecycleStore` to `ExecutionGraphRuntime`, `frontier.py`, `Controller`, `StubProvider`, `UsageStore`, `SkillRegistry`, `Dynamic MoA v2 Model Inventory`, `main`, `replay.py`, `ModelProvider`, `ApiKeyStore`, `properties`, `conftest.py`, `test_usage.py`, `ModelConfig`, `improvement.py`, `benchmark.py`, `LiveDashboardHub`, `enum`, `Phase 3 Executor Baseline`, `enum`?**
   _High betweenness centrality (0.026) - this node is a cross-community bridge._
 - **Are the 277 inferred relationships involving `StubProvider` (e.g. with `ModelConfig` and `test_admin_dashboard_runs_bounded_custom_provider_codex()`) actually correct?**
