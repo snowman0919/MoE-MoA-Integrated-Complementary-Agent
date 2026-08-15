@@ -9679,3 +9679,73 @@ required `60.81 GiB`. The baseline was not weakened and the existing Pilot was
 not stopped without separate authority. Final Executor state is failed with no
 `9001` listener and Gateway readiness is therefore honestly `503`; authenticated
 DeepSeek fallback remains operational. Whole-change rollback is `875f35b8d`.
+
+## Current-release completion re-audit and physical rollback — 2026-08-15
+
+The re-audit started with remote `main` and `dev` at `5d504f1f4`, a clean
+development worktree, and a clean production clone whose local inventory still
+contained four registered hotfix worktrees and eleven merged auxiliary
+branches. Every worktree was clean; every auxiliary branch was an ancestor of
+both long-lived remote branches and was contained by existing
+`archive/20260814/*` tags. The four worktrees and eleven local branches were
+therefore removed without force. Both clones now retain only local `main` and
+`dev`, both refs match their remote at `5d504f1f4`, remote branch divergence is
+zero, and stash count is zero. GitHub reports main branch protection `404
+Branch not protected` and no repository rulesets; the available credential has
+administration read permission only.
+
+The overlay integration did not manufacture structural reduction. From
+rollback `875f35b8d` to `5d504f1f4`, checked-in counts remain 50 Python source
+files below `gateway/src/dgx_moa`, six top-level YAML/JSON/TOML configuration
+files, and 41 shell/top-level compatibility wrappers. Runtime source changed
+only `api.py` and `controller.py` by `+19/-2`; tests, evidence, and the canonical
+project graph account for the remaining release diff. Compatibility wrappers
+and rollback assets remain because no current reference audit proved them safe
+to remove.
+
+A new raw OpenAI-compatible production matrix used evaluation key
+`goal-raw-0815e`, with a 30-minute TTL, 16-request limit, and 200,000-token
+limit. The key received models `200`, admin `403`, and Dashboard-session `403`.
+Five `dgx-moa-fast` requests completed through
+`opencode_go/deepseek-v4-flash` with `fallback_reason=local_unavailable`:
+nonstreaming Chat returned exactly `GOAL_RAW_CHAT_OK`, Responses returned
+exactly `GOAL_RAW_RESPONSES_OK`, Chat SSE returned exactly
+`GOAL_RAW_STREAM_OK` followed by `[DONE]`, and one native
+`read_validation_marker` call accepted a same-session tool result before the
+final output cited `GOAL_TOOL_RESULT_OK`. Request usage recorded five completed
+requests, one streaming request, and 11,077 total tokens.
+
+All four sessions were finalized as excluded validation traces using
+`agent-trace-v3`. Operator Dashboard authentication returned `204`, identity
+reported `operator=true`, private request detail returned `200`, and the
+aggregate ExecutionGraph count remained honestly zero because that path is
+policy-disabled. The tool-continuation Executor projection physically recorded
+1,610 snapshot bytes, 2,377 projection bytes, 10,885 rendered prompt bytes,
+2,390 provider prompt tokens, categories `objective`, `original_inputs`,
+`request_constraints`, and `runtime_evidence:tool`, with zero dropped evidence.
+A direct production WebSocket handshake returned `101 Switching Protocols` and
+the first JSON frame was `connected` with an integer sequence. The evaluation
+key was revoked immediately; SQLite stored plaintext length zero, hash length
+64, kind `evaluation`, and non-null `revoked_at`.
+
+Current-release rollback used a separate bounded evaluation key. After an
+authenticated zero-request drain, the production checkout detached at
+`875f35b8d`, synchronized the frozen environment, and restarted only the fixed
+Gateway. PID changed `3889595 -> 3945946`; an authenticated canary returned
+exactly `GOAL_ROLLBACK_875_OK` from DeepSeek Flash. The checkout then switched
+back to `main@5d504f1f4`, synchronized again, and restarted only the Gateway as
+PID `3946154`; the redeploy canary returned exactly `GOAL_REDEPLOY_5D_OK` from
+the same fallback. The key was revoked and returned models `401`; its database
+row also has zero plaintext and a 64-character hash. Gateway `NRestarts=0`,
+health `200`, and unauthenticated models `401`. Pilot PID `3790208` was unchanged
+through both restarts.
+
+The resident Executor exception remains physical rather than inferred. Its
+three unchanged-baseline starts failed before weight loading because the Pilot
+occupied the GPU; no `9001` listener exists, `/readyz` returns `503`, and
+Dashboard reports state `failed`, generation `27`, fallback active, low/medium
+risk Executor `deepseek-v4-flash`, and high-risk Executor `gpt-5.6-sol`. The
+qualified baseline was not weakened and the unrelated Pilot was not stopped.
+The Runtime Completion re-audit therefore remains
+`IN_PROGRESS_WITH_EXCEPTIONS` pending an operator decision about Pilot versus
+resident Executor ownership and external branch-protection authority.
