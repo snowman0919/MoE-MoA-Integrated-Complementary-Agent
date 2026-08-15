@@ -3079,13 +3079,13 @@ def create_app(
                 request.app.state.controller.note_no_progress(state)
 
             async def remote_executor_complete(
-                executor_request: dict[str, Any], stage: str
+                executor_request: dict[str, Any], stage: str, *, force_frontier: bool = False
             ) -> dict[str, Any]:
                 scoped_request = {
                     **executor_request,
                     "_client_workspace_path": state.repository.get("workspace_path"),
                 }
-                if executor_flash:
+                if executor_flash and not force_frontier:
                     flash_provider = request.app.state.overflow_executor
                     if flash_provider is None:
                         raise OverflowExecutorUnavailable(
@@ -3195,6 +3195,22 @@ def create_app(
                     retry_request, f"{stage}_correction_tool_retry"
                 )
                 retry_message = (response.get("choices") or [{}])[0].get("message", {})
+                if (
+                    not retry_message.get("tool_calls")
+                    and executor_flash
+                    and request.app.state.frontier is not None
+                ):
+                    request.app.state.store.event(
+                        state_session_id,
+                        "executor_flash_tool_call_fallback",
+                        {"provider": "frontier", "reason": "tool_call_missing"},
+                    )
+                    response = await remote_executor_complete(
+                        retry_request,
+                        f"{stage}_frontier_tool_retry",
+                        force_frontier=True,
+                    )
+                    retry_message = (response.get("choices") or [{}])[0].get("message", {})
                 if not retry_message.get("tool_calls"):
                     request.app.state.store.event(
                         state_session_id,

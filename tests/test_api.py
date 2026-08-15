@@ -3562,9 +3562,15 @@ def test_flash_invalid_output_alone_falls_back_to_frontier(
 def test_flash_executor_applies_required_frontier_correction(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]
+    frontier_config = settings.state_db.parent / "flash-correction-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: gpt-5.6-sol\nprimary_profile: primary\ncollaboration_retries: 0\n"
+    )
     controlled = Settings.model_validate(
         settings.model_dump()
         | {
+            "frontier_enabled": True,
+            "frontier_config": frontier_config,
             "lifecycle_mode": "disabled",
             "executor_scheduling": {
                 "enabled": True,
@@ -3574,31 +3580,22 @@ def test_flash_executor_applies_required_frontier_correction(
         }
     )
 
+    flash_calls = 0
+
     class Flash:
         async def available(self) -> bool:
             return True
 
         async def execute(self, request, correlation_id):  # type: ignore[no-untyped-def]
+            nonlocal flash_calls
             del request, correlation_id
+            flash_calls += 1
             return {
                 "model": "deepseek-v4-flash",
                 "choices": [
                     {
-                        "message": {
-                            "role": "assistant",
-                            "content": None,
-                            "tool_calls": [
-                                {
-                                    "id": "call-flash-correction",
-                                    "type": "function",
-                                    "function": {
-                                        "name": "apply_patch",
-                                        "arguments": '{"patch":"bounded correction"}',
-                                    },
-                                }
-                            ],
-                        },
-                        "finish_reason": "tool_calls",
+                        "message": {"role": "assistant", "content": "수정을 적용하겠습니다."},
+                        "finish_reason": "stop",
                     }
                 ],
                 "usage": {"total_tokens": 1},
@@ -3609,10 +3606,42 @@ def test_flash_executor_applies_required_frontier_correction(
         lifecycle_health_probe=lambda role: asyncio.sleep(0, result=False),
         overflow_executor=Flash(),  # type: ignore[arg-type]
     )
+    frontier_calls = 0
+
+    async def remote_execute(request, correlation_id):  # type: ignore[no-untyped-def]
+        nonlocal frontier_calls
+        del request, correlation_id
+        frontier_calls += 1
+        return {
+            "model": "gpt-5.6-sol",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-frontier-correction",
+                                "type": "function",
+                                "function": {
+                                    "name": "apply_patch",
+                                    "arguments": '{"patch":"bounded correction"}',
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"total_tokens": 1},
+            "provider_provenance": {"provider": "primary"},
+        }
+
     session_id = "flash-frontier-correction"
     with TestClient(app) as client:
         app.state.provider = stub_provider
         app.state.controller.provider = stub_provider
+        app.state.frontier.execute = remote_execute
         app.state.store.save(
             SessionState(
                 session_id=session_id,
@@ -3642,9 +3671,15 @@ def test_flash_executor_applies_required_frontier_correction(
         )
 
     assert response.status_code == 200, response.text
+    assert flash_calls == 2
+    assert frontier_calls == 1
     assert response.json()["choices"][0]["finish_reason"] == "tool_calls"
     assert response.json()["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == (
         "apply_patch"
+    )
+    assert any(
+        event["event_type"] == "executor_flash_tool_call_fallback"
+        for event in app.state.store.events(session_id)
     )
 
 
