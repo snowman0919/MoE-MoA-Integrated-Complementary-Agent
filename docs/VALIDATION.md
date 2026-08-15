@@ -9641,3 +9641,41 @@ recorded as a task-completion pass. DeepSeek fallback was not forced because
 the operator required the resident Executor and port `9001` to remain active.
 Both evaluation keys were revoked, stored no plaintext, and returned models
 `401` after revocation.
+
+## Frontier reviewer attribution and project graph integration — 2026-08-15
+
+Commit `e2547c679` attributes a successful Codex OAuth Frontier code-review
+fallback to the logical Reviewer when the local Reviewer is unavailable. An
+independent regression first caught an existing disagreement-triggered Frontier
+task being mislabeled as that fallback; the final guard records Reviewer
+ownership only when it actually creates the replacement task. The focused API
+and Controller suite passed `379` tests. Ruff format/check, strict mypy on 51
+source files, every schema JSON, and the complete suite passed at `1153 passed,
+1 warning`. Dev CI `31881856866` and main CI `31881920233` passed.
+
+Commit `b3c867854` also integrates the repository's canonical `graphify-out`
+artifacts while excluding machine-local interpreter, cache, temporary analysis,
+and dated duplicate snapshots. The final incremental build contains `3273`
+nodes, `9384` edges, and `186` communities. The pre-export integrity gate found
+zero dangling, missing-endpoint, self-loop, duplicate, or collapsed edges. The
+measured query benchmark reported `6.1x` fewer tokens than the naive corpus
+estimate. Fourteen JSON/configuration sources produced no nodes and remain an
+explicit retry warning; no semantic content is claimed for them.
+
+Production fast-forwarded from `875f35b8d` to `main@b3c867854` after both CI
+gates. An authenticated zero-request drain restarted only the Gateway as PID
+`3889595`, active with `NRestarts=0`; health returned `200`, unauthenticated
+models returned `401`, and only the authenticated Gateway listened on
+`0.0.0.0:9000`. A short-TTL evaluation canary returned HTTP `200` and exactly
+`DEPLOY_B3C867854_OK` from `deepseek-v4-flash`; the key was immediately revoked
+and then returned models `401`.
+
+The pre-deployment Executor was already inactive. Restoring the required
+loopback `9001` service used the unchanged qualified baseline, but all three
+systemd attempts failed before weight loading: an existing
+`dgx-moa-pilot-v1-release-attempt12.service` process occupied the GPU, leaving
+`49.15 GiB` free while the approved `gpu_memory_utilization=0.5` startup gate
+required `60.81 GiB`. The baseline was not weakened and the existing Pilot was
+not stopped without separate authority. Final Executor state is failed with no
+`9001` listener and Gateway readiness is therefore honestly `503`; authenticated
+DeepSeek fallback remains operational. Whole-change rollback is `875f35b8d`.
