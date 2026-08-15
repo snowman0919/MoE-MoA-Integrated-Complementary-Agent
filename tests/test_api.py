@@ -5653,6 +5653,84 @@ def test_low_risk_review_failure_preserves_executor_response(
     assert any(event["event_type"] == "review_failed" for event in events)
 
 
+def test_executor_only_lifecycle_map_preserves_low_risk_reviewer_degrade(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    models = dict(settings.models)
+    models["reasoner"] = models["reasoner"].model_copy(
+        update={"provider": "ollama", "lifecycle_control": "external"}
+    )
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "models": models,
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+        }
+    )
+    original = stub_provider.complete
+
+    async def unavailable_review(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor":
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "executor output"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        if role == "reviewer":
+            raise httpx.ConnectError("reviewer unavailable")
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = unavailable_review  # type: ignore[method-assign]
+    app = create_app(
+        controlled,
+        lifecycle_driver=FakeLifecycleDriver({"executor": "active"}),
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": "executor-only-reviewer-degrade",
+            },
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "implement the bounded change"}],
+                "metadata": {"diff_summary": "changed one implementation"},
+            },
+        )
+        state = app.state.store.get("executor-only-reviewer-degrade")
+        events = app.state.store.events("executor-only-reviewer-degrade")
+        high_risk = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "change authentication"}],
+                "metadata": {"authentication": True, "diff_summary": "changed auth"},
+            },
+        )
+        assert_no_request_leases(app)
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "executor output"
+    assert state and state.review_status == "failed"
+    assert any(
+        event["event_type"] == "role_degraded"
+        and event["payload"] == {"role": "reviewer", "reason": "reviewer_unavailable"}
+        for event in events
+    )
+    assert high_risk.status_code == 503
+    assert high_risk.json()["error"]["code"] == "model_not_managed"
+    assert high_risk.headers["X-DGX-MOA-Model-Role"] in {"planner", "reviewer"}
+
+
 @pytest.mark.parametrize("failure", ["value", "timeout", "http_4xx"])
 def test_high_risk_review_failure_returns_typed_bad_gateway(
     settings, stub_provider: StubProvider, failure: str

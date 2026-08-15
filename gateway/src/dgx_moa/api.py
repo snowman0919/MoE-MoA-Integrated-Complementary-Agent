@@ -2773,6 +2773,17 @@ def create_app(
                             failure_class=None if healthy else "external_unavailable",
                         )
                     elif role not in configured.lifecycle_unit_map:
+                        if role == "reviewer" and request_class != "high_risk_task":
+                            degraded_roles[role] = "reviewer_unavailable"
+                            new_states[role] = "cold"
+                            new_loads[role] = False
+                            new_ready_at[role] = None
+                            request.app.state.store.event(
+                                state_session_id,
+                                "role_degraded",
+                                {"role": role, "reason": "reviewer_unavailable"},
+                            )
+                            continue
                         unmanaged = unmanaged or role
                         not_ready = not_ready or record
                     else:
