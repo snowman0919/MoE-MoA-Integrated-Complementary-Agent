@@ -910,9 +910,7 @@ async def responses_sse(
             raise ProgressOnlyResponse
         if tool_calls:
             if (
-                not text.strip()
-                or is_progress_only(text)
-                or has_korean_script_leak(text, progress_language, objective)
+                has_korean_script_leak(text, progress_language, objective)
                 or has_internal_protocol_leak(text)
                 or (progress_language == "ko" and not re.search("[가-힣]", text))
             ):

@@ -9583,9 +9583,10 @@ The reported Codex transcript reproduced in `responses_sse`: progress-only or
 language-mismatched Executor text was replaced by `tool_progress_text` with a
 Gateway-authored description derived from the tool name and shell command.
 The replacement and its `substantive_tool_progress` selector were deleted.
-Meaningful Executor commentary is still forwarded unchanged; rejected
-progress, protocol leakage, and language mismatch now produce no synthetic
-Gateway text while the native tool call remains intact.
+Executor commentary accompanying a native tool call is forwarded unchanged,
+including a short progress sentence. Protocol leakage and language mismatch
+still produce no synthetic Gateway text while the native tool call remains
+intact.
 
 The regression first failed with the exact `cd /tmp/rust-mcu-ide && sed ...`
 shape and passed after the deletion. Streaming tests passed `81`; related API

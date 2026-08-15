@@ -776,7 +776,7 @@ async def test_responses_sse_replaces_malformed_edit_alias_with_feedback() -> No
 
 
 @pytest.mark.asyncio
-async def test_responses_sse_suppresses_gateway_tool_progress_and_terminates_failures(
+async def test_responses_sse_preserves_executor_tool_progress_and_terminates_failures(
     caplog,
 ) -> None:  # type: ignore[no-untyped-def]
     async def tool_upstream():
@@ -799,11 +799,12 @@ async def test_responses_sse_suppresses_gateway_tool_progress_and_terminates_fai
         for line in chunk.decode().splitlines()
         if line.startswith("data: ")
     ]
-    assert not any(
+    deltas = [
         event.get("delta")
         for event in tool_events
         if event.get("type") == "response.output_text.delta"
-    )
+    ]
+    assert deltas == ["목표 파일을 확인합니다."]
     assert all(
         event.get("delta") != "다음 작업에 필요한 증거를 확인합니다." for event in tool_events
     )
