@@ -11,26 +11,28 @@ remain reachable through `docs/DYNAMIC_MOA_COMPLETION_PLAN.md`,
 
 ```text
 2026-08-14 Runtime Completion audit = COMPLETE_WITH_EXCEPTIONS
+2026-08-15 Runtime Completion re-audit = IN_PROGRESS_WITH_EXCEPTIONS
 현재 Gateway release = PILOT_ACTIVE
 전체 Dynamic MoA 프로젝트 = IN_PROGRESS
 PRODUCTION_BETA / STABLE = 미달성
 ```
 
-`COMPLETE_WITH_EXCEPTIONS` is limited to the Runtime audit: the shared Runtime
-fixes, isolated client batches, temporary-key isolation, production canaries,
-rollback/redeploy, and Git/worktree cleanup passed. It does not promote the
-policy-disabled MoA paths or satisfy later release stages.
+The current Runtime release, isolated clients, temporary-key isolation,
+production canary, and rollback rehearsal passed their measured gates. The
+re-audit remains in progress because an independently created dirty development
+overlay was preserved instead of being overwritten, so the requested final
+worktree cleanup is not complete. This does not promote policy-disabled paths.
 
 ## Inspected production release
 
 | Item | Current fact |
 | --- | --- |
-| Source | Runtime code `main@22424effe`; production checkout contains it plus the current evidence update |
-| Rollback | Pre-toggle source `0905d3880`; exact ignored environment/unit backup under `~/.local/state/dgx-moa/rollback-executor-toggle-20260815` |
-| Gateway | PID `2888487`, `NRestarts=0`, healthy authenticated listener on `0.0.0.0:9000` |
+| Source | Runtime code and clean production checkout `main@10f8248fc` |
+| Rollback | Code rollback `a030d51e7`; physical source rollback/redeploy also passed against `c9bf3e3d8` |
+| Gateway | PID `3209048`, `NRestarts=0`, healthy authenticated listener on `0.0.0.0:9000` |
 | Public catalog | only `dgx-moa` and `dgx-moa-fast`, both `context_length: 131072` |
-| Active Executor | `opencode_go/deepseek-v4-flash` through the reviewed production scheduling override |
-| Local Executor | operator-disabled after a physical ON/canary/OFF cycle; no listener on loopback `9001` |
+| Active Executor | local Mistral `dgx-moa-executor`, PID `3229568`, loopback `127.0.0.1:9001` |
+| Overflow Executor | `opencode_go/deepseek-v4-flash`; physically used while local Mistral was operator-disabled |
 | Lifecycle | `fixed`, exact map `executor -> dgx-moa-executor.service`; operator control is active |
 | Enabled integration | Dashboard, Codex OAuth Frontier, DeepSeek Flash Executor scheduling |
 | Disabled policy paths | ExecutionGraph control, specialist routing, Remote Judge, Loop Engineering, Runtime Skills/Knowledge/Evolution, declarative policy, training collection, weekly jobs |
@@ -38,7 +40,7 @@ policy-disabled MoA paths or satisfy later release stages.
 The ignored production environment reports `runtime_channel=main`,
 `trace_origin=production`, and `controller_commit=9d4045b`. That last value is
 stale configuration metadata, not source-deployment authority; Git history and
-the physical deploy/rollback record establish `22424effe` as the running code
+the physical deploy/rollback record establish `10f8248fc` as the running code
 epoch. Correcting the metadata would require a runtime configuration change and
 restart, so it is not part of this documentation-only closeout.
 
@@ -46,14 +48,31 @@ restart, so it is not part of this documentation-only closeout.
 
 | Layer | Authority |
 | --- | --- |
-| Active production request path | DeepSeek V4 Flash Executor; low/medium-risk fallback while local Mistral is operator-stopped |
+| Active production request path | local Mistral Executor on loopback `9001` |
+| Bounded overflow path | DeepSeek V4 Flash for low/medium risk; a missing required native tool call gets one Codex OAuth Frontier attempt, then remains fail-closed |
 | Public API context | `131072`, as returned by `/v1/models` and loaded production config |
-| Operator-disabled local candidate | Mistral Small 4 on loopback `9001`, `131072`, seq1, 3.4 GB KV, native allocator, explicit FlashInfer B12x dense/MoE, TRITON_MLA, `FULL_DECODE_ONLY` |
+| Resident local candidate | Mistral Small 4 on loopback `9001`, `131072`, seq1, 3.4 GB KV, native allocator, explicit FlashInfer B12x dense/MoE, TRITON_MLA, `FULL_DECODE_ONLY` |
 | Preserved rollback baseline | Phase 3 `65536`, seq1, 1.7 GB KV, `gpu_memory_utilization=0.5`, MARLIN |
 
-The operator-disabled local candidate is not described as the active Executor. The 65K
-MARLIN profile remains safety/rollback evidence, not the public context or the
-current production provider.
+The 65K MARLIN profile remains safety/rollback evidence, not the public context
+or the current production provider.
+
+## Implementation matrix
+
+| Capability | Current classification | Measured boundary |
+| --- | --- | --- |
+| Chat / Responses common execution | `PHYSICALLY_VERIFIED` | authenticated Chat, Responses, SSE, cancellation, recovery, long context |
+| Codex / OpenCode / Hermes compatibility | `PHYSICALLY_VERIFIED` | Docker-isolated public and hidden validators; preserved pre-fix failures are in `docs/VALIDATION.md` |
+| ExecutionGraph | `DISABLED_BY_POLICY` | shadow artifacts remain non-authoritative |
+| Role Context projection | `PHYSICALLY_VERIFIED` | provider-input byte/token lineage recorded for Executor, Reasoner, and Frontier |
+| Evidence persistence | `PHYSICALLY_VERIFIED` | canonical snapshots, projections, provider invocations, trace and usage lineage |
+| Planner / Reviewer / Judge / Frontier | `DISABLED_BY_POLICY` / `PHYSICALLY_VERIFIED` | local optional roles and Judge remain disabled; bounded Reviewer degradation and Codex OAuth Frontier are live |
+| API-key isolation / overflow Executor | `PHYSICALLY_VERIFIED` | evaluation scope, TTL, hash-only storage, deny-admin, revoke and post-revoke `401` |
+| Tool call / continuation | `PHYSICALLY_VERIFIED` | native tool call plus same-session result continuation |
+| Streaming / cancellation / recovery | `PHYSICALLY_VERIFIED` | SSE terminal, consumer close, active-request drain, Codex reconnect family fixed and replayed |
+| Dashboard / WebSocket | `PHYSICALLY_VERIFIED` | honest ON/OFF state and exact fixed-mode control |
+| Logging / training candidate | `PHYSICALLY_VERIFIED` / `DISABLED_BY_POLICY` | safe runtime logs are live; collection and promotion remain disabled |
+| Deployment / rollback | `PHYSICALLY_VERIFIED` | drained restart, source rollback/redeploy, health and authenticated canaries |
 
 ## Public behavior
 
@@ -75,9 +94,13 @@ See `docs/API_CLIENT_MODES.md` for the public request contract and
 - CI is checked in and green on both long-lived branches, but GitHub branch
   protection is absent. The available token received `403` when attempting to
   require CI and prohibit force-push/delete: `EXTERNAL_PERMISSION_REQUIRED`.
-- Git/worktree cleanup is complete, but structural codebase reduction is not.
-  The audited release kept file counts at `50/6/62` and added 129 source lines
-  for shared safety/recovery. No net code reduction is claimed.
+- The separate production checkout is clean, but the primary development
+  worktree contains an independently created dirty overlay (`AGENTS.md`, API /
+  controller attribution changes, tests, and `graphify-out/`). It was neither
+  committed nor discarded. Final branch/worktree cleanup is therefore open.
+- Structural codebase reduction is not claimed. From rollback `c9bf3e3d8` to
+  `10f8248fc`, no file was added or removed; 11 files changed by `+567/-26`
+  lines for measured tracing, lifecycle, routing, and regression coverage.
 - Internal compatibility aliases, wrappers, and rollback assets remain because
   references, durable continuations, tests, or physical rollback depend on
   them. No dead public launcher was proven safe to delete in this closeout.
@@ -89,9 +112,10 @@ See `docs/API_CLIENT_MODES.md` for the public request contract and
 
 ## Repository state
 
-Local and remote long-lived branches remain only `main` and `dev`. The
-registered development worktree and separate production checkout are clean;
-stash count is zero.
+Remote long-lived branches are `main` and `dev` at the release revision. The
+separate production checkout is clean. The registered development worktree's
+independent dirty overlay is preserved, and one temporary integrated worktree
+remains until this documentation commit is promoted; stash count is zero.
 Twenty-one `archive/20260814/*` tags preserve auxiliary branch, detached
 worktree, and stash commits. Dirty overlays remain in the mode-`0600` archive
 recorded by hash in `docs/VALIDATION.md`.

@@ -1103,6 +1103,12 @@ configured Codex OAuth Frontier Executor, and remains fail-closed if Frontier
 is unavailable. This fallback does not authorize automatic stopping of the
 normally resident Executor.
 
+When Flash omits a native tool call that the request or a required correction
+demands, the Runtime retries Flash once, then makes one bounded Codex OAuth
+Frontier Executor attempt. If Frontier also omits the tool call or is
+unavailable, the request remains fail-closed. The client still owns tool
+execution.
+
 An authenticated operator may explicitly switch Mistral from `/admin` only
 when `/v1/admin/executor` reports `control_available=true`. OFF performs the
 selected exact service stop and persists lifecycle state `disabled`; active
@@ -1113,3 +1119,10 @@ and the page polls its state, generation, ETA, and honest weight progress. A
 missing trustworthy journal counter is shown as unavailable, never estimated
 from elapsed time. Checked-in lifecycle, scheduling, and Dashboard defaults
 remain disabled.
+
+A Gateway restart during a lifecycle-owned load can leave durable state failed
+while systemd is still activating. Do not start a second model process. Allow
+the exact stop to finish, verify the unit is inactive, preserve failure events,
+reset only the automation latch and role retry state with the existing
+LifecycleStore recovery operations, then use authenticated `/on` once.
+Readiness requires both loopback `9001` health and Dashboard state `ready`.

@@ -9490,3 +9490,89 @@ revoked test token was reactivated hash-only as general key `toggle-test` with
 a 24-hour TTL, 100-request limit, and one-million-token limit; it returned
 `FALLBACK_AFTER_OFF` from `deepseek-v4-flash`. No raw token was stored in the DB
 or committed.
+
+## Runtime provider-input and isolated-client re-audit — 2026-08-15
+
+The re-audit started at `c9bf3e3d8`, promoted four focused releases, and ended
+with production code `main@10f8248fc`: provider-input Role Context tracing
+`d29b5a20c`, exact OFF cancellation `3a310561c`, low-risk unmanaged Reviewer
+degradation `a030d51e7`, and bounded required-tool fallback `10f8248fc`.
+Rollback of the first release to `c9bf3e3d8` and redeploy both returned
+authenticated `200` canaries. The final code rollback is `a030d51e7`.
+
+Ruff format/check, strict mypy on 51 source files, every schema JSON, and the
+complete suite passed at `1158 passed, 1 warning`. GitHub CI passed dev runs
+`31851051625`, `31851920915`, `31852928902`, and `31857115895`, and main runs
+`31851238035`, `31852024306`, `31853012521`, and `31857184744`.
+
+The raw authenticated client physically returned unauthenticated models `401`,
+malformed Chat `422`, Responses `200`, multi-turn marker retention `200`, a
+62,400-byte long input with the exact marker and 52,480 prompt tokens, Chat SSE
+with `[DONE]`, cancellation returning active requests to zero, and a native
+function call plus same-session result continuation.
+
+| Client | Task | Seconds | Gate |
+| --- | --- | ---: | --- |
+| OpenCode 1.17.18 | rate-limiter | 331.402 | passed all ten checks |
+| OpenCode 1.17.18 | atomic-store | 128.467 | passed all ten checks |
+| OpenCode 1.17.18 | webhook-verifier | 306.064 | validators passed; terminal provider failure |
+| OpenCode replay | webhook-verifier | 461.338 | passed all ten checks |
+| Codex 0.146.0 | rate-limiter | 772.875 | validators/exit passed; one recovered disconnect |
+| Codex 0.146.0 | atomic-store | 203.433 | validators/exit passed; one recovered disconnect |
+| Codex 0.146.0 | webhook-verifier | 328.375 | passed all ten checks |
+| Hermes f67aae323 | rate-limiter | 186.872 | passed all ten checks |
+| Hermes f67aae323 | atomic-store | 309.166 | passed all ten checks |
+| Hermes f67aae323 | webhook-verifier | 404.880 | passed all ten checks |
+
+The OpenCode terminal failure did not reproduce and is classified `RESOURCE`.
+Both Codex disconnects reproduced in exact replays at 410.738 and 491.818
+seconds. Gateway events identified the shared root cause as
+`frontier_correction_tool_retry_failed(reason=tool_call_missing)` followed by
+`FrontierRequiredUnavailable`: Flash scheduling retried DeepSeek but never
+invoked the available Codex OAuth Frontier transport.
+
+Release `10f8248fc` adds one bounded Frontier attempt after two Flash responses
+omit a required native tool call, while preserving fail-closed behavior. A
+focused regression proved Flash call count 2, Frontier call count 1, and native
+tool output. With local Mistral physically OFF, the post-fix exact Codex
+rate-limiter replay passed all ten checks in 327.211 seconds and unseen
+dag-runner passed all ten in 191.098 seconds. Neither emitted the new fallback
+event because DeepSeek produced native tool calls directly; the canary proves
+the post-fix client path but does not claim that the new branch itself executed
+in production.
+
+Current-release SQLite joined 297 provider invocations to projections across 24
+sessions. Executor ranges were snapshot `952..125791`, projection
+`1617..126456`, rendered prompt `9543..196810` bytes, and `2045..52480` prompt
+tokens. Reasoner ranges were `3040..42406`, `3704..44443`, `9531..55221`, and
+`1883..31929`; Frontier-review ranges were `18994..54659`, `20351..56857`,
+`9360..11128`, and `17394..18086`. Categories covered objective, original
+inputs, request constraints, tool/failure evidence, and bounded contributions.
+Dropped evidence was zero in this measured window. Raw prompts, remote output,
+hidden reasoning, and credentials were not queried.
+
+Every batch used a separate short-TTL `evaluation` key with request/token
+bounds. Keys were denied admin access, revoked in `finally`, returned models
+`401`, and stored plaintext length `0` with hash length `64`. Hermes cleanup
+removed three temporary profile files containing its raw key; non-secret
+evidence remained.
+
+Production `10f8248fc` drained and restarted Gateway PID `2992922` as PID
+`3189012`; authenticated models, exact-marker Chat, and Responses returned
+`200`, then the canary key returned post-revoke `401`. A bounded OFF canary
+selected DeepSeek. The first ON was interrupted by a Gateway restart to PID
+`3209048`; a direct start was later canceled because durable lifecycle state
+remained failed. Recovery used the existing automation-latch reset and
+`recover_state("executor", "cold")`, preserving all 31 failure events. The
+subsequent owned ON loaded 13/13 shards in 446.96 seconds. Final physical state
+is Gateway `0.0.0.0:9000` PID `3209048` and local Executor
+`127.0.0.1:9001` PID `3229568`, both active with `NRestarts=0`; Dashboard
+reports `ready`, `local_mistral`, and fallback inactive.
+
+The starting Role Context worktree was integrated and removed. During later
+integration, the primary dev worktree acquired an unrelated dirty overlay in
+`AGENTS.md`, API/controller attribution code, tests, and `graphify-out/`. It was
+not overwritten, stashed, committed, or deployed. Remote main/dev and the clean
+production checkout own the release, but final local cleanup remains open.
+From `c9bf3e3d8` to `10f8248fc`, 11 existing files changed by `+567/-26`; no
+file was added or removed and no net reduction is claimed.
