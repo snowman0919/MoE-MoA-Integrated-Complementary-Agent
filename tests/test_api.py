@@ -76,6 +76,12 @@ def test_openai_lifecycle_gate_requires_exact_model_and_public_inference(
     assert openai_inference_ready(
         httpx.Response(200, json={"choices": [{"message": {"content": "READY"}}]})
     )
+    assert openai_inference_ready(
+        httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "", "reasoning_content": "READY"}}]},
+        )
+    )
     assert not openai_inference_ready(
         httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
     )

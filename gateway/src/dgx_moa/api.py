@@ -241,7 +241,12 @@ def openai_inference_ready(response: httpx.Response) -> bool:
     except (ValueError, AttributeError):
         return False
     return bool(
-        choices and isinstance(choices[0], dict) and choices[0].get("message", {}).get("content")
+        choices
+        and isinstance(choices[0], dict)
+        and (
+            choices[0].get("message", {}).get("content")
+            or choices[0].get("message", {}).get("reasoning_content")
+        )
     )
 
 
