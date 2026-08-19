@@ -7696,6 +7696,96 @@ def test_streaming_upstream_400_returns_invalid_request(
         assert response.json()["error"]["code"] == "invalid_request"
 
 
+@pytest.mark.parametrize("stream", [False, True])
+def test_local_executor_400_falls_back_once_to_mimo(
+    settings: Settings, stub_provider: StubProvider, stream: bool
+) -> None:
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            }
+        }
+    )
+    local_calls = 0
+    flash_calls = 0
+
+    async def rejected(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal local_calls
+        local_calls += 1
+        response = httpx.Response(
+            400,
+            json={"message": "System message must be at the beginning.", "code": 400},
+            request=httpx.Request("POST", model.base_url),
+        )
+        raise httpx.HTTPStatusError("bad request", request=response.request, response=response)
+
+    if stream:
+        stub_provider.stream = rejected  # type: ignore[method-assign]
+    else:
+        stub_provider.complete = rejected  # type: ignore[method-assign]
+
+    class Flash:
+        async def available(self) -> bool:
+            return True
+
+        async def execute(self, request, correlation_id):  # type: ignore[no-untyped-def]
+            nonlocal flash_calls
+            del request, correlation_id
+            flash_calls += 1
+            return {
+                "model": "mimo-v2.5",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "MIMO_400_FALLBACK_OK"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"total_tokens": 1},
+                "provider_provenance": {"provider": "opencode_go"},
+            }
+
+    app = create_app(
+        controlled,
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
+        overflow_executor=Flash(),  # type: ignore[arg-type]
+    )
+    session_id = f"local-400-{'stream' if stream else 'complete'}"
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-fast",
+                "stream": stream,
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        events = app.state.store.events(session_id)
+
+    assert response.status_code == 200
+    assert "MIMO_400_FALLBACK_OK" in response.text
+    assert local_calls == 1
+    assert flash_calls == 1
+    scheduled = next(event for event in events if event["event_type"] == "executor_scheduled")
+    assert scheduled["payload"]["selected_executor"] == "local_primary"
+    fallback = next(
+        event for event in events if event["event_type"] == "executor_local_http_400_fallback"
+    )
+    assert fallback["payload"] == {
+        "from": "local_primary",
+        "to": "remote_overflow",
+        "reason": "local_http_400",
+        "stage": "executor_first_byte" if stream else "executor_total",
+    }
+    assert_usage(app, "completed")
+
+
 def test_api_validation(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
     with client_with_stub(settings, stub_provider) as client:
         response = client.post(

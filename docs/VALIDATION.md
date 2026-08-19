@@ -10151,3 +10151,24 @@ request. Durable events recorded both requests as `local_primary` and
 request used `reason=local_idle`. No event with a remote or fallback event type
 was recorded for either request. This is the intended outcome: the valid local
 request no longer fails, so MiMo fallback is neither needed nor invoked.
+
+## Local Executor HTTP 400 fallback — 2026-08-19
+
+The post-invocation routing contract now treats an HTTP 400 returned by an
+admitted `local_primary` Executor as a one-time MiMo fallback condition when
+Executor scheduling and the remote overflow provider are both enabled. The
+Gateway releases the local Executor request/stream leases and scheduler
+admission before selecting `remote_overflow`, records
+`executor_local_http_400_fallback` with `reason=local_http_400`, and does not
+retry the local request. HTTP 400 responses remain client-visible when remote
+overflow is not configured, when scheduling is disabled, or when the failing
+provider was not `local_primary`.
+
+A parameterized regression first failed for both streaming and non-streaming
+requests, then passed with exactly one local call and one MiMo call per request.
+Adjacent regressions confirmed that a streaming HTTP 400 without remote
+overflow and a typed OpenAI HTTP 400 still remain HTTP 400 responses. Ruff
+passed over `gateway/src` and `tests`, strict mypy passed 53 source files, and
+the complete suite passed 1,178 tests in 47.89 seconds with the existing
+Starlette deprecation warning. This evidence preceded production deployment of
+the new fallback condition.

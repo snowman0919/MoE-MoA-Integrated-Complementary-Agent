@@ -3282,6 +3282,45 @@ def create_app(
                 )
                 return response
 
+            def select_local_http_400_fallback(error: httpx.HTTPStatusError, stage: str) -> bool:
+                nonlocal active_lease_ids, executor_admission, executor_flash
+                nonlocal executor_remote, executor_routing_reason, stream_lease_ids
+                if (
+                    error.response.status_code != status.HTTP_400_BAD_REQUEST
+                    or not configured.executor_scheduling.enabled
+                    or request.app.state.overflow_executor is None
+                    or executor_admission is None
+                    or executor_admission.selected_executor != "local_primary"
+                    or executor_remote
+                ):
+                    return False
+                executor_lease_id = str(
+                    uuid.uuid5(uuid.UUID(usage_request_id), "active_request:executor")
+                )
+                request.app.state.lifecycle_store.release_leases(
+                    (*stream_lease_ids, executor_lease_id)
+                )
+                active_lease_ids = tuple(
+                    lease_id for lease_id in active_lease_ids if lease_id != executor_lease_id
+                )
+                stream_lease_ids = ()
+                request.app.state.executor_scheduler.release(usage_request_id)
+                executor_admission = None
+                executor_remote = True
+                executor_flash = True
+                executor_routing_reason = "local_http_400"
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_local_http_400_fallback",
+                    {
+                        "from": "local_primary",
+                        "to": "remote_overflow",
+                        "reason": executor_routing_reason,
+                        "stage": stage,
+                    },
+                )
+                return True
+
             async def remote_reasoner_complete(
                 reasoner_request: dict[str, Any], stage: str
             ) -> dict[str, Any]:
@@ -3596,54 +3635,54 @@ def create_app(
             if body.stream:
                 remote_failure: list[str] = []
                 remote_rendered_prompt_bytes: int | None = None
-                if executor_remote:
 
-                    async def remote_upstream() -> AsyncIterator[bytes]:
-                        nonlocal remote_rendered_prompt_bytes
-                        try:
-                            remote_response = await remote_executor_correction(
-                                prepared, "executor_first_byte"
-                            )
-                            provenance = remote_response.get("provider_provenance")
-                            if (
-                                isinstance(provenance, dict)
-                                and type(provenance.get("rendered_prompt_bytes")) is int
-                            ):
-                                remote_rendered_prompt_bytes = provenance["rendered_prompt_bytes"]
-                        except Exception as error:
-                            remote_failure.append(type(error).__name__)
-                            request.app.state.controller.record_provider_failure(
-                                state, "executor", error
-                            )
-                            request.app.state.store.event(
-                                state_session_id,
-                                "executor_remote_failed",
-                                {
-                                    "provider": "opencode_go" if executor_flash else "frontier",
-                                    "failure_class": type(error).__name__,
-                                    "failure_code": str(error)[:128],
-                                    "routing_reason": executor_routing_reason,
-                                },
-                            )
-                            payload = {
-                                "error": {
-                                    "message": "remote Executor fallback unavailable",
-                                    "type": "backend_error",
-                                    "code": (
-                                        "executor_flash_unavailable"
-                                        if executor_flash
-                                        else "frontier_required_unavailable"
-                                    ),
-                                }
+                async def remote_upstream() -> AsyncIterator[bytes]:
+                    nonlocal remote_rendered_prompt_bytes
+                    try:
+                        remote_response = await remote_executor_correction(
+                            prepared, "executor_first_byte"
+                        )
+                        provenance = remote_response.get("provider_provenance")
+                        if (
+                            isinstance(provenance, dict)
+                            and type(provenance.get("rendered_prompt_bytes")) is int
+                        ):
+                            remote_rendered_prompt_bytes = provenance["rendered_prompt_bytes"]
+                    except Exception as error:
+                        remote_failure.append(type(error).__name__)
+                        request.app.state.controller.record_provider_failure(
+                            state, "executor", error
+                        )
+                        request.app.state.store.event(
+                            state_session_id,
+                            "executor_remote_failed",
+                            {
+                                "provider": "opencode_go" if executor_flash else "frontier",
+                                "failure_class": type(error).__name__,
+                                "failure_code": str(error)[:128],
+                                "routing_reason": executor_routing_reason,
+                            },
+                        )
+                        payload = {
+                            "error": {
+                                "message": "remote Executor fallback unavailable",
+                                "type": "backend_error",
+                                "code": (
+                                    "executor_flash_unavailable"
+                                    if executor_flash
+                                    else "frontier_required_unavailable"
+                                ),
                             }
-                            yield (
-                                "data: " + json.dumps(payload, separators=(",", ":")) + "\n\n"
-                            ).encode()
-                            yield b"data: [DONE]\n\n"
-                            return
-                        async for chunk in completed_chat_sse(remote_response):
-                            yield chunk
+                        }
+                        yield (
+                            "data: " + json.dumps(payload, separators=(",", ":")) + "\n\n"
+                        ).encode()
+                        yield b"data: [DONE]\n\n"
+                        return
+                    async for chunk in completed_chat_sse(remote_response):
+                        yield chunk
 
+                if executor_remote:
                     upstream = keepalive_sse(remote_upstream(), interval_seconds=10)
                 else:
                     stream_lease_ids = tuple(
@@ -3655,13 +3694,18 @@ def create_app(
                             require_ready=configured.lifecycle_mode in {"fixed", "adaptive"},
                         )
                     )
-                    upstream = await request.app.state.provider.stream(
-                        "executor",
-                        configured.models["executor"],
-                        prepared,
-                        timeout_seconds=configured.limits.executor_first_byte_timeout_seconds,
-                        stage="executor_first_byte",
-                    )
+                    try:
+                        upstream = await request.app.state.provider.stream(
+                            "executor",
+                            configured.models["executor"],
+                            prepared,
+                            timeout_seconds=configured.limits.executor_first_byte_timeout_seconds,
+                            stage="executor_first_byte",
+                        )
+                    except httpx.HTTPStatusError as error:
+                        if not select_local_http_400_fallback(error, "executor_first_byte"):
+                            raise
+                        upstream = keepalive_sse(remote_upstream(), interval_seconds=10)
                 state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
                 stage_status["executor_first_byte"] = "completed"
                 observation = StreamObservation(configured.limits.max_stream_capture_bytes)
@@ -3966,17 +4010,21 @@ def create_app(
                     media_type="text/event-stream",
                     headers={"X-Session-ID": session_id},
                 )
-            response = (
-                await remote_executor_correction(prepared, "executor_total")
-                if executor_remote
-                else await request.app.state.provider.complete(
-                    "executor",
-                    configured.models["executor"],
-                    prepared,
-                    timeout_seconds=configured.limits.executor_total_timeout_seconds,
-                    stage="executor_total",
-                )
-            )
+            if executor_remote:
+                response = await remote_executor_correction(prepared, "executor_total")
+            else:
+                try:
+                    response = await request.app.state.provider.complete(
+                        "executor",
+                        configured.models["executor"],
+                        prepared,
+                        timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                        stage="executor_total",
+                    )
+                except httpx.HTTPStatusError as error:
+                    if not select_local_http_400_fallback(error, "executor_total"):
+                        raise
+                    response = await remote_executor_correction(prepared, "executor_total")
             state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
             state.timings_ms["executor_total"] = round(
                 (time.monotonic() - executor_started) * 1000, 3
