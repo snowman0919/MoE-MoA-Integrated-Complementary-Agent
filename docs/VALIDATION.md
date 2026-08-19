@@ -10128,6 +10128,26 @@ instruction bodies. The repaired prepared request retained all ten OpenCode
 tools, reached the live loopback Qwen Executor, emitted SSE chunks, and ended
 with `[DONE]` instead of HTTP 400. Ruff passed over `gateway/src` and `tests`,
 strict mypy passed 53 source files, and the complete suite passed 1,176 tests in
-46.35 seconds with the existing Starlette deprecation warning. No production
-checkout, service, security topology, or systemd state was changed by this
-validation; deployment still requires explicit operator approval.
+46.35 seconds with the existing Starlette deprecation warning. At this
+pre-deployment stage, no production checkout, service, security topology, or
+systemd state had been changed.
+
+### Production deployment and OpenCode replay
+
+After explicit operator approval, production `main` was fast-forwarded from
+`75bee24a` to `fa855cc38` and only `dgx-moa-gateway.service` was drain-restarted.
+The Gateway PID changed from `2738838` to `2849141`; the Executor remained
+active under PID `2700788` with `NRestarts=0`. The resulting listeners remained
+Gateway `0.0.0.0:9000` and Executor `127.0.0.1:9001`, preserving the required
+authentication and loopback topology. The authenticated healthcheck reported
+`status=ok`, both Reasoner and Executor ready, and only the intended public
+models `dgx-moa` and `dgx-moa-fast`.
+
+The same OpenCode 1.17.18 ten-tool request then exited zero and returned
+`OPENCODE_REPRO_OK` in session `ses_fe74dfd52ffeqCuZoHc5BKs4WB`. Gateway and
+Executor journals recorded HTTP 200 for both OpenCode's title request and main
+request. Durable events recorded both requests as `local_primary` and
+`completed`; the main request used `reason=round_robin_promoted` after the title
+request used `reason=local_idle`. No event with a remote or fallback event type
+was recorded for either request. This is the intended outcome: the valid local
+request no longer fails, so MiMo fallback is neither needed nor invoked.
