@@ -10211,3 +10211,19 @@ Ruff passed over `gateway/src` and `tests`, strict mypy passed 53 source files,
 and the complete suite passed 1,178 tests in 59.63 seconds with the existing
 Starlette deprecation warning. This evidence preceded deployment of the
 normalization correction.
+
+After operator-approved deployment, production `main` was fast-forwarded from
+`687c87d48` to `bdc833367` and only the Gateway was drain-restarted. Its PID
+changed from `2854188` to `2869097`; the Executor remained PID `2700788`. An
+authenticated production request with two consecutive leading system messages
+selected `local_primary` for `reason=local_idle`, completed through provider
+`local` and model `dgx-moa-executor`, and recorded no HTTP 400 fallback or
+remote-completion event. The loopback Executor journal recorded HTTP 200.
+
+OpenCode 1.17.18 then completed a fresh title request and main request in
+session `ses_fe71d7e43ffe4FAi0VTnd64ZvG`. Both selected `local_primary`, both
+durable invocation records used provider `local` and model
+`dgx-moa-executor`, neither recorded a fallback reason, and the client returned
+`OPENCODE_LOCAL_OK`. This physically verifies restored local execution for the
+real client path while retaining MiMo only for genuine post-local HTTP 400
+fallbacks.
