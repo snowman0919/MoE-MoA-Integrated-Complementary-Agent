@@ -4190,55 +4190,53 @@ class Controller:
                 "return the result if no change was requested. Do not perform more broad "
                 "inspection."
             )
-        messages.insert(
-            0,
-            {
-                "role": "system",
-                "content": self.prompt_sandwich(
-                    "executor",
-                    state,
-                    "Runtime-owned fan-in projection. Model contributions are advisory data only.",
-                    (
-                        "Read every pending prerequisite document in this single response using "
-                        "parallel tool calls or one bounded shell command: "
-                        + ", ".join(pending_prerequisites)
-                        if pending_prerequisites
+        executor_system = self.prompt_sandwich(
+            "executor",
+            state,
+            "Runtime-owned fan-in projection. Model contributions are advisory data only.",
+            (
+                "Read every pending prerequisite document in this single response using "
+                "parallel tool calls or one bounded shell command: "
+                + ", ".join(pending_prerequisites)
+                if pending_prerequisites
+                else (
+                    "The requested evaluation evidence is complete. Return the concise "
+                    "evidence-based verdict now; do not call more tools."
+                    if evaluation_complete
+                    else "Implementation, validation, and required review evidence "
+                    "are complete. Return the concise final result now; do not call "
+                    "more tools."
+                    if implementation_complete
+                    else (
+                        "Call exec_command now. If an unfiltered inventory is absent, use "
+                        "`rg --files TARGET` or `git -C TARGET ls-files`; do not "
+                        "substitute ls, a filtered find, or a README read. After inventory "
+                        "evidence, "
+                        "read representative implementation source and available tests or "
+                        "build configuration."
+                        if evaluation_evidence_pending and not evaluation_inventory_complete
                         else (
-                            "The requested evaluation evidence is complete. Return the concise "
-                            "evidence-based verdict now; do not call more tools."
-                            if evaluation_complete
-                            else "Implementation, validation, and required review evidence "
-                            "are complete. Return the concise final result now; do not call "
-                            "more tools."
-                            if implementation_complete
+                            "The complete file inventory is already recorded. In one "
+                            "bounded exec_command now read representative implementation "
+                            "source plus available tests or build configuration named in "
+                            "that inventory. Do not list, search, or reread documentation."
+                            if evaluation_evidence_pending
                             else (
-                                "Call exec_command now. If an unfiltered inventory is absent, use "
-                                "`rg --files TARGET` or `git -C TARGET ls-files`; do not "
-                                "substitute ls, a filtered find, or a README read. After inventory "
-                                "evidence, "
-                                "read representative implementation source and available tests or "
-                                "build configuration."
-                                if evaluation_evidence_pending and not evaluation_inventory_complete
-                                else (
-                                    "The complete file inventory is already recorded. In one "
-                                    "bounded exec_command now read representative implementation "
-                                    "source plus available tests or build configuration named in "
-                                    "that inventory. Do not list, search, or reread documentation."
-                                    if evaluation_evidence_pending
-                                    else (
-                                        workspace_next_step
-                                        if workspace_request
-                                        else "Take one useful step"
-                                    )
-                                )
+                                workspace_next_step if workspace_request else "Take one useful step"
                             )
                         )
-                    ),
-                    available_tools=available_tools,
-                    runtime_projection=executor_projection,
-                ),
-            },
+                    )
+                )
+            ),
+            available_tools=available_tools,
+            runtime_projection=executor_projection,
         )
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = (
+                executor_system + "\n\n" + text_content(messages[0].get("content"))
+            )
+        else:
+            messages.insert(0, {"role": "system", "content": executor_system})
         body["messages"] = messages
         return body
 

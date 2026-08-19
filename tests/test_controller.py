@@ -4137,6 +4137,31 @@ async def test_completed_implementation_is_told_to_return_final(
 
 
 @pytest.mark.asyncio
+async def test_executor_merges_existing_leading_system_message(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(session_id="existing-system", objective="Reply exactly ok.")
+
+    prepared = await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa",
+            "messages": [
+                {"role": "system", "content": "Client system instructions."},
+                {"role": "user", "content": state.objective},
+            ],
+            "metadata": {},
+        },
+        ("executor",),
+    )
+
+    assert [message["role"] for message in prepared["messages"]] == ["system", "user"]
+    assert "IMMUTABLE ROLE POLICY" in prepared["messages"][0]["content"]
+    assert prepared["messages"][0]["content"].endswith("Client system instructions.")
+
+
+@pytest.mark.asyncio
 async def test_incomplete_implementation_requires_a_tool_action(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

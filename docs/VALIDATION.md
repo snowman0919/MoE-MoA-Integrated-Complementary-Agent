@@ -10099,3 +10099,35 @@ Starlette deprecation warning).
 The pre-promotion environment, unit, model configuration, and lifecycle
 database are backed up under
 `/home/kotori9/.local/state/dgx-moa/backups/qwen38-production-20260819T1245KST`.
+
+## OpenCode Qwen system-message compatibility — 2026-08-19
+
+Production journals and durable request evidence identified OpenCode session
+`ses_fe76a3da9ffeHQrmM8YHqjtbqx`, request
+`ef3ec931-6545-48ad-990d-e6dc896987f6`. The scheduler selected
+`local_primary` with `reason=local_idle`; the Qwythos Reasoner completed, then
+both the Gateway and loopback Executor recorded
+`POST /v1/chat/completions` as HTTP 400 at `14:55:45 KST`. The Executor failed
+at first-byte admission after 71.95 ms, before any token usage was recorded.
+
+OpenCode 1.17.18 reproduced the same failure. Its original ten-tool request had
+message roles `[system, user]` and completed directly against loopback 9001.
+Replaying the Gateway-prepared request showed roles `[system, system, user]`
+and returned SGLang's exact error:
+`System message must be at the beginning.` The Gateway had inserted its Runtime
+policy as a second leading system message instead of combining it with the
+client's existing system instructions. MiMo did not run because scheduling had
+already admitted the healthy local Executor and the outer HTTP error handler
+classified every local HTTP 400 as an invalid client request; remote fallback
+selection occurs before local invocation, not after this response.
+
+The Executor preparation boundary now combines the Runtime policy with an
+existing leading system message. A focused three-test run passed, including a
+new regression that requires roles `[system, user]` while preserving both
+instruction bodies. The repaired prepared request retained all ten OpenCode
+tools, reached the live loopback Qwen Executor, emitted SSE chunks, and ended
+with `[DONE]` instead of HTTP 400. Ruff passed over `gateway/src` and `tests`,
+strict mypy passed 53 source files, and the complete suite passed 1,176 tests in
+46.35 seconds with the existing Starlette deprecation warning. No production
+checkout, service, security topology, or systemd state was changed by this
+validation; deployment still requires explicit operator approval.
