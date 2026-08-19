@@ -1054,23 +1054,60 @@ the two-repair bound, persist
 compile a new immutable Graph. Do not resume the exhausted Graph and do not
 raise the repair budget to mask the projection error.
 
-The Qwen Executor candidate order is fixed: `Qwen/Qwen3.8-27B`, multimodal LoRA
-qualification, merged target, isolated SGLang plain decode, then
-Chat/Responses/native-tool/image qualification. Only after that contract passes
-may a separately named epoch test NVFP4 and then DSpark. Do not use MTP for this
-Qwen lineage. A DSpark failure falls back to the same Qwen plain-decode slot;
-local candidate failure or busy state falls back through the existing bounded
-DeepSeek V4 Flash overflow. The qualified Mistral service remains the rollback
-Executor. Candidate units and inference listeners stay isolated and loopback-
-only; do not add them to the production lifecycle unit map or restart `:9000`
-until isolated validation, a separately approved bounded canary, and rollback
-rehearsal pass.
+The Qwen Executor source authority is the pinned current
+`Qwen/Qwen3.8-27B` revision. Qualify an artifact derived from that exact source
+with isolated SGLang plain decode, then Chat/Responses/native-tool/image gates.
+Only after the plain contract passes may DSpark be enabled; do not substitute
+MTP. A DSpark failure returns to the same Qwen plain-decode slot. Local failure
+or allowed contention selects MiMo; only a MiMo-specific failure selects
+DeepSeek V4 Flash. The qualified Mistral epochs remain preserved rollback
+evidence, not the new configured role route. Candidate inference stays
+loopback-only; do not add units to a production lifecycle map or restart
+`:9000` until isolated validation, a separately approved bounded canary, and
+rollback rehearsal pass.
 
 Runtime selection and provenance use `engine` (`vllm`, `sglang`, `remote`),
 `executor_slot` (`local_primary`, `local_candidate`, `remote_overflow`), and
 declared capabilities. Model names remain deployment data, not routing
 authority. Media state stores bounded identity/provenance metadata only; never
 copy inline image bytes into durable SessionState.
+
+### Qwen3.8/SGLang development route — 2026-08-18
+
+The checked-in development manifest separates role routing from local
+deployment data. `DGX_MOA_EXECUTOR_MODEL`, `DGX_MOA_EXECUTOR_FALLBACK_MODEL`,
+and `DGX_MOA_EXECUTOR_ROLLBACK_MODEL` override YAML with canonical
+`<provider>/<model>` references. Provider and model split at the first slash;
+model identifiers remain free strings. Planner, Reviewer, Reasoner, Judge, and
+Frontier A/B have equivalent role environment variables. Codex continues to
+use OAuth/App Server authentication; do not add an OpenAI API key.
+
+The current local candidate command uses the pinned manifest rather than model
+name conditionals: SGLang on loopback `9001`, context 262,144, one request,
+FlashInfer attention, FP8 KV metadata, Qwen reasoning/tool parsers, and the
+NVFP4 loader. `SGLANG_PYTHON` may select an isolated qualified environment.
+The checked-in candidate now references the physically validated bundle
+`snowman0919/qwen38-executor-27b-dspark-nvfp4-v1@034de5c1743e53fcae8b0be9d3e68526522723ed`,
+but remains deliberately blocked by `runtime_validated: false`: do not
+remove that gate without separate production deployment approval and physical
+Gateway lifecycle/routing plus broader output-quality evidence.
+
+DSpark remains `speculative.enabled: false` in the checked-in safe default. The
+all-in-one runtime overlay enables it only after the plain and batch-one graph
+gates pass; the measured isolated overlay passed 256K, tools, controlled
+streaming, two starts, memory reclamation, and a narrow p50/p95 comparison.
+Broader output equivalence and production failure-rate evidence remain required
+before promotion. A provider-wide OpenCode failure must stop remote routing;
+only a MiMo-specific HTTP/model compatibility or malformed-output failure may
+try the configured DeepSeek rollback.
+
+The authenticated Dashboard lists every role in the exact lifecycle unit map.
+OFF changes durable desired state first, so new Executor admissions use MiMo;
+existing local pins and leases drain before the full service stop. ON reports
+`LOADING` until the exact served model appears in `/v1/models` and a minimal
+completion succeeds. Use `GET /v1/admin/local-models` to compare desired state,
+runtime state, and effective route. These endpoints do not authorize new units,
+deployment, or production topology changes.
 
 Treat `apply_patch verification failed:` without an explicit numeric exit code
 as failure evidence. Do not treat `Do not modify any other file` as global

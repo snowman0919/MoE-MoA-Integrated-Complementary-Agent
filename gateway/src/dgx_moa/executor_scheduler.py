@@ -50,7 +50,7 @@ class _Queued:
 
 
 class ExecutorScheduler:
-    """Pin each turn to local Mistral or DeepSeek Flash at admission."""
+    """Pin each turn to one local or remote Executor at admission."""
 
     def __init__(
         self,
@@ -73,6 +73,12 @@ class ExecutorScheduler:
         self._pins: dict[str, ExecutorAdmission] = {}
         self._sequence = 0
         self._epoch = 0
+        self._local_enabled = True
+
+    def set_local_enabled(self, enabled: bool) -> None:
+        """Gate new local pins without disturbing requests already pinned locally."""
+        with self._lock:
+            self._local_enabled = enabled
 
     @staticmethod
     def _validate(api_key_id: str, request_id: str) -> None:
@@ -142,9 +148,10 @@ class ExecutorScheduler:
                 if existing.lease_state == "queued":
                     raise ExecutorSchedulingError("request is already queued")
                 return existing
+            local_available = local_available and self._local_enabled
             high_risk = risk in {"high", "critical"}
             if not local_available:
-                if high_risk or not flash_available:
+                if not flash_available:
                     raise ExecutorQueueFull("local Executor is unavailable")
                 admission = ExecutorAdmission(
                     request_id,

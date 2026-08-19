@@ -79,14 +79,14 @@ def test_admin_dashboard_uses_live_probe_for_unmanaged_executor(settings: Settin
         "state": "unmanaged",
         "operator_enabled": False,
         "control_available": False,
-        "active_executor": "deepseek-v4-flash",
+        "active_executor": "opencode/mimo-v2.5",
         "fallback_active": True,
     }
     assert "button:disabled" in dashboard
-    assert '$("executor-progress").hidden=percent==null' in dashboard
+    assert '"/v1/admin/local-models"' in dashboard
 
 
-def test_admin_dashboard_controls_executor_and_uses_flash_while_off(
+def test_admin_dashboard_controls_executor_and_uses_fallback_while_off(
     settings: Settings,
 ) -> None:
     configured = Settings.model_validate(
@@ -121,15 +121,20 @@ def test_admin_dashboard_controls_executor_and_uses_flash_while_off(
     general = {"Authorization": "Bearer general-secret-value"}
 
     with TestClient(app) as client:
-        assert "OFF · Flash 전환" in client.get("/admin").text
+        assert "Managed local models" in client.get("/admin").text
         assert client.get("/v1/admin/executor", headers=general).status_code == 403
 
         stopped = client.post("/v1/admin/executor/off", headers=operator)
         assert stopped.status_code == 200
         assert stopped.json()["operator_enabled"] is False
-        assert stopped.json()["active_executor"] == "deepseek-v4-flash"
+        assert stopped.json()["desired_state"] == "OFF"
+        assert stopped.json()["runtime_state"] == "DISABLED"
+        assert stopped.json()["active_executor"] == "opencode/mimo-v2.5"
         assert stopped.json()["weight_load_percent"] is None
         assert driver.calls.count(("stop", "executor")) == 1
+        disabled_audit = app.state.store.events("runtime-executor")[-1]
+        assert disabled_audit["event_type"] == "executor_operator_disabled"
+        assert disabled_audit["payload"]["operator"] == "operator"
 
         fallback = client.post(
             "/v1/chat/completions",
@@ -143,6 +148,9 @@ def test_admin_dashboard_controls_executor_and_uses_flash_while_off(
         assert fallback.json()["choices"][0]["message"]["content"] == "Flash 처리 완료"
         assert app.state.lifecycle_store.get("executor").state == "disabled"
 
+        listed = client.get("/v1/admin/local-models", headers=operator).json()["data"]
+        assert listed[0]["effective_route"] == "opencode/mimo-v2.5"
+
         started = client.post("/v1/admin/executor/on", headers=operator)
         assert started.status_code == 200
         assert started.json()["operator_enabled"] is True
@@ -154,6 +162,12 @@ def test_admin_dashboard_controls_executor_and_uses_flash_while_off(
         assert current["state"] == "ready"
         assert current["weight_load_percent"] == 100.0
         assert driver.calls.count(("start", "executor")) == 1
+
+        generic_off = client.post("/v1/admin/local-models/executor/off", headers=operator)
+        assert generic_off.status_code == 200
+        generic_audit = app.state.store.events("runtime-executor")[-1]
+        assert generic_audit["event_type"] == "local_model_operator_desired_state_changed"
+        assert generic_audit["payload"]["operator"] == "operator"
 
 
 def test_admin_dashboard_runs_bounded_custom_provider_codex(

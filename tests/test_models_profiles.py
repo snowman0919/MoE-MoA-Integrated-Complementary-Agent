@@ -5,13 +5,13 @@ import sqlite3
 
 import pytest
 import yaml
-from dgx_moa.model_download import classify_failure, verify_model
+from dgx_moa.model_download import artifact_provenance_error, classify_failure, verify_model
 from dgx_moa.model_registry import estimate
 from dgx_moa.profiles import ProfileManager
 
 
 def valid_model(path) -> None:  # type: ignore[no-untyped-def]
-    path.mkdir()
+    path.mkdir(exist_ok=True)
     (path / "config.json").write_text(
         json.dumps(
             {
@@ -36,6 +36,24 @@ def test_model_integrity_and_partial_download(tmp_path) -> None:  # type: ignore
     assert "incomplete files remain" in result["errors"][0]
     assert classify_failure(OSError(28, "No space left on device")) == "capacity-blocked"
     assert classify_failure(RuntimeError("401 gated repo")) == "authentication-blocked"
+
+
+def test_third_party_artifact_requires_exact_official_source_revision() -> None:
+    model = {
+        "repository": "official/model",
+        "revision": "current-sha",
+        "artifact_repository": "third-party/model-nvfp4",
+    }
+
+    assert artifact_provenance_error(model) == (
+        "artifact source revision is unknown for third-party weights"
+    )
+    model["artifact_source_revision"] = "old-sha"
+    assert artifact_provenance_error(model) == (
+        "artifact source revision does not match pinned official source"
+    )
+    model["artifact_source_revision"] = "current-sha"
+    assert artifact_provenance_error(model) is None
 
 
 def test_storage_estimate_blocks_unsafe(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]

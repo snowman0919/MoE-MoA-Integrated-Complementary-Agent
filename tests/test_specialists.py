@@ -54,14 +54,14 @@ def config() -> SpecialistRoutingConfig:
     )
 
 
-def test_reviewer_model_is_glm_and_flash_cannot_fill_that_role() -> None:
+def test_specialist_model_names_are_configuration_not_runtime_literals() -> None:
     assert config().models["reviewer"] == "glm-5.2"
-    with pytest.raises(ValueError, match="Reviewer must use OpenCode Go glm-5.2"):
-        SpecialistRoutingConfig(
-            enabled=True,
-            provider="opencode_go",
-            models={"planner": "deepseek-v4-pro", "reviewer": "deepseek-v4-flash"},
-        )
+    configured = SpecialistRoutingConfig(
+        enabled=True,
+        provider="opencode_go",
+        models={"planner": "vendor/planner", "reviewer": "vendor/reviewer"},
+    )
+    assert configured.models["reviewer"] == "vendor/reviewer"
 
 
 class ContextAwarePlannerProvider(MockPlannerProvider):

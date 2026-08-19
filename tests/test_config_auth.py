@@ -3,7 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from dgx_moa.config import ModelConfig, Settings, load_settings, parse_bool
+from dgx_moa.config import (
+    ModelConfig,
+    ModelRef,
+    ModelRoutingConfig,
+    Settings,
+    load_settings,
+    parse_bool,
+)
 from dgx_moa.frontier import FrontierConfig
 from pydantic import ValidationError
 
@@ -224,13 +231,41 @@ def test_live_observation_secrets_are_external_and_hidden(monkeypatch, tmp_path:
     assert Settings(auth_enabled=False).live_observation.enabled is False
 
 
-def test_executor_scheduler_is_bounded_disabled_and_requires_flash() -> None:
+def test_executor_scheduler_is_bounded_disabled_and_requires_remote_endpoint() -> None:
     settings = Settings(auth_enabled=False)
 
     assert settings.executor_scheduling.enabled is False
     assert settings.executor_scheduling.same_key_max_local_queue == 3
-    with pytest.raises(ValidationError, match="requires OpenCode Go Flash"):
+    with pytest.raises(ValidationError, match="requires an OpenCode endpoint"):
         Settings(auth_enabled=False, executor_scheduling={"enabled": True})
+
+
+def test_model_ref_splits_only_the_first_slash_and_accepts_legacy_alias() -> None:
+    nested = ModelRef.model_validate("openrouter/anthropic/model-name")
+    legacy = ModelRef.model_validate("opencode_go/deepseek-v4-flash")
+
+    assert (nested.provider, nested.model) == ("openrouter", "anthropic/model-name")
+    assert str(legacy) == "opencode/deepseek-v4-flash"
+
+
+def test_executor_role_route_owns_fallback_and_model_only_rollback() -> None:
+    route = ModelRoutingConfig().executor_route
+    assert route.fallback is not None
+
+    assert route.select(primary_ready=True) == route.primary
+    assert route.select(primary_ready=False) == route.fallback
+    assert route.after_failure(route.primary, failure_scope="model") == route.fallback
+    assert route.after_failure(route.fallback, failure_scope="model") == route.rollback
+    assert route.after_failure(route.fallback, failure_scope="provider") is None
+
+
+def test_role_model_environment_overrides_yaml(monkeypatch, tmp_path: Path) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text("gateway:\n  model_routing:\n    planner: opencode/old\nmodels: {}\n")
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
+    monkeypatch.setenv("DGX_MOA_PLANNER_MODEL", "openrouter/vendor/new")
+
+    assert str(load_settings(config).model_routing.planner) == "openrouter/vendor/new"
 
 
 def test_training_store_is_disabled_separate_and_unknown_repositories_fail_closed(

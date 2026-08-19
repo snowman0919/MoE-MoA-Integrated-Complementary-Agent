@@ -74,18 +74,35 @@ async def test_executor_scheduler_cancellation_removes_queue_and_pin() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unavailable_local_executor_uses_flash_but_high_risk_fails_closed() -> None:
+async def test_unavailable_local_executor_uses_fallback_for_every_risk() -> None:
     scheduler = ExecutorScheduler(queue_timeout_seconds=1)
     fallback = await scheduler.acquire(
         "key-a", "fallback", flash_available=True, local_available=False
     )
     assert (fallback.selected_executor, fallback.reason) == ("remote_overflow", "local_unavailable")
 
-    with pytest.raises(ExecutorQueueFull, match="local Executor is unavailable"):
-        await scheduler.acquire(
-            "key-a",
-            "high-risk",
-            risk="high",
-            flash_available=True,
-            local_available=False,
-        )
+    high_risk = await scheduler.acquire(
+        "key-a",
+        "high-risk",
+        risk="high",
+        flash_available=True,
+        local_available=False,
+    )
+    assert (high_risk.selected_executor, high_risk.reason) == (
+        "remote_overflow",
+        "local_unavailable",
+    )
+
+
+@pytest.mark.asyncio
+async def test_operator_gate_preserves_existing_pin_and_blocks_new_local_pins() -> None:
+    scheduler = ExecutorScheduler(queue_timeout_seconds=1)
+    pinned = await scheduler.acquire("key-a", "pinned", flash_available=True)
+    scheduler.set_local_enabled(False)
+
+    assert scheduler.pinned("pinned") == pinned
+    fallback = await scheduler.acquire("key-b", "new", flash_available=True)
+    assert (fallback.selected_executor, fallback.reason) == (
+        "remote_overflow",
+        "local_unavailable",
+    )

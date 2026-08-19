@@ -1,6 +1,33 @@
 # State
 
-Updated: 2026-08-15
+Updated: 2026-08-19
+
+## 2026-08-18 development overlay (not deployed)
+
+`dev@eeb18c66b` now has a configuration-only primary route of
+`local/qwen3.8-27b`, fallback `opencode/mimo-v2.5`, and model-specific rollback
+`opencode/deepseek-v4-flash`. Role references use `<provider>/<model>` and the
+local deployment is a separate manifest pinned to official
+`Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`. The candidate
+command is SGLang, loopback-only, native context 262,144, one running request,
+and checked-in memory fraction 0.5. DSpark remains disabled.
+
+The earlier third-party artifacts did not prove exact source lineage and remain
+rejected. A later isolated build converted the pinned official checkpoint,
+physically validated the NVFP4 + DSpark bundle, and published it as
+`snowman0919/qwen38-executor-27b-dspark-nvfp4-v1@034de5c1743e53fcae8b0be9d3e68526522723ed`.
+The checked-in config now references that exact artifact and source revision,
+but `runtime_validated: false` still prevents an accidental service start.
+Production was not restarted or reconfigured.
+
+Managed local deployments now expose authenticated generic ON/OFF controls.
+Desired state is durable and separate from detailed runtime state and effective
+route. OFF excludes the local Executor from new admissions immediately, lets
+existing pins and lifecycle leases drain, then performs the selected exact full
+service stop. ON remains on remote fallback through load, exact model listing,
+and a minimal inference health gate; only `READY` restores the local route.
+The Executor `RoleRoute` owns primary/fallback/model-only rollback selection;
+provider-wide failures do not select another model on the same provider.
 
 ## Current decision authority
 

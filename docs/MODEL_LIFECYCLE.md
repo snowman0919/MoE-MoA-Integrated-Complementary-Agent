@@ -26,6 +26,13 @@ resident contract is restored.
 
 ## States
 
+Operator status presents six stable phases while retaining the detailed states
+below: `DISABLED`, `LOADING`, `READY`, `DRAINING`, `UNLOADING`, and `FAILED`.
+The API and Dashboard report `desired_state`, `runtime_state`, and
+`effective_route` separately; a desired `OFF` can therefore coexist with a
+draining or unloading process. Desired state is stored in SQLite and survives a
+Gateway restart.
+
 | State | Meaning |
 | --- | --- |
 | `disabled` | Role is not controlled by lifecycle automation. |
@@ -159,6 +166,23 @@ leases, and guards. Request lease acquisition uses the same role lock and checks
 readiness atomically, closing the acquire-versus-unload race. Profile switching
 claims managed-role profile guards before its owned switch and releases the
 original guard ownership afterward.
+
+Authenticated operator controls are generic across the exact roles in
+`lifecycle_unit_map`: `GET /v1/admin/local-models` and
+`POST /v1/admin/local-models/{role}/{on|off}`. Every mutation emits an audit
+event. Executor OFF also coordinates with request-level admission pins: new
+requests select the configured remote fallback immediately, while already
+pinned requests complete before exact stop releases the server process, model
+weights, KV cache, and any speculative runtime state. Lifecycle does not choose
+fallback or rollback models; `RoleRoute` in `model_routing` owns that decision. A
+provider-wide credential, authorization, quota, endpoint, or network failure
+does not retry another model on the same provider.
+
+For OpenAI-compatible managed roles, `READY` requires the loopback model
+catalog to contain the exact served name and a successful minimal non-streaming
+inference. Loading and warmup continue to route away from local. The Dashboard
+never derives weight percentages from time when the journal has no trustworthy
+counter.
 
 ## Protected status and persistence
 

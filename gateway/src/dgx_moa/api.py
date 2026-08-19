@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import aclosing, asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -95,7 +95,7 @@ from .observation import (
     TelegramProvider,
 )
 from .overflow_executor import (
-    OpenCodeGoExecutorProvider,
+    OpenAICompatibleExecutorProvider,
     OverflowExecutorInvalidOutput,
     OverflowExecutorUnavailable,
 )
@@ -231,6 +231,18 @@ def openai_model_ready(response: httpx.Response, model: Any) -> bool:
     except (ValueError, AttributeError):
         return False
     return any(isinstance(item, dict) and item.get("id") == model.served_name for item in models)
+
+
+def openai_inference_ready(response: httpx.Response) -> bool:
+    if response.status_code != 200:
+        return False
+    try:
+        choices = response.json().get("choices", [])
+    except (ValueError, AttributeError):
+        return False
+    return bool(
+        choices and isinstance(choices[0], dict) and choices[0].get("message", {}).get("content")
+    )
 
 
 def error_response(
@@ -594,7 +606,7 @@ def create_app(
     lifecycle_clock: Callable[[], float] = time.time,
     lifecycle_sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     lifecycle_memory_probe: Callable[[], int] = runtime_memory_available,
-    overflow_executor: OpenCodeGoExecutorProvider | None = None,
+    overflow_executor: OpenAICompatibleExecutorProvider | None = None,
     executor_backend: ExecutorBackend | None = None,
 ) -> FastAPI:
     configured = settings or get_settings()
@@ -613,45 +625,28 @@ def create_app(
             return False
         try:
             async with managed_http_client(timeout=30) as client:
-                if role in {"planner", "reviewer"} and model.provider != "ollama":
-                    response = await client.post(
-                        f"{model.base_url.rstrip('/')}/v1/chat/completions",
-                        json={
-                            "model": model.served_name,
-                            "messages": [
-                                {
-                                    "role": "user",
-                                    "content": "Reply with exactly READY.",
-                                }
-                            ],
-                            "temperature": 0,
-                            "max_tokens": 256,
-                            "stream": False,
-                        },
-                    )
-                    if response.status_code != 200:
-                        return False
-                    payload = response.json()
-                    choices = payload.get("choices", [])
-                    return bool(
-                        choices
-                        and isinstance(choices[0], dict)
-                        and choices[0].get("message", {}).get("content")
-                    )
-                response = await client.get(
-                    f"{model.base_url.rstrip('/')}/api/ps"
-                    if model.provider == "ollama"
-                    else f"{model.base_url.rstrip('/')}/v1/models"
+                if model.provider == "ollama":
+                    response = await client.get(f"{model.base_url.rstrip('/')}/api/ps")
+                    return ollama_model_ready(response, model)
+                models_response = await client.get(f"{model.base_url.rstrip('/')}/v1/models")
+                if not openai_model_ready(models_response, model):
+                    return False
+                response = await client.post(
+                    f"{model.base_url.rstrip('/')}/v1/chat/completions",
+                    json={
+                        "model": model.served_name,
+                        "messages": [{"role": "user", "content": "Reply with READY."}],
+                        "temperature": 0,
+                        "max_tokens": 16,
+                        "stream": False,
+                    },
                 )
+                return openai_inference_ready(response)
         except httpx.HTTPError:
             return False
         except (TypeError, ValueError):
             return False
-        return (
-            ollama_model_ready(response, model)
-            if model.provider == "ollama"
-            else response.status_code == 200
-        )
+        return False
 
     async def local_model_readiness() -> dict[str, bool]:
         roles = tuple(configured.models)
@@ -689,6 +684,7 @@ def create_app(
         app.state.dashboard_telemetry_lock = asyncio.Lock()
         app.state.dashboard_telemetry_sample = None
         app.state.executor_admission_lock = asyncio.Lock()
+        app.state.executor_manual_drain = None
         scheduling = configured.executor_scheduling
         app.state.executor_scheduler = ExecutorScheduler(
             same_key_max_local_queue=scheduling.same_key_max_local_queue,
@@ -697,13 +693,20 @@ def create_app(
         )
         app.state.overflow_executor = overflow_executor
         if scheduling.enabled and app.state.overflow_executor is None:
-            endpoint = os.path.expandvars(scheduling.flash_endpoint or "")
+            endpoint = os.path.expandvars(scheduling.remote_endpoint or "")
             if not endpoint or "$" in endpoint:
-                raise ValueError("Executor Flash endpoint environment is unresolved")
-            app.state.overflow_executor = OpenCodeGoExecutorProvider(
+                raise ValueError("remote Executor endpoint environment is unresolved")
+            route = configured.model_routing.executor_route
+            fallback = route.fallback
+            rollback = route.rollback
+            if fallback is None or rollback is None:
+                raise ValueError("enabled remote Executor routing requires fallback and rollback")
+            if fallback.provider != "opencode" or rollback.provider != "opencode":
+                raise ValueError("enabled remote Executor routing requires OpenCode model refs")
+            app.state.overflow_executor = OpenAICompatibleExecutorProvider(
                 endpoint=endpoint,
-                api_key_env=scheduling.flash_api_key_env,
-                model=scheduling.flash_model,
+                api_key_env=scheduling.remote_api_key_env,
+                role_route=route,
                 timeout_seconds=configured.limits.executor_total_timeout_seconds,
             )
         if scheduling.enabled:
@@ -714,7 +717,7 @@ def create_app(
             except TimeoutError:
                 flash_available = False
             if not flash_available:
-                raise ValueError("enabled Executor scheduling requires available OpenCode Go Flash")
+                raise ValueError("enabled Executor scheduling requires its remote fallback")
         app.state.api_keys = api_keys
         app.state.store = store
         app.state.dashboard_live = (
@@ -928,6 +931,9 @@ def create_app(
             managed_roles = tuple(configured.lifecycle_unit_map)
             if configured.lifecycle_mode in {"observe", "fixed", "adaptive"}:
                 await app.state.lifecycle.reconcile_managed(managed_roles)
+                for role in managed_roles:
+                    if not app.state.lifecycle_store.desired_enabled(role):
+                        await app.state.lifecycle.set_enabled(role, False)
             app.state.lifecycle.start_scheduler(
                 configured.lifecycle_mode,
                 managed_roles,
@@ -1134,6 +1140,10 @@ def create_app(
                 app.state.weekly_scheduler.start()
             yield
         finally:
+            executor_manual_drain = app.state.executor_manual_drain
+            if executor_manual_drain is not None:
+                executor_manual_drain.cancel()
+                await asyncio.gather(executor_manual_drain, return_exceptions=True)
             if app.state.weekly_scheduler is not None:
                 await app.state.weekly_scheduler.close()
             if app.state.observation is not None:
@@ -1237,10 +1247,51 @@ def create_app(
             specialist_state = SpecialistRouter.public_state(record.state)
             if specialist_state == "READY" and record.active_request_count:
                 specialist_state = "BUSY"
+        desired_enabled = app.state.lifecycle_store.desired_enabled(record.role)
+        phase = (
+            "DISABLED"
+            if record.state in {"disabled", "cold"}
+            else "LOADING"
+            if record.state
+            in {
+                "load_queued",
+                "process_starting",
+                "loading_weights",
+                "initializing_engine",
+                "warming_up",
+            }
+            else "READY"
+            if record.state in {"ready", "sleeping"}
+            else "DRAINING"
+            if record.state == "unload_queued"
+            else "UNLOADING"
+            if record.state == "unloading"
+            else "FAILED"
+        )
+        if record.role == "executor":
+            effective_route = (
+                str(configured.model_routing.executor)
+                if desired_enabled and record.state == "ready"
+                else str(configured.model_routing.executor_fallback)
+                if configured.executor_scheduling.enabled
+                else "unavailable"
+            )
+        else:
+            configured_route = getattr(configured.model_routing, record.role, None)
+            effective_route = (
+                f"local/{configured.models[record.role].served_name}"
+                if desired_enabled and record.state == "ready"
+                else str(configured_route)
+                if configured_route is not None and configured_route.provider != "local"
+                else "unavailable"
+            )
         return {
             "role": record.role,
             "lifecycle_control": model.lifecycle_control if model else "unconfigured",
             "state": record.state,
+            "desired_state": "ON" if desired_enabled else "OFF",
+            "runtime_state": phase,
+            "effective_route": effective_route,
             **({"specialist_state": specialist_state} if specialist_state is not None else {}),
             "generation": record.generation,
             "ready": record.state == "ready",
@@ -2584,19 +2635,18 @@ def create_app(
             or (unavailable_record is not None and unavailable_record.role == "executor")
             or unmanaged_role == "executor"
             or executor_endpoint_unavailable
-        )
-        executor_frontier_fallback = bool(
-            request_class == "high_risk_task"
-            and request.app.state.frontier is not None
-            and executor_local_unavailable
+            or (
+                configured.lifecycle_mode in {"fixed", "adaptive"}
+                and "executor" in configured.lifecycle_unit_map
+                and not request.app.state.lifecycle_store.desired_enabled("executor")
+            )
         )
         executor_flash_fallback = bool(
             configured.executor_scheduling.enabled
-            and request_class != "high_risk_task"
             and request.app.state.overflow_executor is not None
             and executor_local_unavailable
         )
-        if executor_flash_fallback or executor_frontier_fallback:
+        if executor_flash_fallback:
             loading_record = None
             unavailable_record = None
             unmanaged_role = None
@@ -2623,18 +2673,7 @@ def create_app(
 
         ensured_roles = list(roles)
         try:
-            if executor_frontier_fallback:
-                executor_remote = True
-                executor_routing_reason = "local_unavailable_high_risk"
-                request.app.state.store.event(
-                    state_session_id,
-                    "executor_remote_selected",
-                    {
-                        "routing_reason": executor_routing_reason,
-                        "provider": "frontier",
-                    },
-                )
-            elif configured.executor_scheduling.enabled:
+            if configured.executor_scheduling.enabled:
                 executor_admission = await request.app.state.executor_scheduler.acquire(
                     api_token_id,
                     usage_request_id,
@@ -3505,7 +3544,7 @@ def create_app(
                         execution_attempt_id = execution_runtime.start_attempt(
                             primary_node.node_id,
                             model=(
-                                configured.executor_scheduling.flash_model
+                                configured.model_routing.executor_fallback.model
                                 if executor_flash
                                 else request.app.state.frontier.config.model
                                 if executor_remote
@@ -3540,7 +3579,7 @@ def create_app(
                         else "local"
                     ),
                     "model": (
-                        configured.executor_scheduling.flash_model
+                        configured.model_routing.executor_fallback.model
                         if executor_flash
                         else request.app.state.frontier.config.model
                         if executor_remote
@@ -3683,7 +3722,7 @@ def create_app(
                                         else "local"
                                     ),
                                     "model": (
-                                        configured.executor_scheduling.flash_model
+                                        configured.model_routing.executor_fallback.model
                                         if executor_flash
                                         else request.app.state.frontier.config.model
                                         if executor_remote
@@ -4280,7 +4319,7 @@ def create_app(
                                 execution_attempt_id = execution_runtime.start_attempt(
                                     primary_node.node_id,
                                     model=(
-                                        configured.executor_scheduling.flash_model
+                                        configured.model_routing.executor_fallback.model
                                         if executor_flash
                                         else request.app.state.frontier.config.model
                                         if executor_remote
@@ -5388,7 +5427,8 @@ def create_app(
             and request.app.state.overflow_executor is not None
         )
         control_available = executor_control_available()
-        local_available = record.state == "ready"
+        desired_enabled = request.app.state.lifecycle_store.desired_enabled("executor")
+        local_available = desired_enabled and record.state == "ready"
         if not control_available:
             try:
                 local_available = await asyncio.wait_for(
@@ -5399,23 +5439,21 @@ def create_app(
                 local_available = False
         fallback_active = fallback_configured and not local_available
         return status_lifecycle_record("executor") | {
-            "operator_enabled": record.state != "disabled"
-            if control_available
-            else local_available,
+            "operator_enabled": desired_enabled if control_available else local_available,
             "control_available": control_available,
             "active_executor": (
-                configured.executor_scheduling.flash_model
+                str(configured.model_routing.executor_fallback)
                 if fallback_active
-                else "local_primary"
+                else str(configured.model_routing.executor)
                 if local_available
                 else "unavailable"
             ),
-            "fallback_model": configured.executor_scheduling.flash_model,
+            "fallback_model": str(configured.model_routing.executor_fallback),
             "fallback_active": fallback_active,
             "high_risk_executor": (
                 request.app.state.frontier.config.model
                 if fallback_active and request.app.state.frontier is not None
-                else "local_primary"
+                else str(configured.model_routing.executor)
                 if local_available
                 else "unavailable"
             ),
@@ -5425,8 +5463,48 @@ def create_app(
         if not executor_control_available():
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Executor control requires fixed/adaptive lifecycle and configured Flash fallback",
+                "Executor control requires fixed/adaptive lifecycle and configured fallback",
             )
+
+    async def set_executor_enabled(enabled: bool) -> LifecycleRecord:
+        async with app.state.executor_admission_lock:
+            if enabled:
+                app.state.executor_scheduler.set_local_enabled(True)
+                drain = app.state.executor_manual_drain
+                if drain is not None and not drain.done():
+                    drain.cancel()
+                    await asyncio.gather(drain, return_exceptions=True)
+                app.state.executor_manual_drain = None
+                return cast(
+                    LifecycleRecord,
+                    await app.state.lifecycle.set_enabled("executor", True),
+                )
+            app.state.executor_scheduler.set_local_enabled(False)
+            app.state.lifecycle_store.set_desired_enabled("executor", False)
+            snapshot = app.state.executor_scheduler.snapshot()
+            if snapshot["owner_request_id"] is None and snapshot["queued"] == 0:
+                return cast(
+                    LifecycleRecord,
+                    await app.state.lifecycle.set_enabled("executor", False),
+                )
+
+            async def drain_after_pins() -> None:
+                while True:
+                    current = app.state.executor_scheduler.snapshot()
+                    if current["owner_request_id"] is None and current["queued"] == 0:
+                        await app.state.lifecycle.set_enabled("executor", False)
+                        return
+                    await asyncio.sleep(0.1)
+
+            current_task = app.state.executor_manual_drain
+            if current_task is None or current_task.done():
+                app.state.executor_manual_drain = asyncio.create_task(drain_after_pins())
+            record = app.state.lifecycle_store.get("executor")
+            if record.state == "ready":
+                record = app.state.lifecycle_store.queue_unload(
+                    "executor", expected_transition_id=record.transition_id
+                )
+            return cast(LifecycleRecord, record)
 
     @app.get("/v1/admin/executor", dependencies=[Depends(admin_auth)])
     async def admin_executor_status(request: Request) -> dict[str, Any]:
@@ -5435,25 +5513,58 @@ def create_app(
     @app.post("/v1/admin/executor/on", dependencies=[Depends(admin_auth)])
     async def admin_executor_on(request: Request) -> dict[str, Any]:
         require_executor_control()
-        record = await request.app.state.lifecycle.set_enabled("executor", True)
+        record = await set_executor_enabled(True)
         request.app.state.store.event(
-            "runtime-executor", "executor_operator_enabled", {"generation": record.generation}
+            "runtime-executor",
+            "executor_operator_enabled",
+            {"generation": record.generation, "operator": request.state.api_token_id},
         )
         return await executor_control_status(request)
 
     @app.post("/v1/admin/executor/off", dependencies=[Depends(admin_auth)])
     async def admin_executor_off(request: Request) -> dict[str, Any]:
         require_executor_control()
-        record = await request.app.state.lifecycle.set_enabled("executor", False)
-        if record.state != "disabled":
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                f"Executor cannot stop while lifecycle state is {record.state}",
-            )
+        record = await set_executor_enabled(False)
         request.app.state.store.event(
-            "runtime-executor", "executor_operator_disabled", {"generation": record.generation}
+            "runtime-executor",
+            "executor_operator_disabled",
+            {"generation": record.generation, "operator": request.state.api_token_id},
         )
         return await executor_control_status(request)
+
+    def require_local_model_control(role: str) -> None:
+        if configured.lifecycle_mode not in {"fixed", "adaptive"}:
+            raise HTTPException(status.HTTP_409_CONFLICT, "local model lifecycle is not managed")
+        if role not in configured.lifecycle_unit_map:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown managed local model")
+        if role == "executor" and not executor_control_available():
+            require_executor_control()
+
+    @app.get("/v1/admin/local-models", dependencies=[Depends(admin_auth)])
+    async def admin_local_models() -> dict[str, Any]:
+        return {"data": [status_lifecycle_record(role) for role in configured.lifecycle_unit_map]}
+
+    @app.post("/v1/admin/local-models/{role}/{desired}", dependencies=[Depends(admin_auth)])
+    async def admin_local_model_desired(
+        role: str, desired: Literal["on", "off"], request: Request
+    ) -> dict[str, Any]:
+        require_local_model_control(role)
+        record = (
+            await set_executor_enabled(desired == "on")
+            if role == "executor"
+            else await app.state.lifecycle.set_enabled(role, desired == "on")
+        )
+        app.state.store.event(
+            f"runtime-{role}",
+            "local_model_operator_desired_state_changed",
+            {
+                "role": role,
+                "desired_state": desired.upper(),
+                "generation": record.generation,
+                "operator": request.state.api_token_id,
+            },
+        )
+        return status_lifecycle_record(role)
 
     @app.get("/v1/admin/drain", dependencies=[Depends(admin_auth)])
     async def admin_drain_status(request: Request) -> dict[str, Any]:
@@ -5973,7 +6084,7 @@ def create_app(
             model_catalog.append(
                 {
                     "role": "executor",
-                    "served_name": configured.executor_scheduling.flash_model,
+                    "served_name": configured.model_routing.executor_fallback.model,
                     "repository": "OpenCode Go fallback",
                 }
             )

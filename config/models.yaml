@@ -87,15 +87,24 @@ gateway:
     policies: []
   execution_graph:
     mode: disabled
+  model_routing:
+    executor: local/qwen3.8-27b
+    executor_fallback: opencode/mimo-v2.5
+    executor_rollback: opencode/deepseek-v4-flash
+    planner: opencode/deepseek-v4-pro
+    reviewer: opencode/glm-5.2
+    reasoner: ollama/Qwythos-v2-9B:Q4
+    judge: opencode/kimi-k3
+    frontier_a: codex/gpt-5.6-sol
+    frontier_b: null
   executor_scheduling:
     enabled: false
     same_key_max_local_queue: 3
     max_total_local_queue: 256
     queue_timeout_seconds: 14400
-    flash_provider: disabled
-    flash_model: deepseek-v4-flash
-    flash_endpoint: https://opencode.ai/zen/go
-    flash_api_key_env: OPENCODE_GO_API_KEY
+    remote_provider: disabled
+    remote_endpoint: https://opencode.ai/zen/go
+    remote_api_key_env: OPENCODE_GO_API_KEY
   dashboard_enabled: false
   live_observation:
     enabled: false
@@ -219,24 +228,41 @@ gateway:
     optional_minimum_ready_residency_seconds: 300
     max_steps: 1000
 
-models:
-  executor:
-    repository: mistralai/Mistral-Small-4-119B-2603-NVFP4
-    revision: b1a9048590131d38491bd23a7c9f6ed0962f0358
-    classification: official
+local_models:
+  qwen3.8-27b:
+    repository: Qwen/Qwen3.8-27B
+    revision: 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+    artifact_repository: snowman0919/qwen38-executor-27b-dspark-nvfp4-v1
+    artifact_revision: 034de5c1743e53fcae8b0be9d3e68526522723ed
+    artifact_source_revision: 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+    classification: local-generated
     base_url: http://127.0.0.1:9001
     served_name: dgx-moa-executor
-    destination: /home/kotori9/models/.hf-cache/models--mistralai--Mistral-Small-4-119B-2603-NVFP4/snapshots/b1a9048590131d38491bd23a7c9f6ed0962f0358
-    context_length: 131072
+    destination: /home/kotori9/models/dgx-moa/qwen38-executor-27b-dspark-nvfp4-v1
+    context_length: 262144
     max_num_seqs: 1
-    quantization: compressed-tensors
-    tool_call_parser: mistral
-    reasoning_parser: mistral
-    trust_remote_code: false
+    quantization: modelopt_fp4
+    attention_backend: flashinfer
+    kv_cache_dtype: fp8_e4m3
+    gpu_memory_utilization: 0.5
+    cuda_graph_max_bs: 1
+    tool_call_parser: qwen3_coder
+    reasoning_parser: qwen3
+    trust_remote_code: true
     required: true
-    engine: vllm
+    runtime_validated: false
+    engine: sglang
     executor_slot: local_primary
-    capabilities: [text, native_tools, responses, streaming, lora]
+    capabilities: [text, vision, native_tools, responses, streaming]
+    speculative:
+      enabled: false
+      method: dspark
+      model: RadixArk/Qwen3.8-27B-DSpark
+      revision: 85ef153be924f17ce4bf62726954eeaa4a73e854
+      num_speculative_tokens: null
+      draft_attention_backend: flashinfer
+
+models:
   planner:
     repository: nvidia/Qwen3.6-27B-NVFP4
     revision: 0893e1606ff3d5f97a441f405d5fc541a6bdf404

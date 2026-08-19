@@ -1186,6 +1186,7 @@ def test_schema_persists_every_lifecycle_field_without_changing_usage_tables(
         "model_invocation_usage",
         "lifecycle_failure_events",
         "lifecycle_automation",
+        "lifecycle_desired_state",
         "model_lifecycle",
         "model_lifecycle_decisions",
         "model_lifecycle_leases",
@@ -2495,6 +2496,49 @@ async def test_operator_disable_cancels_an_incomplete_load(tmp_path: Path) -> No
     assert disabled.state == "disabled"
     assert driver.calls.count(("stop", "executor")) == 1
     assert coordinator._tasks == {}
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_operator_off_persists_and_drains_existing_request_before_stop(
+    tmp_path: Path,
+) -> None:
+    module = lifecycle()
+    path = tmp_path / "manual-desired.db"
+    unit_map = {"executor": "dgx-moa-dev-executor.service"}
+    store = module.LifecycleStore(path, ("executor",), unit_map=unit_map)
+    disabled = store.get("executor")
+    store.transition("executor", "cold", expected_transition_id=disabled.transition_id)
+    reach(store, "executor", "ready")
+    leases = store.acquire_request_leases(
+        "7147bbd5-f70c-45d5-a396-9668c78d4d12", ("executor",), kind="active_request"
+    )
+    driver = module.FakeLifecycleDriver({"executor": "active"})
+    coordinator = module.LifecycleCoordinator(
+        store,
+        driver,
+        health_probe=lambda role: asyncio.sleep(0, result=True),
+        timeout_seconds=1,
+        poll_seconds=0.01,
+        memory_probe=lambda: 1_000,
+    )
+
+    draining = await coordinator.set_enabled("executor", False)
+    assert draining.state == "unload_queued"
+    assert store.desired_enabled("executor") is False
+    assert ("stop", "executor") not in driver.calls
+
+    store.release_leases(lease.lease_id for lease in leases)
+    for _ in range(100):
+        if store.get("executor").state == "disabled":
+            break
+        await asyncio.sleep(0.01)
+    assert store.get("executor").state == "disabled"
+    assert driver.calls.count(("stop", "executor")) == 1
+    assert (
+        module.LifecycleStore(path, ("executor",), unit_map=unit_map).desired_enabled("executor")
+        is False
+    )
     await coordinator.close()
 
 

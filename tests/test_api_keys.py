@@ -170,9 +170,8 @@ def test_admin_key_api_separates_permissions_and_returns_no_store(
         assert "activeRoleModels.has" in dashboard.text
         assert "activeModels.has" in dashboard.text
         assert 'class="tooltip"' in dashboard.text
-        assert all(
-            name in dashboard.text for name in ("Mistral-Small-4", "Nemotron-30B", "North-Mini-30B")
-        )
+        assert all(name in dashboard.text for name in ("Nemotron-30B", "North-Mini-30B"))
+        assert "Mistral-Small-4" not in dashboard.text
 
         listing = client.get("/v1/admin/api-keys", headers=operator)
         assert listing.status_code == 200

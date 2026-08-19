@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from dgx_moa.config import SpeculativeConfig
 from dgx_moa.serve import KV_CACHE, command, role_bool_environment, role_context_length
 
 
@@ -82,3 +83,53 @@ def test_explicit_context_environment_overrides_configured_value(
 def test_configured_context_is_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DGX_MOA_EXECUTOR_MAX_MODEL_LEN", raising=False)
     assert role_context_length("executor", 65536) == "65536"
+
+
+def test_sglang_executor_command_is_loopback_single_sequence_and_dspark_disabled(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    model = settings.models["executor"]
+    model.engine = "sglang"
+    model.context_length = 262144
+    model.quantization = "modelopt_fp4"
+    model.attention_backend = "flashinfer"
+    model.kv_cache_dtype = "fp8_e4m3"
+    model.gpu_memory_utilization = 0.5
+    model.cuda_graph_max_bs = 1
+    model.reasoning_parser = "qwen3"
+    model.tool_call_parser = "qwen3_coder"
+    monkeypatch.setattr("dgx_moa.serve.load_settings", lambda: settings)
+
+    arguments = command("executor")
+
+    assert arguments[arguments.index("--host") + 1] == "127.0.0.1"
+    assert arguments[arguments.index("--context-length") + 1] == "262144"
+    assert arguments[arguments.index("--max-running-requests") + 1] == "1"
+    assert arguments[arguments.index("--mem-fraction-static") + 1] == "0.5"
+    assert "--speculative-algorithm" not in arguments
+
+
+def test_sglang_dspark_command_requires_and_passes_pinned_measured_config(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    model = settings.models["executor"]
+    model.engine = "sglang"
+    model.speculative = SpeculativeConfig(
+        enabled=True,
+        method="dspark",
+        model="vendor/qwen-dspark",
+        revision="draft-sha",
+        num_speculative_tokens=8,
+        draft_attention_backend="flashinfer",
+        draft_quantization="unquant",
+        num_continuous_decode_steps=2,
+    )
+    monkeypatch.setattr("dgx_moa.serve.load_settings", lambda: settings)
+
+    arguments = command("executor")
+
+    assert arguments[arguments.index("--speculative-algorithm") + 1] == "DSPARK"
+    assert arguments[arguments.index("--speculative-draft-model-revision") + 1] == "draft-sha"
+    assert arguments[arguments.index("--speculative-draft-model-quantization") + 1] == "unquant"
+    assert arguments[arguments.index("--speculative-dspark-block-size") + 1] == "7"
+    assert arguments[arguments.index("--num-continuous-decode-steps") + 1] == "2"

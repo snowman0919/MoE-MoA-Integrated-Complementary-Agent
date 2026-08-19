@@ -5,7 +5,7 @@ import json
 import os
 from urllib.parse import urlsplit
 
-from .config import load_settings, parse_bool
+from .config import ModelConfig, Settings, load_settings, parse_bool
 
 PORTS = {"executor": 8101, "planner": 8102, "reviewer": 8103, "reasoner": 8104, "judge": 8110}
 KV_CACHE = {
@@ -36,9 +36,87 @@ def role_context_length(role: str, configured: int) -> str:
     return role_environment(role, "MAX_MODEL_LEN", configured)
 
 
-def command(role: str) -> list[str]:
-    settings = load_settings()
-    model = settings.models[role]
+def _sglang_command(role: str, model: ModelConfig) -> list[str]:
+    arguments = [
+        os.path.expanduser(os.getenv("SGLANG_PYTHON", "~/.pyenv/shims/python")),
+        "-m",
+        "sglang.launch_server",
+        "--model-path",
+        str(model.destination),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(urlsplit(model.base_url).port or PORTS[role]),
+        "--served-model-name",
+        model.served_name,
+        "--context-length",
+        role_context_length(role, model.context_length),
+        "--max-running-requests",
+        os.getenv("DGX_MOA_MAX_NUM_SEQS", str(model.max_num_seqs)),
+        "--mem-fraction-static",
+        role_environment(role, "GPU_MEMORY_UTILIZATION", model.gpu_memory_utilization or 0.5),
+    ]
+    for flag, value in (
+        ("--attention-backend", model.attention_backend),
+        ("--kv-cache-dtype", model.kv_cache_dtype),
+        ("--max-total-tokens", model.max_total_tokens),
+        ("--max-mamba-cache-size", model.max_mamba_cache_size),
+        ("--chunked-prefill-size", model.chunked_prefill_size),
+        ("--cuda-graph-max-bs", model.cuda_graph_max_bs),
+        ("--reasoning-parser", model.reasoning_parser),
+        ("--tool-call-parser", model.tool_call_parser),
+        ("--watchdog-timeout", model.watchdog_timeout),
+    ):
+        if value is not None:
+            arguments += [flag, str(value)]
+    if model.trust_remote_code:
+        arguments.append("--trust-remote-code")
+    if model.disable_flashinfer_autotune:
+        arguments.append("--disable-flashinfer-autotune")
+    if model.disable_prefill_cuda_graph:
+        arguments.append("--disable-prefill-cuda-graph")
+    if model.disable_decode_cuda_graph:
+        arguments.append("--disable-decode-cuda-graph")
+    if model.enable_torch_compile:
+        arguments.append("--enable-torch-compile")
+    if model.torch_compile_max_bs is not None:
+        arguments += ["--torch-compile-max-bs", str(model.torch_compile_max_bs)]
+    if model.skip_server_warmup:
+        arguments.append("--skip-server-warmup")
+    if model.quantization == "modelopt_fp4":
+        arguments += ["--quantization", "modelopt_fp4"]
+    if model.speculative.enabled:
+        arguments += [
+            "--speculative-algorithm",
+            model.speculative.method.upper(),
+            "--speculative-draft-model-path",
+            str(model.speculative.model),
+            "--speculative-draft-model-revision",
+            str(model.speculative.revision),
+        ]
+        if model.speculative.draft_attention_backend:
+            arguments += [
+                "--speculative-draft-attention-backend",
+                model.speculative.draft_attention_backend,
+            ]
+        if model.speculative.draft_quantization:
+            arguments += [
+                "--speculative-draft-model-quantization",
+                model.speculative.draft_quantization,
+            ]
+        arguments += [
+            "--num-continuous-decode-steps",
+            str(model.speculative.num_continuous_decode_steps),
+        ]
+        if model.speculative.num_speculative_tokens:
+            arguments += [
+                "--speculative-dspark-block-size",
+                str(model.speculative.num_speculative_tokens - 1),
+            ]
+    return arguments
+
+
+def _vllm_command(role: str, model: ModelConfig, settings: Settings) -> list[str]:
     arguments = [
         os.path.expanduser(os.getenv("VLLM_BIN", "~/.pyenv/shims/vllm")),
         "serve",
@@ -97,11 +175,22 @@ def command(role: str) -> list[str]:
     return arguments
 
 
+def command(role: str) -> list[str]:
+    settings = load_settings()
+    model = settings.models[role]
+    if model.engine == "sglang":
+        return _sglang_command(role, model)
+    return _vllm_command(role, model, settings)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("role", choices=PORTS)
     parser.add_argument("--print", action="store_true")
     arguments = parser.parse_args()
+    settings = load_settings()
+    if not arguments.print and not settings.models[arguments.role].runtime_validated:
+        raise SystemExit(f"{arguments.role} runtime is not physically validated")
     built = command(arguments.role)
     if arguments.print:
         print(" ".join(built))

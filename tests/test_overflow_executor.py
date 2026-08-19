@@ -6,6 +6,7 @@ import httpx
 import pytest
 from dgx_moa.overflow_executor import (
     OpenCodeGoExecutorProvider,
+    OverflowExecutorInvalidOutput,
     OverflowExecutorUnavailable,
 )
 
@@ -45,6 +46,7 @@ async def test_opencode_go_executor_preserves_native_tools_and_strips_private_fi
     provider = OpenCodeGoExecutorProvider(
         endpoint="https://opencode.invalid",
         api_key_env="OPENCODE_GO_API_KEY",
+        model="mimo-v2.5",
         transport=httpx.MockTransport(handler),
     )
     result = await provider.execute(
@@ -71,7 +73,7 @@ async def test_opencode_go_executor_preserves_native_tools_and_strips_private_fi
         "request-1:executor",
     )
 
-    assert captured["model"] == "deepseek-v4-flash"
+    assert captured["model"] == "mimo-v2.5"
     assert captured["messages"][0]["role"] == "system"
     assert captured["messages"][2]["reasoning_content"] == ""
     assert captured["tool_choice"] == "auto"
@@ -79,7 +81,8 @@ async def test_opencode_go_executor_preserves_native_tools_and_strips_private_fi
     assert captured["stream"] is False
     assert captured["max_tokens"] == 4096
     assert not {"metadata", "stream_options", "_client_workspace_path"} & captured.keys()
-    assert result["provider_provenance"]["provider"] == "opencode_go"
+    assert result["provider_provenance"]["provider"] == "opencode"
+    assert result["provider_provenance"]["route"] == "fallback"
 
 
 @pytest.mark.asyncio
@@ -90,6 +93,7 @@ async def test_opencode_go_executor_treats_region_opt_in_as_unavailable(
     provider = OpenCodeGoExecutorProvider(
         endpoint="https://opencode.invalid",
         api_key_env="OPENCODE_GO_API_KEY",
+        model="mimo-v2.5",
         transport=httpx.MockTransport(
             lambda _request: httpx.Response(
                 403,
@@ -98,7 +102,7 @@ async def test_opencode_go_executor_treats_region_opt_in_as_unavailable(
         ),
     )
 
-    with pytest.raises(OverflowExecutorUnavailable, match="region opt-in"):
+    with pytest.raises(OverflowExecutorUnavailable, match="provider authorization"):
         await provider.execute({"messages": []}, "request-1")
 
 
@@ -110,6 +114,7 @@ async def test_opencode_go_executor_rejects_hidden_reasoning_without_public_outp
     provider = OpenCodeGoExecutorProvider(
         endpoint="https://opencode.invalid",
         api_key_env="OPENCODE_GO_API_KEY",
+        model="mimo-v2.5",
         transport=httpx.MockTransport(
             lambda _request: httpx.Response(
                 200,
@@ -125,5 +130,42 @@ async def test_opencode_go_executor_rejects_hidden_reasoning_without_public_outp
         ),
     )
 
-    with pytest.raises(OverflowExecutorUnavailable, match="no public output"):
+    with pytest.raises(OverflowExecutorInvalidOutput, match="no public output"):
         await provider.execute({"messages": [], "max_tokens": 128}, "request-1")
+
+
+@pytest.mark.asyncio
+async def test_model_failure_uses_rollback_but_provider_failure_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    models: list[str] = []
+
+    async def model_handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        models.append(body["model"])
+        if body["model"] == "mimo-v2.5":
+            return httpx.Response(404)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    monkeypatch.setenv("OPENCODE_GO_API_KEY", "synthetic")
+    provider = OpenCodeGoExecutorProvider(
+        endpoint="https://opencode.invalid",
+        api_key_env="OPENCODE_GO_API_KEY",
+        model="mimo-v2.5",
+        rollback_model="deepseek-v4-flash",
+        transport=httpx.MockTransport(model_handler),
+    )
+    result = await provider.execute({"messages": []}, "request-1")
+    assert models == ["mimo-v2.5", "deepseek-v4-flash"]
+    assert result["provider_provenance"]["route"] == "rollback"
+
+    models.clear()
+    provider.transport = httpx.MockTransport(
+        lambda request: models.append(json.loads(request.content)["model"]) or httpx.Response(503)
+    )
+    with pytest.raises(OverflowExecutorUnavailable):
+        await provider.execute({"messages": []}, "request-2")
+    assert models == ["mimo-v2.5"]

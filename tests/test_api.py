@@ -20,6 +20,8 @@ from dgx_moa.api import (
     create_app,
     has_matching_tool_result,
     ollama_model_ready,
+    openai_inference_ready,
+    openai_model_ready,
 )
 from dgx_moa.config import Settings
 from dgx_moa.controller import fingerprint
@@ -58,6 +60,25 @@ def test_runtime_version_is_2_0(settings: Settings) -> None:
 
     assert __version__ == "2.0.0"
     assert app.version == "2.0.0"
+
+
+def test_openai_lifecycle_gate_requires_exact_model_and_public_inference(
+    settings: Settings,
+) -> None:
+    model = settings.models["executor"]
+
+    assert openai_model_ready(
+        httpx.Response(200, json={"data": [{"id": model.served_name}]}), model
+    )
+    assert not openai_model_ready(
+        httpx.Response(200, json={"data": [{"id": "wrong-model"}]}), model
+    )
+    assert openai_inference_ready(
+        httpx.Response(200, json={"choices": [{"message": {"content": "READY"}}]})
+    )
+    assert not openai_inference_ready(
+        httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+    )
 
 
 def test_adjacent_responses_tool_calls_form_one_assistant_batch() -> None:
@@ -146,17 +167,17 @@ def test_busy_executor_routes_new_session_to_frontier(
     assert started["payload"]["routing_reason"] == "local_busy"
 
 
-def test_api_key_scheduler_pins_cross_key_turn_to_flash_and_projects_graph(
+def test_api_key_scheduler_pins_cross_key_turn_to_remote_fallback_and_projects_graph(
     settings: Settings, stub_provider: StubProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
-            return httpx.Response(200, json={"data": [{"id": "deepseek-v4-flash"}]})
+            return httpx.Response(200, json={"data": [{"id": "mimo-v2.5"}]})
         return httpx.Response(
             200,
             json={
                 "id": "chatcmpl-flash",
-                "model": "deepseek-v4-flash",
+                "model": "mimo-v2.5",
                 "choices": [
                     {
                         "message": {"role": "assistant", "content": "Flash 처리 완료"},
@@ -184,6 +205,8 @@ def test_api_key_scheduler_pins_cross_key_turn_to_flash_and_projects_graph(
     flash = OpenCodeGoExecutorProvider(
         endpoint="https://opencode.invalid",
         api_key_env="OPENCODE_GO_API_KEY",
+        model="mimo-v2.5",
+        rollback_model="deepseek-v4-flash",
         transport=httpx.MockTransport(handler),
     )
     app = create_app(
@@ -3750,7 +3773,7 @@ def test_disabled_lifecycle_probes_executor_before_scheduling(
     assert stub_provider.calls == []
 
 
-def test_disabled_local_executor_routes_high_risk_request_to_frontier(
+def test_disabled_local_executor_routes_high_risk_request_to_mimo(
     settings: Settings, stub_provider: StubProvider
 ) -> None:
     frontier_config = settings.state_db.parent / "disabled-executor-frontier.yaml"
@@ -3776,6 +3799,19 @@ def test_disabled_local_executor_routes_high_risk_request_to_frontier(
         async def available(self) -> bool:
             return True
 
+        async def execute(self, request, correlation_id):  # type: ignore[no-untyped-def]
+            del request, correlation_id
+            return {
+                "model": "mimo-v2.5",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "FLASH_FALLBACK_OK"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"total_tokens": 1},
+            }
+
     app = create_app(
         controlled,
         lifecycle_driver=FakeLifecycleDriver({"executor": "inactive"}),
@@ -3783,24 +3819,9 @@ def test_disabled_local_executor_routes_high_risk_request_to_frontier(
         overflow_executor=Flash(),  # type: ignore[arg-type]
     )
 
-    async def remote_execute(request, correlation_id):  # type: ignore[no-untyped-def]
-        del request, correlation_id
-        return {
-            "model": "gpt-5.6-sol",
-            "choices": [
-                {
-                    "message": {"role": "assistant", "content": "FRONTIER_FALLBACK_OK"},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"total_tokens": 1},
-            "provider_provenance": {"provider": "primary"},
-        }
-
     with TestClient(app) as client:
         app.state.provider = stub_provider
         app.state.controller.provider = stub_provider
-        app.state.frontier.execute = remote_execute
         generation = app.state.lifecycle_store.get("executor").generation
         for index in range(3):
             app.state.lifecycle_store.record_failure(
@@ -3826,13 +3847,11 @@ def test_disabled_local_executor_routes_high_risk_request_to_frontier(
         events = app.state.store.events("high-risk-frontier-fallback")
 
     assert response.status_code == 200
-    assert response.json()["choices"][0]["message"]["content"] == "FRONTIER_FALLBACK_OK"
+    assert response.json()["choices"][0]["message"]["content"] == "FLASH_FALLBACK_OK"
     assert stub_provider.calls == []
-    selected = next(event for event in events if event["event_type"] == "executor_remote_selected")
-    assert selected["payload"] == {
-        "provider": "frontier",
-        "routing_reason": "local_unavailable_high_risk",
-    }
+    selected = next(event for event in events if event["event_type"] == "executor_scheduled")
+    assert selected["payload"]["selected_executor"] == "remote_overflow"
+    assert selected["payload"]["reason"] == "local_unavailable"
 
 
 def test_observe_lifecycle_records_state_without_blocking_or_controlling(
@@ -4062,6 +4081,9 @@ def test_model_status_is_authenticated_typed_and_content_free(
         "role",
         "lifecycle_control",
         "state",
+        "desired_state",
+        "runtime_state",
+        "effective_route",
         "generation",
         "ready",
         "transition_id",

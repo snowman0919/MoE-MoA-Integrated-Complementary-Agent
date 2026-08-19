@@ -112,7 +112,7 @@ class _RemoteProvider:
         body["model"] = self.model
         body["stream"] = False
         body["max_tokens"] = max(int(body.get("max_tokens", 0) or 0), self.min_completion_tokens)
-        if self.role == "reviewer" and self.model == "glm-5.2":
+        if self.role == "reviewer":
             body.pop("thinking", None)
             body["reasoning_effort"] = "none"
         body.pop("tools", None)

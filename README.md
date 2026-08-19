@@ -58,6 +58,12 @@ Safe checked-in lifecycle and optional-feature defaults remain disabled. See
 `docs/MODEL_LIFECYCLE.md` for lifecycle semantics. Do not copy ignored
 operator-owned overrides or credentials into Git.
 
+The undeployed `dev` manifest routes the Executor as
+`local/qwen3.8-27b -> opencode/mimo-v2.5 -> opencode/deepseek-v4-flash` and
+contains a gated SGLang 262K candidate. It is not a claim about the running
+production topology; current blockers and measured evidence are recorded in
+`docs/STATE.md` and `docs/VALIDATION.md`.
+
 Current authorities:
 
 - `docs/STATE.md` — current operating facts and release status

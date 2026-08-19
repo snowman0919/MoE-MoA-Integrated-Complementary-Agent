@@ -42,13 +42,9 @@ word-break:break-word;border-radius:10px;padding:11px}.user{background:#20304f}.
       <section class="card"><h2>Runtime</h2>
         <p class="muted">인증된 런타임 상태 JSON을 확인합니다.</p>
         <button id="runtime">상태 조회</button></section>
-      <section class="card"><h2>Mistral Executor</h2>
-        <p id="executor-state" class="muted">상태 확인 중...</p>
-        <progress id="executor-progress" max="100" aria-label="Mistral 가중치 로드율"></progress>
-        <p id="executor-progress-label" class="muted">가중치 로드율: 확인 중</p>
-        <p id="executor-control" class="muted">제어 상태 확인 중...</p>
-        <form><button id="executor-on" type="button">ON</button>
-          <button id="executor-off" type="button">OFF · Flash 전환</button></form></section>
+      <section class="card"><h2>Managed local models</h2>
+        <p class="muted">desired state · runtime state · effective route</p>
+        <div id="local-models">상태 확인 중...</div></section>
     </div>
     <section class="card chat">
       <h2>Codex CLI · DGX MoA custom provider</h2>
@@ -72,7 +68,7 @@ word-break:break-word;border-radius:10px;padding:11px}.user{background:#20304f}.
 </main>
 <script>
 const $=id=>document.getElementById(id);
-let sessionId=null,busy=false,executorTimer=null;
+let sessionId=null,busy=false,localModelTimer=null;
 const api=async(path,options={})=>{
   const response=await fetch(path,{...options,headers:{"Content-Type":"application/json",
     ...(options.headers||{})}});
@@ -89,26 +85,24 @@ async function load(){
   $("login").hidden=true;$("content").hidden=false;$("workspace").replaceChildren();
   data.workspaces.forEach(name=>{const option=document.createElement("option");
     option.value=name;option.textContent=name;$("workspace").append(option)});
-  await loadExecutor();executorTimer||=setInterval(loadExecutor,2000);
+  await loadLocalModels();localModelTimer||=setInterval(loadLocalModels,2000);
 }
-async function loadExecutor(){try{const data=await api("/v1/admin/executor"),loading=
-  ["load_queued","process_starting","loading_weights","initializing_engine","warming_up"]
-    .includes(data.state),percent=data.weight_load_percent;
-  $("executor-state").textContent=(data.operator_enabled?"ON":"OFF")+" · "+data.state+
-    " · 저·중위험: "+data.active_executor+" · 고위험: "+data.high_risk_executor;
-  $("executor-progress").hidden=percent==null;
-  if(percent!=null)$("executor-progress").value=percent;
-  $("executor-progress-label").textContent="가중치 로드율: "+
-    (percent==null?"측정 불가":percent.toFixed(1)+"%")+
-    (data.estimated_ready_seconds==null?"":" · ETA "+Math.ceil(data.estimated_ready_seconds)+"초");
-  $("executor-control").textContent=data.control_available?"Executor 제어 가능":
-    "제어 불가 · "+data.control;
-  $("executor-on").disabled=!data.control_available||data.state==="ready"||loading;
-  $("executor-off").disabled=!data.control_available||!data.operator_enabled;
-}catch(error){$("executor-state").textContent=error.message}}
-async function setExecutor(enabled){try{$("executor-on").disabled=true;
-  $("executor-off").disabled=true;await api("/v1/admin/executor/"+(enabled?"on":"off"),
-    {method:"POST"});await loadExecutor()}catch(error){$("executor-state").textContent=error.message}}
+function renderLocalModel(data){const card=document.createElement("div"),state=document.createElement("p"),
+  progress=document.createElement("progress"),controls=document.createElement("p"),on=document.createElement("button"),
+  off=document.createElement("button"),changing=["LOADING","DRAINING","UNLOADING"].includes(data.runtime_state);
+  state.textContent=data.role+" · desired "+data.desired_state+" · runtime "+data.runtime_state+
+    " · route "+data.effective_route;state.className="muted";card.append(state);
+  progress.max=100;progress.value=data.weight_load_percent||0;progress.hidden=data.weight_load_percent==null;
+  progress.setAttribute("aria-label",data.role+" weight load percent");card.append(progress);
+  on.textContent="ON";off.textContent="OFF";on.disabled=data.desired_state==="ON"||changing;
+  off.disabled=data.desired_state==="OFF";on.onclick=()=>setLocalModel(data.role,true);
+  off.onclick=()=>setLocalModel(data.role,false);controls.append(on," ",off);card.append(controls);return card}
+async function loadLocalModels(){try{const payload=await api("/v1/admin/local-models"),root=$("local-models");
+  root.replaceChildren(...payload.data.map(renderLocalModel))
+}catch(error){$("local-models").textContent=error.message}}
+async function setLocalModel(role,enabled){try{await api("/v1/admin/local-models/"+
+  encodeURIComponent(role)+"/"+(enabled?"on":"off"),{method:"POST"});await loadLocalModels()
+}catch(error){$("local-models").textContent=error.message}}
 function reset(){sessionId=null;$("messages").replaceChildren();
   $("codex-state").textContent="새 독립 Codex CLI 세션입니다."}
 function render(event,assistant){
@@ -146,10 +140,8 @@ $("mode").onchange=()=>{$("workspace-label").hidden=$("mode").value!=="agent";re
 $("workspace").onchange=reset;$("new-session").onclick=reset;$("composer").onsubmit=send;
 $("runtime").onclick=async()=>addMessage(JSON.stringify(
   await api("/v1/admin/runtime-status"),null,2),"event");
-$("executor-on").onclick=()=>setExecutor(true);
-$("executor-off").onclick=()=>setExecutor(false);
 $("logout").onclick=async()=>{await api("/v1/admin/session",{method:"DELETE"});
-  clearInterval(executorTimer);executorTimer=null;$("content").hidden=true;
+  clearInterval(localModelTimer);localModelTimer=null;$("content").hidden=true;
   $("login").hidden=false;reset()};
 load().catch(()=>$("login").hidden=false);
 </script>

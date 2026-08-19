@@ -9901,3 +9901,159 @@ Dynamic MoA = IN_PROGRESS
 Qwen Executor = CANDIDATE
 PRODUCTION_BETA / STABLE = 미달성
 ```
+
+## Qwen3.8 routing and lifecycle development validation — 2026-08-18
+
+### Upstream and manifest evidence
+
+The official Hugging Face API and Git ref both resolved
+`Qwen/Qwen3.8-27B` to
+`1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`. Its inspected configuration
+declares native `max_position_embeddings=262144`; the official model card lists
+SGLang support, vision input, and Qwen reasoning/tool parsing. The inspected
+SGLang Qwen3.8 cookbook includes a one-GPU DGX Spark NVFP4 command and a
+separate DSpark recipe. These are upstream compatibility statements, not local
+runtime measurements.
+
+The inspected `RadixArk/Qwen3.8-27B-NVFP4` revision was
+`554ebba9b5f1b79dc11246341960360e6ef05ef4`, but its conversion metadata names
+older Qwen source revision `e13a4f0db45042c4bc6f3b18909e9599351a62ae`.
+That does not match the pinned official source. The download verifier now marks
+that lineage mismatch invalid, and the checked-in local deployment remains
+`runtime_validated: false`. The inspected DSpark draft revision was
+`85ef153be924f17ce4bf62726954eeaa4a73e854`; speculative decoding remains
+disabled because plain local SGLang has not passed and the installed SGLang
+build does not expose DSPARK.
+
+### Local physical boundary
+
+No model, service, or production configuration was mutated. At inspection,
+NVIDIA GB10 compute capability 12.1 used driver `580.159.03`; GPU utilization
+was 96%, and unrelated PID `1730949` reported `62543 MiB` while running the
+operator-owned Qwen training pipeline. `/proc/meminfo` reported
+`11927248 kB` available. The root filesystem had `73360834560` bytes free at
+93% use. `/home/kotori9/models/dgx-moa/qwen3.8-27b-nvfp4` was absent.
+
+The repository virtual environment has no SGLang/Torch runtime. The host pyenv
+has SGLang `0.5.13.post1`, SGLang kernel `0.4.3`, Torch `2.11.0`, Transformers
+`5.5.0`, compressed-tensors `0.15.0.1`, and ModelOpt `0.44.0`; that SGLang
+version's CLI does not list DSPARK. Gateway remained PID `5105` on authenticated
+wildcard port `9000`; the Executor unit remained failed with no `9001` listener.
+The Gateway and training process were not restarted, stopped, or reconfigured.
+Therefore Qwen load, SGLang start, `/v1/models`, generation, tools,
+continuation, streaming, 256K context, restart, Gateway primary routing, DSpark
+acceptance, latency, throughput, memory reclamation, and output equivalence are
+all explicitly **not run**.
+
+### Development checks
+
+Static command generation produced loopback `127.0.0.1:9001`, SGLang native
+context 262,144, one running request, memory fraction 0.5, FlashInfer attention,
+FP8 KV metadata, Qwen parsers, NVFP4, and no speculative flags. Tests cover
+first-slash ModelRef parsing, environment precedence, legacy aliases, SGLang
+command shape, fallback-to-rollback model failure, provider-wide no-retry,
+durable desired OFF, graceful lease drain, exact stop, generic authenticated
+Dashboard control, request pinning, fan-out/JOIN, repair, continuation,
+provenance, loopback binding, and secret handling. Ruff and strict mypy passed;
+the complete suite passed `1161` tests in `52.14` seconds with one existing
+Starlette deprecation warning.
+
+### Continuation audit — 2026-08-18
+
+A later read-only host inspection found the exact official checkpoint already
+cached at
+`Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0` (`52G` on disk).
+It also found a `22G` cached
+`unsloth/Qwen3.8-27B-NVFP4@16b6615af3548b88e2d8e382457bc705b00479cf`.
+The latter card names the official repository but does not state the exact
+source commit, so it is not evidence that the weights derive from the pinned
+official revision. Artifact verification now fails closed before download when
+third-party source lineage is missing or mismatched; it never substitutes the
+desired official SHA into an unknown `.source-revision` record.
+
+The operator-owned PID `1730949` was still training Qwen from
+`/home/kotori9/code/base_executor`, used `62677 MiB`, and had reached step
+`80/1500`; it exposed no inference listener. Root free space was
+`73356500992` bytes. Host SGLang remained `0.5.13.post1` and did not expose the
+current speculative-algorithm enum. These facts do not satisfy any local
+serving or benchmark gate, and that process was not modified.
+
+The completion audit also moved Executor route selection into a tested
+`RoleRoute`: primary unavailability selects MiMo, only a model-scoped MiMo
+failure selects DeepSeek, and provider-scoped failure selects nothing. Manual
+lifecycle audit events now include the authenticated operator ID. The default
+READY gate has direct tests for exact `/v1/models` identity and non-empty public
+minimal inference output.
+
+## Qwen3.8 NVFP4 + DSpark physical validation — 2026-08-19
+
+This measurement supersedes the earlier unrun local-runtime boundary for this
+specific generated artifact. The target was converted from
+`Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0` with ModelOpt
+`fbcdc16c2d67ca6db3f33b2848e923600f7012c7`; the DSpark draft was pinned to
+`RadixArk/Qwen3.8-27B-DSpark@85ef153be924f17ce4bf62726954eeaa4a73e854`.
+SGLang was pinned to `0111b290312aa224962397db86c04fe112539fb2`.
+
+The mandatory plain profile used context 262,144, one running request,
+`max_total_tokens=270000`, `max_mamba_cache_size=5`, memory fraction 0.35,
+FP8 E4M3 KV, chunked prefill 4,096, FlashInfer autotune disabled, and both
+prefill/decode CUDA graphs disabled. It allocated 19.20 GB of NVFP4 target
+weights, 8.24 GB of target KV, and 0.86 GB of recurrent state. The 1K, 32K,
+128K, and 256K context smokes passed. A 64-token decode measured 11.628 tok/s;
+minimum system-available memory was 81,227,186,176 bytes.
+
+Enabling only the batch-one decode graph kept all context smokes passing and
+measured 11.973 tok/s. Enabling DSpark next loaded 19.59 GB of target weights
+and 2.59 GB of draft weights, added a 2.58 GB draft KV pool and approximately
+2.27 GB of hybrid intermediate recurrent state, and captured batch-one target
+and draft verify graphs. All four context smokes passed. The same 64-token
+decode measured 24.997 tok/s, peak system-used memory was 52,443,746,304 bytes,
+and minimum system-available memory was 78,151,417,856 bytes. This is a short
+smoke result, not a 40 tok/s claim or a production benchmark.
+
+A follow-up protocol run started the same DSpark profile a second time on
+loopback port 19002. `/v1/models` returned only `dgx-moa-executor`; an OpenAI
+tool request returned `finish_reason=tool_calls` with valid
+`add_numbers({"a":2,"b":3})` JSON. With thinking explicitly disabled, SSE
+streaming returned four frames, public content `STREAM_OK`, TTFT 0.310 seconds,
+and a terminal `[DONE]`. One isolated 64-token acceptance sample used 21 verify
+steps (mean accepted length 3.05 including the target bonus token; draft-token
+acceptance approximately 29.3%). Ten serial 64-token requests measured DSpark
+p50/p95 latency 2.601/2.725 seconds and p50/p95 throughput 24.607/24.670 tok/s.
+The identical plain batch-one graph workload measured p50/p95 latency
+5.294/5.337 seconds and p50/p95 throughput 12.090/12.152 tok/s. DSpark therefore
+improved this narrow workload by approximately 2.04x.
+
+The first default-thinking stream exhausted its 32-token budget in reasoning
+and produced no public content; this is recorded as a failed request profile.
+The passing streaming contract requires explicit thinking control or a
+sufficient output budget. Both DSpark starts reached READY. After each stop,
+the loopback listener and all SGLang child processes disappeared; the second
+protocol stop returned system-available memory to 125,910,999,040 bytes. This
+proves two-start smoke restart and resource reclamation, not long-duration
+production reliability. Broader quality equivalence and workload-level
+acceptance remain unmeasured.
+
+The earlier global OOMs were reproduced before the safe gate: uncapped SGLang
+auto-sized approximately 637K KV tokens and 120 recurrent slots, and a later
+first-request attempt allowed multiple required FP4 CUTLASS JIT compilers to
+run concurrently. The successful profiles set `MAX_JOBS=1` and
+`FLASHINFER_MM_FP4_CUTE_DSL_COMPILE_WORKERS=1`; no OOM occurred. Production
+port 9001 was not started or changed.
+
+The validated bundle was uploaded to public Hugging Face model repository
+`snowman0919/qwen38-executor-27b-dspark-nvfp4-v1` at commit
+`f7771248277a27a7f70092ecbf987d74f22ff4e4`. Its root contains the NVFP4 target,
+`dspark/` contains the pinned draft, and `bundle.json` plus `validation.json`
+record the runtime contract and measured limits. Remote metadata verification
+found all required files and 23,335,273,894 total bytes. This upload does not
+constitute production deployment approval.
+
+The lifecycle/routing completion audit also found and corrected two contract
+gaps. Manual Executor OFF now closes scheduler local admission atomically while
+preserving existing local pins, and every new request—including high-risk
+requests—selects the configured MiMo fallback while local is disabled or
+loading. `RoleRoute` alone selects DeepSeek rollback after a MiMo model-scoped
+failure; provider-scoped failures do not retry another model. Ruff format/lint,
+strict mypy over 53 source files, and the complete 1,171-test suite passed after
+the correction (one existing Starlette deprecation warning).

@@ -15,6 +15,8 @@ from huggingface_hub import snapshot_download
 
 def classify_failure(error: Exception) -> str:
     message = str(error).lower()
+    if "artifact source revision" in message:
+        return "provenance-blocked"
     if (isinstance(error, OSError) and error.errno == errno.ENOSPC) or "no space" in message:
         return "capacity-blocked"
     if any(marker in message for marker in ("401", "unauthorized", "gated repo", "forbidden")):
@@ -24,6 +26,16 @@ def classify_failure(error: Exception) -> str:
     if any(marker in message for marker in ("timeout", "connection", "network")):
         return "network-failure"
     return "download-failed"
+
+
+def artifact_provenance_error(model: dict[str, Any]) -> str | None:
+    artifact_repository = model.get("artifact_repository") or model["repository"]
+    artifact_source = model.get("artifact_source_revision")
+    if artifact_repository != model["repository"] and not artifact_source:
+        return "artifact source revision is unknown for third-party weights"
+    if artifact_source and artifact_source != model["revision"]:
+        return "artifact source revision does not match pinned official source"
+    return None
 
 
 def verify_model(path: str | Path, require_quantization: bool = True) -> dict[str, Any]:
@@ -81,22 +93,32 @@ def verify_model(path: str | Path, require_quantization: bool = True) -> dict[st
 
 
 def download_role(role: str, model: dict[str, Any], hf_home: Path) -> dict[str, Any]:
+    artifact_repository = model.get("artifact_repository") or model["repository"]
+    artifact_revision = model.get("artifact_revision") or model["revision"]
+    if provenance_error := artifact_provenance_error(model):
+        raise ValueError(provenance_error)
+    artifact_source = model.get("artifact_source_revision") or model["revision"]
     destination = Path(model["destination"]).expanduser()
     destination.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     snapshot_download(
-        repo_id=model["repository"],
-        revision=model["revision"],
+        repo_id=artifact_repository,
+        revision=artifact_revision,
         local_dir=destination,
         cache_dir=hf_home / "hub",
         token=os.getenv("HF_TOKEN"),
     )
-    (destination / ".revision").write_text(model["revision"] + "\n")
+    (destination / ".revision").write_text(artifact_revision + "\n")
+    (destination / ".source-revision").write_text(artifact_source + "\n")
     result = verify_model(destination, require_quantization=bool(model.get("quantization")))
     result.update(
         {
             "role": role,
             "repository": model["repository"],
+            "source_revision": model["revision"],
+            "artifact_repository": artifact_repository,
+            "artifact_revision": artifact_revision,
+            "artifact_source_revision": artifact_source,
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "free_bytes": shutil.disk_usage(destination).free,
         }
@@ -130,11 +152,13 @@ def main() -> None:
                     }
                 )
         else:
-            results.append(
-                verify_model(
-                    Path(model["destination"]).expanduser(), bool(model.get("quantization"))
-                )
+            result = verify_model(
+                Path(model["destination"]).expanduser(), bool(model.get("quantization"))
             )
+            if provenance_error := artifact_provenance_error(model):
+                result["status"] = "invalid"
+                result["errors"].append(provenance_error)
+            results.append(result)
     print(json.dumps(results, indent=2))
     if any(result["status"] != "verified" for result in results):
         raise SystemExit(2)

@@ -727,6 +727,10 @@ class LifecycleStore:
                 "(singleton, automation_disabled, failure_count, last_reset_at) "
                 "VALUES (1, 0, 0, 0)"
             )
+            database.execute(
+                "CREATE TABLE IF NOT EXISTS lifecycle_desired_state ("
+                "role TEXT PRIMARY KEY, enabled INTEGER NOT NULL, updated_at REAL NOT NULL)"
+            )
             for role in self._roles:
                 now = self._clock()
                 record = LifecycleRecord(
@@ -747,6 +751,11 @@ class LifecycleStore:
                         "UPDATE model_lifecycle SET service_unit = ? WHERE role = ?",
                         (self._unit_map[role], role),
                     )
+                    database.execute(
+                        "INSERT OR IGNORE INTO lifecycle_desired_state (role, enabled, updated_at) "
+                        "VALUES (?, 1, ?)",
+                        (role, now),
+                    )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30)
@@ -757,6 +766,24 @@ class LifecycleStore:
     def _require_role(self, role: str) -> None:
         if role not in self._role_set:
             raise UnknownRoleError(role)
+
+    def desired_enabled(self, role: str) -> bool:
+        self._require_role(role)
+        with self._connect() as database:
+            row = database.execute(
+                "SELECT enabled FROM lifecycle_desired_state WHERE role = ?", (role,)
+            ).fetchone()
+        return bool(row[0]) if row is not None else True
+
+    def set_desired_enabled(self, role: str, enabled: bool) -> None:
+        self._require_role(role)
+        with self._connect() as database:
+            database.execute(
+                "INSERT INTO lifecycle_desired_state (role, enabled, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(role) DO UPDATE SET enabled = excluded.enabled, "
+                "updated_at = excluded.updated_at",
+                (role, int(enabled), self._clock()),
+            )
 
     def _lease_now(self) -> float:
         now = self._clock()
@@ -1705,6 +1732,7 @@ class LifecycleCoordinator:
         self._load_driver_tasks: set[asyncio.Task[Any]] = set()
         self._scheduler_task: asyncio.Task[None] | None = None
         self._stop_tasks: dict[str, asyncio.Task[None]] = {}
+        self._drain_tasks: dict[str, asyncio.Task[None]] = {}
         self._idle_state: dict[str, tuple[LifecycleMode, float | None, int]] = {}
 
     def _automation_disabled(self) -> bool:
@@ -1893,13 +1921,16 @@ class LifecycleCoordinator:
         async with self._locks[role]:
             if self._automation_disabled():
                 return False
-            try:
-                queued = self.store.queue_unload(
-                    role,
-                    expected_transition_id=policy_record.transition_id,
-                )
-            except (InvalidTransitionError, StaleTransitionError):
-                return False
+            if policy_record.state == "unload_queued":
+                queued = policy_record
+            else:
+                try:
+                    queued = self.store.queue_unload(
+                        role,
+                        expected_transition_id=policy_record.transition_id,
+                    )
+                except (InvalidTransitionError, StaleTransitionError):
+                    return False
             try:
                 memory_before = await asyncio.to_thread(self._memory_sample)
             except Exception as error:
@@ -1914,7 +1945,7 @@ class LifecycleCoordinator:
             )
             if admitted is None:
                 current = self.store.get(role)
-                if current.state == "unload_queued":
+                if current.state == "unload_queued" and not disable:
                     self.store.cancel_queued_unload(
                         role,
                         expected_transition_id=current.transition_id,
@@ -2093,6 +2124,8 @@ class LifecycleCoordinator:
             raise UnknownRoleError(role) from error
         async with lock:
             record = self.store.get(role)
+            if not self.store.desired_enabled(role):
+                return LoadCheck(record=record)
             task = self._tasks.get(role)
             if task is not None and task.done():
                 self._tasks.pop(role)
@@ -2131,10 +2164,18 @@ class LifecycleCoordinator:
             lock = self._locks[role]
         except KeyError as error:
             raise UnknownRoleError(role) from error
+        self.store.set_desired_enabled(role, enabled)
         record = self.store.get(role)
         if enabled:
+            drain = self._drain_tasks.pop(role, None)
+            if drain is not None and not drain.done():
+                drain.cancel()
             async with lock:
                 record = self.store.get(role)
+                if record.state == "unload_queued":
+                    record = self.store.cancel_queued_unload(
+                        role, expected_transition_id=record.transition_id
+                    )
                 if record.state == "disabled":
                     record = self.store.transition(
                         role,
@@ -2154,6 +2195,13 @@ class LifecycleCoordinator:
                         expected_transition_id=record.transition_id,
                     )
                 return record
+        if record.state == "unload_queued":
+            if not self.store.unload_blockers(role):
+                await self._unload_role(role, record, disable=True)
+                return self.store.get(role)
+            if role not in self._drain_tasks or self._drain_tasks[role].done():
+                self._drain_tasks[role] = asyncio.create_task(self._drain_disabled_role(role))
+            return record
         if record.state != "ready":
             task = self._tasks.pop(role, None)
             if task is not None:
@@ -2177,8 +2225,26 @@ class LifecycleCoordinator:
                     "disabled",
                     expected_transition_id=record.transition_id,
                 )
-        await self._unload_role(role, record, disable=True)
-        return self.store.get(role)
+        if not self.store.unload_blockers(role):
+            await self._unload_role(role, record, disable=True)
+            return self.store.get(role)
+        async with lock:
+            record = self.store.get(role)
+            if record.state == "ready":
+                record = self.store.queue_unload(role, expected_transition_id=record.transition_id)
+        if role not in self._drain_tasks or self._drain_tasks[role].done():
+            self._drain_tasks[role] = asyncio.create_task(self._drain_disabled_role(role))
+        return record
+
+    async def _drain_disabled_role(self, role: str) -> None:
+        try:
+            while self.store.unload_blockers(role):
+                await self.sleeper(min(self.poll_seconds, 1.0))
+            if self.store.desired_enabled(role):
+                return
+            await self._unload_role(role, self.store.get(role), disable=True)
+        finally:
+            self._drain_tasks.pop(role, None)
 
     async def _load(self, role: str, transition_id: str) -> None:
         started = self.clock()
@@ -2361,6 +2427,12 @@ class LifecycleCoordinator:
             scheduler.cancel()
             await asyncio.gather(scheduler, return_exceptions=True)
             self._scheduler_task = None
+        drain_tasks = tuple(self._drain_tasks.values())
+        for task in drain_tasks:
+            task.cancel()
+        if drain_tasks:
+            await asyncio.gather(*drain_tasks, return_exceptions=True)
+        self._drain_tasks.clear()
         stop_tasks = tuple(self._stop_tasks.values())
         if stop_tasks:
             await asyncio.gather(*stop_tasks, return_exceptions=True)

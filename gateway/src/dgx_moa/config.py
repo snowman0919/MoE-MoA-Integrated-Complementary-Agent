@@ -23,6 +23,86 @@ API_KEY_PLACEHOLDERS = {
 }
 MODEL_ROLES = frozenset({"executor", "planner", "reviewer", "reasoner", "judge"})
 SYSTEMD_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@-]*\.service$")
+ProviderName = Literal["local", "ollama", "opencode", "openrouter", "codex"]
+
+
+class ModelRef(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    provider: ProviderName
+    model: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_reference(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            reference = value.strip()
+            aliases = {
+                "local_mistral": "local/qwen3.8-27b",
+                "deepseek-v4-flash": "opencode/deepseek-v4-flash",
+            }
+            reference = aliases.get(reference, reference)
+            if reference.startswith("opencode_go/"):
+                reference = "opencode/" + reference.split("/", 1)[1]
+            if "/" not in reference:
+                raise ValueError("model reference must use <provider>/<model>")
+            provider, model = reference.split("/", 1)
+            return {"provider": provider, "model": model}
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value: str) -> str:
+        if not value.strip() or value != value.strip():
+            raise ValueError("model name must be non-empty and trimmed")
+        return value
+
+    def __str__(self) -> str:
+        return f"{self.provider}/{self.model}"
+
+
+class RoleRoute(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    primary: ModelRef
+    fallback: ModelRef | None = None
+    rollback: ModelRef | None = None
+
+    def select(self, *, primary_ready: bool) -> ModelRef | None:
+        return self.primary if primary_ready else self.fallback
+
+    def after_failure(
+        self, failed: ModelRef, *, failure_scope: Literal["model", "provider"]
+    ) -> ModelRef | None:
+        if failure_scope == "provider":
+            return None
+        if failed == self.fallback:
+            return self.rollback
+        if failed == self.primary:
+            return self.fallback
+        return None
+
+
+class ModelRoutingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    executor: ModelRef = ModelRef(provider="local", model="qwen3.8-27b")
+    executor_fallback: ModelRef = ModelRef(provider="opencode", model="mimo-v2.5")
+    executor_rollback: ModelRef = ModelRef(provider="opencode", model="deepseek-v4-flash")
+    planner: ModelRef = ModelRef(provider="opencode", model="deepseek-v4-pro")
+    reviewer: ModelRef = ModelRef(provider="opencode", model="glm-5.2")
+    reasoner: ModelRef = ModelRef(provider="ollama", model="Qwythos-v2-9B:Q4")
+    judge: ModelRef = ModelRef(provider="opencode", model="kimi-k3")
+    frontier_a: ModelRef = ModelRef(provider="codex", model="gpt-5.6-sol")
+    frontier_b: ModelRef | None = None
+
+    @property
+    def executor_route(self) -> RoleRoute:
+        return RoleRoute(
+            primary=self.executor,
+            fallback=self.executor_fallback,
+            rollback=self.executor_rollback,
+        )
 
 
 def parse_bool(value: Any) -> bool:
@@ -347,8 +427,6 @@ class SpecialistRoutingConfig(BaseModel):
         required_roles = {"planner", "reviewer"}
         if set(self.models) != required_roles:
             raise ValueError("specialist models must define planner and reviewer")
-        if self.enabled and self.models["reviewer"] != "glm-5.2":
-            raise ValueError("enabled Reviewer must use OpenCode Go glm-5.2")
         if set(self.local_latency_seconds) != required_roles:
             raise ValueError("local latency estimates must define planner and reviewer")
         if set(self.remote_latency_seconds) != required_roles:
@@ -385,17 +463,34 @@ class ExecutorSchedulingConfig(BaseModel):
     same_key_max_local_queue: Literal[3] = 3
     max_total_local_queue: int = Field(default=256, ge=3, le=10_000)
     queue_timeout_seconds: float = Field(default=14_400, gt=0, le=86_400)
-    flash_provider: Literal["disabled", "opencode_go"] = "disabled"
-    flash_model: Literal["deepseek-v4-flash"] = "deepseek-v4-flash"
-    flash_endpoint: str | None = None
-    flash_api_key_env: str = "OPENCODE_GO_API_KEY"
+    remote_provider: Literal["disabled", "opencode"] = "disabled"
+    remote_endpoint: str | None = None
+    remote_api_key_env: str = "OPENCODE_GO_API_KEY"
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_flash_keys(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        migrated = dict(value)
+        if "flash_provider" in migrated:
+            legacy = migrated.pop("flash_provider")
+            migrated.setdefault(
+                "remote_provider", "opencode" if legacy == "opencode_go" else legacy
+            )
+        migrated.pop("flash_model", None)
+        if "flash_endpoint" in migrated:
+            migrated.setdefault("remote_endpoint", migrated.pop("flash_endpoint"))
+        if "flash_api_key_env" in migrated:
+            migrated.setdefault("remote_api_key_env", migrated.pop("flash_api_key_env"))
+        return migrated
 
     @model_validator(mode="after")
     def validate_enabled_scheduler(self) -> ExecutorSchedulingConfig:
-        if self.enabled and (self.flash_provider != "opencode_go" or not self.flash_endpoint):
-            raise ValueError("enabled Executor scheduling requires OpenCode Go Flash")
-        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", self.flash_api_key_env):
-            raise ValueError("Executor Flash credential must be an environment variable name")
+        if self.enabled and (self.remote_provider != "opencode" or not self.remote_endpoint):
+            raise ValueError("enabled Executor scheduling requires an OpenCode endpoint")
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", self.remote_api_key_env):
+            raise ValueError("remote Executor credential must be an environment variable name")
         return self
 
 
@@ -486,9 +581,36 @@ class WeeklyJobsConfig(BaseModel):
         return value
 
 
+class SpeculativeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    method: Literal["dspark"] = "dspark"
+    model: str | None = None
+    revision: str | None = None
+    num_speculative_tokens: int | None = Field(default=None, ge=1)
+    draft_attention_backend: str | None = None
+    draft_quantization: str | None = None
+    num_continuous_decode_steps: int = Field(default=1, ge=1)
+
+    @model_validator(mode="after")
+    def validate_enabled(self) -> SpeculativeConfig:
+        if self.enabled and (
+            not self.model or not self.revision or self.num_speculative_tokens is None
+        ):
+            raise ValueError(
+                "enabled speculative decoding requires a pinned draft model "
+                "and measured token count"
+            )
+        return self
+
+
 class ModelConfig(BaseModel):
     repository: str
     revision: str
+    artifact_repository: str | None = None
+    artifact_revision: str | None = None
+    artifact_source_revision: str | None = None
     classification: str
     base_url: str
     served_name: str
@@ -499,11 +621,27 @@ class ModelConfig(BaseModel):
     context_length: int = Field(ge=65_536)
     max_num_seqs: int = 1
     quantization: str | None = None
+    attention_backend: str | None = None
+    kv_cache_dtype: str | None = None
+    gpu_memory_utilization: float | None = Field(default=None, gt=0, le=1)
+    max_total_tokens: int | None = Field(default=None, ge=1)
+    max_mamba_cache_size: int | None = Field(default=None, ge=1)
+    chunked_prefill_size: int | None = Field(default=None, ge=-1)
+    cuda_graph_max_bs: int | None = Field(default=None, ge=1)
+    disable_flashinfer_autotune: bool = False
+    disable_prefill_cuda_graph: bool = False
+    disable_decode_cuda_graph: bool = False
+    enable_torch_compile: bool = False
+    torch_compile_max_bs: int | None = Field(default=None, ge=1)
+    skip_server_warmup: bool = False
+    watchdog_timeout: float | None = Field(default=None, gt=0)
+    speculative: SpeculativeConfig = Field(default_factory=SpeculativeConfig)
     tool_call_parser: str | None = None
     reasoning_parser: str | None = None
     trust_remote_code: bool = False
     lora_adapter: Path | None = None
     required: bool = True
+    runtime_validated: bool = True
     engine: ExecutorEngine = "vllm"
     executor_slot: ExecutorSlot | None = None
     capabilities: frozenset[ExecutorCapability] = frozenset({"text", "streaming"})
@@ -540,12 +678,14 @@ class Settings(BaseModel):
     specialist_routing: SpecialistRoutingConfig = Field(default_factory=SpecialistRoutingConfig)
     declarative_policy: DeclarativePolicyConfig = Field(default_factory=DeclarativePolicyConfig)
     execution_graph: ExecutionGraphConfig = Field(default_factory=ExecutionGraphConfig)
+    model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig)
     executor_scheduling: ExecutorSchedulingConfig = Field(default_factory=ExecutorSchedulingConfig)
     dashboard_enabled: bool = False
     live_observation: LiveObservationConfig = Field(default_factory=LiveObservationConfig)
     training_data: TrainingDataConfig = Field(default_factory=TrainingDataConfig)
     weekly_jobs: WeeklyJobsConfig = Field(default_factory=WeeklyJobsConfig)
     models: dict[str, ModelConfig] = Field(default_factory=dict)
+    local_models: dict[str, ModelConfig] = Field(default_factory=dict)
     limits: Limits = Field(default_factory=Limits)
 
     @field_validator(
@@ -628,6 +768,34 @@ def load_settings(path: str | Path | None = None) -> Settings:
         raw = yaml.safe_load(config_path.read_text()) or {}
     gateway = dict(raw.get("gateway", {}))
     gateway["models"] = raw.get("models", {})
+    gateway["local_models"] = raw.get("local_models", {})
+    routing = dict(gateway.get("model_routing", {}))
+    role_environment = {
+        "executor": "DGX_MOA_EXECUTOR_MODEL",
+        "executor_fallback": "DGX_MOA_EXECUTOR_FALLBACK_MODEL",
+        "executor_rollback": "DGX_MOA_EXECUTOR_ROLLBACK_MODEL",
+        "planner": "DGX_MOA_PLANNER_MODEL",
+        "reviewer": "DGX_MOA_REVIEWER_MODEL",
+        "reasoner": "DGX_MOA_REASONER_MODEL",
+        "judge": "DGX_MOA_JUDGE_MODEL",
+        "frontier_a": "DGX_MOA_FRONTIER_A_MODEL",
+        "frontier_b": "DGX_MOA_FRONTIER_B_MODEL",
+    }
+    for field, environment in role_environment.items():
+        if value := os.getenv(environment):
+            routing[field] = value
+    gateway["model_routing"] = routing
+    executor_explicit = "executor" in routing
+    executor_ref = ModelRef.model_validate(routing.get("executor", "local/qwen3.8-27b"))
+    if (
+        executor_ref.provider == "local"
+        and "executor" not in gateway["models"]
+        and (gateway["local_models"] or executor_explicit)
+    ):
+        try:
+            gateway["models"]["executor"] = gateway["local_models"][executor_ref.model]
+        except KeyError as error:
+            raise ValueError(f"unknown local Executor deployment: {executor_ref.model}") from error
     gateway["auth_enabled"] = os.getenv("DGX_MOA_AUTH_ENABLED", gateway.get("auth_enabled", True))
     gateway["api_key"] = os.getenv("DGX_MOA_API_KEY", gateway.get("api_key"))
     api_keys: Any = os.getenv("DGX_MOA_API_KEYS", gateway.get("api_keys", {}))
