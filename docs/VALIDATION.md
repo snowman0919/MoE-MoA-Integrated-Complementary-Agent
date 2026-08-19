@@ -10057,3 +10057,45 @@ loading. `RoleRoute` alone selects DeepSeek rollback after a MiMo model-scoped
 failure; provider-scoped failures do not retry another model. Ruff format/lint,
 strict mypy over 53 source files, and the complete 1,171-test suite passed after
 the correction (one existing Starlette deprecation warning).
+
+## Qwen3.8 DSpark production promotion — 2026-08-19
+
+Human-approved production promotion completed on the canonical
+`dgx-moa-executor.service` at loopback `127.0.0.1:9001`; the authenticated
+gateway remains the only wildcard listener on port 9000. The promoted runtime
+uses the pinned artifacts above with context 262,144, one running request,
+270,000 total KV tokens, memory fraction 0.35, FP8 E4M3 KV, Mamba cache size 5,
+4,096-token chunked prefill, FlashInfer autotune disabled, prefill graph off,
+batch-one decode/verify graphs, torch compile max batch 4, and DSpark block 7
+with an explicitly unquantized draft and two continuous decode steps.
+
+The final production start reported 19.02 GB target weights, 3.24 GB draft
+weights, 8.24 GB target KV, 2.58 GB draft KV, and approximately 3.13 GB of
+Mamba/GDN recurrent and intermediate state. Graph capture ended with 72.77 GB
+available device/unified memory; after the benchmark `/proc/meminfo` reported
+76,886,184 kB available. The Executor and gateway both remained active with
+zero restarts. A forced 64-token warmup measured 49.917 tok/s. Two serial,
+forced 1,024-token greedy generations measured 41.234 and 41.410 tok/s. These
+measurements establish repeatable production throughput above 40 tok/s, not a
+stable 50 tok/s guarantee.
+
+The authenticated `dgx-moa-fast` smoke returned HTTP 200 through the gateway,
+routed to `dgx-moa-executor`, and produced non-empty public content. Lifecycle
+status after a gateway restart was `READY`, desired `ON`, effective route
+`local/qwen3.8-27b`, generation 35, no failure, and an open automation circuit.
+Reapplying the all-in-one runtime was a zero-restart no-op and preserved the
+same Executor PID.
+
+Promotion exposed and corrected two production-only integration mismatches.
+Qwen reasoning-only minimal replies are now accepted by the lifecycle health
+gate, and the all-in-one apply writes the measured context, memory fraction,
+and sequence count so legacy environment values cannot override the validated
+overlay. The Qwen-specific systemd drop-in also recognizes SGLang's final
+process-tree `SIGKILL` as a successful explicit stop while retaining
+`Restart=always` for unrequested exits. Ruff format/lint, strict mypy over 53
+source files, and all 1,175 tests passed after these corrections (one existing
+Starlette deprecation warning).
+
+The pre-promotion environment, unit, model configuration, and lifecycle
+database are backed up under
+`/home/kotori9/.local/state/dgx-moa/backups/qwen38-production-20260819T1245KST`.
