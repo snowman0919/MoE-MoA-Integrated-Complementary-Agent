@@ -10172,3 +10172,22 @@ passed over `gateway/src` and `tests`, strict mypy passed 53 source files, and
 the complete suite passed 1,178 tests in 47.89 seconds with the existing
 Starlette deprecation warning. This evidence preceded production deployment of
 the new fallback condition.
+
+After operator-approved deployment, production `main` was fast-forwarded from
+`6f2ec3241` to `f5cf4f355` and only the Gateway was drain-restarted. Its PID
+changed from `2849141` to `2854188`; the Executor remained PID `2700788`. A
+bounded authenticated request in session `fallback-http400-prod-20260819`
+intentionally retained two client system messages after Runtime preparation.
+The loopback Executor recorded HTTP 400 at `15:37:52 KST`, while the Gateway
+returned HTTP 200 at `15:37:55 KST` with model `mimo-v2.5`, finish reason
+`stop`, and content `MIMO_HTTP400_PROD_OK`.
+
+Durable events recorded the exact sequence: `executor_scheduled` selected
+`local_primary` for `local_idle`; `executor_started` used local;
+`executor_local_http_400_fallback` recorded `local_http_400`;
+`executor_remote_completed` recorded `mimo-v2.5`; and `session_ended` recorded
+`completed`. Request
+`f92c3ead-dab0-4a08-816d-288c9fc96ff7` completed without a retryable failure
+class and recorded 2,029 prompt, 28 completion, and 2,057 total tokens. This
+physically verifies the requested post-local-400 MiMo fallback rather than
+inferring it from unit tests.
