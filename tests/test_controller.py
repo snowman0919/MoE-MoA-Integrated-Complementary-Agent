@@ -4148,7 +4148,8 @@ async def test_executor_merges_existing_leading_system_message(
         {
             "model": "dgx-moa",
             "messages": [
-                {"role": "system", "content": "Client system instructions."},
+                {"role": "system", "content": "First client system instruction."},
+                {"role": "system", "content": "Second client system instruction."},
                 {"role": "user", "content": state.objective},
             ],
             "metadata": {},
@@ -4158,7 +4159,9 @@ async def test_executor_merges_existing_leading_system_message(
 
     assert [message["role"] for message in prepared["messages"]] == ["system", "user"]
     assert "IMMUTABLE ROLE POLICY" in prepared["messages"][0]["content"]
-    assert prepared["messages"][0]["content"].endswith("Client system instructions.")
+    assert prepared["messages"][0]["content"].endswith(
+        "First client system instruction.\n\nSecond client system instruction."
+    )
 
 
 @pytest.mark.asyncio

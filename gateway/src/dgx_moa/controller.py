@@ -4231,10 +4231,21 @@ class Controller:
             available_tools=available_tools,
             runtime_projection=executor_projection,
         )
-        if messages and messages[0].get("role") == "system":
+        leading_systems = 0
+        for message in messages:
+            if message.get("role") != "system":
+                break
+            leading_systems += 1
+        if leading_systems:
             messages[0]["content"] = (
-                executor_system + "\n\n" + text_content(messages[0].get("content"))
+                executor_system
+                + "\n\n"
+                + "\n\n".join(
+                    text_content(message.get("content"))
+                    for message in messages[:leading_systems]
+                )
             )
+            del messages[1:leading_systems]
         else:
             messages.insert(0, {"role": "system", "content": executor_system})
         body["messages"] = messages

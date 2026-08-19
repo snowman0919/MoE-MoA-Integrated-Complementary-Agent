@@ -10191,3 +10191,23 @@ Durable events recorded the exact sequence: `executor_scheduled` selected
 class and recorded 2,029 prompt, 28 completion, and 2,057 total tokens. This
 physically verifies the requested post-local-400 MiMo fallback rather than
 inferring it from unit tests.
+
+### Multiple leading OpenCode system messages
+
+Subsequent production evidence showed five OpenCode requests all selected
+`local_primary` but then recorded `executor_local_http_400_fallback`. The latest
+request inputs began with roles `[system, system, user, ...]`; the prior
+normalization merged Runtime policy only into the first system message and left
+the second intact. A content-free direct Executor reproduction returned HTTP
+400 with `System message must be at the beginning.` This proved that fallback
+was masking repeated local chat-template rejection rather than the scheduler
+skipping the local model.
+
+Executor preparation now combines every consecutive leading system message,
+in order, into the first message while preserving its other fields. The updated
+regression failed before the change with roles `[system, system, user]` and
+passed afterward with `[system, user]` and both client instructions preserved.
+Ruff passed over `gateway/src` and `tests`, strict mypy passed 53 source files,
+and the complete suite passed 1,178 tests in 59.63 seconds with the existing
+Starlette deprecation warning. This evidence preceded deployment of the
+normalization correction.
