@@ -24,6 +24,20 @@ from dgx_moa.runtime_prepare import (
 ROOT = Path(__file__).parents[1]
 
 
+def write_runtime_overlay(path: Path) -> dict[str, object]:
+    overlay = build_overlay(
+        yaml.safe_load((ROOT / "config/models.yaml").read_text()),
+        alias="qwen3.8-27b",
+        source={"repo_id": "owner/model", "revision": "a" * 40},
+        destination=path.parent / "nvfp4",
+        draft_revision="b" * 40,
+        draft_destination=path.parent / "draft",
+        speculative_enabled=True,
+    )
+    path.write_text(yaml.safe_dump(overlay))
+    return overlay["local_models"]["qwen3.8-27b"]
+
+
 def test_checkpoint_contracts_and_fingerprint_are_deterministic(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="complete checkpoint"):
         validate_hf_files({".gitattributes"})
@@ -209,8 +223,10 @@ def test_apply_restores_environment_when_ready_check_fails(
 ) -> None:
     env_file = tmp_path / ".env.local"
     env_file.write_text("KEEP=value\n")
+    write_runtime_overlay(tmp_path / "runtime.yaml")
     calls: list[str] = []
     monkeypatch.setenv("DGX_MOA_ADMIN_API_KEY", "not-persisted")
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
     monkeypatch.setattr(
         "dgx_moa.runtime_prepare.request_json",
         lambda url, **_kwargs: calls.append(url) or {},
@@ -243,17 +259,22 @@ def test_apply_is_noop_when_same_runtime_is_ready(
     env_file = tmp_path / ".env.local"
     overlay = tmp_path / "runtime.yaml"
     runtime_python = tmp_path / "venv/bin/python"
+    model = write_runtime_overlay(overlay)
     desired = update_environment(
         "KEEP=value\n",
         {
             "DGX_MOA_CONFIG": str(overlay),
             "SGLANG_PYTHON": str(runtime_python),
+            "DGX_MOA_EXECUTOR_MAX_MODEL_LEN": str(model["context_length"]),
+            "DGX_MOA_EXECUTOR_GPU_MEMORY_UTILIZATION": str(model["gpu_memory_utilization"]),
+            "DGX_MOA_MAX_NUM_SEQS": str(model["max_num_seqs"]),
             "MAX_JOBS": "1",
             "FLASHINFER_MM_FP4_CUTE_DSL_COMPILE_WORKERS": "1",
         },
     )
     env_file.write_text(desired)
     monkeypatch.setenv("DGX_MOA_ADMIN_API_KEY", "not-persisted")
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
     monkeypatch.setattr("dgx_moa.runtime_prepare.lifecycle_phase", lambda *_args: "READY")
     monkeypatch.setattr(
         "dgx_moa.runtime_prepare.request_json",

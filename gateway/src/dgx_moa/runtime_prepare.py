@@ -22,7 +22,7 @@ import yaml
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import LocalEntryNotFoundError
 
-from .config import ModelConfig
+from .config import ModelConfig, load_settings
 from .model_download import verify_model
 from .serve import _sglang_command
 
@@ -710,12 +710,18 @@ def apply_runtime(
     token = os.getenv("DGX_MOA_ADMIN_API_KEY")
     if not token:
         raise RuntimeError("DGX_MOA_ADMIN_API_KEY is required for --apply and is never persisted")
+    model = load_settings(overlay_path).models[role]
     previous = env_file.read_text() if env_file.exists() else ""
     desired = update_environment(
         previous,
         {
             "DGX_MOA_CONFIG": str(overlay_path),
             "SGLANG_PYTHON": str(runtime_python),
+            f"DGX_MOA_{role.upper()}_MAX_MODEL_LEN": str(model.context_length),
+            f"DGX_MOA_{role.upper()}_GPU_MEMORY_UTILIZATION": str(
+                model.gpu_memory_utilization or 0.5
+            ),
+            "DGX_MOA_MAX_NUM_SEQS": str(model.max_num_seqs),
             "MAX_JOBS": "1",
             "FLASHINFER_MM_FP4_CUTE_DSL_COMPILE_WORKERS": "1",
         },
