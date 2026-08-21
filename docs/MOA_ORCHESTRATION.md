@@ -15,7 +15,7 @@ the core MoA while an external client owns the tool-result loop.
 `dgx-moa-orchestrated` enables dynamic specialists and Frontier collaboration.
 
 For every normal MoA turn the gateway builds bounded shared context, invokes the
-external Ollama Reasoner, validates its structured contribution, and supplies
+loopback Ollama Reasoner, validates its structured contribution, and supplies
 that contribution to the Executor. The Reasoner cannot issue tools, edit files,
 call another provider, or answer the client. The Executor owns the structured
 routing decision, native tool calls, recommendation resolution, and final output.

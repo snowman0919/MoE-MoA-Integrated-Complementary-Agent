@@ -4,8 +4,10 @@ import csv
 import hashlib
 import json
 import math
+import queue
 import re
 import sqlite3
+import threading
 import time
 import uuid
 from collections import Counter
@@ -279,6 +281,9 @@ class UsageStore:
             Path(invocation_report_path) if invocation_report_path is not None else None
         )
         self.model_catalog = dict(model_catalog or {})
+        self._stage_queue: queue.Queue[tuple[str, str, str, float] | None] = queue.Queue()
+        self._stage_writer: threading.Thread | None = None
+        self._stage_writer_error: Exception | None = None
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as database:
             database.executescript(
@@ -350,6 +355,12 @@ class UsageStore:
                 );
                 CREATE INDEX IF NOT EXISTS model_invocation_usage_role_time
                     ON model_invocation_usage(role, invoked_at);
+                CREATE TABLE IF NOT EXISTS request_stage_latency (
+                    request_id TEXT PRIMARY KEY,
+                    timings_json TEXT NOT NULL,
+                    stage_status_json TEXT NOT NULL,
+                    recorded_at REAL NOT NULL
+                );
                 """
             )
             columns = {row[1] for row in database.execute("PRAGMA table_info(request_usage)")}
@@ -417,7 +428,100 @@ class UsageStore:
                     total_tokens,
                 ),
             )
+
+    def record_stages(
+        self,
+        request_id: str,
+        timings_ms: Mapping[str, float],
+        stage_status: Mapping[str, str],
+    ) -> None:
+        """Queue non-authoritative latency telemetry for batched SQLite persistence."""
+        if self._stage_writer is None:
+            self._stage_writer = threading.Thread(
+                target=self._write_stages,
+                name="usage-stage-writer",
+                daemon=True,
+            )
+            self._stage_writer.start()
+        self._stage_queue.put(
+            (
+                request_id,
+                json.dumps(dict(timings_ms), sort_keys=True, separators=(",", ":")),
+                json.dumps(dict(stage_status), sort_keys=True, separators=(",", ":")),
+                time.time(),
+            )
+        )
+
+    def _write_stages(self) -> None:
+        while True:
+            first = self._stage_queue.get()
+            if first is None:
+                self._stage_queue.task_done()
+                return
+            batch = [first]
+            stop = False
+            while len(batch) < 64:
+                try:
+                    item = self._stage_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is None:
+                    self._stage_queue.task_done()
+                    stop = True
+                    break
+                batch.append(item)
+            try:
+                with self._connect() as database:
+                    database.executemany(
+                        "INSERT OR REPLACE INTO request_stage_latency "
+                        "(request_id, timings_json, stage_status_json, recorded_at) "
+                        "VALUES (?, ?, ?, ?)",
+                        batch,
+                    )
+            except Exception as error:  # telemetry is fail-open; flush exposes the failure.
+                self._stage_writer_error = error
+            finally:
+                for _ in batch:
+                    self._stage_queue.task_done()
+            if stop:
+                return
+
+    def flush(self) -> None:
+        self._stage_queue.join()
+        if self._stage_writer_error is not None:
+            raise RuntimeError("request stage writer failed") from self._stage_writer_error
+
+    def close(self) -> None:
+        self.flush()
+        if self._stage_writer is not None:
+            self._stage_queue.put(None)
+            self._stage_writer.join()
+            self._stage_writer = None
         self.write_model_invocation_rates()
+
+    def rollback_stage_latency(self) -> None:
+        """Drop rebuildable latency telemetry without touching request usage."""
+        self.flush()
+        with self._connect() as database:
+            database.execute("DROP TABLE IF EXISTS request_stage_latency")
+
+    def request_stages(self, request_id: str) -> dict[str, Any] | None:
+        self.flush()
+        with self._connect() as database:
+            row = database.execute(
+                "SELECT timings_json, stage_status_json, recorded_at "
+                "FROM request_stage_latency WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+        return (
+            {
+                "timings_ms": json.loads(row[0]),
+                "stage_status": json.loads(row[1]),
+                "recorded_at": float(row[2]),
+            }
+            if row
+            else None
+        )
 
     def model_invocation_rates(self, *, now: float | None = None) -> list[dict[str, Any]]:
         current = time.time() if now is None else now

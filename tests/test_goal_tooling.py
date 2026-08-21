@@ -64,8 +64,10 @@ def test_model_lifecycle_documentation_contract() -> None:
     assert "| Executor | 7200 | 14400 | 28800 | 600 |" in lifecycle
     assert "| Planner | 600 | 1200 | 3600 | 600 |" in lifecycle
     assert "| Reviewer | 600 | 1200 | 3600 | 600 |" in lifecycle
-    assert "| Reasoner (external) | n/a | n/a | n/a | n/a |" in lifecycle
-    assert "external Reasoner" in lifecycle and "outside local idle automation" in lifecycle
+    assert "| Reasoner (external lifecycle) | n/a | n/a | n/a | n/a |" in lifecycle
+    assert (
+        "externally managed Reasoner" in lifecycle and "outside local idle automation" in lifecycle
+    )
     assert "idle unload is disabled by default" in lifecycle
     assert "30-second" in lifecycle
     assert "`lifecycle_mode: disabled`" in lifecycle
@@ -218,13 +220,13 @@ def test_api_client_mode_documentation() -> None:
     assert "Tailscale Serve" not in hermes
 
 
-def test_external_reasoner_uses_requested_q4_model() -> None:
+def test_loopback_reasoner_uses_requested_q4_model() -> None:
     reasoner = yaml.safe_load(Path("config/models.yaml").read_text())["models"]["reasoner"]
     assert reasoner["revision"] == "Q4"
     assert reasoner["served_name"] == "Qwythos-v2-9B:Q4"
     assert reasoner["provider"] == "ollama"
     assert reasoner["lifecycle_control"] == "external"
-    assert reasoner["base_url"] == "http://100.90.167.128:11434"
+    assert reasoner["base_url"] == "http://127.0.0.1:11434"
 
 
 def test_hermes_documentation_matches_physical_config() -> None:

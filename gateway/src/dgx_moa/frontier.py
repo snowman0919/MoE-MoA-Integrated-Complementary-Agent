@@ -8,6 +8,7 @@ import errno
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import signal
@@ -1770,6 +1771,45 @@ def evaluate_frontier_candidate(
         "automatic_deploy": False,
         "human_approval_required": True,
         "reason": "all deterministic gates passed" if accepted else "candidate gate failed",
+    }
+
+
+def select_frontier_floor(local: dict[str, Any], frontier: dict[str, Any]) -> dict[str, Any]:
+    """Select local only when the same objective verifier proves it superior."""
+    verifier = local.get("verifier_sha256")
+    if not (
+        isinstance(verifier, str)
+        and re.fullmatch(r"[0-9a-f]{64}", verifier) is not None
+        and verifier == frontier.get("verifier_sha256")
+    ):
+        raise ValueError("Frontier Floor candidates require one pinned verifier")
+    for name, candidate in (("local", local), ("frontier", frontier)):
+        if candidate.get("isolated") is not True or candidate.get("verifier_kind") != "objective":
+            raise ValueError(f"{name} candidate is not objectively verified in isolation")
+        score = candidate.get("score")
+        if (
+            not isinstance(score, (int, float))
+            or isinstance(score, bool)
+            or not math.isfinite(score)
+        ):
+            raise ValueError(f"{name} candidate has invalid verifier score")
+    local_wins = local.get("passed") is True and (
+        frontier.get("passed") is not True or float(local["score"]) > float(frontier["score"])
+    )
+    selected = "local" if local_wins else "frontier" if frontier.get("passed") is True else None
+    return {
+        "selected": selected,
+        "reason": (
+            "local_objectively_superior"
+            if local_wins
+            else "frontier_floor_preserved"
+            if selected == "frontier"
+            else "no_verified_candidate"
+        ),
+        "verifier_sha256": verifier,
+        "automatic_merge": False,
+        "automatic_deploy": False,
+        "human_approval_required": True,
     }
 
 

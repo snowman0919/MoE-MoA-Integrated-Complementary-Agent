@@ -213,6 +213,7 @@ gateway:
     executor_total_timeout_seconds: 900
     reviewer_timeout_seconds: 120
     judge_timeout_seconds: 300
+    optional_fan_in_timeout_seconds: 30
     model_load_timeout_seconds: 1200
     tool_continuation_timeout_seconds: 600
     usage_sample_window: 512
@@ -305,8 +306,8 @@ models:
   reasoner:
     repository: ollama/Qwythos-v2-9B
     revision: Q4
-    classification: external
-    base_url: http://100.90.167.128:11434
+    classification: local
+    base_url: http://127.0.0.1:11434
     served_name: Qwythos-v2-9B:Q4
     destination: /home/kotori9/models/dgx-moa/reasoner
     provider: ollama

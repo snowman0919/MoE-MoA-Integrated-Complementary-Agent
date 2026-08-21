@@ -213,6 +213,17 @@ def test_role_context_manifest_links_provider_input_usage_and_dropped_evidence(
     assert {item["reason"] for item in manifest["dropped_evidence"]} == {"byte_budget"}
     assert manifest["provider_invocations"][0]["provider_prompt_tokens"] == 321
 
+    repeated = controller.project_runtime_context(state, snapshot, "planner", "fanout")
+    assert repeated.projection_id == projection.projection_id
+    assert state.role_context_projections[-1]["cache_hit"] is True
+    assert state.role_context_projections[-1]["evidence_delta"] == {
+        "base_projection_id": projection.projection_id,
+        "added_evidence_ids": [],
+        "removed_evidence_ids": [],
+        "added_contribution_ids": [],
+        "removed_contribution_ids": [],
+    }
+
 
 def test_normalize_tool_result_preserves_hermes_output() -> None:
     terminal = normalize_tool_result(
@@ -2067,6 +2078,55 @@ def test_successful_same_path_fallback_resolves_mcp_failure(
     )
 
 
+def test_test_failure_requires_unfiltered_successful_validation(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    state = SessionState(session_id="test-failure-resolution")
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+
+    def observe(call_id: str, command: str, content: str) -> None:
+        controller._observe(
+            state,
+            [
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": "exec_command",
+                                "arguments": json.dumps({"cmd": command}),
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": call_id, "content": content},
+            ],
+        )
+
+    root = "/tmp/project"
+    observe(
+        "failed-test",
+        f"cd {root} && python -m unittest discover -s tests -v",
+        '{"exit_code":1,"stderr":"FAILED (failures=1)"}',
+    )
+    observe("inspection", f"cd {root} && cat module.py", '{"exit_code":0,"stdout":"x = 1"}')
+    observe(
+        "filtered-test",
+        f"cd {root} && python -m unittest discover -s tests -v | tail -20",
+        '{"exit_code":0,"stdout":"FAILED (failures=1)"}',
+    )
+    assert active_failures(state)[0]["failure_class"] == "TEST_FAILURE"
+
+    observe(
+        "passing-test",
+        f"cd {root} && python -m unittest discover -s tests -v",
+        '{"exit_code":0,"stdout":"Ran 3 tests\\nOK"}',
+    )
+    assert active_failures(state) == []
+
+
 def test_failure_classification() -> None:
     assert classify_failure("No such file or directory") == "NONEXISTENT_PATH"
     assert classify_failure("unsupported call: read_mcp_resources") == "UNSUPPORTED_TOOL"
@@ -3126,6 +3186,40 @@ async def test_optional_planner_transport_failure_degrades_without_failing_execu
     assert state.observability_status == "degraded"
     assert any(
         event["event_type"] == "planner_degraded" for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_optional_planner_deadline_does_not_block_executor(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    cancelled = asyncio.Event()
+
+    async def slow_planner(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role != "planner":
+            return await StubProvider().complete(role, model, request, **kwargs)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    settings.limits.optional_fan_in_timeout_seconds = 0.01
+    stub_provider.complete = slow_planner  # type: ignore[method-assign]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = controller.session("deadline-plan", [{"role": "user", "content": "task"}])
+
+    started = time.monotonic()
+    await controller.prepare_executor(
+        state, {"model": "dgx-moa-agent", "messages": []}, ("planner", "executor")
+    )
+
+    assert time.monotonic() - started < 0.2
+    assert cancelled.is_set()
+    assert any(
+        event["event_type"] == "optional_role_deadline_exceeded"
+        and event["payload"]["role"] == "planner"
+        for event in store.events(state.session_id)
     )
 
 

@@ -139,6 +139,7 @@ class Limits(BaseModel):
     executor_total_timeout_seconds: float = 900
     reviewer_timeout_seconds: float = 120
     judge_timeout_seconds: float = 300
+    optional_fan_in_timeout_seconds: float = Field(default=30, gt=0, le=300)
     model_load_timeout_seconds: float = 1_200
     tool_continuation_timeout_seconds: float = 600
     usage_sample_window: int = Field(default=512, ge=1)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Callable
@@ -216,6 +217,33 @@ class StateStore:
                 "runtime_channel TEXT NOT NULL, trace_origin TEXT NOT NULL, "
                 "created_at TEXT NOT NULL)"
             )
+            database.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS pending_tool_calls (
+                    api_token_id TEXT NOT NULL,
+                    tool_call_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    PRIMARY KEY (api_token_id, tool_call_id)
+                );
+                CREATE INDEX IF NOT EXISTS pending_tool_calls_session
+                    ON pending_tool_calls(session_id);
+                CREATE TABLE IF NOT EXISTS pending_objectives (
+                    api_token_id TEXT NOT NULL,
+                    objective_hash TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    PRIMARY KEY (api_token_id, objective_hash, session_id)
+                );
+                CREATE INDEX IF NOT EXISTS pending_objectives_session
+                    ON pending_objectives(session_id);
+                """
+            )
+            if not database.execute("SELECT 1 FROM pending_tool_calls LIMIT 1").fetchone():
+                for (payload,) in database.execute(
+                    "SELECT payload FROM sessions ORDER BY updated_at ASC"
+                ):
+                    self._replace_pending_indexes(
+                        database, SessionState.model_validate_json(payload)
+                    )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30)
@@ -235,30 +263,57 @@ class StateStore:
         if not tool_call_ids:
             return None
         with self._connect() as database:
+            placeholders = ",".join("?" for _ in tool_call_ids)
+            row = database.execute(
+                "SELECT s.payload FROM pending_tool_calls p JOIN sessions s "
+                "ON s.session_id = p.session_id WHERE p.api_token_id = ? "
+                f"AND p.tool_call_id IN ({placeholders}) ORDER BY s.updated_at DESC LIMIT 1",
+                (api_token_id, *sorted(tool_call_ids)),
+            ).fetchone()
+            if row is not None:
+                return SessionState.model_validate_json(row[0])
+            objective_hash = hashlib.sha256(objective.encode()).hexdigest()
             rows = database.execute(
-                "SELECT payload FROM sessions ORDER BY updated_at DESC"
+                "SELECT s.payload FROM pending_objectives p JOIN sessions s "
+                "ON s.session_id = p.session_id WHERE p.api_token_id = ? "
+                "AND p.objective_hash = ? ORDER BY s.updated_at DESC LIMIT 2",
+                (api_token_id, objective_hash),
             ).fetchall()
-        states = [SessionState.model_validate_json(payload) for (payload,) in rows]
-        for state in states:
-            if state.api_token_id != api_token_id:
-                continue
-            pending = set(state.pending_tool_call_ids)
-            if state.last_tool_call and isinstance(state.last_tool_call.get("id"), str):
-                pending.add(state.last_tool_call["id"])
-            if pending.intersection(tool_call_ids):
-                return state
-        candidates = [
-            state
-            for state in states
-            if state.api_token_id == api_token_id
-            and state.objective == objective
-            and state.final_status is None
-            and state.pending_tool_call_ids
-        ]
+        candidates = [SessionState.model_validate_json(payload) for (payload,) in rows]
         # ponytail: ambiguous identical concurrent goals need a client-provided session ID.
         if len(candidates) == 1:
             return candidates[0]
         return None
+
+    @staticmethod
+    def _replace_pending_indexes(database: sqlite3.Connection, state: SessionState) -> None:
+        database.execute("DELETE FROM pending_tool_calls WHERE session_id = ?", (state.session_id,))
+        database.execute("DELETE FROM pending_objectives WHERE session_id = ?", (state.session_id,))
+        pending = list(state.pending_tool_call_ids)
+        if state.last_tool_call and isinstance(state.last_tool_call.get("id"), str):
+            pending.append(state.last_tool_call["id"])
+        database.executemany(
+            "INSERT OR REPLACE INTO pending_tool_calls(api_token_id, tool_call_id, session_id) "
+            "VALUES (?, ?, ?)",
+            ((state.api_token_id, call_id, state.session_id) for call_id in dict.fromkeys(pending)),
+        )
+        if state.final_status is None and state.pending_tool_call_ids:
+            database.execute(
+                "INSERT INTO pending_objectives(api_token_id, objective_hash, session_id) "
+                "VALUES (?, ?, ?)",
+                (
+                    state.api_token_id,
+                    hashlib.sha256(state.objective.encode()).hexdigest(),
+                    state.session_id,
+                ),
+            )
+
+    def rollback_pending_indexes(self) -> None:
+        """Drop rebuildable continuation indexes without touching canonical sessions."""
+        with self._connect() as database:
+            database.executescript(
+                "DROP TABLE IF EXISTS pending_tool_calls; DROP TABLE IF EXISTS pending_objectives;"
+            )
 
     def save(self, state: SessionState) -> None:
         state.updated_at = now()
@@ -270,6 +325,7 @@ class StateStore:
                 "updated_at=excluded.updated_at",
                 (state.session_id, state.model_dump_json(), state.updated_at),
             )
+            self._replace_pending_indexes(database, state)
 
     def session_owner(self, session_id: str) -> str | None:
         if owner := self._session_owners.get(session_id):
