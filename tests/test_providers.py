@@ -50,8 +50,10 @@ async def test_backend_contract_reports_identity_and_supports_cancel(
         }
     )
     provider = ModelProvider()
+    paths: list[str] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
         if request.url.path.endswith("/v1/models"):
             return httpx.Response(200, json={"data": [{"id": model.served_name}]})
         return httpx.Response(200, json={"count": 7, "max_model_len": 65536})
@@ -69,6 +71,11 @@ async def test_backend_contract_reports_identity_and_supports_cancel(
         "count": 7,
         "max_model_len": 65536,
     }
+    assert await provider.tokenize(model, {"messages": []}) == {
+        "count": 7,
+        "max_model_len": 65536,
+    }
+    assert paths.count("/tokenize") == 1
 
     closed = False
 
@@ -83,6 +90,7 @@ async def test_backend_contract_reports_identity_and_supports_cancel(
     await anext(iterator)
     await provider.cancel(iterator)
     assert closed is True
+    await provider.aclose()
 
 
 def tracked_stream_transport(
@@ -140,6 +148,7 @@ def test_ollama_reasoner_contract(settings) -> None:  # type: ignore[no-untyped-
         "messages": [{"role": "system", "content": "reason"}],
         "stream": False,
         "keep_alive": -1,
+        "think": False,
         "options": {"num_ctx": 65536, "num_predict": 321},
         "format": schema,
     }
@@ -261,6 +270,71 @@ def test_mistral_executor_does_not_put_system_messages_after_tools(settings) -> 
     ]
 
 
+def test_qwen_executor_collapses_leading_instructions_without_mutation(settings) -> None:  # type: ignore[no-untyped-def]
+    request = {
+        "messages": [
+            {"role": "system", "content": "Runtime instructions"},
+            {"role": "developer", "content": "Client instructions"},
+            {"role": "user", "content": "Work."},
+            {"role": "developer", "content": "Continue now."},
+        ]
+    }
+
+    model = settings.models["executor"].model_copy(update={"reasoning_parser": "qwen3"})
+    body = ModelProvider.body("executor", model, request)
+
+    assert body["messages"] == [
+        {"role": "system", "content": "Runtime instructions\n\nClient instructions"},
+        {"role": "user", "content": "Work."},
+        {"role": "user", "content": "Continue now."},
+    ]
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}
+    assert request["messages"][1]["role"] == "developer"
+
+    multimodal = ModelProvider.body(
+        "executor",
+        model,
+        {
+            "messages": [
+                {"role": "system", "content": "Runtime instructions"},
+                {
+                    "role": "developer",
+                    "content": [{"type": "text", "text": "Client instructions"}],
+                },
+                {"role": "user", "content": "Work."},
+            ]
+        },
+    )
+    assert multimodal["messages"][0]["content"] == [
+        {"type": "text", "text": "Runtime instructions"},
+        {"type": "text", "text": "Client instructions"},
+    ]
+
+    required = ModelProvider.body(
+        "executor",
+        model,
+        {
+            "messages": [{"role": "user", "content": "Use a tool."}],
+            "tool_choice": "required",
+            "chat_template_kwargs": {"preserve_thinking": False},
+        },
+    )
+    assert required["chat_template_kwargs"] == {
+        "preserve_thinking": False,
+        "enable_thinking": False,
+    }
+    automatic = ModelProvider.body(
+        "executor",
+        model,
+        {
+            "messages": [{"role": "user", "content": "Use a tool if needed."}],
+            "tools": [{"type": "function", "function": {"name": "terminal"}}],
+            "tool_choice": "auto",
+        },
+    )
+    assert automatic["chat_template_kwargs"] == {"enable_thinking": False}
+
+
 def test_nemotron_planner_keeps_bounded_reasoning(settings) -> None:  # type: ignore[no-untyped-def]
     body = ModelProvider.body(
         "planner",
@@ -312,7 +386,8 @@ async def test_executor_context_fit_uses_served_tokenizer_limit(
         lambda **kwargs: async_client(transport=transport, **kwargs),
     )
 
-    fits = await ModelProvider.context_fits(
+    provider = ModelProvider()
+    fits = await provider.context_fits(
         settings.models["executor"],
         {
             "messages": [{"role": "user", "content": "large"}],
@@ -324,6 +399,7 @@ async def test_executor_context_fit_uses_served_tokenizer_limit(
     assert fits is False
     assert requests[0].url.path == "/tokenize"
     assert json.loads(requests[0].content)["tools"][0]["function"]["name"] == "read_file"
+    await provider.aclose()
 
 
 @pytest.mark.asyncio
@@ -589,8 +665,9 @@ async def test_stream_setup_cancellation_closes_response_and_client(
         return created
 
     monkeypatch.setattr("dgx_moa.providers.httpx.AsyncClient", client)
+    provider = ModelProvider()
     pending = asyncio.create_task(
-        ModelProvider().stream(
+        provider.stream(
             "executor",
             settings.models["executor"],
             {"messages": []},
@@ -605,6 +682,8 @@ async def test_stream_setup_cancellation_closes_response_and_client(
         await pending
 
     assert responses[0].is_closed
+    assert not clients[0].is_closed
+    await provider.aclose()
     assert clients[0].is_closed
 
 
@@ -618,7 +697,8 @@ async def test_stream_close_before_first_iteration_closes_response_and_client_on
             yield b"second"
 
     responses, clients = tracked_stream_transport(monkeypatch, Bytes())
-    stream = await ModelProvider().stream(
+    provider = ModelProvider()
+    stream = await provider.stream(
         "executor",
         settings.models["executor"],
         {"messages": []},
@@ -628,8 +708,9 @@ async def test_stream_close_before_first_iteration_closes_response_and_client_on
     await stream.aclose()  # type: ignore[attr-defined]
 
     assert responses[0].is_closed
-    assert clients[0].is_closed
+    assert not clients[0].is_closed
     assert responses[0].close_count == 1
+    await provider.aclose()
     assert clients[0].close_count == 1
 
 
@@ -644,7 +725,8 @@ async def test_stream_preserves_prefetched_byte_order_and_closes_on_exhaustion(
             yield b"third"
 
     responses, clients = tracked_stream_transport(monkeypatch, Bytes())
-    stream = await ModelProvider().stream(
+    provider = ModelProvider()
+    stream = await provider.stream(
         "executor",
         settings.models["executor"],
         {"messages": []},
@@ -655,6 +737,8 @@ async def test_stream_preserves_prefetched_byte_order_and_closes_on_exhaustion(
 
     assert chunks == [b"first", b"second", b"third"]
     assert responses[0].close_count == 1
+    assert clients[0].close_count == 0
+    await provider.aclose()
     assert clients[0].close_count == 1
 
 
@@ -668,7 +752,8 @@ async def test_stream_iteration_error_closes_response_and_client_once(
             raise RuntimeError("stream failed")
 
     responses, clients = tracked_stream_transport(monkeypatch, FailingBytes())
-    stream = await ModelProvider().stream(
+    provider = ModelProvider()
+    stream = await provider.stream(
         "executor",
         settings.models["executor"],
         {"messages": []},
@@ -680,6 +765,8 @@ async def test_stream_iteration_error_closes_response_and_client_once(
     await stream.aclose()  # type: ignore[attr-defined]
 
     assert responses[0].close_count == 1
+    assert clients[0].close_count == 0
+    await provider.aclose()
     assert clients[0].close_count == 1
 
 
@@ -696,7 +783,8 @@ async def test_stream_iteration_cancellation_closes_response_and_client_once(
             await asyncio.Event().wait()
 
     responses, clients = tracked_stream_transport(monkeypatch, BlockingBytes())
-    stream = await ModelProvider().stream(
+    provider = ModelProvider()
+    stream = await provider.stream(
         "executor",
         settings.models["executor"],
         {"messages": []},
@@ -711,4 +799,6 @@ async def test_stream_iteration_cancellation_closes_response_and_client_once(
     await stream.aclose()  # type: ignore[attr-defined]
 
     assert responses[0].close_count == 1
+    assert clients[0].close_count == 0
+    await provider.aclose()
     assert clients[0].close_count == 1

@@ -99,10 +99,33 @@ def test_compression_keeps_assistant_preceding_retained_tool_results() -> None:
     ]
 
     assert [message["role"] for message in compress_messages(messages, limits)] == [
+        "user",
         "assistant",
         "tool",
         "tool",
     ]
+
+
+def test_compression_keeps_a_user_anchor_for_long_tool_loops() -> None:
+    limits = Limits(max_retained_observations=4)
+    messages = [{"role": "user", "content": "implement"}]
+    for index in range(4):
+        messages.extend(
+            [
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"id": f"call_{index}", "function": {"name": "exec", "arguments": "{}"}}
+                    ],
+                },
+                {"role": "tool", "tool_call_id": f"call_{index}", "content": "done"},
+            ]
+        )
+
+    compressed = compress_messages(messages, limits)
+
+    assert compressed[0] == {"role": "user", "content": "implement"}
+    assert compressed[-1]["role"] == "tool"
 
 
 def test_tool_outputs_share_the_compression_budget() -> None:

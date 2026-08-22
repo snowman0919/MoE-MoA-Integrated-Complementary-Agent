@@ -55,6 +55,7 @@ from .execution_graph import (
     ExecutionGraphStore,
     NodeType,
     SchedulingSnapshot,
+    execution_graph_parity,
     record_shadow_failure,
 )
 from .executor_backend import ExecutorBackend
@@ -189,6 +190,21 @@ from .weekly import (
     weekly_runtime_improvement_report,
     weekly_skill_report,
 )
+
+
+def validate_executor_response(response: dict[str, Any]) -> None:
+    validate_assistant_response(response)
+    message = response.get("choices", [{}])[0].get("message", {})
+    content = message.get("content") if isinstance(message, dict) else None
+    if not message.get("tool_calls") and not (isinstance(content, str) and content.strip()):
+        raise ValueError("executor response missing public output")
+    if (
+        isinstance(content, str)
+        and not message.get("tool_calls")
+        and has_internal_protocol_leak(content)
+    ):
+        raise ValueError("executor response contains internal protocol markup")
+
 
 TIMEOUT_FAILURE_CLASSES: dict[str, RetryableFailureClass] = {
     "planner": "planner_timeout",
@@ -1156,6 +1172,10 @@ def create_app(
             if app.state.specialists is not None:
                 await app.state.specialists.close()
             await app.state.lifecycle.close()
+            app.state.usage.close()
+            close_provider = getattr(provider, "aclose", None)
+            if close_provider is not None:
+                await close_provider()
 
     app = FastAPI(title="DGX MoA Agent", version="2.0.0", lifespan=lifespan)
     app.add_middleware(DrainMiddleware)
@@ -2538,6 +2558,11 @@ def create_app(
                                     execution_contradicted_evidence_ids
                                 ),
                             )
+                            request.app.state.store.event(
+                                current.session_id,
+                                "execution_graph_shadow_parity",
+                                execution_graph_parity(runtime, current),
+                            )
                             current.execution_checkpoint_id = runtime.last_checkpoint_id
                         except (ValueError, sqlite3.Error) as error:
                             record_shadow_failure(
@@ -2547,13 +2572,19 @@ def create_app(
                             execution_runtime = None
                             execution_attempt_id = None
                     request.app.state.controller.complete_loop_iteration(current, status_value)
-                    record_request_timing(current)
                     request.app.state.store.event(
                         current.session_id,
                         "session_ended",
                         {"request_id": state_session_id, "status": status_value},
                     )
+                    state_persistence_started = time.monotonic()
                     request.app.state.store.save(current)
+                    current.timings_ms["state_persistence"] = round(
+                        (time.monotonic() - state_persistence_started) * 1000, 3
+                    )
+                    if status_value == "completed" and current.final_status == "completed":
+                        current.timings_ms["verified_completion"] = elapsed_ms(accepted)
+                    record_request_timing(current)
                     record_trace_safely(request, current, task_id)
                 if usage_started:
                     completed_at = time.time()
@@ -2566,6 +2597,7 @@ def create_app(
                     ):
                         role_failures.pop("reviewer", None)
                         stage_status["reviewer"] = "completed"
+                    usage_persistence_started = time.monotonic()
                     request.app.state.usage.finalize(
                         usage_request_id,
                         RequestUsageFinalization(
@@ -2595,6 +2627,13 @@ def create_app(
                         },
                         role_failures=role_failures,
                     )
+                    if current is not None:
+                        current.timings_ms["usage_persistence"] = round(
+                            (time.monotonic() - usage_persistence_started) * 1000, 3
+                        )
+                        request.app.state.usage.record_stages(
+                            usage_request_id, current.timings_ms, stage_status
+                        )
             finally:
                 if disconnect_watcher is not None:
                     disconnect_watcher.cancel()
@@ -3046,7 +3085,7 @@ def create_app(
             state.api_token_id = api_token_id
             task_id = task_id or state.task_id or state_session_id
             raw["metadata"]["task_id"] = task_id
-            state.timings_ms = {"accepted": 0.0}
+            state.timings_ms = {"accepted": 0.0, "admission": elapsed_ms(accepted)}
             for role, reason in degraded_roles.items():
                 stage_status[role] = "unavailable"
                 request.app.state.store.event(
@@ -3347,6 +3386,7 @@ def create_app(
                 or has_matching_tool_result(raw["messages"])
                 or bool(getattr(request.state, "responses_tool_owner_recovered", False))
             ) and not new_failure_observed
+            fan_in_started = time.monotonic()
             prepared = await request.app.state.controller.prepare_executor(
                 state,
                 raw,
@@ -3358,6 +3398,7 @@ def create_app(
                 ),
                 execution_runtime=execution_runtime,
             )
+            state.timings_ms["fan_in"] = round((time.monotonic() - fan_in_started) * 1000, 3)
             executor_projection_manifest = state.role_context_projections[-1]
             if executor_projection_manifest.get("role") != "executor":
                 raise ValueError("Executor provider input is missing its Runtime projection")
@@ -3368,7 +3409,7 @@ def create_app(
                         (
                             node
                             for node in execution_runtime.graph.nodes
-                            if node.node_type == NodeType.EXECUTOR and node.purpose == "evidence"
+                            if node.node_type == NodeType.EXECUTOR_EVIDENCE
                         ),
                         None,
                     )
@@ -3543,7 +3584,7 @@ def create_app(
                     primary_node = next(
                         node
                         for node in execution_runtime.graph.nodes
-                        if node.node_type == NodeType.EXECUTOR and node.purpose == "primary"
+                        if node.node_type == NodeType.EXECUTOR_PRIMARY
                     )
                     if primary_node.node_id in execution_runtime.ready_node_ids():
                         execution_attempt_id = execution_runtime.start_attempt(
@@ -3663,6 +3704,9 @@ def create_app(
                         stage="executor_first_byte",
                     )
                 state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
+                state.timings_ms["executor_ttft"] = round(
+                    (time.monotonic() - executor_started) * 1000, 3
+                )
                 stage_status["executor_first_byte"] = "completed"
                 observation = StreamObservation(configured.limits.max_stream_capture_bytes)
                 stream_completed = False
@@ -3681,6 +3725,14 @@ def create_app(
                         ) and not remote_failure
                         state.timings_ms["executor_total"] = round(
                             (time.monotonic() - executor_started) * 1000, 3
+                        )
+                        state.timings_ms["executor_decode"] = round(
+                            max(
+                                0.0,
+                                state.timings_ms["executor_total"]
+                                - state.timings_ms.get("executor_ttft", 0.0),
+                            ),
+                            3,
                         )
                         stage_status.setdefault(
                             "executor_total", "completed" if terminal else "aborted"
@@ -3966,28 +4018,81 @@ def create_app(
                     media_type="text/event-stream",
                     headers={"X-Session-ID": session_id},
                 )
-            response = (
-                await remote_executor_correction(prepared, "executor_total")
-                if executor_remote
-                else await request.app.state.provider.complete(
-                    "executor",
-                    configured.models["executor"],
-                    prepared,
-                    timeout_seconds=configured.limits.executor_total_timeout_seconds,
-                    stage="executor_total",
+            attempt_started = executor_started
+            retry_usage: dict[str, int] = {}
+            for invalid_output_attempt in range(2):
+                response = (
+                    await remote_executor_correction(prepared, "executor_total")
+                    if executor_remote
+                    else await request.app.state.provider.complete(
+                        "executor",
+                        configured.models["executor"],
+                        prepared,
+                        timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                        stage="executor_total",
+                    )
                 )
-            )
+                retry_reason: str | None = None
+                try:
+                    validate_executor_response(response)
+                except ValueError as error:
+                    retry_reason = str(error)
+                assistant_message = response.get("choices", [{}])[0].get("message", {})
+                assistant_tool_calls = assistant_message.get("tool_calls") or []
+                if prepared.get("tool_choice") == "required" and not assistant_tool_calls:
+                    retry_reason = "executor omitted required tool call"
+                if retry_reason is None:
+                    break
+                if executor_remote or invalid_output_attempt:
+                    raise ValueError(retry_reason)
+                retry_usage = reported_usage(response.get("usage"))
+                request.app.state.controller.record_invocation(
+                    state,
+                    "executor",
+                    response,
+                    attempt_started,
+                    mode="invalid_output_retry",
+                    projection_id=executor_projection_id,
+                    rendered_prompt=request.app.state.controller.rendered_model_request(
+                        "executor", prepared
+                    ),
+                )
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_invalid_output_retried",
+                    {"reason": retry_reason, "attempt": 2},
+                )
+                retry_instruction = (
+                    "The previous response omitted the required native tool call. Call one "
+                    "available tool now; do not return final text."
+                    if prepared.get("tool_choice") == "required"
+                    else "Return one concise user-facing final answer now, without internal "
+                    "protocol markup or hidden-only reasoning."
+                )
+                prepared = {
+                    **prepared,
+                    "messages": [
+                        *prepared.get("messages", []),
+                        {"role": "system", "content": retry_instruction},
+                    ],
+                }
+                attempt_started = time.monotonic()
             state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
             state.timings_ms["executor_total"] = round(
                 (time.monotonic() - executor_started) * 1000, 3
             )
+            state.timings_ms["executor_ttft"] = state.timings_ms["executor_total"]
+            state.timings_ms["executor_decode"] = 0.0
             stage_status["executor_total"] = "completed"
-            token_usage.update(reported_usage(response.get("usage")))
+            final_usage = reported_usage(response.get("usage"))
+            token_usage.update(
+                {key: value + retry_usage.get(key, 0) for key, value in final_usage.items()}
+            )
             request.app.state.controller.record_invocation(
                 state,
                 "executor",
                 response,
-                executor_started,
+                attempt_started,
                 mode="final_synthesis",
                 fallback_reason=executor_routing_reason if executor_remote else None,
                 projection_id=executor_projection_id,
@@ -3997,9 +4102,6 @@ def create_app(
                     else request.app.state.controller.rendered_model_request("executor", prepared)
                 ),
             )
-            validate_assistant_response(response)
-            assistant_message = response.get("choices", [{}])[0].get("message", {})
-            assistant_tool_calls = assistant_message.get("tool_calls") or []
             for call in assistant_tool_calls:
                 request.app.state.controller.admit_tool_call(
                     state,
@@ -4313,8 +4415,7 @@ def create_app(
                                 primary_node = next(
                                     node
                                     for node in execution_runtime.graph.nodes
-                                    if node.node_type == NodeType.EXECUTOR
-                                    and node.purpose == "primary"
+                                    if node.node_type == NodeType.EXECUTOR_PRIMARY
                                 )
                                 if primary_node.node_id not in (execution_runtime.ready_node_ids()):
                                     raise ValueError("Judge correction edge is not ready")
@@ -4370,7 +4471,7 @@ def create_app(
                                 )
                             ),
                         )
-                        validate_assistant_response(response)
+                        validate_executor_response(response)
                         assistant_message = response.get("choices", [{}])[0].get("message", {})
                         finish_reason = response.get("choices", [{}])[0].get("finish_reason")
                         state.finish_reasons = [str(finish_reason)] if finish_reason else []

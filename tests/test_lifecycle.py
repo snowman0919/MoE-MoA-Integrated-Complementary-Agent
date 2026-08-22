@@ -1184,6 +1184,7 @@ def test_schema_persists_every_lifecycle_field_without_changing_usage_tables(
         "role_request_usage",
         "lifecycle_samples",
         "model_invocation_usage",
+        "request_stage_latency",
         "lifecycle_failure_events",
         "lifecycle_automation",
         "lifecycle_desired_state",

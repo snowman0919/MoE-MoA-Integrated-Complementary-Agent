@@ -575,6 +575,7 @@ class Controller:
         self.specialists: SpecialistRouter | None = None
         self.lifecycle_store: Any | None = None
         self._review_lock = asyncio.Lock()
+        self._projection_cache: dict[tuple[object, ...], RoleContextProjection] = {}
         self.execution_graph_store = (
             ExecutionGraphStore(settings.state_db)
             if settings.execution_graph.mode == "shadow"
@@ -929,16 +930,40 @@ class Controller:
         causal_parent_attempt_ids: tuple[str, ...] = (),
         join_node_id: str | None = None,
     ) -> RoleContextProjection:
-        projection = project_role_context(
-            snapshot,
+        projection_started = time.monotonic()
+        cache_key = (
+            snapshot.snapshot_hash,
             role,
-            stage=stage,
-            target_attempt_id=target_attempt_id,
-            causal_parent_attempt_ids=causal_parent_attempt_ids,
-            join_node_id=join_node_id,
+            stage,
+            target_attempt_id,
+            causal_parent_attempt_ids,
+            join_node_id,
         )
+        projection = self._projection_cache.get(cache_key)
+        cache_hit = projection is not None
+        if projection is None:
+            projection = project_role_context(
+                snapshot,
+                role,
+                stage=stage,
+                target_attempt_id=target_attempt_id,
+                causal_parent_attempt_ids=causal_parent_attempt_ids,
+                join_node_id=join_node_id,
+            )
+            if len(self._projection_cache) >= 256:
+                self._projection_cache.pop(next(iter(self._projection_cache)))
+            self._projection_cache[cache_key] = projection
         allowed_kinds = set(ROLE_PROJECTION_POLICIES[(role, stage)].allowed_runtime_kinds)
         included_evidence_ids = set(projection.provenance.included_evidence_ids)
+        included_contribution_ids = set(projection.provenance.included_contribution_ids)
+        previous = next(
+            (item for item in reversed(state.role_context_projections) if item.get("role") == role),
+            None,
+        )
+        previous_evidence_ids = set(previous.get("source_evidence_ids", [])) if previous else set()
+        previous_contribution_ids = (
+            set(previous.get("source_contribution_ids", [])) if previous else set()
+        )
         projection_bytes = len(projection.model_dump_json().encode())
         manifest = {
             "role": role,
@@ -949,6 +974,18 @@ class Controller:
             "projection_hash": projection.projection_hash,
             "included_categories": list(projection.provenance.included_categories),
             "source_evidence_ids": list(projection.provenance.included_evidence_ids),
+            "source_contribution_ids": list(projection.provenance.included_contribution_ids),
+            "evidence_delta": {
+                "base_projection_id": previous.get("projection_id") if previous else None,
+                "added_evidence_ids": sorted(included_evidence_ids - previous_evidence_ids),
+                "removed_evidence_ids": sorted(previous_evidence_ids - included_evidence_ids),
+                "added_contribution_ids": sorted(
+                    included_contribution_ids - previous_contribution_ids
+                ),
+                "removed_contribution_ids": sorted(
+                    previous_contribution_ids - included_contribution_ids
+                ),
+            },
             "excluded_evidence_ids": list(projection.provenance.excluded_evidence_ids),
             "dropped_evidence": [
                 {
@@ -969,10 +1006,16 @@ class Controller:
             "rendered_prompt_bytes": None,
             "provider_prompt_tokens": None,
             "provider_invocations": [],
+            "cache_hit": cache_hit,
             "created_at": now(),
         }
         state.role_context_projections.append(manifest)
         state.role_context_projections = state.role_context_projections[-64:]
+        state.timings_ms["projection"] = round(
+            state.timings_ms.get("projection", 0.0)
+            + (time.monotonic() - projection_started) * 1000,
+            3,
+        )
         self.store.event(state.session_id, "collaboration_context_projected", manifest)
         return projection
 
@@ -1254,6 +1297,10 @@ class Controller:
         *,
         account_loop_usage: bool = True,
     ) -> None:
+        invocation = {
+            **invocation,
+            "request_id": state.current_request_id or state.session_id,
+        }
         state.agent_invocations.append(invocation)
         state.agent_invocations = state.agent_invocations[-self.settings.limits.max_steps :]
         if account_loop_usage:
@@ -1996,6 +2043,10 @@ class Controller:
             if not failed and target_paths:
                 for failure in active_failures(state):
                     if not target_paths.intersection(failure.get("target_paths", [])):
+                        continue
+                    if failure.get(
+                        "failure_class"
+                    ) == "TEST_FAILURE" and not is_successful_validation_execution(execution):
                         continue
                     failure["resolution_status"] = "resolved"
                     failure["resolved_at"] = now()
@@ -2962,6 +3013,7 @@ class Controller:
         collaboration_context = ""
         frontier_projection: RoleContextProjection | None = None
         fanout_started = False
+        fan_in_deadline: float | None = None
         fanout_contributions: list[ModelContribution] = []
         fanout_snapshot = self.runtime_evidence_snapshot(
             state,
@@ -3160,6 +3212,29 @@ class Controller:
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
 
+        async def await_fan_in(task: asyncio.Task[Any], role: str, *, required: bool) -> Any:
+            if required or task.done():
+                return await task
+            assert fan_in_deadline is not None
+            remaining = fan_in_deadline - time.monotonic()
+            if remaining > 0:
+                try:
+                    async with asyncio.timeout(remaining):
+                        return await task
+                except TimeoutError:
+                    pass
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            self.store.event(
+                state.session_id,
+                "optional_role_deadline_exceeded",
+                {
+                    "role": role,
+                    "deadline_seconds": self.settings.limits.optional_fan_in_timeout_seconds,
+                },
+            )
+            raise StageTimeout(f"{role}_optional_fan_in")
+
         if reasoner:
             reasoner_graph_attempt = graph_start(NodeType.REASONER)
             reasoner_projection = self.project_runtime_context(
@@ -3326,6 +3401,7 @@ class Controller:
                         "latency_ms": round((time.monotonic() - reasoner_record_started) * 1000, 3),
                     },
                 )
+            state.timings_ms["reasoner"] = round((time.monotonic() - reasoner_started) * 1000, 3)
             self.record_invocation(
                 state,
                 "reasoner",
@@ -3504,6 +3580,7 @@ class Controller:
             )
             if frontier_degraded:
                 state.derived_confidence = "low"
+        fan_in_deadline = time.monotonic() + self.settings.limits.optional_fan_in_timeout_seconds
         if "planner" in roles and needs_planner(state) and "planner" in self.settings.models:
             assert planner_request is not None
             assert planner_started is not None
@@ -3512,7 +3589,11 @@ class Controller:
             planner_routing: dict[str, Any] = {}
             parsed: dict[str, Any] = {}
             try:
-                planner, planner_routing = await planner_task
+                planner, planner_routing = await await_fan_in(
+                    planner_task,
+                    "planner",
+                    required=state.request_class == "high_risk_task",
+                )
                 try:
                     parsed = PlannerPlan.model_validate(parse_json_content(planner)).model_dump()
                 except ValueError:
@@ -3613,7 +3694,11 @@ class Controller:
                 )
         if pre_review_task is not None:
             try:
-                pre_review_result = await pre_review_task
+                pre_review_result = await await_fan_in(
+                    pre_review_task,
+                    "reviewer",
+                    required=state.review_fail_closed,
+                )
             except (httpx.HTTPError, StageTimeout, ValueError) as error:
                 state.review_status = "failed"
                 self.record_provider_failure(state, "reviewer", error)
@@ -3806,7 +3891,11 @@ class Controller:
         if frontier_task is not None:
             assert self.frontier is not None
             try:
-                frontier_result = await frontier_task
+                frontier_result = await await_fan_in(
+                    frontier_task,
+                    "frontier",
+                    required=bool(request.get("metadata", {}).get("frontier_required")),
+                )
             except LoopAdmissionError as error:
                 graph_fail(frontier_graph_attempt, "frontier", error)
                 raise
@@ -5042,6 +5131,7 @@ class Controller:
             timeout_seconds=self.settings.limits.judge_timeout_seconds,
             stage="judge",
         )
+        state.timings_ms["judge"] = round((time.monotonic() - judge_started) * 1000, 3)
         self.record_invocation(
             state,
             "judge",

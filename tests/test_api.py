@@ -317,10 +317,10 @@ def test_api_key_scheduler_pins_cross_key_turn_to_remote_fallback_and_projects_g
         ("CLASSIFY", "SUCCEEDED"),
         ("REASONER", "SUCCEEDED"),
         ("PLANNER", "SUCCEEDED"),
-        ("EXECUTOR", "SUCCEEDED"),
+        ("EXECUTOR_EVIDENCE", "SUCCEEDED"),
         ("JOIN", "SUCCEEDED"),
         ("EXECUTOR_SELECT", "SUCCEEDED"),
-        ("EXECUTOR", "SUCCEEDED"),
+        ("EXECUTOR_PRIMARY", "SUCCEEDED"),
         ("CHECKPOINT", "SUCCEEDED"),
         ("FINALIZE", "SUCCEEDED"),
     ]
@@ -1225,7 +1225,7 @@ def test_selective_remote_judge_gates_final_delivery(
         assert [attempt.node_type.value for attempt in attempts] == [
             "CLASSIFY",
             "EXECUTOR_SELECT",
-            "EXECUTOR",
+            "EXECUTOR_PRIMARY",
             "REVIEWER",
             "JUDGE",
             "CHECKPOINT",
@@ -1251,7 +1251,7 @@ def test_selective_remote_judge_gates_final_delivery(
         assert [attempt.node_type.value for attempt in attempts] == [
             "CLASSIFY",
             "EXECUTOR_SELECT",
-            "EXECUTOR",
+            "EXECUTOR_PRIMARY",
             "REVIEWER",
             "JUDGE",
             "FINALIZE",
@@ -1352,10 +1352,10 @@ def test_selective_remote_judge_correction_is_validated_and_rechecked(
     assert [attempt.node_type.value for attempt in attempts] == [
         "CLASSIFY",
         "EXECUTOR_SELECT",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "REVIEWER",
         "JUDGE",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "REVIEWER",
         "JUDGE",
         "CHECKPOINT",
@@ -2771,7 +2771,10 @@ async def test_stream_tool_calls_create_one_continuation_before_stream_release(
     assert record.active_request_count == 0
     assert record.open_stream_count == 0
     assert record.continuation_lease_count == 1
-    assert [attempt.node_type.value for attempt in attempts][-2:] == ["EXECUTOR", "TOOL"]
+    assert [attempt.node_type.value for attempt in attempts][-2:] == [
+        "EXECUTOR_PRIMARY",
+        "TOOL",
+    ]
     assert attempts[-1].state.value == "WAITING_TOOL"
     assert not any(
         event["event_type"] == "execution_graph_shadow_failed"
@@ -5525,11 +5528,18 @@ def test_request_timing_event_is_numeric_and_content_free(
     timings = payload["timings_ms"]
     assert set(timings) == {
         "accepted",
+        "admission",
+        "projection",
+        "reasoner",
+        "fan_in",
         "upstream_start",
         "first_upstream_byte",
         "first_downstream_byte",
         "completed",
         "executor_total",
+        "executor_ttft",
+        "executor_decode",
+        "state_persistence",
     }
     assert all(isinstance(value, int | float) and value >= 0 for value in timings.values())
     assert [
@@ -6701,7 +6711,7 @@ def test_policy_approval_resumes_waiting_execution_graph(
         "POLICY_GATE",
         "HUMAN_APPROVAL",
         "EXECUTOR_SELECT",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "FINALIZE",
     ]
     assert attempts[2].selected_outgoing_edges
@@ -7448,10 +7458,11 @@ async def test_streaming_api_first_byte_cancellation_persists_terminal_evidence(
             await pending
 
         assert responses[0].is_closed
-        assert clients[0].is_closed
+        assert not clients[0].is_closed
         state = app.state.store.get("first-byte-cancelled")
         events = app.state.store.events("first-byte-cancelled")
 
+    assert clients[0].is_closed
     assert state and state.final_status == "cancelled"
     assert sum(event["event_type"] == "stream_aborted" for event in events) == 1
     timing_events = [event for event in events if event["event_type"] == "request_timing"]
@@ -7825,7 +7836,7 @@ def test_chat_and_responses_share_one_disabled_by_default_graph_shadow_path(
     assert all(graph.nodes[-1].node_type == "FINALIZE" for graph in graphs)
     assert all(
         [attempt.node_type for attempt in graph_attempts]
-        == ["CLASSIFY", "EXECUTOR_SELECT", "EXECUTOR", "FINALIZE"]
+        == ["CLASSIFY", "EXECUTOR_SELECT", "EXECUTOR_PRIMARY", "FINALIZE"]
         for graph_attempts in attempts
     )
     assert all(
@@ -7998,10 +8009,10 @@ def test_graph_shadow_resumes_bounded_tool_and_test_continuation(
     assert [attempt.node_type.value for attempt in attempts] == [
         "CLASSIFY",
         "EXECUTOR_SELECT",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "TOOL",
         "TEST",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "FINALIZE",
     ]
     assert attempts[2].attempt_id.endswith("a001")
@@ -8015,9 +8026,9 @@ def test_graph_shadow_resumes_bounded_tool_and_test_continuation(
     assert [attempt.node_type.value for attempt in failure_attempts] == [
         "CLASSIFY",
         "EXECUTOR_SELECT",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "TOOL",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "FINALIZE",
     ]
     assert failure_attempts[3].state.value == "FAILED"
@@ -9463,6 +9474,120 @@ def test_malformed_tool_call_returns_bad_gateway(settings, stub_provider: StubPr
         }
         usage = assert_usage(client.app, "failed")
         assert usage.retryable_failure_class == "backend_error"
+
+
+def test_nonstream_internal_tool_markup_fails_closed(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def leaked(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        response = await original(role, model, request)
+        if role == "executor":
+            response["choices"][0] = {
+                "message": {"role": "assistant", "content": "<tool_call><function=terminal>"},
+                "finish_reason": "stop",
+            }
+        return response
+
+    stub_provider.complete = leaked  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa-fast", "messages": [{"role": "user", "content": "x"}]},
+        )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["message"] == (
+        "executor response contains internal protocol markup"
+    )
+
+
+def test_nonstream_required_tool_omission_fails_closed(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def omitted(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        response = await original(role, model, request)
+        if role == "executor":
+            assert request["tool_choice"] == "required"
+            response["choices"][0] = {
+                "message": {"role": "assistant", "content": "Done."},
+                "finish_reason": "stop",
+            }
+        return response
+
+    stub_provider.complete = omitted  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [
+                    {"role": "user", "content": "Implement the fix in module.py and test it."}
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "description": "Run a command",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["message"] == "executor omitted required tool call"
+
+
+def test_nonstream_required_tool_omission_retries_once(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+    executor_calls = 0
+
+    async def omitted_once(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal executor_calls
+        response = await original(role, model, request)
+        if role == "executor":
+            executor_calls += 1
+            if executor_calls == 1:
+                response["choices"][0] = {
+                    "message": {"role": "assistant", "content": "I should run the test."},
+                    "finish_reason": "stop",
+                }
+        return response
+
+    stub_provider.complete = omitted_once  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [
+                    {"role": "user", "content": "Implement the fix in module.py and test it."}
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "description": "Run a command",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["finish_reason"] == "tool_calls"
+    assert executor_calls == 2
 
 
 @pytest.mark.parametrize("stream", [False, True])

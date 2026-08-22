@@ -11,7 +11,7 @@ import httpx
 
 from .config import ModelConfig
 from .executor_backend import ExecutorCapability
-from .http_client import make_http_client, managed_http_client
+from .http_client import make_http_client
 
 PLANNER_REASONING_TOKENS = 768
 PLANNER_FINAL_TOKENS = 1_536
@@ -45,6 +45,36 @@ def mistral_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return normalized
 
 
+def qwen_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    instructions: list[Any] = []
+    leading_instructions = True
+    for source in messages:
+        role = source.get("role")
+        if leading_instructions and role in {"developer", "system"}:
+            content = source.get("content")
+            if content:
+                instructions.append(content)
+            continue
+        leading_instructions = False
+        message = dict(source)
+        if role in {"developer", "system"}:
+            message["role"] = "user"
+        normalized.append(message)
+    if instructions:
+        if all(isinstance(content, str) for content in instructions):
+            merged_content: Any = "\n\n".join(instructions)
+        else:
+            merged_content = []
+            for instruction in instructions:
+                if isinstance(instruction, str):
+                    merged_content.append({"type": "text", "text": instruction})
+                elif isinstance(instruction, list):
+                    merged_content.extend(instruction)
+        normalized.insert(0, {"role": "system", "content": merged_content})
+    return normalized
+
+
 class StageTimeout(TimeoutError):
     def __init__(self, stage: str):
         super().__init__(f"{stage} timed out")
@@ -57,13 +87,11 @@ class OwnedByteStream:
         first: bytes | None,
         iterator: AsyncIterator[bytes],
         response: httpx.Response,
-        client: httpx.AsyncClient,
     ) -> None:
         self._first = first
         self._first_pending = first is not None
         self._iterator = iterator
         self._response = response
-        self._client = client
         self._close_lock = asyncio.Lock()
         self._closed = False
 
@@ -91,17 +119,24 @@ class OwnedByteStream:
             if self._closed:
                 return
             self._closed = True
-            try:
-                if not self._response.is_closed:
-                    await self._response.aclose()
-            finally:
-                if not self._client.is_closed:
-                    await self._client.aclose()
+            if not self._response.is_closed:
+                await self._response.aclose()
 
 
 class ModelProvider:
     def __init__(self, timeout: float = 300.0):
         self.timeout = timeout
+        self._client: httpx.AsyncClient | None = None
+        self._tokenizations: dict[str, dict[str, Any]] = {}
+
+    def _http_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = make_http_client(timeout=None)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
 
     def capabilities(self, model: ModelConfig) -> frozenset[ExecutorCapability]:
         return model.capabilities
@@ -109,10 +144,9 @@ class ModelProvider:
     async def models(self, model: ModelConfig) -> list[str]:
         resource = "/api/ps" if model.provider == "ollama" else "/v1/models"
         try:
-            async with managed_http_client(timeout=30) as client:
-                response = await client.get(f"{model.base_url.rstrip('/')}{resource}")
-                response.raise_for_status()
-                payload = response.json()
+            response = await self._http_client().get(f"{model.base_url.rstrip('/')}{resource}")
+            response.raise_for_status()
+            payload = response.json()
         except (httpx.HTTPError, TypeError, ValueError):
             return []
         entries = (
@@ -134,22 +168,36 @@ class ModelProvider:
         if model.provider == "ollama":
             return None
         body = self.body(role, model, request)
+        token_request = {
+            "model": model.served_name,
+            "messages": body.get("messages", []),
+            "tools": body.get("tools"),
+            "chat_template_kwargs": body.get("chat_template_kwargs"),
+        }
+        cache_key = hashlib.sha256(
+            json.dumps(
+                {"base_url": model.base_url, **token_request},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        if cache_key in self._tokenizations:
+            return dict(self._tokenizations[cache_key])
         try:
-            async with managed_http_client(timeout=30) as client:
-                response = await client.post(
-                    f"{model.base_url.rstrip('/')}/tokenize",
-                    json={
-                        "model": model.served_name,
-                        "messages": body.get("messages", []),
-                        "tools": body.get("tools"),
-                        "chat_template_kwargs": body.get("chat_template_kwargs"),
-                    },
-                )
-                response.raise_for_status()
-                payload = response.json()
+            response = await self._http_client().post(
+                f"{model.base_url.rstrip('/')}/tokenize", json=token_request
+            )
+            response.raise_for_status()
+            payload = response.json()
         except (httpx.HTTPError, TypeError, ValueError):
             return None
-        return cast(dict[str, Any], payload) if isinstance(payload, dict) else None
+        if not isinstance(payload, dict):
+            return None
+        result = cast(dict[str, Any], payload)
+        if len(self._tokenizations) >= 256:
+            self._tokenizations.pop(next(iter(self._tokenizations)))
+        self._tokenizations[cache_key] = dict(result)
+        return result
 
     @staticmethod
     async def cancel(stream: AsyncIterator[bytes]) -> None:
@@ -167,6 +215,12 @@ class ModelProvider:
             if body["messages"] and body["messages"][-1].get("role") == "assistant":
                 body["continue_final_message"] = True
                 body["add_generation_prompt"] = False
+        if role == "executor" and model.reasoning_parser == "qwen3":
+            body["messages"] = qwen_messages(body.get("messages", []))
+            body["chat_template_kwargs"] = {
+                **dict(body.get("chat_template_kwargs") or {}),
+                "enable_thinking": False,
+            }
         if role != "executor":
             body.pop("tools", None)
             body.pop("tool_choice", None)
@@ -226,8 +280,8 @@ class ModelProvider:
         available = max(1, context_length - prompt_tokens - 8)
         body["max_tokens"] = min(requested, available)
 
-    @staticmethod
     async def context_fits(
+        self,
         model: ModelConfig,
         request: dict[str, Any],
         *,
@@ -238,19 +292,10 @@ class ModelProvider:
         body = ModelProvider.body(role, model, request)
         try:
             async with asyncio.timeout(timeout_seconds):
-                async with managed_http_client(timeout=None) as client:
-                    response = await client.post(
-                        f"{model.base_url.rstrip('/')}/tokenize",
-                        json={
-                            "model": model.served_name,
-                            "messages": body.get("messages", []),
-                            "tools": body.get("tools"),
-                            "chat_template_kwargs": body.get("chat_template_kwargs"),
-                        },
-                    )
-                    response.raise_for_status()
-                    payload = response.json()
-        except (TimeoutError, httpx.HTTPError, ValueError):
+                payload = await self.tokenize(model, request, role=role)
+        except TimeoutError:
+            return None
+        if payload is None:
             return None
         prompt_tokens = payload.get("count")
         context_length = payload.get("max_model_len", model.context_length)
@@ -260,7 +305,7 @@ class ModelProvider:
             for value in (prompt_tokens, context_length, output_tokens)
         ):
             return None
-        return int(prompt_tokens) + int(output_tokens) <= int(context_length)
+        return cast(int, prompt_tokens) + cast(int, output_tokens) <= cast(int, context_length)
 
     @classmethod
     async def complete_reasoning_planner(
@@ -362,6 +407,7 @@ class ModelProvider:
             json_schema = response_format.get("json_schema")
             if isinstance(json_schema, dict) and isinstance(json_schema.get("schema"), dict):
                 body["format"] = json_schema["schema"]
+                body["think"] = False
         return body
 
     @staticmethod
@@ -399,37 +445,35 @@ class ModelProvider:
         timeout_seconds = self.timeout if timeout_seconds is None else timeout_seconds
         try:
             async with asyncio.timeout(timeout_seconds):
-                async with managed_http_client(timeout=None) as client:
-                    if model.provider == "ollama":
-                        body = self.ollama_body(model, request)
-                        response = await client.post(
-                            f"{model.base_url.rstrip('/')}/api/chat",
-                            json=body,
-                        )
-                    else:
-                        body = self.body(role, model, request)
-                        if role == "planner" and model.reasoning_parser == "nemotron_v3":
-                            return await self.complete_reasoning_planner(client, model, body)
-                        if role == "reviewer":
-                            await self.fit_specialist_completion(client, model, body)
-                        response = await client.post(
-                            f"{model.base_url.rstrip('/')}/v1/chat/completions",
-                            json=body,
-                        )
-                    response.raise_for_status()
-                    payload = cast(dict[str, Any], response.json())
-                    result = (
-                        self.ollama_response(payload) if model.provider == "ollama" else payload
+                client = self._http_client()
+                if model.provider == "ollama":
+                    body = self.ollama_body(model, request)
+                    response = await client.post(
+                        f"{model.base_url.rstrip('/')}/api/chat",
+                        json=body,
                     )
-                    result["_rendered_prompt_bytes"] = len(
-                        json.dumps(
-                            body,
-                            ensure_ascii=False,
-                            sort_keys=True,
-                            separators=(",", ":"),
-                        ).encode()
+                else:
+                    body = self.body(role, model, request)
+                    if role == "planner" and model.reasoning_parser == "nemotron_v3":
+                        return await self.complete_reasoning_planner(client, model, body)
+                    if role == "reviewer":
+                        await self.fit_specialist_completion(client, model, body)
+                    response = await client.post(
+                        f"{model.base_url.rstrip('/')}/v1/chat/completions",
+                        json=body,
                     )
-                    return result
+                response.raise_for_status()
+                payload = cast(dict[str, Any], response.json())
+                result = self.ollama_response(payload) if model.provider == "ollama" else payload
+                result["_rendered_prompt_bytes"] = len(
+                    json.dumps(
+                        body,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                )
+                return result
         except (TimeoutError, httpx.TimeoutException) as error:
             raise StageTimeout(stage or role) from error
 
@@ -448,7 +492,7 @@ class ModelProvider:
         body["stream"] = True
         timeout_seconds = self.timeout if timeout_seconds is None else timeout_seconds
         timeout_stage = stage or role
-        client = make_http_client(timeout=None)
+        client = self._http_client()
         response: httpx.Response | None = None
         try:
             async with asyncio.timeout(timeout_seconds):
@@ -466,20 +510,17 @@ class ModelProvider:
         except asyncio.CancelledError:
             if response is not None:
                 await response.aclose()
-            await client.aclose()
             raise
         except (TimeoutError, httpx.TimeoutException) as error:
             if response is not None:
                 await response.aclose()
-            await client.aclose()
             raise StageTimeout(timeout_stage) from error
         except Exception:
             if response is not None:
                 await response.aclose()
-            await client.aclose()
             raise
 
-        return OwnedByteStream(first, iterator, response, client)
+        return OwnedByteStream(first, iterator, response)
 
 
 def response_message(response: dict[str, Any]) -> dict[str, Any]:
