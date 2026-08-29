@@ -31,17 +31,27 @@ The initial panel contains five standard-library repository tasks:
 rate-limiter, atomic-store, DAG runner, webhook verifier, and safe JSONL
 report. Each attempt starts from an isolated committed fixture and is evaluated
 by public tests, hidden tests, file-scope checks, terminal evidence, requested
-language, bad-terminal detection, and Docker isolation.
+language, bad-terminal detection, Docker isolation, and the text the selected
+client actually exposes to its user. The latter is extracted from the raw
+OpenAI final event, OpenCode's last text part, Codex's last completed agent
+message, or Hermes stdout. It must be non-empty, clean of internal tool
+protocol, no longer than the requested limit, and report the requested changed
+file, exact validation command and result, and remaining risk.
+
+Successful completion is timed through the public, hidden, and user-visible
+checks, not merely until the client process exits. Failed contracts retain a
+time-to-verdict but have no verified-completion value and do not contribute to
+successful-task throughput.
 
 The runner records and verifies the gateway URL, runner SHA-256, prompt
 SHA-256, test SHA-256, and initial commit before an attempt starts. A
-deterministic SHA-256 order fixes the 20 attempts in each repeat before any
+deterministic SHA-256 order fixes the 25 attempts in each repeat before any
 result is observed.
 
 ## Preregistered decision rules
 
-1. Run three complete repeats first: 15 task attempts per harness and 60 total
-   attempts across baseline, OpenCode, Codex, and Hermes.
+1. Run three complete repeats first: five task attempts per harness and 75 total
+   attempts across baseline, raw OpenAI-compatible, OpenCode, Codex, and Hermes.
 2. A hard reliability gate requires every attempt to pass all checks and
    permits no stream disconnect, failed terminal, modified test, scope escape,
    missing test evidence, or isolation failure.
@@ -78,3 +88,22 @@ checkpointed task must run for at least ten hours and demonstrate:
 The Goal remains active until the hard reliability gate and the statistical
 quality rule pass, or a clear failure is improved and the same frozen protocol
 is rerun.
+
+## Frontier dominance v2
+
+`scripts/evaluate-frontier-dominance-v2.py` is the release-claim gate. Its input
+must contain real repository tasks, paired execution, isolated workspaces,
+external hidden validation, digest-verified raw evidence, two independent epoch
+manifests, and all four clients (`raw_openai_compatible`, `codex`, `opencode`,
+`hermes`). It rejects mocks, generated patches, validator exposure, unintended
+fallbacks, missing evidence, and any target false completion.
+
+For every pinned comparator it requires a one-sided 95% paired-success LCB above
+`+3%p`; task-type, language, and context-length stratum LCBs above `-5%p`;
+current-system verified-completion p50/p95 at most `0.80x`/`0.90x`; no comparator
+p50 degradation and comparator p95 at most `1.10x`; and successful-task tokens
+and external cost at most `1.20x`. Missing or insufficient real data returns
+`INCONCLUSIVE`, never `PASS`.
+
+The current repository contains the evaluator and schema checks but no qualifying
+Qwen input artifact. No Frontier dominance claim is active.

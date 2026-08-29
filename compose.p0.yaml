@@ -1,0 +1,149 @@
+services:
+  gateway:
+    image: sha256:c0cabfa4c9d7daa38507ebf24ebc5049b85b8b3c2f0aa4cc45fa07f9b8f89b80
+    container_name: dgx-moa-p0-gateway
+    network_mode: service:reasoner
+    env_file: /home/kotori9/dgx-moa-agent/.env
+    environment:
+      DGX_MOA_CONFIG: /app/config/models.yaml
+      DGX_MOA_BIND_HOST: 0.0.0.0
+      DGX_MOA_PROJECT_ROOT: /app
+      DGX_MOA_STATE_DB: /app/data/state/gateway.db
+    volumes:
+      - ./config:/app/config:ro
+      - ./data/diagnostics/frontier-dominance-v2/p0-stack/data:/app/data
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=512m
+    read_only: true
+    depends_on:
+      executor:
+        condition: service_healthy
+      reasoner:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: "no"
+
+  executor:
+    image: sha256:bca274746b0487150fe3f3c5e2fe0f870b9de6d1c6a79a38bb0b2c581387ccd8
+    container_name: dgx-moa-p0-executor
+    network_mode: service:reasoner
+    ipc: host
+    gpus: all
+    environment:
+      HOME: /home/kotori9
+      CUDA_HOME: /usr/local/cuda
+      XDG_CACHE_HOME: /home/kotori9/.cache
+      MAX_JOBS: "1"
+      CMAKE_BUILD_PARALLEL_LEVEL: "1"
+      FLASHINFER_MM_FP4_CUTE_DSL_COMPILE_WORKERS: "1"
+    volumes:
+      - /home/kotori9/models:/home/kotori9/models:ro
+      - /home/kotori9/.local/share/uv/python:/home/kotori9/.local/share/uv/python:ro
+      - /usr/local/cuda-13.0:/usr/local/cuda:ro
+      - /home/kotori9/.cache/sglang:/home/kotori9/.cache/sglang
+      - /home/kotori9/.cache/flashinfer:/home/kotori9/.cache/flashinfer
+      - /home/kotori9/.cache/torch:/home/kotori9/.cache/torch
+      - /home/kotori9/.cache/huggingface:/home/kotori9/.cache/huggingface:ro
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=2g
+    read_only: true
+    command:
+      - /home/kotori9/models/dgx-moa/qwen-executor-builds/venvs/sglang-0111b290-modelopt-fbcdc16c/bin/python
+      - -m
+      - sglang.launch_server
+      - --model-path
+      - /home/kotori9/models/dgx-moa/qwen-executor-builds/56155c2e3aff20b6/nvfp4
+      - --host
+      - 127.0.0.1
+      - --port
+      - "9001"
+      - --served-model-name
+      - dgx-moa-executor
+      - --context-length
+      - "262144"
+      - --max-running-requests
+      - "1"
+      - --mem-fraction-static
+      - "0.35"
+      - --attention-backend
+      - flashinfer
+      - --kv-cache-dtype
+      - fp8_e4m3
+      - --max-total-tokens
+      - "270000"
+      - --max-mamba-cache-size
+      - "5"
+      - --chunked-prefill-size
+      - "4096"
+      - --cuda-graph-max-bs
+      - "1"
+      - --reasoning-parser
+      - qwen3
+      - --tool-call-parser
+      - qwen3_coder
+      - --watchdog-timeout
+      - "1800.0"
+      - --trust-remote-code
+      - --disable-flashinfer-autotune
+      - --disable-prefill-cuda-graph
+      - --enable-torch-compile
+      - --torch-compile-max-bs
+      - "4"
+      - --skip-server-warmup
+      - --quantization
+      - modelopt_fp4
+      - --speculative-algorithm
+      - DSPARK
+      - --speculative-draft-model-path
+      - /home/kotori9/models/dgx-moa/qwen-executor-builds/56155c2e3aff20b6/draft
+      - --speculative-draft-model-revision
+      - 85ef153be924f17ce4bf62726954eeaa4a73e854
+      - --speculative-draft-attention-backend
+      - flashinfer
+      - --speculative-draft-model-quantization
+      - unquant
+      - --num-continuous-decode-steps
+      - "2"
+      - --speculative-dspark-block-size
+      - "7"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9001/health', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      retries: 240
+      start_period: 30s
+    restart: "no"
+
+  reasoner:
+    image: ollama/ollama@sha256:a5f42ba1af98f623a341f9f13140abce6b8ad2eacdc618338771aceb81b08668
+    container_name: dgx-moa-p0-reasoner
+    ports:
+      - "9000:9000"
+    gpus: all
+    environment:
+      OLLAMA_HOST: 127.0.0.1:11434
+      OLLAMA_MODELS: /root/.ollama/models
+    volumes:
+      - /usr/share/ollama/.ollama:/root/.ollama
+    command: ["serve"]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+    restart: "no"
+
+  harness:
+    image: python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7
+    container_name: dgx-moa-p0-harness
+    network_mode: service:reasoner
+    depends_on:
+      gateway:
+        condition: service_healthy
+    command: ["python", "--version"]
+    read_only: true
+    restart: "no"

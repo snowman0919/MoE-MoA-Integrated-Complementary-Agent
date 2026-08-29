@@ -29,6 +29,25 @@ def test_session_persistence(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert loaded and loaded.objective == "ship"
 
 
+def test_pending_tool_indexes_migrate_query_and_rollback(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    path = tmp_path / "state.db"
+    store = StateStore(path)
+    state = SessionState(
+        session_id="pending",
+        objective="continue this task",
+        api_token_id="client",
+        pending_tool_call_ids=["call-1"],
+    )
+    store.save(state)
+
+    assert store.find_tool_owner({"call-1"}, "client").session_id == "pending"  # type: ignore[union-attr]
+    assert store.find_tool_owner({"remapped"}, "client", state.objective).session_id == "pending"  # type: ignore[union-attr]
+
+    store.rollback_pending_indexes()
+    rebuilt = StateStore(path)
+    assert rebuilt.find_tool_owner({"call-1"}, "client").session_id == "pending"  # type: ignore[union-attr]
+
+
 def test_deterministic_routing_and_completion() -> None:
     state = SessionState(session_id="x", acceptance_criteria=["tests", "security"])
     assert needs_planner(state)

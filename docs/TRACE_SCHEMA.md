@@ -30,7 +30,10 @@ Strict provenance values are `main|dev|candidate` and
 `production|benchmark|validation|diagnostic|candidate_evaluation`. Production is
 valid only with `main`; candidate evaluation is valid only with `candidate`.
 Archives use `data/traces/<runtime>/<origin>/<date>/<session>.jsonl` and remain
-discoverable through the SQLite trace index.
+discoverable through the SQLite trace index. Each session file is an atomically
+replaced, single-record cumulative snapshot; durable event history remains in
+the SQLite state store. Readers continue to accept older multi-record JSONL
+files and select the latest record for a session.
 
 V1 remains readable as `legacy`, but is never silently counted as complete v2/v3
 or exported for training. Run `scripts/audit-trace-completeness.sh data/traces` to

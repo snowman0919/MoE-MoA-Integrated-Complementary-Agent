@@ -114,6 +114,29 @@ def test_response_language_uses_current_user_objective() -> None:
     )
 
 
+def test_reasoning_request_aliases_and_bounds() -> None:
+    chat = ChatRequest.model_validate(
+        {
+            "model": "dgx-moa-fast",
+            "messages": [{"role": "user", "content": "Work."}],
+            "reasoningEffort": "high",
+            "reasoningSummary": "auto",
+        }
+    )
+    assert chat.reasoning_effort == "high"
+    assert chat.reasoning_summary == "auto"
+    assert (
+        ResponsesRequest.model_validate(
+            {"model": "dgx-moa-fast", "input": "Work.", "reasoning": {"effort": "low"}}
+        ).reasoning.effort
+        == "low"
+    )  # type: ignore[union-attr]
+    with pytest.raises(ValueError):
+        ResponsesRequest.model_validate(
+            {"model": "dgx-moa-fast", "input": "Work.", "reasoning": {"effort": "ultra"}}
+        )
+
+
 def test_busy_executor_routes_new_session_to_frontier(
     settings: Settings, stub_provider: StubProvider
 ) -> None:
@@ -229,6 +252,22 @@ def test_api_key_scheduler_pins_cross_key_turn_to_remote_fallback_and_projects_g
                 "key-a", "held-request", risk="medium", flash_available=True
             )
         )
+        queued: dict[str, object] = {}
+
+        def wait_for_local() -> None:
+            queued["admission"] = asyncio.run(
+                app.state.executor_scheduler.acquire(
+                    "key-a", "queued-request", risk="medium", flash_available=True
+                )
+            )
+
+        waiting = threading.Thread(target=wait_for_local)
+        waiting.start()
+        for _ in range(100):
+            if app.state.executor_scheduler.snapshot()["queued"] == 1:
+                break
+            time.sleep(0.01)
+        assert app.state.executor_scheduler.snapshot()["queued"] == 1
         response = client.post(
             "/v1/chat/completions",
             headers={"Authorization": "Bearer secret-b", "X-Session-ID": "flash-session"},
@@ -240,6 +279,9 @@ def test_api_key_scheduler_pins_cross_key_turn_to_remote_fallback_and_projects_g
         events = app.state.store.events("flash-session")
         state = app.state.store.get("flash-session")
         app.state.executor_scheduler.release(held.request_id)
+        waiting.join(timeout=1)
+        assert not waiting.is_alive()
+        app.state.executor_scheduler.release("queued-request")
         flash_calls = tuple(stub_provider.calls)
         stub_provider.calls.clear()
         original_complete = stub_provider.complete
@@ -317,10 +359,10 @@ def test_api_key_scheduler_pins_cross_key_turn_to_remote_fallback_and_projects_g
         ("CLASSIFY", "SUCCEEDED"),
         ("REASONER", "SUCCEEDED"),
         ("PLANNER", "SUCCEEDED"),
-        ("EXECUTOR", "SUCCEEDED"),
+        ("EXECUTOR_EVIDENCE", "SUCCEEDED"),
         ("JOIN", "SUCCEEDED"),
         ("EXECUTOR_SELECT", "SUCCEEDED"),
-        ("EXECUTOR", "SUCCEEDED"),
+        ("EXECUTOR_PRIMARY", "SUCCEEDED"),
         ("CHECKPOINT", "SUCCEEDED"),
         ("FINALIZE", "SUCCEEDED"),
     ]
@@ -1225,7 +1267,7 @@ def test_selective_remote_judge_gates_final_delivery(
         assert [attempt.node_type.value for attempt in attempts] == [
             "CLASSIFY",
             "EXECUTOR_SELECT",
-            "EXECUTOR",
+            "EXECUTOR_PRIMARY",
             "REVIEWER",
             "JUDGE",
             "CHECKPOINT",
@@ -1251,7 +1293,7 @@ def test_selective_remote_judge_gates_final_delivery(
         assert [attempt.node_type.value for attempt in attempts] == [
             "CLASSIFY",
             "EXECUTOR_SELECT",
-            "EXECUTOR",
+            "EXECUTOR_PRIMARY",
             "REVIEWER",
             "JUDGE",
             "FINALIZE",
@@ -1352,10 +1394,10 @@ def test_selective_remote_judge_correction_is_validated_and_rechecked(
     assert [attempt.node_type.value for attempt in attempts] == [
         "CLASSIFY",
         "EXECUTOR_SELECT",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "REVIEWER",
         "JUDGE",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "REVIEWER",
         "JUDGE",
         "CHECKPOINT",
@@ -2771,7 +2813,10 @@ async def test_stream_tool_calls_create_one_continuation_before_stream_release(
     assert record.active_request_count == 0
     assert record.open_stream_count == 0
     assert record.continuation_lease_count == 1
-    assert [attempt.node_type.value for attempt in attempts][-2:] == ["EXECUTOR", "TOOL"]
+    assert [attempt.node_type.value for attempt in attempts][-2:] == [
+        "EXECUTOR_PRIMARY",
+        "TOOL",
+    ]
     assert attempts[-1].state.value == "WAITING_TOOL"
     assert not any(
         event["event_type"] == "execution_graph_shadow_failed"
@@ -4450,6 +4495,7 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             "model_messages",
             "include_skills_usage_instructions",
             "supports_reasoning_summaries",
+            "supports_reasoning_summary_parameter",
             "default_reasoning_summary",
             "support_verbosity",
             "default_verbosity",
@@ -4473,7 +4519,24 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert all(model["apply_patch_tool_type"] == "freeform" for model in models["models"])
         assert all(model["shell_type"] == "shell_command" for model in models["models"])
         assert all(model["context_window"] == context_length for model in models["models"])
-        assert all(model["supports_reasoning_summaries"] is False for model in models["models"])
+        assert all(model["input_modalities"] == ["text", "image"] for model in models["models"])
+        assert all(model["default_reasoning_level"] == "low" for model in models["models"])
+        assert all(
+            [level["effort"] for level in model["supported_reasoning_levels"]]
+            == ["low", "medium", "high"]
+            for model in models["models"]
+        )
+        assert all(model["supports_reasoning_summaries"] is True for model in models["models"])
+        assert all(
+            model["supports_reasoning_summary_parameter"] is True
+            and model["default_reasoning_summary"] == "auto"
+            for model in models["models"]
+        )
+        assert all(
+            model["supports_search_tool"] is True
+            and model["web_search_tool_type"] == "text_and_image"
+            for model in models["models"]
+        )
         assert all(model["tool_mode"] == "direct" for model in models["models"])
         assert all(
             "integration display names are not MCP server IDs" in model["base_instructions"]
@@ -4508,7 +4571,7 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             for model in models["models"]
         )
         assert all(
-            model["comp_hash"] == f"dgx-moa-{context_length}-v1" for model in models["models"]
+            model["comp_hash"] == f"dgx-moa-{context_length}-v2" for model in models["models"]
         )
         response = client.post(
             "/v1/chat/completions",
@@ -4521,6 +4584,26 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert call["id"] == "call-preserved"
         assert response.json()["usage"]["total_tokens"] == 3
         assert stub_provider.calls == ["reasoner", "executor"]
+
+
+def test_fast_multimodal_content_reaches_executor(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    content = [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,aW1hZ2U="}},
+        {"type": "text", "text": "Read the image."},
+    ]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa-fast", "messages": [{"role": "user", "content": content}]},
+        )
+
+    assert response.status_code == 200
+    assert stub_provider.calls == ["executor"]
+    assert any(
+        message.get("role") == "user" and message.get("content") == content
+        for message in stub_provider.requests[-1]["messages"]
+    )
 
 
 def test_admin_drain_rejects_new_work_and_can_be_cancelled(
@@ -5525,11 +5608,18 @@ def test_request_timing_event_is_numeric_and_content_free(
     timings = payload["timings_ms"]
     assert set(timings) == {
         "accepted",
+        "admission",
+        "projection",
+        "reasoner",
+        "fan_in",
         "upstream_start",
         "first_upstream_byte",
         "first_downstream_byte",
         "completed",
         "executor_total",
+        "executor_ttft",
+        "executor_decode",
+        "state_persistence",
     }
     assert all(isinstance(value, int | float) and value >= 0 for value in timings.values())
     assert [
@@ -6701,7 +6791,7 @@ def test_policy_approval_resumes_waiting_execution_graph(
         "POLICY_GATE",
         "HUMAN_APPROVAL",
         "EXECUTOR_SELECT",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "FINALIZE",
     ]
     assert attempts[2].selected_outgoing_edges
@@ -7448,10 +7538,11 @@ async def test_streaming_api_first_byte_cancellation_persists_terminal_evidence(
             await pending
 
         assert responses[0].is_closed
-        assert clients[0].is_closed
+        assert not clients[0].is_closed
         state = app.state.store.get("first-byte-cancelled")
         events = app.state.store.events("first-byte-cancelled")
 
+    assert clients[0].is_closed
     assert state and state.final_status == "cancelled"
     assert sum(event["event_type"] == "stream_aborted" for event in events) == 1
     timing_events = [event for event in events if event["event_type"] == "request_timing"]
@@ -7915,7 +8006,7 @@ def test_chat_and_responses_share_one_disabled_by_default_graph_shadow_path(
     assert all(graph.nodes[-1].node_type == "FINALIZE" for graph in graphs)
     assert all(
         [attempt.node_type for attempt in graph_attempts]
-        == ["CLASSIFY", "EXECUTOR_SELECT", "EXECUTOR", "FINALIZE"]
+        == ["CLASSIFY", "EXECUTOR_SELECT", "EXECUTOR_PRIMARY", "FINALIZE"]
         for graph_attempts in attempts
     )
     assert all(
@@ -8088,10 +8179,10 @@ def test_graph_shadow_resumes_bounded_tool_and_test_continuation(
     assert [attempt.node_type.value for attempt in attempts] == [
         "CLASSIFY",
         "EXECUTOR_SELECT",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "TOOL",
         "TEST",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "FINALIZE",
     ]
     assert attempts[2].attempt_id.endswith("a001")
@@ -8105,9 +8196,9 @@ def test_graph_shadow_resumes_bounded_tool_and_test_continuation(
     assert [attempt.node_type.value for attempt in failure_attempts] == [
         "CLASSIFY",
         "EXECUTOR_SELECT",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "TOOL",
-        "EXECUTOR",
+        "EXECUTOR_PRIMARY",
         "FINALIZE",
     ]
     assert failure_attempts[3].state.value == "FAILED"
@@ -9553,6 +9644,120 @@ def test_malformed_tool_call_returns_bad_gateway(settings, stub_provider: StubPr
         }
         usage = assert_usage(client.app, "failed")
         assert usage.retryable_failure_class == "backend_error"
+
+
+def test_nonstream_internal_tool_markup_fails_closed(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def leaked(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        response = await original(role, model, request)
+        if role == "executor":
+            response["choices"][0] = {
+                "message": {"role": "assistant", "content": "<tool_call><function=terminal>"},
+                "finish_reason": "stop",
+            }
+        return response
+
+    stub_provider.complete = leaked  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa-fast", "messages": [{"role": "user", "content": "x"}]},
+        )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["message"] == (
+        "executor response contains internal protocol markup"
+    )
+
+
+def test_nonstream_required_tool_omission_fails_closed(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def omitted(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        response = await original(role, model, request)
+        if role == "executor":
+            assert request["tool_choice"] == "required"
+            response["choices"][0] = {
+                "message": {"role": "assistant", "content": "Done."},
+                "finish_reason": "stop",
+            }
+        return response
+
+    stub_provider.complete = omitted  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [
+                    {"role": "user", "content": "Implement the fix in module.py and test it."}
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "description": "Run a command",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["message"] == "executor omitted required tool call"
+
+
+def test_nonstream_required_tool_omission_retries_once(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+    executor_calls = 0
+
+    async def omitted_once(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal executor_calls
+        response = await original(role, model, request)
+        if role == "executor":
+            executor_calls += 1
+            if executor_calls == 1:
+                response["choices"][0] = {
+                    "message": {"role": "assistant", "content": "I should run the test."},
+                    "finish_reason": "stop",
+                }
+        return response
+
+    stub_provider.complete = omitted_once  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [
+                    {"role": "user", "content": "Implement the fix in module.py and test it."}
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "description": "Run a command",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["finish_reason"] == "tool_calls"
+    assert executor_calls == 2
 
 
 @pytest.mark.parametrize("stream", [False, True])

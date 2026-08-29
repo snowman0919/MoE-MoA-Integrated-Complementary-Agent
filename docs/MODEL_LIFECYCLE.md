@@ -7,13 +7,13 @@ Executor, Planner, and Reviewer units; it is active and physically validated.
 
 The current dynamic MoA design changes role policy, not the measured local
 Executor mechanism. Executor remains normally resident with idle unload off.
-The Ollama Reasoner is externally lifecycle-managed, persistently resident
+The loopback Ollama Reasoner is externally lifecycle-managed, persistently resident
 (`keep_alive=-1`), and never targeted by local systemd start/stop or short-idle
 policy. Planner and Reviewer are local adaptive/on-demand roles. Heavy Judge is
 an exclusive, operator-controlled profile outside idle automation. Exact full
 service stop/start remains the only selected local unload and fallback.
 
-If the external Reasoner is missing or Ollama has evicted it, the default MoA
+If the externally managed Reasoner is missing or Ollama has evicted it, the default MoA
 must use a bounded readiness wait or return a typed loading/unavailable response;
 it must not silently claim a Reasoner contribution or degrade to Executor-only.
 The client may explicitly retry with `dgx-moa-fast` only when its policy permits.
@@ -137,7 +137,7 @@ state, or restart resets hysteresis. Minimum residency must also pass.
 | Executor | 7200 | 14400 | 28800 | 600 |
 | Planner | 600 | 1200 | 3600 | 600 |
 | Reviewer | 600 | 1200 | 3600 | 600 |
-| Reasoner (external) | n/a | n/a | n/a | n/a |
+| Reasoner (external lifecycle) | n/a | n/a | n/a | n/a |
 
 Executor is normally resident and its idle unload is disabled by default and in
 production. Planner and Reviewer enable adaptive idle unload. The external

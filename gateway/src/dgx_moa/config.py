@@ -139,6 +139,7 @@ class Limits(BaseModel):
     executor_total_timeout_seconds: float = 900
     reviewer_timeout_seconds: float = 120
     judge_timeout_seconds: float = 300
+    optional_fan_in_timeout_seconds: float = Field(default=30, gt=0, le=300)
     model_load_timeout_seconds: float = 1_200
     tool_continuation_timeout_seconds: float = 600
     usage_sample_window: int = Field(default=512, ge=1)
@@ -460,9 +461,9 @@ class ExecutorSchedulingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    same_key_max_local_queue: Literal[3] = 3
-    max_total_local_queue: int = Field(default=256, ge=3, le=10_000)
-    queue_timeout_seconds: float = Field(default=14_400, gt=0, le=86_400)
+    same_key_max_local_queue: Literal[1] = 1
+    max_total_local_queue: Literal[1] = 1
+    queue_timeout_seconds: float = Field(default=45, gt=0, le=86_400)
     remote_provider: Literal["disabled", "opencode"] = "disabled"
     remote_endpoint: str | None = None
     remote_api_key_env: str = "OPENCODE_GO_API_KEY"
@@ -585,7 +586,7 @@ class SpeculativeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    method: Literal["dspark"] = "dspark"
+    method: Literal["dspark", "dflash"] = "dspark"
     model: str | None = None
     revision: str | None = None
     num_speculative_tokens: int | None = Field(default=None, ge=1)

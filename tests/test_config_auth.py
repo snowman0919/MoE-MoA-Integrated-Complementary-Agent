@@ -235,7 +235,9 @@ def test_executor_scheduler_is_bounded_disabled_and_requires_remote_endpoint() -
     settings = Settings(auth_enabled=False)
 
     assert settings.executor_scheduling.enabled is False
-    assert settings.executor_scheduling.same_key_max_local_queue == 3
+    assert settings.executor_scheduling.same_key_max_local_queue == 1
+    assert settings.executor_scheduling.max_total_local_queue == 1
+    assert settings.executor_scheduling.queue_timeout_seconds == 45
     with pytest.raises(ValidationError, match="requires an OpenCode endpoint"):
         Settings(auth_enabled=False, executor_scheduling={"enabled": True})
 

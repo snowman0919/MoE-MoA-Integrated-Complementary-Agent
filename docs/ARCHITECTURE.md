@@ -17,8 +17,9 @@ corrections.
 
 OpenCode connects over tailnet or local-LAN TCP to the authenticated gateway.
 The controller stores session state in SQLite and calls loopback-only local role servers.
-The Reasoner is the agreed Qwythos service at `100.90.167.128`; no local
-Reasoner service is installed and no role-model endpoint is exposed by this gateway.
+The checked-in Reasoner target is Qwythos on loopback `127.0.0.1:11434`.
+Its process lifecycle remains externally managed, but its inference endpoint
+must not bind or route through LAN, tailnet, or a wildcard address.
 Resident and judge profiles remain mutually exclusive systemd targets.
 
 The public catalog exposes only `dgx-moa` and `dgx-moa-fast`. The primary
@@ -43,7 +44,9 @@ both 1,000,000 bytes. Streaming review is deferred. Non-streaming review uses at
 most 16,000 characters of external evidence; low-risk review failure preserves
 valid executor output, while high-risk orchestration may fail closed.
 
-The local resident target keeps the Qwen3-Coder-Next Executor and gateway.
+The last physically promoted resident target is Qwen3.8 27B NVFP4 + DSpark and
+the gateway. The checked-in Qwen manifest remains fail-closed and is not the
+production overlay.
 Planner and Reviewer are optional local services whose
 `PartOf=dgx-moa-resident.target` relationship ensures a resident stop also stops
 any role loaded separately. The Ollama Reasoner is a separately started,
@@ -52,22 +55,33 @@ memory-bounded service and is never locally idle-unloaded. Judge runs only
 while judge profile is active. Health is public; inference uses
 `DGX_MOA_AUTH_ENABLED`, and admin profile switching is disabled by default.
 
-This topology is production-enabled. Safe checked-in lifecycle control remains
-disabled with an empty unit map, while the ignored 0600 production environment
-enables reviewed adaptive control for the exact Executor, Planner, and Reviewer
-units. Cold optional roles use the typed loading/unavailable `503` contract when
-remote specialist routing is disabled. When enabled, cold Planner and Reviewer
-calls use their pinned OpenCode Go DeepSeek provider while local warm-up runs.
-Judge and the Ollama Reasoner stay outside that unit map.
+Safe checked-in lifecycle control remains disabled with an empty unit map. The
+ignored 0600 production overlay owns the exact physically reviewed Executor
+unit; optional local role units were inactive at the 2026-08-20 inspection.
+Cold optional roles use the typed loading/unavailable `503` contract when remote
+specialist routing is disabled. Judge and the externally managed Reasoner stay outside
+the checked-in map.
 
-The topology follows physical Phase 3 evidence. Exact full process stop/start
-is the selected executor unload and mandatory fallback. The retained executor
-runtime remains context 65,536, one sequence, 1,700,000,000 KV bytes,
-`gpu_memory_utilization=0.5`, and MARLIN. Three transient-systemd cycles passed
-the complete quality contract and left both process-group and unit-cgroup
-PSS/RSS at zero after every stop. Sleep levels, live cache reset, and the
-one-variable memory candidates did not satisfy the same memory/stability/quality
-selection rule. Exact rows are in `MEMORY_OPTIMIZATION.md`.
+Exact full process stop/start remains the selected executor unload and mandatory
+fallback. Phase 3 context 65,536, one sequence, 1,700,000,000 KV bytes,
+`gpu_memory_utilization=0.5`, and MARLIN remain preserved rollback evidence.
+The active Qwen overlay instead uses the measured 262,144-context DSpark
+contract in `docs/STATE.md`; rejected sleep/cache/eager/chunk/offload experiments
+remain non-production evidence.
+
+ExecutionGraph remains shadow-only. New graphs use explicit
+`EXECUTOR_EVIDENCE`, `EXECUTOR_PRIMARY`, and `EXECUTOR_FALLBACK` node types;
+legacy `EXECUTOR` is read compatibility only. At request finalization the
+Runtime compares graph role attempts with the Controller invocation ledger and
+records a parity result. Any delta makes the graph ineligible for authority;
+there is no checked-in authoritative mode.
+
+After mandatory Reasoner work, optional Planner, Reviewer, and Frontier fan-in
+shares one bounded deadline. Finished artifacts participate; late optional
+tasks are cancelled before Executor preparation. Required safety roles bypass
+that optimization. Projection manifests retain source IDs and a per-role
+evidence/contribution delta while role inputs remain independent one-shot
+artifacts.
 
 `main` is the reviewed production control plane and trace producer. `dev` is the
 integration branch. Future recursive work follows `main` MoA -> OpenCode -> an
@@ -105,7 +119,11 @@ sampling, then a `cold` transition and sample. Failures become sanitized
 `failed` state. Full state, mode, race, recovery, and API contracts are in
 `docs/MODEL_LIFECYCLE.md`.
 
-Usage is stored once per request and once per participating role. Idle decisions
+Usage is stored once per request and once per participating role. Detailed
+request-stage latency telemetry is queued to one bounded-batch SQLite writer;
+canonical state and request finalization remain synchronous. Model-invocation
+CSV aggregation is delayed until store shutdown instead of running per model
+call. Idle decisions
 consume only recent successful gaps for that role, so aggregate Executor traffic
 cannot substitute for Planner or Reviewer activity. Three lifecycle
 mutation failures inside the configured window latch automation off; status and

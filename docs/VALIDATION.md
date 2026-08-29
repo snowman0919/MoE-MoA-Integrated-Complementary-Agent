@@ -10227,3 +10227,161 @@ durable invocation records used provider `local` and model
 `OPENCODE_LOCAL_OK`. This physically verifies restored local execution for the
 real client path while retaining MiMo only for genuine post-local HTTP 400
 fallbacks.
+## Executor production recovery — 2026-08-27
+
+The failed `dgx-moa-executor.service` was traced to the pinned DSpark draft
+symlink resolving to an absent Hugging Face snapshot, which made SGLang treat
+the local path as an invalid repository ID. The exact pinned revision
+`RadixArk/Qwen3.8-27B-DSpark@85ef153be924f17ce4bf62726954eeaa4a73e854`
+was restored in the existing cache. Local-only snapshot resolution then passed
+with six files totaling 2,718,609,744 bytes. No unit topology, bind address,
+authentication setting, model target, or runtime profile was changed.
+
+The existing service started at 17:16:05 KST and became active at 17:33:04 KST
+with zero restarts. SGLang reported 19.11 GB of NVFP4 target weights, 2.99 GB
+of DSpark draft weights, 270,000 FP8 KV tokens, context length 262,144, and
+73.30 GB available after graph capture. The first start compiled 17 FlashInfer
+sm120 FP4 GEMM objects; engine tokenizer startup took 1,007.77 seconds. These
+are cold-start observations, not decode-throughput measurements.
+
+The Executor exposed only `127.0.0.1:9001`; `/health` and `/v1/models` returned
+HTTP 200, and the model record reported `dgx-moa-executor` with
+`max_model_len=262144`. A direct non-thinking generation returned exactly
+`EXECUTOR_OK` in 0.688 seconds. The authenticated wildcard gateway remained on
+port 9000, unauthenticated `/v1/models` returned HTTP 401, and an authenticated
+`dgx-moa-fast` request returned HTTP 200 with exactly `FAST_OK` in 111.511
+seconds. Both Executor and gateway remained active after the smokes.
+
+## OpenCode model metadata projection — 2026-08-27
+
+OpenCode 1.17.18 does not derive custom-provider context limits from the
+OpenAI-compatible `/v1/models` payload; it requires each configured model to
+declare `limit.context` and `limit.output`. The checked-in and active OpenCode
+configuration now use only the public `dgx-moa` and `dgx-moa-fast` aliases with
+context 262,144 and output 16,384. `opencode models dgx-moa --verbose` resolved
+both models as active with text input, tool calls, no model reasoning, and the
+exact configured limits. The focused documentation/config contract test passed.
+
+## End-to-end image input — 2026-08-28
+
+The resident Qwen executor configuration declares `Qwen3_5ForConditionalGeneration`,
+an embedded `qwen3_5_vision` configuration, and distinct image/video token IDs.
+A 390×204 PNG sent directly to loopback port 9001 returned HTTP 200 and the
+correct value `0` in 2.585 seconds; usage reported 72 image tokens. The same
+image returned HTTP 200 and `0` through authenticated `dgx-moa-fast` in 3.376
+seconds and authenticated `dgx-moa` in 31.752 seconds.
+
+OpenCode 1.17.18 resolved both aliases with attachment support, text/image
+input, text output, no model reasoning, tool calls, context 262,144, and output
+16,384. An actual `opencode run -f` request through `dgx-moa-fast` read the PNG
+and returned exactly `0`. After the gateway-only production restart,
+unauthenticated `/v1/models` remained HTTP 401 and its authenticated response
+advertised `input_modalities: ["text", "image"]` for both aliases. Gateway and
+Executor remained active with zero automatic restarts; the Executor was not
+restarted. Port 9001 remained bound only to `127.0.0.1` and port 9000 remained
+the authenticated wildcard listener.
+
+This evidence validates image input to text output only. It does not validate
+audio, video, PDF, or image output.
+
+## OpenCode web search and Qwen reasoning controls — 2026-08-28
+
+The resident Executor accepted `enable_thinking=true` with a bounded reasoning
+budget and returned HTTP 200, exact public content `THINK_OK`, 144 characters of
+native `reasoning_content`, and a stop finish reason in 1.500 seconds. The
+gateway now maps `none`, `low`, `medium`, and `high` to disabled, 1,024, 4,096,
+and 8,192 Qwen reasoning tokens without changing the non-reasoning default for
+requests that omit the setting.
+
+After the gateway-only production restart, authenticated `/v1/models`
+advertised `low` as default, `low`/`medium`/`high` controls, reasoning summaries,
+and text-and-image search for both aliases. An authenticated `dgx-moa-fast`
+Chat Completions request with low reasoning returned exact
+`GATEWAY_THINK_OK`, 206 characters of native reasoning, and HTTP 200. A streamed
+Responses request returned a non-empty 115-character reasoning summary through
+the standard reasoning-summary delta/done events and exact public content
+`RESPONSES_THINK_OK`.
+
+OpenCode 1.17.18 resolved both aliases with reasoning enabled, default low
+effort, `none`/`low`/`medium`/`high` variants, and automatic summaries. A real
+`opencode run --variant low --thinking` emitted a reasoning event and exact
+`OPENCODE_REASONING_OK`. With the documented `OPENCODE_ENABLE_EXA=1` gate and
+`websearch: allow`, a separate run completed one Exa `websearch` call, injected
+the result into the next model turn, and returned the first result title. No
+search API key was required or stored.
+
+Ruff, strict mypy over 53 source files, and all 1,203 tests passed. Gateway and
+Executor remained active with zero automatic restarts; the Executor was not
+restarted.
+
+## Codex subagent admission timeout — 2026-08-28
+
+The affected remote client sent non-streaming `dgx-moa-fast` requests in
+parallel. State records show the successful first local request completed in
+63.677 seconds, while later requests waited 63.734 to 98.371 seconds before
+starting. Four representative queued requests were then cancelled by the
+client at 125.020 to 125.088 seconds with no first byte. Executor journals kept
+decoding and recorded a queued request at each cancellation; this rules out a
+model hang. Across 68 decode samples in the incident window, measured mean
+generation throughput was 13.58 token/s and mean speculative acceptance was
+0.099.
+
+The Executor remains physically bounded to one sequence. Gateway admission
+timeout was reduced from 14,400 to 45 seconds so a queued request returns the
+existing retryable HTTP 503 plus `Retry-After` before the client's 120-second
+budget is consumed. The production gateway loaded `queue_timeout_seconds=45`,
+restarted without restarting the Executor, and an authenticated streamed
+Responses smoke returned `SUBAGENT_OK` plus `response.completed`. Ruff, strict
+mypy over 53 source files, and all 1,203 tests passed. Both services remained
+active with zero automatic restarts; port 9001 remained loopback-only, port
+9000 remained the wildcard gateway, and unauthenticated model discovery
+returned HTTP 401.
+
+## Immediate busy overflow and 2026-08-26 usage attribution — 2026-08-28
+
+The 2026-08-26 OpenCode Go charge shown by the provider was attributable to one
+OpenCode session under API token ID `monad`. It ran for 5.38 hours and issued
+550 gateway requests, including 548 native-agent turns. The local Executor had
+failed startup because its DSpark draft path resolved to a missing snapshot, so
+all 550 scheduling decisions were `local_unavailable -> remote_overflow`.
+
+`mimo-v2.5` completed 496 invocations with 55,083,279 prompt tokens and 265,070
+completion tokens. Average prompt size was 111,055 tokens, p95 was 167,750,
+maximum was 198,723, and recorded cached tokens were zero. The session produced
+498 tool-call turns and 1,071 distinct tool-call IDs. Repeated full accumulated
+conversation and tool history, rather than output volume, therefore dominated
+the provider usage. The local database has no provider tariff, so it supports
+the token attribution but does not independently recompute the displayed
+`$7.84` charge.
+
+A separate set of `local_unavailable` decisions at 00:26–00:32 KST on
+2026-08-28 occurred after the systemd service had physically recovered. The
+fixed lifecycle database still held the earlier generation-37
+`service_failed` result, so the gateway trusted stale control-plane state until
+its 00:32:47 restart reconciled Executor state to `ready` at 00:32:49. Current
+health is HTTP 200 on port 9001, lifecycle state is `ready`, and the inspected
+09:17–09:33 requests all selected `local_idle -> dgx-moa-executor`.
+
+Executor admission now permits one global local wait behind the one-sequence
+Executor. Once that slot is occupied, further low/medium-risk requests go
+directly to OpenCode Go; high/critical requests remain local-only and fail
+closed when the slot is full. In the live three-request test, the owner and
+single waiter returned from `dgx-moa-executor` in 4.959 and 9.566 seconds,
+while the third request returned from `mimo-v2.5` in 11.968 seconds. The
+gateway restarted successfully without restarting the Executor.
+
+## OpenCode textual tool-call recovery — 2026-08-29
+
+Gateway state evidence for session `ses_fb4c0c764ffeVmWZ0hBeDhufV3` shows a
+streamed OpenCode request at 11:06:53 KST emitted two complete
+`<tool_call><function=read>` envelopes as assistant content and ended with
+`finish_reason=stop`. The Chat Completions stream forwarded every content
+delta before terminal validation, stored the markup as `final_output`, and
+incorrectly recorded the request as completed.
+
+The common SSE forwarder now buffers an assistant response that starts with
+that textual tool-call envelope, converts only a complete strict envelope to
+native streamed `tool_calls`, and fails closed without forwarding malformed
+markup. Native tool-call bytes remain unchanged. `ruff check`, `ruff format
+--check`, and all tests in `tests/test_streaming.py` and `tests/test_api.py`
+passed. No production service was restarted or changed.
