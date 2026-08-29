@@ -133,3 +133,23 @@ def test_sglang_dspark_command_requires_and_passes_pinned_measured_config(
     assert arguments[arguments.index("--speculative-draft-model-quantization") + 1] == "unquant"
     assert arguments[arguments.index("--speculative-dspark-block-size") + 1] == "7"
     assert arguments[arguments.index("--num-continuous-decode-steps") + 1] == "2"
+
+
+def test_sglang_dflash_command_uses_dflash_block_size(
+    settings, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    settings.models["executor"].engine = "sglang"
+    settings.models["executor"].speculative = SpeculativeConfig(
+        enabled=True,
+        method="dflash",
+        model="vendor/qwen-dflash2",
+        revision="draft-sha",
+        num_speculative_tokens=8,
+    )
+    monkeypatch.setattr("dgx_moa.serve.load_settings", lambda: settings)
+
+    arguments = command("executor")
+
+    assert arguments[arguments.index("--speculative-algorithm") + 1] == "DFLASH"
+    assert arguments[arguments.index("--speculative-dflash-block-size") + 1] == "8"
+    assert "--speculative-dspark-block-size" not in arguments

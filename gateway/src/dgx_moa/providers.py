@@ -15,6 +15,7 @@ from .http_client import make_http_client
 
 PLANNER_REASONING_TOKENS = 768
 PLANNER_FINAL_TOKENS = 1_536
+QWEN_REASONING_BUDGETS = {"low": 1_024, "medium": 4_096, "high": 8_192}
 MISTRAL_TOOL_CALL_ID = re.compile(r"^[A-Za-z0-9]{9}$")
 
 
@@ -210,6 +211,8 @@ class ModelProvider:
         body = request.copy()
         body["model"] = model.served_name
         body.pop("metadata", None)
+        reasoning_effort = body.pop("reasoning_effort", None)
+        body.pop("reasoning_summary", None)
         if role == "executor" and model.reasoning_parser == "mistral":
             body["messages"] = mistral_messages(body.get("messages", []))
             if body["messages"] and body["messages"][-1].get("role") == "assistant":
@@ -217,10 +220,13 @@ class ModelProvider:
                 body["add_generation_prompt"] = False
         if role == "executor" and model.reasoning_parser == "qwen3":
             body["messages"] = qwen_messages(body.get("messages", []))
-            body["chat_template_kwargs"] = {
-                **dict(body.get("chat_template_kwargs") or {}),
-                "enable_thinking": False,
-            }
+            template_options = dict(body.get("chat_template_kwargs") or {})
+            template_options["enable_thinking"] = reasoning_effort in QWEN_REASONING_BUDGETS
+            if reasoning_effort in QWEN_REASONING_BUDGETS:
+                template_options["reasoning_budget"] = QWEN_REASONING_BUDGETS[reasoning_effort]
+            else:
+                template_options.pop("reasoning_budget", None)
+            body["chat_template_kwargs"] = template_options
         if role != "executor":
             body.pop("tools", None)
             body.pop("tool_choice", None)

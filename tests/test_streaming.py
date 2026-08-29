@@ -58,6 +58,42 @@ async def test_responses_sse_translates_chat_text_and_usage() -> None:
 
 
 @pytest.mark.asyncio
+async def test_responses_sse_translates_reasoning_summary() -> None:
+    async def upstream():
+        yield b'data: {"choices":[{"delta":{"reasoning_content":"check "}}]}\n\n'
+        yield b'data: {"choices":[{"delta":{"reasoning_content":"facts"}}]}\n\n'
+        yield b'data: {"choices":[{"delta":{"content":"done"}}]}\n\n'
+        yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    chunks = [
+        chunk
+        async for chunk in responses_sse(
+            upstream(),
+            "dgx-moa-fast",
+            reasoning_effort="medium",
+            reasoning_summary="auto",
+        )
+    ]
+    events = [
+        json.loads(line[6:])
+        for chunk in chunks
+        for line in chunk.decode().splitlines()
+        if line.startswith("data: ")
+    ]
+
+    assert [
+        event["delta"]
+        for event in events
+        if event["type"] == "response.reasoning_summary_text.delta"
+    ] == ["check ", "facts"]
+    completed = events[-1]["response"]
+    assert completed["reasoning"] == {"effort": "medium", "summary": "auto"}
+    assert completed["output"][0]["summary"][0]["text"] == "check facts"
+    assert completed["output"][1]["content"][0]["text"] == "done"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "text",
     [
@@ -1441,6 +1477,58 @@ async def test_native_tool_call_delta_bytes_are_preserved_exactly() -> None:
     assert observation.tool_call_names == {0: "shell"}
     assert observation.tool_call_ids_by_index == {0: "call-1"}
     assert observation.tool_call_arguments == {0: '{"cmd":"ls"}'}
+
+
+@pytest.mark.asyncio
+async def test_text_tool_markup_is_recovered_before_it_reaches_the_client() -> None:
+    markup = (
+        "<tool_call>\n<function=read>\n"
+        "<parameter=filePath>\n/tmp/SKILL.md\n</parameter>\n"
+        "<parameter=offset>\n1\n</parameter>\n"
+        "</function>\n</tool_call>\n"
+        "<tool_call>\n<function=read>\n"
+        "<parameter=filePath>\n/tmp/SKILL.md\n</parameter>\n"
+        "<parameter=offset>\n60\n</parameter>\n"
+        "</function>\n</tool_call>"
+    )
+
+    async def upstream():
+        yield (
+            "data: " + json.dumps({"choices": [{"delta": {"content": markup}}]}) + "\n\n"
+        ).encode()
+        yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    observation = StreamObservation(max_capture_bytes=10_000)
+    events = [event async for event in forward_sse(upstream(), observation, max_event_bytes=10_000)]
+
+    assert all(b"<tool_call>" not in event for event in events)
+    assert observation.finish_reasons == ["tool_calls"]
+    assert observation.tool_call_names == {0: "read", 1: "read"}
+    assert json.loads(observation.tool_call_arguments[0]) == {
+        "filePath": "/tmp/SKILL.md",
+        "offset": 1,
+    }
+    assert json.loads(observation.tool_call_arguments[1]) == {
+        "filePath": "/tmp/SKILL.md",
+        "offset": 60,
+    }
+
+
+@pytest.mark.asyncio
+async def test_malformed_text_tool_markup_is_not_forwarded() -> None:
+    async def upstream():
+        yield b'data: {"choices":[{"delta":{"content":"<tool_call>broken"}}]}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    forwarded = []
+    with pytest.raises(ValueError, match="internal protocol markup"):
+        async for event in forward_sse(
+            upstream(), StreamObservation(max_capture_bytes=1000), max_event_bytes=1000
+        ):
+            forwarded.append(event)
+
+    assert forwarded == []
 
 
 @pytest.mark.asyncio

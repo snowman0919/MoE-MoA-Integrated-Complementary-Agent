@@ -214,6 +214,56 @@ def has_internal_protocol_leak(text: str) -> bool:
     )
 
 
+_TEXT_TOOL_CALL = re.compile(
+    r"\s*<tool_call>\s*<function=(?P<name>[A-Za-z_][A-Za-z0-9_]*)>"
+    r"(?P<parameters>.*?)</function>\s*</tool_call>",
+    re.DOTALL,
+)
+_TEXT_TOOL_PARAMETER = re.compile(
+    r"\s*<parameter=(?P<name>[A-Za-z_][A-Za-z0-9_]*)>"
+    r"(?P<value>.*?)</parameter>",
+    re.DOTALL,
+)
+
+
+def recover_text_tool_calls(text: str) -> list[dict[str, object]] | None:
+    calls: list[dict[str, object]] = []
+    cursor = 0
+    for match in _TEXT_TOOL_CALL.finditer(text):
+        if text[cursor : match.start()].strip():
+            return None
+        arguments: dict[str, object] = {}
+        parameter_cursor = 0
+        parameters = match.group("parameters")
+        for parameter in _TEXT_TOOL_PARAMETER.finditer(parameters):
+            if parameters[parameter_cursor : parameter.start()].strip():
+                return None
+            name = parameter.group("name")
+            if name in arguments:
+                return None
+            value = parameter.group("value").strip()
+            try:
+                arguments[name] = json.loads(value)
+            except ValueError:
+                arguments[name] = value
+            parameter_cursor = parameter.end()
+        if parameters[parameter_cursor:].strip():
+            return None
+        calls.append(
+            {
+                "index": len(calls),
+                "id": f"call_{uuid.uuid4().hex}",
+                "type": "function",
+                "function": {
+                    "name": match.group("name"),
+                    "arguments": json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
+                },
+            }
+        )
+        cursor = match.end()
+    return calls if calls and not text[cursor:].strip() else None
+
+
 def is_read_only_evaluation(objective: str) -> bool:
     normalized = objective.lower()
     evaluation = any(
@@ -600,6 +650,9 @@ async def forward_sse(
     max_event_bytes: int,
 ) -> AsyncGenerator[bytes, None]:
     buffer = bytearray()
+    protocol_buffering = False
+    protocol_text: list[str] = []
+    protocol_observation = StreamObservation(max_capture_bytes=0)
     try:
         async for chunk in upstream:
             buffer.extend(chunk)
@@ -610,6 +663,61 @@ async def forward_sse(
                     raise ValueError(f"SSE event exceeds {max_event_bytes} bytes")
                 event = bytes(buffer[:event_size])
                 del buffer[:event_size]
+                if protocol_buffering:
+                    protocol_observation.observe(event)
+                    for line in event.decode(errors="replace").splitlines():
+                        if line.startswith("data: ") and line != "data: [DONE]":
+                            try:
+                                delta = (json.loads(line[6:]).get("choices") or [{}])[0].get(
+                                    "delta"
+                                ) or {}
+                            except ValueError:
+                                continue
+                            if isinstance(delta.get("content"), str):
+                                protocol_text.append(delta["content"])
+                    if _is_done(event):
+                        calls = recover_text_tool_calls("".join(protocol_text))
+                        if calls is None:
+                            raise ValueError("upstream response contains internal protocol markup")
+                        repaired = (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "choices": [
+                                        {
+                                            "delta": {"tool_calls": calls},
+                                            "finish_reason": "tool_calls",
+                                        }
+                                    ],
+                                    "usage": protocol_observation.usage or None,
+                                },
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                            + "\n\n"
+                        ).encode()
+                        observation.observe(repaired)
+                        yield repaired
+                        observation.done_seen = True
+                        yield event
+                        return
+                    continue
+                event_text = ""
+                for line in event.decode(errors="replace").splitlines():
+                    if line.startswith("data: ") and line != "data: [DONE]":
+                        try:
+                            delta = (json.loads(line[6:]).get("choices") or [{}])[0].get(
+                                "delta"
+                            ) or {}
+                        except ValueError:
+                            continue
+                        if isinstance(delta.get("content"), str):
+                            event_text += delta["content"]
+                if event_text.lstrip().startswith("<tool_call>"):
+                    protocol_buffering = True
+                    protocol_text.append(event_text)
+                    protocol_observation.observe(event)
+                    continue
                 observation.observe(event)
                 if _is_done(event):
                     if not observation.done_seen:
@@ -696,7 +804,11 @@ async def completed_chat_sse(payload: dict[str, Any]) -> AsyncIterator[bytes]:
     event = {
         "choices": [
             {
-                "delta": {"content": message.get("content"), "tool_calls": tool_calls},
+                "delta": {
+                    "content": message.get("content"),
+                    "reasoning_content": message.get("reasoning_content"),
+                    "tool_calls": tool_calls,
+                },
                 "finish_reason": choice.get("finish_reason"),
             }
         ],
@@ -722,13 +834,19 @@ async def responses_sse(
     successful_tool_fingerprints: frozenset[str] = frozenset(),
     workspace_inventory_complete: bool = False,
     workspace_inventory_paths: tuple[str, ...] = (),
+    reasoning_effort: str | None = None,
+    reasoning_summary: str | None = None,
 ) -> AsyncGenerator[bytes, None]:
     """Translate Chat Completions SSE into Responses text and function-call events."""
     response_id = f"resp_{uuid.uuid4().hex}"
     message_id = f"msg_{uuid.uuid4().hex}"
+    reasoning_id = f"rs_{uuid.uuid4().hex}"
+    include_reasoning_summary = reasoning_summary == "auto"
+    message_output_index = int(include_reasoning_summary)
     created_at = int(time.time())
     sequence_number = 0
     text_parts: list[str] = []
+    reasoning_parts: list[str] = []
     buffered_text_chars = 0
     tool_calls: dict[int, dict[str, object]] = {}
     usage: dict[str, object] | None = None
@@ -750,7 +868,7 @@ async def responses_sse(
             "output": output,
             "parallel_tool_calls": True,
             "previous_response_id": None,
-            "reasoning": {"effort": None, "summary": None},
+            "reasoning": {"effort": reasoning_effort, "summary": reasoning_summary},
             "store": False,
             "temperature": 1.0,
             "text": {"format": {"type": "text"}},
@@ -779,11 +897,26 @@ async def responses_sse(
     }
     yield event("response.created", response=response_payload("in_progress", []))
     yield event("response.in_progress", response=response_payload("in_progress", []))
-    yield event("response.output_item.added", output_index=0, item=pending_message)
+    if include_reasoning_summary:
+        yield event(
+            "response.output_item.added",
+            output_index=0,
+            item={"id": reasoning_id, "type": "reasoning", "summary": []},
+        )
+        yield event(
+            "response.reasoning_summary_part.added",
+            item_id=reasoning_id,
+            output_index=0,
+            summary_index=0,
+            part={"type": "summary_text", "text": ""},
+        )
+    yield event(
+        "response.output_item.added", output_index=message_output_index, item=pending_message
+    )
     yield event(
         "response.content_part.added",
         item_id=message_id,
-        output_index=0,
+        output_index=message_output_index,
         content_index=0,
         part={"type": "output_text", "text": "", "annotations": [], "logprobs": []},
     )
@@ -815,6 +948,20 @@ async def responses_sse(
                     terminal_seen = True
                     finish_reasons.append(str(choice["finish_reason"]))
                 delta = choice.get("delta") or {}
+                reasoning_content = delta.get("reasoning_content")
+                if (
+                    include_reasoning_summary
+                    and isinstance(reasoning_content, str)
+                    and reasoning_content
+                ):
+                    reasoning_parts.append(reasoning_content)
+                    yield event(
+                        "response.reasoning_summary_text.delta",
+                        item_id=reasoning_id,
+                        output_index=0,
+                        summary_index=0,
+                        delta=reasoning_content,
+                    )
                 content = delta.get("content")
                 if isinstance(content, str) and content:
                     text_parts.append(content)
@@ -916,11 +1063,36 @@ async def responses_sse(
             ):
                 text = ""
             text_parts = [text]
+        completed_output: list[dict[str, object]] = []
+        if include_reasoning_summary:
+            reasoning_text = "".join(reasoning_parts)
+            reasoning_part = {"type": "summary_text", "text": reasoning_text}
+            reasoning_item: dict[str, object] = {
+                "id": reasoning_id,
+                "type": "reasoning",
+                "summary": [reasoning_part],
+            }
+            yield event(
+                "response.reasoning_summary_text.done",
+                item_id=reasoning_id,
+                output_index=0,
+                summary_index=0,
+                text=reasoning_text,
+            )
+            yield event(
+                "response.reasoning_summary_part.done",
+                item_id=reasoning_id,
+                output_index=0,
+                summary_index=0,
+                part=reasoning_part,
+            )
+            yield event("response.output_item.done", output_index=0, item=reasoning_item)
+            completed_output.append(reasoning_item)
         for content in text_parts:
             yield event(
                 "response.output_text.delta",
                 item_id=message_id,
-                output_index=0,
+                output_index=message_output_index,
                 content_index=0,
                 delta=content,
                 logprobs=[],
@@ -941,7 +1113,7 @@ async def responses_sse(
         yield event(
             "response.output_text.done",
             item_id=message_id,
-            output_index=0,
+            output_index=message_output_index,
             content_index=0,
             text=text,
             logprobs=[],
@@ -949,13 +1121,18 @@ async def responses_sse(
         yield event(
             "response.content_part.done",
             item_id=message_id,
-            output_index=0,
+            output_index=message_output_index,
             content_index=0,
             part=part,
         )
-        yield event("response.output_item.done", output_index=0, item=completed_message)
-        completed_output = [completed_message]
+        yield event(
+            "response.output_item.done",
+            output_index=message_output_index,
+            item=completed_message,
+        )
+        completed_output.append(completed_message)
         for index, item in sorted(tool_calls.items()):
+            tool_output_index = index + message_output_index + 1
             original_name = str(item["name"])
             item["name"], item["_arguments"] = compatible_edit_call(
                 original_name,
@@ -1096,7 +1273,7 @@ async def responses_sse(
                     item["_arguments_emitted"] = len(str(item["_arguments"]))
                 yield event(
                     "response.output_item.added",
-                    output_index=index + 1,
+                    output_index=tool_output_index,
                     item={key: value for key, value in item.items() if not key.startswith("_")},
                 )
             if item["_kind"] == "custom":
@@ -1118,16 +1295,18 @@ async def responses_sse(
                     yield event(
                         "response.custom_tool_call_input.delta",
                         item_id=custom_item["id"],
-                        output_index=index + 1,
+                        output_index=tool_output_index,
                         delta=custom_input,
                     )
                 yield event(
                     "response.custom_tool_call_input.done",
                     item_id=custom_item["id"],
-                    output_index=index + 1,
+                    output_index=tool_output_index,
                     input=custom_input,
                 )
-                yield event("response.output_item.done", output_index=index + 1, item=custom_item)
+                yield event(
+                    "response.output_item.done", output_index=tool_output_index, item=custom_item
+                )
                 completed_output.append(custom_item)
                 continue
             item.pop("_arguments", None)
@@ -1137,17 +1316,17 @@ async def responses_sse(
                     "response.function_call_arguments.delta",
                     response_id=response_id,
                     item_id=item["id"],
-                    output_index=index + 1,
+                    output_index=tool_output_index,
                     delta=item["arguments"],
                 )
             yield event(
                 "response.function_call_arguments.done",
                 response_id=response_id,
                 item_id=item["id"],
-                output_index=index + 1,
+                output_index=tool_output_index,
                 arguments=item["arguments"],
             )
-            yield event("response.output_item.done", output_index=index + 1, item=item)
+            yield event("response.output_item.done", output_index=tool_output_index, item=item)
             completed_output.append(item)
         yield event(
             "response.completed",

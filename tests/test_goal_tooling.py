@@ -207,12 +207,29 @@ def test_lifecycle_docs_link_canonical_contract_and_keep_evidence_pending() -> N
 def test_api_client_mode_documentation() -> None:
     api_modes = Path("docs/API_CLIENT_MODES.md").read_text()
     hermes = Path("docs/HERMES_AGENT.md").read_text()
+    opencode = json.loads(Path("config/opencode.example.json").read_text())
     for alias in ("dgx-moa", "dgx-moa-fast"):
         assert alias in api_modes
     for retired_alias in ("dgx-moa-agent", "dgx-moa-orchestrated", "dgx-moa-chat"):
         assert retired_alias not in api_modes
-    assert "context_length: 131072" in api_modes
-    assert "public executor context is\n131,072 tokens" in api_modes
+    assert "context_length: 262144" in api_modes
+    assert "public executor context is\n262,144 tokens" in api_modes
+    assert opencode["model"] == "dgx-moa/dgx-moa"
+    assert set(opencode["provider"]["dgx-moa"]["models"]) == {"dgx-moa", "dgx-moa-fast"}
+    assert all(
+        model["limit"] == {"context": 262_144, "output": 16_384}
+        for model in opencode["provider"]["dgx-moa"]["models"].values()
+    )
+    assert all(
+        model["attachment"] is True
+        and model["reasoning"] is True
+        and model["tool_call"] is True
+        and model["modalities"] == {"input": ["text", "image"], "output": ["text"]}
+        and model["options"] == {"reasoningEffort": "low", "reasoningSummary": "auto"}
+        and set(model["variants"]) == {"none", "low", "medium", "high"}
+        for model in opencode["provider"]["dgx-moa"]["models"].values()
+    )
+    assert opencode["permission"] == {"websearch": "allow", "webfetch": "allow"}
     assert "PILOT_ACTIVE" in api_modes
     assert "http://100.125.239.72:9000/v1" in hermes
     assert "DGX_MOA_API_KEY" in hermes

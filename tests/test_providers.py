@@ -334,6 +334,22 @@ def test_qwen_executor_collapses_leading_instructions_without_mutation(settings)
     )
     assert automatic["chat_template_kwargs"] == {"enable_thinking": False}
 
+    reasoned = ModelProvider.body(
+        "executor",
+        model,
+        {
+            "messages": [{"role": "user", "content": "Reason briefly."}],
+            "reasoning_effort": "medium",
+            "reasoning_summary": "auto",
+        },
+    )
+    assert reasoned["chat_template_kwargs"] == {
+        "enable_thinking": True,
+        "reasoning_budget": 4_096,
+    }
+    assert "reasoning_effort" not in reasoned
+    assert "reasoning_summary" not in reasoned
+
 
 def test_nemotron_planner_keeps_bounded_reasoning(settings) -> None:  # type: ignore[no-untyped-def]
     body = ModelProvider.body(

@@ -114,6 +114,29 @@ def test_response_language_uses_current_user_objective() -> None:
     )
 
 
+def test_reasoning_request_aliases_and_bounds() -> None:
+    chat = ChatRequest.model_validate(
+        {
+            "model": "dgx-moa-fast",
+            "messages": [{"role": "user", "content": "Work."}],
+            "reasoningEffort": "high",
+            "reasoningSummary": "auto",
+        }
+    )
+    assert chat.reasoning_effort == "high"
+    assert chat.reasoning_summary == "auto"
+    assert (
+        ResponsesRequest.model_validate(
+            {"model": "dgx-moa-fast", "input": "Work.", "reasoning": {"effort": "low"}}
+        ).reasoning.effort
+        == "low"
+    )  # type: ignore[union-attr]
+    with pytest.raises(ValueError):
+        ResponsesRequest.model_validate(
+            {"model": "dgx-moa-fast", "input": "Work.", "reasoning": {"effort": "ultra"}}
+        )
+
+
 def test_busy_executor_routes_new_session_to_frontier(
     settings: Settings, stub_provider: StubProvider
 ) -> None:
@@ -229,6 +252,22 @@ def test_api_key_scheduler_pins_cross_key_turn_to_remote_fallback_and_projects_g
                 "key-a", "held-request", risk="medium", flash_available=True
             )
         )
+        queued: dict[str, object] = {}
+
+        def wait_for_local() -> None:
+            queued["admission"] = asyncio.run(
+                app.state.executor_scheduler.acquire(
+                    "key-a", "queued-request", risk="medium", flash_available=True
+                )
+            )
+
+        waiting = threading.Thread(target=wait_for_local)
+        waiting.start()
+        for _ in range(100):
+            if app.state.executor_scheduler.snapshot()["queued"] == 1:
+                break
+            time.sleep(0.01)
+        assert app.state.executor_scheduler.snapshot()["queued"] == 1
         response = client.post(
             "/v1/chat/completions",
             headers={"Authorization": "Bearer secret-b", "X-Session-ID": "flash-session"},
@@ -240,6 +279,9 @@ def test_api_key_scheduler_pins_cross_key_turn_to_remote_fallback_and_projects_g
         events = app.state.store.events("flash-session")
         state = app.state.store.get("flash-session")
         app.state.executor_scheduler.release(held.request_id)
+        waiting.join(timeout=1)
+        assert not waiting.is_alive()
+        app.state.executor_scheduler.release("queued-request")
         flash_calls = tuple(stub_provider.calls)
         stub_provider.calls.clear()
         original_complete = stub_provider.complete
@@ -4453,6 +4495,7 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             "model_messages",
             "include_skills_usage_instructions",
             "supports_reasoning_summaries",
+            "supports_reasoning_summary_parameter",
             "default_reasoning_summary",
             "support_verbosity",
             "default_verbosity",
@@ -4476,7 +4519,24 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert all(model["apply_patch_tool_type"] == "freeform" for model in models["models"])
         assert all(model["shell_type"] == "shell_command" for model in models["models"])
         assert all(model["context_window"] == context_length for model in models["models"])
-        assert all(model["supports_reasoning_summaries"] is False for model in models["models"])
+        assert all(model["input_modalities"] == ["text", "image"] for model in models["models"])
+        assert all(model["default_reasoning_level"] == "low" for model in models["models"])
+        assert all(
+            [level["effort"] for level in model["supported_reasoning_levels"]]
+            == ["low", "medium", "high"]
+            for model in models["models"]
+        )
+        assert all(model["supports_reasoning_summaries"] is True for model in models["models"])
+        assert all(
+            model["supports_reasoning_summary_parameter"] is True
+            and model["default_reasoning_summary"] == "auto"
+            for model in models["models"]
+        )
+        assert all(
+            model["supports_search_tool"] is True
+            and model["web_search_tool_type"] == "text_and_image"
+            for model in models["models"]
+        )
         assert all(model["tool_mode"] == "direct" for model in models["models"])
         assert all(
             "integration display names are not MCP server IDs" in model["base_instructions"]
@@ -4511,7 +4571,7 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
             for model in models["models"]
         )
         assert all(
-            model["comp_hash"] == f"dgx-moa-{context_length}-v1" for model in models["models"]
+            model["comp_hash"] == f"dgx-moa-{context_length}-v2" for model in models["models"]
         )
         response = client.post(
             "/v1/chat/completions",
@@ -4524,6 +4584,26 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert call["id"] == "call-preserved"
         assert response.json()["usage"]["total_tokens"] == 3
         assert stub_provider.calls == ["reasoner", "executor"]
+
+
+def test_fast_multimodal_content_reaches_executor(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
+    content = [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,aW1hZ2U="}},
+        {"type": "text", "text": "Read the image."},
+    ]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={"model": "dgx-moa-fast", "messages": [{"role": "user", "content": content}]},
+        )
+
+    assert response.status_code == 200
+    assert stub_provider.calls == ["executor"]
+    assert any(
+        message.get("role") == "user" and message.get("content") == content
+        for message in stub_provider.requests[-1]["messages"]
+    )
 
 
 def test_admin_drain_rejects_new_work_and_can_be_cancelled(
@@ -7705,6 +7785,96 @@ def test_streaming_upstream_400_returns_invalid_request(
         assert response.status_code == 400
         assert response.json()["error"]["type"] == "invalid_request_error"
         assert response.json()["error"]["code"] == "invalid_request"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_local_executor_400_falls_back_once_to_mimo(
+    settings: Settings, stub_provider: StubProvider, stream: bool
+) -> None:
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            }
+        }
+    )
+    local_calls = 0
+    flash_calls = 0
+
+    async def rejected(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal local_calls
+        local_calls += 1
+        response = httpx.Response(
+            400,
+            json={"message": "System message must be at the beginning.", "code": 400},
+            request=httpx.Request("POST", model.base_url),
+        )
+        raise httpx.HTTPStatusError("bad request", request=response.request, response=response)
+
+    if stream:
+        stub_provider.stream = rejected  # type: ignore[method-assign]
+    else:
+        stub_provider.complete = rejected  # type: ignore[method-assign]
+
+    class Flash:
+        async def available(self) -> bool:
+            return True
+
+        async def execute(self, request, correlation_id):  # type: ignore[no-untyped-def]
+            nonlocal flash_calls
+            del request, correlation_id
+            flash_calls += 1
+            return {
+                "model": "mimo-v2.5",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "MIMO_400_FALLBACK_OK"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"total_tokens": 1},
+                "provider_provenance": {"provider": "opencode_go"},
+            }
+
+    app = create_app(
+        controlled,
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
+        overflow_executor=Flash(),  # type: ignore[arg-type]
+    )
+    session_id = f"local-400-{'stream' if stream else 'complete'}"
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-fast",
+                "stream": stream,
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        events = app.state.store.events(session_id)
+
+    assert response.status_code == 200
+    assert "MIMO_400_FALLBACK_OK" in response.text
+    assert local_calls == 1
+    assert flash_calls == 1
+    scheduled = next(event for event in events if event["event_type"] == "executor_scheduled")
+    assert scheduled["payload"]["selected_executor"] == "local_primary"
+    fallback = next(
+        event for event in events if event["event_type"] == "executor_local_http_400_fallback"
+    )
+    assert fallback["payload"] == {
+        "from": "local_primary",
+        "to": "remote_overflow",
+        "reason": "local_http_400",
+        "stage": "executor_first_byte" if stream else "executor_total",
+    }
+    assert_usage(app, "completed")
 
 
 def test_api_validation(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

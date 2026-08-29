@@ -10099,3 +10099,289 @@ Starlette deprecation warning).
 The pre-promotion environment, unit, model configuration, and lifecycle
 database are backed up under
 `/home/kotori9/.local/state/dgx-moa/backups/qwen38-production-20260819T1245KST`.
+
+## OpenCode Qwen system-message compatibility — 2026-08-19
+
+Production journals and durable request evidence identified OpenCode session
+`ses_fe76a3da9ffeHQrmM8YHqjtbqx`, request
+`ef3ec931-6545-48ad-990d-e6dc896987f6`. The scheduler selected
+`local_primary` with `reason=local_idle`; the Qwythos Reasoner completed, then
+both the Gateway and loopback Executor recorded
+`POST /v1/chat/completions` as HTTP 400 at `14:55:45 KST`. The Executor failed
+at first-byte admission after 71.95 ms, before any token usage was recorded.
+
+OpenCode 1.17.18 reproduced the same failure. Its original ten-tool request had
+message roles `[system, user]` and completed directly against loopback 9001.
+Replaying the Gateway-prepared request showed roles `[system, system, user]`
+and returned SGLang's exact error:
+`System message must be at the beginning.` The Gateway had inserted its Runtime
+policy as a second leading system message instead of combining it with the
+client's existing system instructions. MiMo did not run because scheduling had
+already admitted the healthy local Executor and the outer HTTP error handler
+classified every local HTTP 400 as an invalid client request; remote fallback
+selection occurs before local invocation, not after this response.
+
+The Executor preparation boundary now combines the Runtime policy with an
+existing leading system message. A focused three-test run passed, including a
+new regression that requires roles `[system, user]` while preserving both
+instruction bodies. The repaired prepared request retained all ten OpenCode
+tools, reached the live loopback Qwen Executor, emitted SSE chunks, and ended
+with `[DONE]` instead of HTTP 400. Ruff passed over `gateway/src` and `tests`,
+strict mypy passed 53 source files, and the complete suite passed 1,176 tests in
+46.35 seconds with the existing Starlette deprecation warning. At this
+pre-deployment stage, no production checkout, service, security topology, or
+systemd state had been changed.
+
+### Production deployment and OpenCode replay
+
+After explicit operator approval, production `main` was fast-forwarded from
+`75bee24a` to `fa855cc38` and only `dgx-moa-gateway.service` was drain-restarted.
+The Gateway PID changed from `2738838` to `2849141`; the Executor remained
+active under PID `2700788` with `NRestarts=0`. The resulting listeners remained
+Gateway `0.0.0.0:9000` and Executor `127.0.0.1:9001`, preserving the required
+authentication and loopback topology. The authenticated healthcheck reported
+`status=ok`, both Reasoner and Executor ready, and only the intended public
+models `dgx-moa` and `dgx-moa-fast`.
+
+The same OpenCode 1.17.18 ten-tool request then exited zero and returned
+`OPENCODE_REPRO_OK` in session `ses_fe74dfd52ffeqCuZoHc5BKs4WB`. Gateway and
+Executor journals recorded HTTP 200 for both OpenCode's title request and main
+request. Durable events recorded both requests as `local_primary` and
+`completed`; the main request used `reason=round_robin_promoted` after the title
+request used `reason=local_idle`. No event with a remote or fallback event type
+was recorded for either request. This is the intended outcome: the valid local
+request no longer fails, so MiMo fallback is neither needed nor invoked.
+
+## Local Executor HTTP 400 fallback — 2026-08-19
+
+The post-invocation routing contract now treats an HTTP 400 returned by an
+admitted `local_primary` Executor as a one-time MiMo fallback condition when
+Executor scheduling and the remote overflow provider are both enabled. The
+Gateway releases the local Executor request/stream leases and scheduler
+admission before selecting `remote_overflow`, records
+`executor_local_http_400_fallback` with `reason=local_http_400`, and does not
+retry the local request. HTTP 400 responses remain client-visible when remote
+overflow is not configured, when scheduling is disabled, or when the failing
+provider was not `local_primary`.
+
+A parameterized regression first failed for both streaming and non-streaming
+requests, then passed with exactly one local call and one MiMo call per request.
+Adjacent regressions confirmed that a streaming HTTP 400 without remote
+overflow and a typed OpenAI HTTP 400 still remain HTTP 400 responses. Ruff
+passed over `gateway/src` and `tests`, strict mypy passed 53 source files, and
+the complete suite passed 1,178 tests in 47.89 seconds with the existing
+Starlette deprecation warning. This evidence preceded production deployment of
+the new fallback condition.
+
+After operator-approved deployment, production `main` was fast-forwarded from
+`6f2ec3241` to `f5cf4f355` and only the Gateway was drain-restarted. Its PID
+changed from `2849141` to `2854188`; the Executor remained PID `2700788`. A
+bounded authenticated request in session `fallback-http400-prod-20260819`
+intentionally retained two client system messages after Runtime preparation.
+The loopback Executor recorded HTTP 400 at `15:37:52 KST`, while the Gateway
+returned HTTP 200 at `15:37:55 KST` with model `mimo-v2.5`, finish reason
+`stop`, and content `MIMO_HTTP400_PROD_OK`.
+
+Durable events recorded the exact sequence: `executor_scheduled` selected
+`local_primary` for `local_idle`; `executor_started` used local;
+`executor_local_http_400_fallback` recorded `local_http_400`;
+`executor_remote_completed` recorded `mimo-v2.5`; and `session_ended` recorded
+`completed`. Request
+`f92c3ead-dab0-4a08-816d-288c9fc96ff7` completed without a retryable failure
+class and recorded 2,029 prompt, 28 completion, and 2,057 total tokens. This
+physically verifies the requested post-local-400 MiMo fallback rather than
+inferring it from unit tests.
+
+### Multiple leading OpenCode system messages
+
+Subsequent production evidence showed five OpenCode requests all selected
+`local_primary` but then recorded `executor_local_http_400_fallback`. The latest
+request inputs began with roles `[system, system, user, ...]`; the prior
+normalization merged Runtime policy only into the first system message and left
+the second intact. A content-free direct Executor reproduction returned HTTP
+400 with `System message must be at the beginning.` This proved that fallback
+was masking repeated local chat-template rejection rather than the scheduler
+skipping the local model.
+
+Executor preparation now combines every consecutive leading system message,
+in order, into the first message while preserving its other fields. The updated
+regression failed before the change with roles `[system, system, user]` and
+passed afterward with `[system, user]` and both client instructions preserved.
+Ruff passed over `gateway/src` and `tests`, strict mypy passed 53 source files,
+and the complete suite passed 1,178 tests in 59.63 seconds with the existing
+Starlette deprecation warning. This evidence preceded deployment of the
+normalization correction.
+
+After operator-approved deployment, production `main` was fast-forwarded from
+`687c87d48` to `bdc833367` and only the Gateway was drain-restarted. Its PID
+changed from `2854188` to `2869097`; the Executor remained PID `2700788`. An
+authenticated production request with two consecutive leading system messages
+selected `local_primary` for `reason=local_idle`, completed through provider
+`local` and model `dgx-moa-executor`, and recorded no HTTP 400 fallback or
+remote-completion event. The loopback Executor journal recorded HTTP 200.
+
+OpenCode 1.17.18 then completed a fresh title request and main request in
+session `ses_fe71d7e43ffe4FAi0VTnd64ZvG`. Both selected `local_primary`, both
+durable invocation records used provider `local` and model
+`dgx-moa-executor`, neither recorded a fallback reason, and the client returned
+`OPENCODE_LOCAL_OK`. This physically verifies restored local execution for the
+real client path while retaining MiMo only for genuine post-local HTTP 400
+fallbacks.
+## Executor production recovery — 2026-08-27
+
+The failed `dgx-moa-executor.service` was traced to the pinned DSpark draft
+symlink resolving to an absent Hugging Face snapshot, which made SGLang treat
+the local path as an invalid repository ID. The exact pinned revision
+`RadixArk/Qwen3.8-27B-DSpark@85ef153be924f17ce4bf62726954eeaa4a73e854`
+was restored in the existing cache. Local-only snapshot resolution then passed
+with six files totaling 2,718,609,744 bytes. No unit topology, bind address,
+authentication setting, model target, or runtime profile was changed.
+
+The existing service started at 17:16:05 KST and became active at 17:33:04 KST
+with zero restarts. SGLang reported 19.11 GB of NVFP4 target weights, 2.99 GB
+of DSpark draft weights, 270,000 FP8 KV tokens, context length 262,144, and
+73.30 GB available after graph capture. The first start compiled 17 FlashInfer
+sm120 FP4 GEMM objects; engine tokenizer startup took 1,007.77 seconds. These
+are cold-start observations, not decode-throughput measurements.
+
+The Executor exposed only `127.0.0.1:9001`; `/health` and `/v1/models` returned
+HTTP 200, and the model record reported `dgx-moa-executor` with
+`max_model_len=262144`. A direct non-thinking generation returned exactly
+`EXECUTOR_OK` in 0.688 seconds. The authenticated wildcard gateway remained on
+port 9000, unauthenticated `/v1/models` returned HTTP 401, and an authenticated
+`dgx-moa-fast` request returned HTTP 200 with exactly `FAST_OK` in 111.511
+seconds. Both Executor and gateway remained active after the smokes.
+
+## OpenCode model metadata projection — 2026-08-27
+
+OpenCode 1.17.18 does not derive custom-provider context limits from the
+OpenAI-compatible `/v1/models` payload; it requires each configured model to
+declare `limit.context` and `limit.output`. The checked-in and active OpenCode
+configuration now use only the public `dgx-moa` and `dgx-moa-fast` aliases with
+context 262,144 and output 16,384. `opencode models dgx-moa --verbose` resolved
+both models as active with text input, tool calls, no model reasoning, and the
+exact configured limits. The focused documentation/config contract test passed.
+
+## End-to-end image input — 2026-08-28
+
+The resident Qwen executor configuration declares `Qwen3_5ForConditionalGeneration`,
+an embedded `qwen3_5_vision` configuration, and distinct image/video token IDs.
+A 390×204 PNG sent directly to loopback port 9001 returned HTTP 200 and the
+correct value `0` in 2.585 seconds; usage reported 72 image tokens. The same
+image returned HTTP 200 and `0` through authenticated `dgx-moa-fast` in 3.376
+seconds and authenticated `dgx-moa` in 31.752 seconds.
+
+OpenCode 1.17.18 resolved both aliases with attachment support, text/image
+input, text output, no model reasoning, tool calls, context 262,144, and output
+16,384. An actual `opencode run -f` request through `dgx-moa-fast` read the PNG
+and returned exactly `0`. After the gateway-only production restart,
+unauthenticated `/v1/models` remained HTTP 401 and its authenticated response
+advertised `input_modalities: ["text", "image"]` for both aliases. Gateway and
+Executor remained active with zero automatic restarts; the Executor was not
+restarted. Port 9001 remained bound only to `127.0.0.1` and port 9000 remained
+the authenticated wildcard listener.
+
+This evidence validates image input to text output only. It does not validate
+audio, video, PDF, or image output.
+
+## OpenCode web search and Qwen reasoning controls — 2026-08-28
+
+The resident Executor accepted `enable_thinking=true` with a bounded reasoning
+budget and returned HTTP 200, exact public content `THINK_OK`, 144 characters of
+native `reasoning_content`, and a stop finish reason in 1.500 seconds. The
+gateway now maps `none`, `low`, `medium`, and `high` to disabled, 1,024, 4,096,
+and 8,192 Qwen reasoning tokens without changing the non-reasoning default for
+requests that omit the setting.
+
+After the gateway-only production restart, authenticated `/v1/models`
+advertised `low` as default, `low`/`medium`/`high` controls, reasoning summaries,
+and text-and-image search for both aliases. An authenticated `dgx-moa-fast`
+Chat Completions request with low reasoning returned exact
+`GATEWAY_THINK_OK`, 206 characters of native reasoning, and HTTP 200. A streamed
+Responses request returned a non-empty 115-character reasoning summary through
+the standard reasoning-summary delta/done events and exact public content
+`RESPONSES_THINK_OK`.
+
+OpenCode 1.17.18 resolved both aliases with reasoning enabled, default low
+effort, `none`/`low`/`medium`/`high` variants, and automatic summaries. A real
+`opencode run --variant low --thinking` emitted a reasoning event and exact
+`OPENCODE_REASONING_OK`. With the documented `OPENCODE_ENABLE_EXA=1` gate and
+`websearch: allow`, a separate run completed one Exa `websearch` call, injected
+the result into the next model turn, and returned the first result title. No
+search API key was required or stored.
+
+Ruff, strict mypy over 53 source files, and all 1,203 tests passed. Gateway and
+Executor remained active with zero automatic restarts; the Executor was not
+restarted.
+
+## Codex subagent admission timeout — 2026-08-28
+
+The affected remote client sent non-streaming `dgx-moa-fast` requests in
+parallel. State records show the successful first local request completed in
+63.677 seconds, while later requests waited 63.734 to 98.371 seconds before
+starting. Four representative queued requests were then cancelled by the
+client at 125.020 to 125.088 seconds with no first byte. Executor journals kept
+decoding and recorded a queued request at each cancellation; this rules out a
+model hang. Across 68 decode samples in the incident window, measured mean
+generation throughput was 13.58 token/s and mean speculative acceptance was
+0.099.
+
+The Executor remains physically bounded to one sequence. Gateway admission
+timeout was reduced from 14,400 to 45 seconds so a queued request returns the
+existing retryable HTTP 503 plus `Retry-After` before the client's 120-second
+budget is consumed. The production gateway loaded `queue_timeout_seconds=45`,
+restarted without restarting the Executor, and an authenticated streamed
+Responses smoke returned `SUBAGENT_OK` plus `response.completed`. Ruff, strict
+mypy over 53 source files, and all 1,203 tests passed. Both services remained
+active with zero automatic restarts; port 9001 remained loopback-only, port
+9000 remained the wildcard gateway, and unauthenticated model discovery
+returned HTTP 401.
+
+## Immediate busy overflow and 2026-08-26 usage attribution — 2026-08-28
+
+The 2026-08-26 OpenCode Go charge shown by the provider was attributable to one
+OpenCode session under API token ID `monad`. It ran for 5.38 hours and issued
+550 gateway requests, including 548 native-agent turns. The local Executor had
+failed startup because its DSpark draft path resolved to a missing snapshot, so
+all 550 scheduling decisions were `local_unavailable -> remote_overflow`.
+
+`mimo-v2.5` completed 496 invocations with 55,083,279 prompt tokens and 265,070
+completion tokens. Average prompt size was 111,055 tokens, p95 was 167,750,
+maximum was 198,723, and recorded cached tokens were zero. The session produced
+498 tool-call turns and 1,071 distinct tool-call IDs. Repeated full accumulated
+conversation and tool history, rather than output volume, therefore dominated
+the provider usage. The local database has no provider tariff, so it supports
+the token attribution but does not independently recompute the displayed
+`$7.84` charge.
+
+A separate set of `local_unavailable` decisions at 00:26–00:32 KST on
+2026-08-28 occurred after the systemd service had physically recovered. The
+fixed lifecycle database still held the earlier generation-37
+`service_failed` result, so the gateway trusted stale control-plane state until
+its 00:32:47 restart reconciled Executor state to `ready` at 00:32:49. Current
+health is HTTP 200 on port 9001, lifecycle state is `ready`, and the inspected
+09:17–09:33 requests all selected `local_idle -> dgx-moa-executor`.
+
+Executor admission now permits one global local wait behind the one-sequence
+Executor. Once that slot is occupied, further low/medium-risk requests go
+directly to OpenCode Go; high/critical requests remain local-only and fail
+closed when the slot is full. In the live three-request test, the owner and
+single waiter returned from `dgx-moa-executor` in 4.959 and 9.566 seconds,
+while the third request returned from `mimo-v2.5` in 11.968 seconds. The
+gateway restarted successfully without restarting the Executor.
+
+## OpenCode textual tool-call recovery — 2026-08-29
+
+Gateway state evidence for session `ses_fb4c0c764ffeVmWZ0hBeDhufV3` shows a
+streamed OpenCode request at 11:06:53 KST emitted two complete
+`<tool_call><function=read>` envelopes as assistant content and ended with
+`finish_reason=stop`. The Chat Completions stream forwarded every content
+delta before terminal validation, stored the markup as `final_output`, and
+incorrectly recorded the request as completed.
+
+The common SSE forwarder now buffers an assistant response that starts with
+that textual tool-call envelope, converts only a complete strict envelope to
+native streamed `tool_calls`, and fails closed without forwarding malformed
+markup. Native tool-call bytes remain unchanged. `ruff check`, `ruff format
+--check`, and all tests in `tests/test_streaming.py` and `tests/test_api.py`
+passed. No production service was restarted or changed.
