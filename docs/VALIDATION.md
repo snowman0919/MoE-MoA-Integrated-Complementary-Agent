@@ -10385,3 +10385,21 @@ native streamed `tool_calls`, and fails closed without forwarding malformed
 markup. Native tool-call bytes remain unchanged. `ruff check`, `ruff format
 --check`, and all tests in `tests/test_streaming.py` and `tests/test_api.py`
 passed. No production service was restarted or changed.
+
+### Main integration and production deployment — 2026-08-29
+
+The OpenCode output recovery, one-slot busy queue, reasoning/image metadata,
+and atomic trace snapshot changes were merged through `dev` into local `main`
+at `f6333fce9a45`. Ruff, strict mypy over 53 source files, and all 1,209 tests
+passed on the merged tree. GitHub publication remained blocked by the locally
+stored invalid OAuth token; no credential was replaced or bypassed.
+
+Production fast-forwarded to the same commit. A stale in-memory drain count of
+two remained despite zero established connections and zero lifecycle leases,
+so the bounded drain was cancelled and only `dgx-moa-gateway.service` was
+restarted. Its PID changed from 555261 to 2362013. The Executor remained PID
+3407598 with zero restarts and loopback-only port 9001; the authenticated
+gateway remained on port 9000. Unauthenticated model discovery returned HTTP
+401, both public models advertised context 262,144 and reasoning summaries,
+and `dgx-moa-fast` returned HTTP 200 from `dgx-moa-executor` with exact content
+`DEPLOY_OK`.
