@@ -19,12 +19,20 @@ curl -fsS -H "Authorization: Bearer ${DGX_MOA_API_KEY}" \
 ```
 
 `GET /v1/models` returns only the two production aliases with
-`context_length: 131072`.
+`context_length: 262144`.
 
 | Model alias | Gateway policy | Tool-loop owner |
 | --- | --- | --- |
 | `dgx-moa` | Reasoner + Executor core with runtime-selected optional roles | Client, when tools are supplied |
 | `dgx-moa-fast` | Explicit Executor-only compatibility path | Client, when tools are supplied |
+
+Both aliases accept text and image input and return text. OpenCode clients must
+use the checked-in custom-provider model metadata so PNG, JPEG, GIF, and WebP
+attachments are sent as image media instead of being treated as text-only input.
+They also expose `none`, `low`, `medium`, and `high` Qwen reasoning variants;
+`low` is the OpenCode default and `reasoningSummary: auto` returns the model's
+reasoning summary. OpenCode's local `websearch` tool requires
+`OPENCODE_ENABLE_EXA=1` and `permission.websearch: allow`.
 
 `dgx-moa-fast` is always Executor-only. `dgx-moa` invokes the Reasoner and does
 not silently bypass it. The gateway preserves
@@ -61,15 +69,25 @@ accepts and forwards the standard executor request fields:
 - `stop`
 - `stream_options`
 - `response_format`
+- `reasoning_effort` (`none`, `low`, `medium`, or `high`)
+- `reasoning_summary` (`none` or `auto`)
 
 Other OpenAI-compatible fields, such as `seed`, are also preserved for the
 executor. `tool_choice` and `parallel_tool_calls` require `tools`, while
 `stream_options` requires `stream: true`.
+The Responses endpoint accepts the equivalent nested `reasoning.effort` and
+`reasoning.summary` fields.
+
+Codex subagents using `dgx-moa-fast` must send `stream: true` and limit exact
+local-model concurrency to one. The resident Executor has one sequence; when it
+is busy, additional low/medium-risk requests immediately use OpenCode Go
+overflow. High/critical requests remain local-only and may wait up to 45
+seconds before the gateway returns retryable HTTP 503 with `Retry-After`.
 
 Project `metadata` and `X-Session-ID`/provenance headers are optional. Standard
 clients do not need them. The executor output budget defaults to 4,096 tokens;
 `max_tokens` may raise it to at most 16,384. The public executor context is
-131,072 tokens.
+262,144 tokens.
 
 Training collection is currently disabled. If it is separately promoted,
 eligibility requires clients to send a stable

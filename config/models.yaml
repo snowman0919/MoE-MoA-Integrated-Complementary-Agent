@@ -99,9 +99,9 @@ gateway:
     frontier_b: null
   executor_scheduling:
     enabled: false
-    same_key_max_local_queue: 3
-    max_total_local_queue: 256
-    queue_timeout_seconds: 14400
+    same_key_max_local_queue: 1
+    max_total_local_queue: 1
+    queue_timeout_seconds: 45
     remote_provider: disabled
     remote_endpoint: https://opencode.ai/zen/go
     remote_api_key_env: OPENCODE_GO_API_KEY

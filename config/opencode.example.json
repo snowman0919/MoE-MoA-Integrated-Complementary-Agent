@@ -9,9 +9,39 @@
         "apiKey": "{env:DGX_MOA_API_KEY}"
       },
       "models": {
-        "dgx-moa": {"name": "DGX MoA"}
+        "dgx-moa": {
+          "name": "DGX MoA",
+          "attachment": true,
+          "reasoning": true,
+          "tool_call": true,
+          "modalities": {"input": ["text", "image"], "output": ["text"]},
+          "limit": {"context": 262144, "output": 16384},
+          "options": {"reasoningEffort": "low", "reasoningSummary": "auto"},
+          "variants": {
+            "none": {"reasoningEffort": "none", "reasoningSummary": "none"},
+            "low": {"reasoningEffort": "low", "reasoningSummary": "auto"},
+            "medium": {"reasoningEffort": "medium", "reasoningSummary": "auto"},
+            "high": {"reasoningEffort": "high", "reasoningSummary": "auto"}
+          }
+        },
+        "dgx-moa-fast": {
+          "name": "DGX MoA Fast (Executor)",
+          "attachment": true,
+          "reasoning": true,
+          "tool_call": true,
+          "modalities": {"input": ["text", "image"], "output": ["text"]},
+          "limit": {"context": 262144, "output": 16384},
+          "options": {"reasoningEffort": "low", "reasoningSummary": "auto"},
+          "variants": {
+            "none": {"reasoningEffort": "none", "reasoningSummary": "none"},
+            "low": {"reasoningEffort": "low", "reasoningSummary": "auto"},
+            "medium": {"reasoningEffort": "medium", "reasoningSummary": "auto"},
+            "high": {"reasoningEffort": "high", "reasoningSummary": "auto"}
+          }
+        }
       }
     }
   },
-  "model": "dgx-moa/dgx-moa"
+  "model": "dgx-moa/dgx-moa",
+  "permission": {"websearch": "allow", "webfetch": "allow"}
 }

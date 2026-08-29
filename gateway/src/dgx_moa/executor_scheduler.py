@@ -55,9 +55,9 @@ class ExecutorScheduler:
     def __init__(
         self,
         *,
-        same_key_max_local_queue: int = 3,
-        max_total_local_queue: int = 256,
-        queue_timeout_seconds: float = 14_400,
+        same_key_max_local_queue: int = 1,
+        max_total_local_queue: int = 1,
+        queue_timeout_seconds: float = 45,
     ) -> None:
         if same_key_max_local_queue < 1 or max_total_local_queue < 1:
             raise ValueError("Executor queue limits must be positive")
@@ -187,10 +187,11 @@ class ExecutorScheduler:
             same_key = owner_key == api_key_id
             key_queue = self._queues.get(api_key_id)
             key_depth = len(key_queue) if key_queue else 0
+            total_depth = sum(len(queue) for queue in self._queues.values())
             if (
                 not high_risk
                 and flash_available
-                and (not same_key or key_depth >= self.same_key_max_local_queue)
+                and total_depth >= self.max_total_local_queue
             ):
                 admission = ExecutorAdmission(
                     request_id,
@@ -201,11 +202,10 @@ class ExecutorScheduler:
                     "overflow",
                     0,
                     self._epoch,
-                    "cross_key_overflow" if not same_key else "same_key_queue_limit",
+                    "cross_key_overflow" if not same_key else "same_key_overflow",
                 )
                 self._pins[request_id] = admission
                 return admission
-            total_depth = sum(len(queue) for queue in self._queues.values())
             if (
                 key_depth >= self.same_key_max_local_queue
                 or total_depth >= self.max_total_local_queue
@@ -231,7 +231,7 @@ class ExecutorScheduler:
                 "queued",
                 self._queue_position(request_id),
                 self._epoch,
-                "high_risk_local_only" if high_risk else "same_key_local_queue",
+                "high_risk_local_only" if high_risk else "local_busy_queue",
             )
             self._pins[request_id] = queued
         assert future is not None

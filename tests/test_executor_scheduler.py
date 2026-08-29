@@ -12,51 +12,39 @@ async def test_executor_scheduler_overflow_fairness_and_high_risk_fail_closed() 
     owner = await scheduler.acquire("key-a", "a1", flash_available=True)
     assert owner.selected_executor == "local_primary"
 
+    queued = asyncio.create_task(
+        scheduler.acquire("key-a", "a2", flash_available=True)
+    )
+    await asyncio.sleep(0)
+    assert scheduler.snapshot()["queued"] == 1
+    assert scheduler.pinned("a2").reason == "local_busy_queue"  # type: ignore[union-attr]
+
     cross_key = await scheduler.acquire("key-b", "b-flash", flash_available=True)
     assert (cross_key.selected_executor, cross_key.reason) == (
         "remote_overflow",
         "cross_key_overflow",
     )
 
-    a2 = asyncio.create_task(scheduler.acquire("key-a", "a2", flash_available=True))
-    a3 = asyncio.create_task(scheduler.acquire("key-a", "a3", flash_available=True))
-    a4 = asyncio.create_task(scheduler.acquire("key-a", "a4", flash_available=True))
-    await asyncio.sleep(0)
-    overflow = await scheduler.acquire("key-a", "a5", flash_available=True)
-    assert (overflow.selected_executor, overflow.reason) == (
+    same_key = await scheduler.acquire("key-a", "a3", flash_available=True)
+    assert (same_key.selected_executor, same_key.reason) == (
         "remote_overflow",
-        "same_key_queue_limit",
+        "same_key_overflow",
     )
 
-    b_local = asyncio.create_task(
-        scheduler.acquire("key-b", "b-local", risk="high", flash_available=True)
-    )
-    await asyncio.sleep(0)
     scheduler.release("a1")
-    assert (await b_local).api_key_id == "key-b"
-    scheduler.release("b-local")
-    assert (await a2).api_key_id == "key-a"
+    assert (await queued).request_id == "a2"
     scheduler.release("a2")
-    assert (await a3).api_key_id == "key-a"
-    scheduler.release("a3")
-    assert (await a4).api_key_id == "key-a"
 
     high_risk = ExecutorScheduler(queue_timeout_seconds=1)
     await high_risk.acquire("key-a", "risk-owner", flash_available=True)
-    queued = [
-        asyncio.create_task(
-            high_risk.acquire("key-a", f"risk-{index}", risk="high", flash_available=True)
-        )
-        for index in range(3)
-    ]
+    queued = asyncio.create_task(
+        high_risk.acquire("key-a", "risk-0", risk="high", flash_available=True)
+    )
     await asyncio.sleep(0)
     with pytest.raises(ExecutorQueueFull, match="high-risk"):
-        await high_risk.acquire("key-a", "risk-4", risk="high", flash_available=True)
-    pins = [high_risk.pinned(f"risk-{index}") for index in range(3)]
-    assert all(pin is not None and pin.selected_executor == "local_primary" for pin in pins)
-    for task in queued:
-        task.cancel()
-    await asyncio.gather(*queued, return_exceptions=True)
+        await high_risk.acquire("key-a", "risk-1", risk="high", flash_available=True)
+    queued.cancel()
+    await asyncio.gather(queued, return_exceptions=True)
 
 
 @pytest.mark.asyncio

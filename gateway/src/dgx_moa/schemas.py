@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from .media import media_placeholders
 
@@ -29,6 +29,13 @@ class ChatMessage(BaseModel):
     tool_call_id: str | None = None
 
 
+class ReasoningOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    effort: Literal["none", "low", "medium", "high"] | None = None
+    summary: Literal["none", "auto"] | None = None
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -44,6 +51,14 @@ class ChatRequest(BaseModel):
     stop: str | list[str] | None = None
     stream_options: dict[str, Any] | None = None
     response_format: dict[str, Any] | None = None
+    reasoning_effort: Literal["none", "low", "medium", "high"] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("reasoning_effort", "reasoningEffort"),
+    )
+    reasoning_summary: Literal["none", "auto"] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("reasoning_summary", "reasoningSummary"),
+    )
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -74,6 +89,7 @@ class ResponsesRequest(BaseModel):
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
     parallel_tool_calls: bool | None = None
+    reasoning: ReasoningOptions | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     max_output_tokens: int | None = Field(default=None, gt=0)
     temperature: float | None = Field(default=None, ge=0, le=2)

@@ -453,9 +453,18 @@ def _responses_payload(
     choices = chat_response.get("choices") or []
     if choices:
         message = choices[0].get("message", {})
+        reasoning_content = message.get("reasoning_content")
+        if isinstance(reasoning_content, str) and reasoning_content:
+            payload["output"].append(
+                {
+                    "id": f"rs_{uuid.uuid4().hex}",
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": reasoning_content}],
+                }
+            )
         content = message.get("content")
         if isinstance(content, str) and content:
-            payload["output"] = [
+            payload["output"].append(
                 {
                     "type": "message",
                     "status": "completed",
@@ -464,7 +473,7 @@ def _responses_payload(
                         {"type": "output_text", "text": content},
                     ],
                 }
-            ]
+            )
         for tool_call in message.get("tool_calls") or []:
             function = tool_call.get("function") or {}
             name, arguments = compatible_edit_call(
@@ -1975,6 +1984,14 @@ def create_app(
     async def models() -> dict[str, Any]:
         aliases = list(PUBLIC_MODEL_ALIASES)
         context_length = configured.models["executor"].context_length
+        reasoning_levels = [
+            {"effort": "low", "description": "Fast responses with lighter reasoning"},
+            {
+                "effort": "medium",
+                "description": "Balances speed and reasoning depth for everyday tasks",
+            },
+            {"effort": "high", "description": "Greater reasoning depth for complex problems"},
+        ]
         descriptions = {
             "dgx-moa": "Reasoner + Executor Dynamic MoA model.",
             "dgx-moa-fast": "Executor-only compatibility model.",
@@ -1996,8 +2013,8 @@ def create_app(
                     "slug": alias,
                     "display_name": alias,
                     "description": descriptions[alias],
-                    "default_reasoning_level": None,
-                    "supported_reasoning_levels": [],
+                    "default_reasoning_level": "low",
+                    "supported_reasoning_levels": reasoning_levels,
                     "shell_type": "shell_command",
                     "visibility": "list",
                     "supported_in_api": True,
@@ -2019,22 +2036,23 @@ def create_app(
                     ),
                     "model_messages": None,
                     "include_skills_usage_instructions": False,
-                    "supports_reasoning_summaries": False,
-                    "default_reasoning_summary": "none",
+                    "supports_reasoning_summaries": True,
+                    "supports_reasoning_summary_parameter": True,
+                    "default_reasoning_summary": "auto",
                     "support_verbosity": False,
                     "default_verbosity": None,
                     "apply_patch_tool_type": "freeform",
-                    "web_search_tool_type": "text",
+                    "web_search_tool_type": "text_and_image",
                     "truncation_policy": {"mode": "tokens", "limit": 10_000},
                     "supports_parallel_tool_calls": True,
                     "supports_image_detail_original": False,
                     "context_window": context_length,
                     "max_context_window": context_length,
-                    "comp_hash": f"dgx-moa-{context_length}-v1",
+                    "comp_hash": f"dgx-moa-{context_length}-v2",
                     "effective_context_window_percent": 95,
                     "experimental_supported_tools": [],
-                    "input_modalities": ["text"],
-                    "supports_search_tool": False,
+                    "input_modalities": ["text", "image"],
+                    "supports_search_tool": True,
                     "use_responses_lite": False,
                     "tool_mode": "direct",
                     "multi_agent_version": None,
@@ -5008,6 +5026,8 @@ def create_app(
             temperature=body.temperature,
             top_p=body.top_p,
             stop=body.stop,
+            reasoning_effort=body.reasoning.effort if body.reasoning else None,
+            reasoning_summary=body.reasoning.summary if body.reasoning else None,
         )
         if body.stream:
             response_session_id = x_session_id or str(body.metadata.get("session_id") or "")
@@ -5199,6 +5219,8 @@ def create_app(
                                             if response_state
                                             else ()
                                         ),
+                                        reasoning_effort=chat_body.reasoning_effort,
+                                        reasoning_summary=chat_body.reasoning_summary,
                                     ),
                                     heartbeat=b"event: ping\ndata: {}\n\n",
                                 ):
@@ -5373,6 +5395,8 @@ def create_app(
                                     if response_state
                                     else ()
                                 ),
+                                reasoning_effort=chat_body.reasoning_effort,
+                                reasoning_summary=chat_body.reasoning_summary,
                             ):
                                 yield chunk
                             return
