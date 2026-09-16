@@ -226,7 +226,9 @@ _TEXT_TOOL_PARAMETER = re.compile(
 )
 
 
-def recover_text_tool_calls(text: str) -> list[dict[str, object]] | None:
+def recover_text_tool_calls(
+    text: str, available_tool_names: set[str] | None = None
+) -> list[dict[str, object]] | None:
     calls: list[dict[str, object]] = []
     cursor = 0
     for match in _TEXT_TOOL_CALL.finditer(text):
@@ -249,13 +251,21 @@ def recover_text_tool_calls(text: str) -> list[dict[str, object]] | None:
             parameter_cursor = parameter.end()
         if parameters[parameter_cursor:].strip():
             return None
+        tool_name = match.group("name")
+        if tool_name == "shell" and tool_name not in (available_tool_names or set()):
+            if "bash" in (available_tool_names or set()):
+                tool_name = "bash"
+                if "cmd" in arguments and "command" not in arguments:
+                    arguments["command"] = arguments.pop("cmd")
+            elif "exec_command" in (available_tool_names or set()):
+                tool_name = "exec_command"
         calls.append(
             {
                 "index": len(calls),
                 "id": f"call_{uuid.uuid4().hex}",
                 "type": "function",
                 "function": {
-                    "name": match.group("name"),
+                    "name": tool_name,
                     "arguments": json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
                 },
             }
@@ -643,11 +653,38 @@ def _is_done(event: bytes) -> bool:
     return any(line == b"data: [DONE]" for line in event.splitlines())
 
 
+def _split_text_tool_event(event: bytes) -> tuple[bytes | None, str | None]:
+    for line in event.decode(errors="replace").splitlines():
+        if not line.startswith("data: ") or line == "data: [DONE]":
+            continue
+        try:
+            payload = json.loads(line[6:])
+            choice = (payload.get("choices") or [{}])[0]
+            delta = choice.get("delta") or {}
+            content = delta.get("content")
+        except (AttributeError, IndexError, TypeError, ValueError):
+            continue
+        if not isinstance(content, str) or "<tool_call>" not in content:
+            continue
+        prefix, marker, protocol = content.partition("<tool_call>")
+        prefix_event = None
+        if prefix:
+            delta["content"] = prefix
+            choice["finish_reason"] = None
+            payload.pop("usage", None)
+            prefix_event = (
+                "data: " + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+            ).encode()
+        return prefix_event, marker + protocol
+    return None, None
+
+
 async def forward_sse(
     upstream: AsyncIterator[bytes],
     observation: StreamObservation,
     *,
     max_event_bytes: int,
+    available_tool_names: set[str] | None = None,
 ) -> AsyncGenerator[bytes, None]:
     buffer = bytearray()
     protocol_buffering = False
@@ -676,7 +713,9 @@ async def forward_sse(
                             if isinstance(delta.get("content"), str):
                                 protocol_text.append(delta["content"])
                     if _is_done(event):
-                        calls = recover_text_tool_calls("".join(protocol_text))
+                        calls = recover_text_tool_calls(
+                            "".join(protocol_text), available_tool_names
+                        )
                         if calls is None:
                             raise ValueError("upstream response contains internal protocol markup")
                         repaired = (
@@ -702,20 +741,13 @@ async def forward_sse(
                         yield event
                         return
                     continue
-                event_text = ""
-                for line in event.decode(errors="replace").splitlines():
-                    if line.startswith("data: ") and line != "data: [DONE]":
-                        try:
-                            delta = (json.loads(line[6:]).get("choices") or [{}])[0].get(
-                                "delta"
-                            ) or {}
-                        except ValueError:
-                            continue
-                        if isinstance(delta.get("content"), str):
-                            event_text += delta["content"]
-                if event_text.lstrip().startswith("<tool_call>"):
+                prefix_event, protocol_suffix = _split_text_tool_event(event)
+                if protocol_suffix is not None:
+                    if prefix_event is not None:
+                        observation.observe(prefix_event)
+                        yield prefix_event
                     protocol_buffering = True
-                    protocol_text.append(event_text)
+                    protocol_text.append(protocol_suffix)
                     protocol_observation.observe(event)
                     continue
                 observation.observe(event)

@@ -4218,6 +4218,12 @@ def create_app(
                         upstream,
                         observation,
                         max_event_bytes=configured.limits.max_sse_event_bytes,
+                        available_tool_names={
+                            str(tool.get("name") or tool.get("function", {}).get("name"))
+                            for tool in prepared.get("tools", [])
+                            if isinstance(tool, dict)
+                            and (tool.get("name") or tool.get("function", {}).get("name"))
+                        },
                     )
                     try:
                         deadline = (

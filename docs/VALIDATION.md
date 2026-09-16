@@ -10569,3 +10569,23 @@ bytes) and returned exact `REASONER_RECOVERY_OK` with HTTP 200 in 12.419 seconds
 Afterward `/api/ps` listed Qwythos resident, `/readyz` returned HTTP 200 with
 both Reasoner and Executor ready, and the complete healthcheck passed. No
 Gateway restart or source/configuration change was required.
+
+## OMP textual tool-call recovery — 2026-09-16
+
+The active OMP/OpenCode session showed the Executor ending a streamed response
+with Korean commentary followed by a textual `<tool_call>` envelope in the same
+SSE delta. The Gateway forwarded that markup as assistant text and recorded
+`finish_reason=stop`, so the client received neither a native tool call nor a
+continuation barrier. The envelope also named `shell` with a `cmd` argument,
+while first-party session evidence showed that OMP exposed `bash` with a
+`command` argument.
+
+The common Chat SSE forwarder now splits and preserves commentary preceding the
+envelope, buffers the strict envelope, and emits a native tool call. Recovered
+`shell` calls are mapped only when necessary to an actually advertised `bash`
+or `exec_command` tool; the OMP mapping also changes `cmd` to `command`. A
+deterministic regression reproduces the observed event boundary and proves that
+no markup reaches the client, the finish reason is `tool_calls`, and the emitted
+call is `bash({"command":"ls"})`. Ruff, formatting, strict mypy over 54 source
+files, 361 streaming/API tests, and all 1,230 tests passed. Production runtime
+validation is recorded after deployment rather than inferred from these tests.

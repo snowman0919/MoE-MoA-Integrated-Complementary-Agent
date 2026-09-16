@@ -1516,6 +1516,48 @@ async def test_text_tool_markup_is_recovered_before_it_reaches_the_client() -> N
 
 
 @pytest.mark.asyncio
+async def test_text_tool_markup_after_commentary_is_recovered() -> None:
+    async def upstream():
+        yield (
+            "data: "
+            + json.dumps(
+                {
+                    "choices": [
+                        {
+                            "delta": {"content": "상태를 확인하겠습니다.\n\n<tool_call>\n"},
+                            "finish_reason": None,
+                        }
+                    ]
+                }
+            )
+            + "\n\n"
+        ).encode()
+        yield b'data: {"choices":[{"delta":{"content":"<function=shell>\\n"}}]}\n\n'
+        yield (
+            b'data: {"choices":[{"delta":{"content":"<parameter=cmd>\\nls\\n'
+            b'</parameter>\\n</function>\\n</tool_call>"},"finish_reason":"stop"}]}\n\n'
+        )
+        yield b"data: [DONE]\n\n"
+
+    observation = StreamObservation(max_capture_bytes=10_000)
+    events = [
+        event
+        async for event in forward_sse(
+            upstream(),
+            observation,
+            max_event_bytes=10_000,
+            available_tool_names={"bash"},
+        )
+    ]
+
+    assert any("상태를 확인하겠습니다." in event.decode() for event in events)
+    assert all(b"<tool_call>" not in event for event in events)
+    assert observation.finish_reasons == ["tool_calls"]
+    assert observation.tool_call_names == {0: "bash"}
+    assert json.loads(observation.tool_call_arguments[0]) == {"command": "ls"}
+
+
+@pytest.mark.asyncio
 async def test_malformed_text_tool_markup_is_not_forwarded() -> None:
     async def upstream():
         yield b'data: {"choices":[{"delta":{"content":"<tool_call>broken"}}]}\n\n'
