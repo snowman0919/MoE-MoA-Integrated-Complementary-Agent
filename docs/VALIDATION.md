@@ -10616,3 +10616,27 @@ staging client then completed the `read-1` fixture as Gateway session
 validation exit 0, and finalization exit 0. This is physical client evidence for
 the deployed path; it is not a synthetic benchmark or a frontier-performance
 claim.
+
+## Local-only unhold model — 2026-09-16
+
+Public alias `dgx-moa-unhold` was added as a strict local Executor-only option.
+It reuses the established fast role path, so `roles_required` is exactly
+`["executor"]`, while disabling OpenCode Go overflow, Frontier selection and
+correction, Responses quality fallback, and local-HTTP-400 fallback. If the
+local Executor is unavailable, queued beyond the local policy, or rejects the
+request, the request fails closed instead of changing provider.
+
+Deterministic tests cover public discovery, the one-Executor role invariant,
+local-unavailable failure with a configured overflow provider, and suppression
+of local-HTTP-400 fallback. Ruff, formatting, strict mypy over 54 source files,
+and all 1,236 tests passed. One pre-existing Planner deadline test initially
+measured 0.209 seconds against its 0.2-second bound; it passed alone and the
+unchanged full suite then passed, so no threshold was weakened.
+
+Commit `5eb6e5eb3` was fast-forwarded to the production checkout and only the
+Gateway was restarted. PID `3826508` reported `NRestarts=0`; `/readyz` returned
+HTTP 200 with Executor and Reasoner ready. Authenticated `/v1/models` returned
+`dgx-moa`, `dgx-moa-fast`, and `dgx-moa-unhold`. Production session
+`unhold-production-smoke-20260916` returned exact `UNHOLD_OK` with HTTP 200;
+usage recorded `runtime_mode=fast`, `roles_required=["executor"]`, and the
+scheduler recorded `selected_executor=local_primary` with `reason=local_idle`.
