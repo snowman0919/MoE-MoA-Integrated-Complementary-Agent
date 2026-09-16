@@ -10560,3 +10560,12 @@ call because low effort may legitimately suppress auxiliary activation. The
 deployment is therefore live for the verified Executor paths, but full
 Reasoner readiness remains an explicit operational limitation rather than a
 claimed pass.
+
+The Reasoner host returned after its temporary reboot later on 2026-09-16.
+Network and `/v1/models` checks passed first, while `/readyz` correctly remained
+503 because Ollama `/api/ps` contained no resident model. A real medium-effort
+`dgx-moa` request then loaded `Qwythos-v2-9B:Q4` (7,680,305,397 reported VRAM
+bytes) and returned exact `REASONER_RECOVERY_OK` with HTTP 200 in 12.419 seconds.
+Afterward `/api/ps` listed Qwythos resident, `/readyz` returned HTTP 200 with
+both Reasoner and Executor ready, and the complete healthcheck passed. No
+Gateway restart or source/configuration change was required.
