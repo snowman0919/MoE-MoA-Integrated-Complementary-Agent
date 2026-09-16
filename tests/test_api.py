@@ -4742,6 +4742,47 @@ async def test_non_fast_stream_overlaps_executor_work_and_waits_before_final_str
     assert "EXECUTOR_HYPOTHESIS" in json.dumps(stub_provider.requests[-1])
 
 
+@pytest.mark.asyncio
+async def test_non_fast_stream_continues_when_preliminary_executor_work_fails(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def fail_preliminary(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "executor":
+            raise ValueError("empty preliminary response")
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = fail_preliminary  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = await chat_endpoint(app)(
+            ChatRequest(
+                model="dgx-moa-agent",
+                stream=True,
+                messages=[{"role": "user", "content": "work"}],
+            ),
+            Request({"type": "http", "app": app}),
+            x_session_id="async-stream-preliminary-failure",
+            x_runtime_channel=None,
+            x_trace_origin=None,
+            x_task_id=None,
+            x_workspace_path=None,
+            x_workspace_id=None,
+            x_repository_branch=None,
+            x_repository_commit=None,
+            x_dirty_state=None,
+        )
+        assert isinstance(response, StreamingResponse)
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        events = app.state.store.events("async-stream-preliminary-failure")
+
+    assert b'"content":"ok"' in body
+    assert any(event["event_type"] == "executor_preliminary_work_failed" for event in events)
+
+
 def test_async_reviewer_finding_notifies_and_reloops_executor(
     settings, stub_provider: StubProvider
 ) -> None:  # type: ignore[no-untyped-def]

@@ -3727,40 +3727,55 @@ def create_app(
             executor_started = time.monotonic()
             if body.stream and async_prepare_task is not None and async_snapshot is not None:
                 draft_started = time.monotonic()
-                draft_response = (
-                    await remote_executor_correction(prepared, "executor_work")
-                    if executor_remote
-                    else await request.app.state.provider.complete(
-                        "executor",
-                        configured.models["executor"],
-                        prepared,
-                        timeout_seconds=configured.limits.executor_total_timeout_seconds,
-                        stage="executor_work",
-                    )
-                )
-                validate_executor_response(draft_response)
-                draft_message = draft_response.get("choices", [{}])[0].get("message", {})
-                request.app.state.controller.record_invocation(
-                    state,
-                    "executor",
-                    draft_response,
-                    draft_started,
-                    mode="executor_work",
-                    fallback_reason=executor_routing_reason if executor_remote else None,
-                    projection_id=executor_projection_id,
-                    rendered_prompt=(
-                        prepared
+                draft_message: dict[str, Any] = {}
+                try:
+                    draft_response = (
+                        await remote_executor_correction(prepared, "executor_work")
                         if executor_remote
-                        else request.app.state.controller.rendered_model_request(
-                            "executor", prepared
+                        else await request.app.state.provider.complete(
+                            "executor",
+                            configured.models["executor"],
+                            prepared,
+                            timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                            stage="executor_work",
                         )
-                    ),
-                )
-                request.app.state.store.event(
-                    state_session_id,
-                    "executor_useful_work_while_delegates_pending",
-                    {"work": "executor_model_call", "snapshot_hash": async_snapshot.evidence_hash},
-                )
+                    )
+                    validate_executor_response(draft_response)
+                    draft_message = draft_response.get("choices", [{}])[0].get("message", {})
+                    request.app.state.controller.record_invocation(
+                        state,
+                        "executor",
+                        draft_response,
+                        draft_started,
+                        mode="executor_work",
+                        fallback_reason=executor_routing_reason if executor_remote else None,
+                        projection_id=executor_projection_id,
+                        rendered_prompt=(
+                            prepared
+                            if executor_remote
+                            else request.app.state.controller.rendered_model_request(
+                                "executor", prepared
+                            )
+                        ),
+                    )
+                    request.app.state.store.event(
+                        state_session_id,
+                        "executor_useful_work_while_delegates_pending",
+                        {
+                            "work": "executor_model_call",
+                            "snapshot_hash": async_snapshot.evidence_hash,
+                        },
+                    )
+                except Exception as error:
+                    request.app.state.store.event(
+                        state_session_id,
+                        "executor_preliminary_work_failed",
+                        {
+                            "failure_class": type(error).__name__,
+                            "failure_code": str(error)[:128],
+                            "snapshot_hash": async_snapshot.evidence_hash,
+                        },
+                    )
                 prepared = await async_prepare_task
                 async_prepare_task = None
                 executor_projection_manifest = state.role_context_projections[-1]
