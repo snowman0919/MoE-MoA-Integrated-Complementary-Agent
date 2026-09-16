@@ -10532,3 +10532,31 @@ Gateway paths all passed. With Qwythos-v2-9B:Q4 resident at 65,536 context, the
 systemd-backed memory watchdog stayed active with a 7.086 GiB low-water and no
 swap. Evidence is in
 `/home/kotori9/qwen38-data/results/harness-optimization-20260915/`.
+
+## Async MoA + Qwen3.8 production integration — 2026-09-16
+
+The async evidence-grounded MoA changes were merged with the preserved
+Qwen3.8 production integration and validated at
+`5aba1ab5f621ed2e880b0847075e77f8fe50091f`. Ruff lint and formatting passed,
+strict mypy passed all 54 source files, and the complete suite passed 1,229
+tests with one upstream Starlette deprecation warning. The deterministic MVP
+benchmark remained 10/10 successful with the unchanged 3/6/1
+fast/standard/escalation route distribution, 1.2 tool calls per success, and
+0.0388344 seconds per success; token metrics remain unavailable.
+
+The production checkout was fast-forwarded to the validated commit. The
+documented stale drain counter again remained at two while both established
+connection counts were zero, so the drain was cancelled and only
+`dgx-moa-gateway.service` was restarted. Its PID changed from 2474447 to
+3569553 with zero restarts; the external Executor listener on loopback port
+30000 was not restarted. Authenticated model discovery and `/healthz` returned
+HTTP 200. A real `dgx-moa-fast` request returned exact `FAST_DEPLOY_OK`, and a
+real low-effort `dgx-moa` request returned `MOA_DEPLOY_OK` in 2.334 seconds.
+
+`/readyz` remains HTTP 503 because the resident profile reports the configured
+external Reasoner at `100.90.167.128:11434` as stopped, while the Executor is
+ready. The successful low-effort request does not prove a physical Reasoner
+call because low effort may legitimately suppress auxiliary activation. The
+deployment is therefore live for the verified Executor paths, but full
+Reasoner readiness remains an explicit operational limitation rather than a
+claimed pass.
