@@ -4,6 +4,8 @@ import json
 
 import httpx
 import pytest
+from dgx_moa.config import ModelRef, RoleRoute
+from dgx_moa.http_client import opencode_headers
 from dgx_moa.overflow_executor import (
     OpenCodeGoExecutorProvider,
     OverflowExecutorInvalidOutput,
@@ -16,9 +18,11 @@ async def test_opencode_go_executor_preserves_native_tools_and_strips_private_fi
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, object] = {}
+    captured_headers: dict[str, str] = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
         captured.update(json.loads(request.content))
+        captured_headers.update(request.headers)
         return httpx.Response(
             200,
             json={
@@ -80,9 +84,73 @@ async def test_opencode_go_executor_preserves_native_tools_and_strips_private_fi
     assert captured["parallel_tool_calls"] is True
     assert captured["stream"] is False
     assert captured["max_tokens"] == 4096
+    assert (
+        captured_headers["x-opencode-session"]
+        == opencode_headers("synthetic", "request-1")["x-opencode-session"]
+    )
+    assert captured_headers["user-agent"] == "dgx-moa-gateway/1.0"
     assert not {"metadata", "stream_options", "_client_workspace_path"} & captured.keys()
     assert result["provider_provenance"]["provider"] == "opencode"
     assert result["provider_provenance"]["route"] == "fallback"
+
+
+@pytest.mark.asyncio
+async def test_responses_model_is_adapted_to_chat_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/v1/responses")
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "resp-1",
+                "model": "muse-spark-1.3-contributor",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "OK"}],
+                    }
+                ],
+                "usage": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+            },
+        )
+
+    monkeypatch.setenv("OPENCODE_GO_API_KEY", "synthetic")
+    muse = ModelRef(provider="opencode", model="muse-spark-1.3-contributor", api="responses")
+    provider = OpenCodeGoExecutorProvider(
+        endpoint="https://opencode.invalid",
+        api_key_env="OPENCODE_GO_API_KEY",
+        role_route=RoleRoute(primary=muse, fallback=muse),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await provider.execute(
+        {
+            "messages": [{"role": "user", "content": "Reply exactly OK"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "read_file", "parameters": {"type": "object"}},
+                }
+            ],
+        },
+        "request-1",
+    )
+
+    assert captured["input"] == [{"role": "user", "content": "Reply exactly OK"}]
+    assert captured["tools"] == [
+        {"type": "function", "name": "read_file", "parameters": {"type": "object"}}
+    ]
+    assert "max_tokens" not in captured
+    assert result["choices"][0]["message"]["content"] == "OK"
+    assert result["usage"] == {
+        "prompt_tokens": 3,
+        "completion_tokens": 2,
+        "total_tokens": 5,
+    }
 
 
 @pytest.mark.asyncio

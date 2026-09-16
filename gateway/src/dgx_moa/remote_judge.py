@@ -9,7 +9,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .http_client import managed_http_client
+from .http_client import managed_http_client, opencode_headers
 from .security import redact
 from .training import sanitize
 
@@ -126,7 +126,9 @@ class JudgeCallLimitExceeded(JudgeProviderError):
 
 class JudgeProvider(ABC):
     @abstractmethod
-    async def judge(self, package: JudgeEvidencePackage) -> RemoteJudgeVerdict:
+    async def judge(
+        self, package: JudgeEvidencePackage, *, session_id: str | None = None
+    ) -> RemoteJudgeVerdict:
         raise NotImplementedError
 
     @abstractmethod
@@ -139,8 +141,10 @@ class JudgeProvider(ABC):
 
 
 class DisabledJudgeProvider(JudgeProvider):
-    async def judge(self, package: JudgeEvidencePackage) -> RemoteJudgeVerdict:
-        del package
+    async def judge(
+        self, package: JudgeEvidencePackage, *, session_id: str | None = None
+    ) -> RemoteJudgeVerdict:
+        del package, session_id
         raise JudgeUnavailable("Remote Judge is disabled")
 
     async def available(self) -> bool:
@@ -152,7 +156,10 @@ class MockJudgeProvider(JudgeProvider):
         self.verdicts = list(verdict) if isinstance(verdict, list) else [verdict]
         self.packages: list[JudgeEvidencePackage] = []
 
-    async def judge(self, package: JudgeEvidencePackage) -> RemoteJudgeVerdict:
+    async def judge(
+        self, package: JudgeEvidencePackage, *, session_id: str | None = None
+    ) -> RemoteJudgeVerdict:
+        del session_id
         self.packages.append(package.sanitized())
         return self.verdicts[min(len(self.packages) - 1, len(self.verdicts) - 1)]
 
@@ -187,13 +194,13 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
         base = self.endpoint if self.endpoint.endswith("/v1") else f"{self.endpoint}/v1"
         return f"{base}/{resource.lstrip('/')}"
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, session_id: str | None = None) -> dict[str, str]:
         api_key = os.getenv(self.api_key_env)
         if not api_key:
             raise JudgeUnavailable(
                 f"Remote Judge credential environment is unset: {self.api_key_env}"
             )
-        return {"Authorization": f"Bearer {api_key}"}
+        return opencode_headers(api_key, session_id)
 
     async def _admit(self, request_id: str) -> None:
         async with self._call_lock:
@@ -217,7 +224,9 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
         except (httpx.HTTPError, JudgeUnavailable):
             return False
 
-    async def judge(self, package: JudgeEvidencePackage) -> RemoteJudgeVerdict:
+    async def judge(
+        self, package: JudgeEvidencePackage, *, session_id: str | None = None
+    ) -> RemoteJudgeVerdict:
         await self._admit(package.request_id)
         evidence = package.sanitized()
         body = {
@@ -260,7 +269,7 @@ class OpenCodeGoJudgeProvider(JudgeProvider):
                 ) as client:
                     response = await client.post(
                         self._url("chat/completions"),
-                        headers=self._headers(),
+                        headers=self._headers(session_id or package.request_id),
                         json=body,
                     )
                     if response.status_code == 429 or response.status_code >= 500:

@@ -10,7 +10,7 @@ from typing import Any, cast
 import httpx
 
 from .config import ModelRef, ProviderName, RoleRoute
-from .http_client import managed_http_client
+from .http_client import managed_http_client, opencode_headers
 from .providers import StageTimeout
 
 
@@ -71,12 +71,14 @@ class OpenAICompatibleExecutorProvider:
         base = self.endpoint if self.endpoint.endswith("/v1") else f"{self.endpoint}/v1"
         return f"{base}/{resource.lstrip('/')}"
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, session_id: str | None = None) -> dict[str, str]:
         api_key = os.getenv(self.api_key_env)
         if not api_key:
             raise OverflowExecutorUnavailable(
                 f"remote Executor credential environment is unset: {self.api_key_env}"
             )
+        if self.provider == "opencode":
+            return opencode_headers(api_key, session_id)
         return {"Authorization": f"Bearer {api_key}"}
 
     async def available(self) -> bool:
@@ -117,15 +119,120 @@ class OpenAICompatibleExecutorProvider:
         body["max_tokens"] = max(int(body.get("max_tokens", 0) or 0), 4_096)
         return body
 
+    @classmethod
+    def _responses_body(cls, request: dict[str, Any], model: str) -> dict[str, Any]:
+        chat = cls._body(request, model)
+        input_items: list[dict[str, Any]] = []
+        for message in chat.pop("messages", []):
+            if not isinstance(message, dict):
+                continue
+            if message.get("role") == "tool":
+                input_items.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": message.get("tool_call_id"),
+                        "output": message.get("content", ""),
+                    }
+                )
+                continue
+            content = message.get("content")
+            if content:
+                input_items.append({"role": message.get("role", "user"), "content": content})
+            for call in message.get("tool_calls", []):
+                function = call.get("function", {}) if isinstance(call, dict) else {}
+                input_items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": call.get("id"),
+                        "name": function.get("name"),
+                        "arguments": function.get("arguments", "{}"),
+                    }
+                )
+        tools = []
+        for tool in chat.pop("tools", []):
+            function = tool.get("function", {}) if isinstance(tool, dict) else {}
+            tools.append({"type": "function", **function})
+        max_output_tokens = chat.pop("max_tokens")
+        response_format = chat.pop("response_format", None)
+        body = {**chat, "input": input_items, "max_output_tokens": max_output_tokens}
+        if tools:
+            body["tools"] = tools
+        if isinstance(response_format, dict):
+            format_config = response_format.get("json_schema", response_format)
+            if isinstance(format_config, dict):
+                body["text"] = {"format": {**format_config, "type": response_format["type"]}}
+        if effort := body.pop("reasoning_effort", None):
+            body["reasoning"] = {"effort": effort}
+        body.pop("thinking", None)
+        return body
+
+    @staticmethod
+    def _responses_payload(raw: dict[str, Any]) -> dict[str, Any]:
+        content: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        for item in raw.get("output", []):
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "message":
+                content.extend(
+                    part.get("text", "")
+                    for part in item.get("content", [])
+                    if isinstance(part, dict) and part.get("type") == "output_text"
+                )
+            elif item.get("type") == "function_call":
+                tool_calls.append(
+                    {
+                        "id": item.get("call_id") or item.get("id"),
+                        "type": "function",
+                        "function": {
+                            "name": item.get("name"),
+                            "arguments": item.get("arguments", "{}"),
+                        },
+                    }
+                )
+        message: dict[str, Any] = {"role": "assistant", "content": "".join(content) or None}
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        usage = raw.get("usage", {})
+        return {
+            "id": raw.get("id"),
+            "object": "chat.completion",
+            "model": raw.get("model"),
+            "choices": [
+                {
+                    "index": 0,
+                    "message": message,
+                    "finish_reason": "tool_calls" if tool_calls else "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": usage.get("input_tokens", 0),
+                "completion_tokens": usage.get("output_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+            },
+        }
+
     async def _execute_model(
-        self, request: dict[str, Any], correlation_id: str, model: str, route: str
+        self, request: dict[str, Any], correlation_id: str, model_ref: ModelRef, route: str
     ) -> dict[str, Any]:
-        body = self._body(request, model)
+        model = model_ref.model
+        body = (
+            self._responses_body(request, model)
+            if model_ref.api == "responses"
+            else self._body(request, model)
+        )
+        session_id = request.get("_opencode_session")
+        if not isinstance(session_id, str) or not session_id:
+            session_id = correlation_id.split(":", 1)[0]
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 async with managed_http_client(timeout=None, transport=self.transport) as client:
                     response = await client.post(
-                        self._url("chat/completions"), headers=self._headers(), json=body
+                        self._url(
+                            "responses" if model_ref.api == "responses" else "chat/completions"
+                        ),
+                        headers=self._headers(session_id),
+                        json=body,
                     )
                     if response.status_code in {401, 403, 429} or response.status_code >= 500:
                         raise OverflowExecutorUnavailable(
@@ -145,6 +252,8 @@ class OpenAICompatibleExecutorProvider:
         if not isinstance(raw_payload, dict):
             raise OverflowExecutorInvalidOutput("remote Executor returned a non-object response")
         payload = cast(dict[str, Any], raw_payload)
+        if model_ref.api == "responses":
+            payload = self._responses_payload(payload)
         choices = payload.get("choices")
         message = choices[0].get("message") if isinstance(choices, list) and choices else None
         if not isinstance(message, dict) or not (
@@ -171,12 +280,12 @@ class OpenAICompatibleExecutorProvider:
         if failed is None:  # guarded during construction
             raise OverflowExecutorUnavailable("remote Executor fallback is not configured")
         try:
-            return await self._execute_model(request, correlation_id, failed.model, "fallback")
+            return await self._execute_model(request, correlation_id, failed, "fallback")
         except OverflowExecutorModelFailure:
             next_model = self.role_route.after_failure(failed, failure_scope="model")
             if next_model is None or next_model == failed:
                 raise
-            return await self._execute_model(request, correlation_id, next_model.model, "rollback")
+            return await self._execute_model(request, correlation_id, next_model, "rollback")
 
 
 class OpenCodeGoExecutorProvider(OpenAICompatibleExecutorProvider):

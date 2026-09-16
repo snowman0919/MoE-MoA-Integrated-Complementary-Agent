@@ -10459,3 +10459,76 @@ The required post-change `graphify . --update --code-only` completed with
 machine-local untracked experiment directories were excluded from extraction;
 documentation extraction remained unavailable without an LLM key, so this was
 an incremental code-only graph refresh over the retained canonical graph.
+
+## Qwen3.8 Flash-Next Executor promotion — 2026-09-15
+
+The operator-approved optimization run preserved the existing image, model
+trees, results, ignored runtime overlay, and OpenCode configuration before any
+changes. The final server reused image
+`sha256:c5f00d2cd3c2e1163eac3a11e9922240a0628bc626f49d89902fc151859982b8`
+and source revision
+`orcarouter/Qwen3.8-Flash-Next-Uncensored-NVFP4@c1209bda15a6bbc4c68b585e93d40c0d85f50306`.
+Its inspected command line contained language-model-only, context 262,144,
+HashK R4 model view, FP8 E4M3 KV, NEXTN steps 3 / draft tokens 4, 65K draft
+map, memory fraction 0.89, four running requests, and random seed 42.
+The final inspected KV allocation was 363,200 slots; the 65K draft map SHA-256
+was `67b1de6644565e6554cc02a5eb9a988a60b488fd595da98bc1d3ca69b01afce5`.
+
+Fixed-seed comparisons covered 245,760, 229,376, and 204,800 contexts. All
+passed quality 5/5, but none improved the complete workload; 229K and 204K
+regressed controlled short decode. An MTP 2/3 candidate improved OpenCode
+decode by 6.83% to 30.94 tok/s but regressed controlled short decode by 20.64%
+to 37.84 tok/s, so the trap restored the stable 262K MTP 3/4 server.
+
+Final physical evidence:
+
+- controlled short/8K/32K decode medians: 47.68 / 39.79 / 36.59 tok/s;
+- sgbench-compatible E2E median 44.12 tok/s, maximum 55.20 tok/s;
+- real OpenCode server-decode median 28.96 tok/s and exact-payload replay
+  29.19 tok/s;
+- quality 5/5;
+- exact 250,000 server input tokens with needles recovered at 5%, 50%, and 95%
+  in 111.47 seconds;
+- no configured swap, 9.7 GiB host memory available after validation, and
+  94–96% GPU SM use through most of the 250K prefill;
+- direct OpenCode chat, repository reads, file edit, and Python execution passed;
+- Gateway native function call plus matching tool-result continuation returned
+  `42` for `17+25`;
+- authenticated `/healthz` and `/readyz` passed, unauthenticated model discovery
+  returned 401, port `30000` was loopback-only, and old port `9001` was closed.
+
+The ignored runtime overlay now selects `local/qwen3.8-flash-next`, marks its
+lifecycle external, and leaves the old `qwen3.8-27b` entry intact for rollback.
+Only `dgx-moa-gateway.service` was restarted; the independently managed model
+container remained live. `dgx-moa-fast` returned exact `FAST_OK`, and the full
+Reasoner + Executor `dgx-moa` path returned exact `MOA_OK` after loading the
+configured external Reasoner.
+
+One pre-existing orchestration boundary remains: an actual OpenCode code-edit
+request through the Gateway successfully edited and repeatedly validated the
+fixture, but the Gateway did not accept OpenCode's `bash` evidence as completion
+and continued issuing redundant validation turns. The CLI was interrupted only
+after the requested file and all checks had passed. Direct OpenCode-to-Executor
+completed normally, and direct Gateway tool call/continuation completed
+normally. This is recorded as a Gateway completion-policy issue, not hidden as
+an Executor quality pass.
+
+The 70 tok/s single-request target and 40 tok/s real-OpenCode primary target
+remain unmet. The historical 85.61 tok/s result is four-stream aggregate
+throughput, never a single-request claim. Full artifacts are under
+`/home/kotori9/qwen38-data/results/omp-optimization-20260914T1655Z/`.
+
+## Harness-safe Flash-Next retune — 2026-09-15
+
+The final external Executor kept context and KV capacity at 262,144 tokens and
+used HashK R6, FP8 KV, NEXTN 3/4, the 65K draft map, one request slot, five
+Mamba slots, and eager decode. Controlled single-request decode was 37.16
+tok/s median and 42.39 maximum, versus 26.72 tok/s for the best preserved 27B
+Executor run. The requested 60 tok/s gate remained unmet.
+
+Quality sanity was 5/5 and a fresh 250,000-token three-needle retrieval passed
+in 108.70 seconds. Codex, OpenCode, Hermes, generic Gateway, and full primary
+Gateway paths all passed. With Qwythos-v2-9B:Q4 resident at 65,536 context, the
+systemd-backed memory watchdog stayed active with a 7.086 GiB low-water and no
+swap. Evidence is in
+`/home/kotori9/qwen38-data/results/harness-optimization-20260915/`.

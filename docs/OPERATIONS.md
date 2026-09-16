@@ -4,16 +4,48 @@
 
 Current operations follow `docs/STATE.md`. The fixed authenticated Gateway is a
 `PILOT_ACTIVE` release on `0.0.0.0:9000`; the overall project is
-`IN_PROGRESS`. The last physically promoted local Executor is Qwen3.8 27B NVFP4
-+ DSpark on loopback `9001`. The 2026-08-20 read-only inspection found Gateway
-and Executor active with zero restarts. ExecutionGraph authority, specialist
-routing, and Remote Judge remain disabled.
+`IN_PROGRESS`. The physically promoted Executor is the externally managed
+Qwen3.8 Flash-Next server on loopback `127.0.0.1:30000`. The superseded
+Executor port `9001` is closed. ExecutionGraph authority, specialist routing,
+and Remote Judge remain disabled.
+
+The ignored runtime overlay selects `local/qwen3.8-flash-next`, has lifecycle
+mode disabled and an empty unit map, and keeps the prior `local/qwen3.8-27b`
+definition as rollback data. Do not start `dgx-moa-executor.service` while the
+Flash-Next container owns GPU memory. The public aliases remain `dgx-moa`
+(Reasoner + Executor) and `dgx-moa-fast` (Executor-only).
 
 The public catalog reports context `262144`. The checked-in Qwen deployment is a
 fail-closed candidate (`runtime_validated: false`, memory fraction `0.5`, DSpark
-off); the ignored production overlay is the measured memory fraction `0.35`,
-270,000-total-KV, batch-one DSpark profile. Phase 3 65K/1.7-GB-KV MARLIN remains
-the preserved rollback baseline.
+off); it is not rewritten to claim authority for the ignored deployment. The
+active external server uses memory fraction `0.89`, FP8 KV, HashK R6, NEXTN 3/4,
+a 65K draft map, two request slots, ten Mamba slots, and eager decode. Phase 3
+65K/1.7-GB-KV MARLIN and the previous DSpark overlay remain preserved rollback
+evidence.
+
+Operational checks:
+
+```bash
+curl -fsS http://127.0.0.1:30000/health
+ss -ltnp | rg ':(30000|9000|9001)\b'
+systemctl --user status dgx-moa-gateway.service
+```
+
+Authenticate Gateway checks from the protected environment; never paste token
+values into commands, logs, or documentation. The expected binding is `30000`
+loopback-only and `9000` wildcard with bearer authentication. `/readyz` also
+requires the externally managed Qwythos Reasoner to be resident.
+
+Rollback material is preserved at
+`/home/kotori9/qwen38-data/backups/omp-optimization-20260915T0259KST`.
+Because the backed-up environment re-enables the old systemd Executor, first
+stop the Gateway and the Flash-Next container; never load both large Executors
+at once. Then restore `dgx-moa/.env.local` to the repository `.env.local`,
+`dgx-moa/operational/runtime.yaml` to the configured ignored runtime path, and
+`opencode.json` to `~/.config/opencode/opencode.json` before restarting the
+Gateway. File modes must remain `0600`. The Qwen image, model trees, HashK
+view, draft maps, and all benchmark results are independent and were not
+deleted or overwritten by promotion.
 
 Current Qwen P0 release certification is not complete. The Gateway base and
 quality-harness base are now digest-pinned, and the Gateway image builds, but

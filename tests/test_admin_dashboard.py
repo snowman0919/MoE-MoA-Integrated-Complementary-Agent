@@ -79,7 +79,7 @@ def test_admin_dashboard_uses_live_probe_for_unmanaged_executor(settings: Settin
         "state": "unmanaged",
         "operator_enabled": False,
         "control_available": False,
-        "active_executor": "opencode/mimo-v2.5",
+        "active_executor": "opencode/muse-spark-1.3-contributor",
         "fallback_active": True,
     }
     assert "button:disabled" in dashboard
@@ -129,7 +129,7 @@ def test_admin_dashboard_controls_executor_and_uses_fallback_while_off(
         assert stopped.json()["operator_enabled"] is False
         assert stopped.json()["desired_state"] == "OFF"
         assert stopped.json()["runtime_state"] == "DISABLED"
-        assert stopped.json()["active_executor"] == "opencode/mimo-v2.5"
+        assert stopped.json()["active_executor"] == "opencode/muse-spark-1.3-contributor"
         assert stopped.json()["weight_load_percent"] is None
         assert driver.calls.count(("stop", "executor")) == 1
         disabled_audit = app.state.store.events("runtime-executor")[-1]
@@ -149,7 +149,7 @@ def test_admin_dashboard_controls_executor_and_uses_fallback_while_off(
         assert app.state.lifecycle_store.get("executor").state == "disabled"
 
         listed = client.get("/v1/admin/local-models", headers=operator).json()["data"]
-        assert listed[0]["effective_route"] == "opencode/mimo-v2.5"
+        assert listed[0]["effective_route"] == "opencode/muse-spark-1.3-contributor"
 
         started = client.post("/v1/admin/executor/on", headers=operator)
         assert started.status_code == 200

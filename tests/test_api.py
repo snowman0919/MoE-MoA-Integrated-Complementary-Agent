@@ -23,7 +23,7 @@ from dgx_moa.api import (
     openai_inference_ready,
     openai_model_ready,
 )
-from dgx_moa.config import Settings
+from dgx_moa.config import ModelRef, Settings
 from dgx_moa.controller import fingerprint
 from dgx_moa.execution_graph import ExecutionGraphRuntime, NodeState, NodeType
 from dgx_moa.frontier import FrontierCollaborationResult, FrontierConfig
@@ -60,6 +60,48 @@ def test_runtime_version_is_2_0(settings: Settings) -> None:
 
     assert __version__ == "2.0.0"
     assert app.version == "2.0.0"
+
+
+def test_model_routing_drives_remote_specialist_models(settings: Settings) -> None:
+    raw = settings.model_dump()
+    raw["specialist_routing"].update(
+        {"enabled": True, "provider": "opencode_go", "endpoint": "https://opencode.invalid"}
+    )
+    raw["model_routing"]["planner"] = "opencode/new-planner"
+    raw["model_routing"]["reviewer"] = "opencode/new-reviewer"
+    configured = Settings.model_validate(raw)
+    app = create_app(configured)
+
+    with TestClient(app):
+        assert app.state.specialists.remote["planner"].model == "new-planner"
+        assert app.state.specialists.remote["reviewer"].model == "new-reviewer"
+
+
+def test_model_routing_drives_both_frontier_models(settings: Settings) -> None:
+    frontier_config = settings.state_db.parent / "modular-frontier.yaml"
+    frontier_config.write_text(
+        "enabled: true\nmodel: legacy-a\nprimary_profile: primary\n"
+        "openrouter_fallback_enabled: true\nopenrouter_model: legacy-b\n"
+    )
+    routing = settings.model_routing.model_copy(
+        update={
+            "frontier_a": ModelRef(provider="codex", model="new-a"),
+            "frontier_b": ModelRef(provider="openrouter", model="new-b"),
+        }
+    )
+    configured = settings.model_copy(
+        update={
+            "frontier_enabled": True,
+            "frontier_config": frontier_config,
+            "model_routing": routing,
+        }
+    )
+
+    app = create_app(configured)
+
+    with TestClient(app):
+        assert app.state.frontier_config.model == "new-a"
+        assert app.state.frontier_config.openrouter_model == "new-b"
 
 
 def test_openai_lifecycle_gate_requires_exact_model_and_public_inference(

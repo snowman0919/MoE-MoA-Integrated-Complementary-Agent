@@ -333,6 +333,17 @@ def test_qwen_executor_collapses_leading_instructions_without_mutation(settings)
         },
     )
     assert automatic["chat_template_kwargs"] == {"enable_thinking": False}
+    automatic_with_reasoning = ModelProvider.body(
+        "executor",
+        model,
+        {
+            "messages": [{"role": "user", "content": "Use a tool if needed."}],
+            "tools": [{"type": "function", "function": {"name": "terminal"}}],
+            "tool_choice": "auto",
+            "reasoning_effort": "low",
+        },
+    )
+    assert automatic_with_reasoning["chat_template_kwargs"] == {"enable_thinking": False}
 
     reasoned = ModelProvider.body(
         "executor",

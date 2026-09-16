@@ -73,7 +73,7 @@ Safe checked-in lifecycle and optional-feature defaults remain disabled. See
 operator-owned overrides or credentials into Git.
 
 The checked-in fail-closed manifest routes the Executor as
-`local/qwen3.8-27b -> opencode/mimo-v2.5 -> opencode/deepseek-v4-flash` and
+`local/qwen3.8-27b -> opencode/muse-spark-1.3-contributor -> opencode/deepseek-v4-flash` and
 retains `runtime_validated: false`, memory fraction `0.5`, and DSpark disabled.
 Those safe defaults are distinct from the ignored, measured production overlay
 (memory fraction `0.35`, DSpark enabled). Current blockers and evidence are in
