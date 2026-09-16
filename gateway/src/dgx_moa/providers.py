@@ -221,8 +221,11 @@ class ModelProvider:
         if role == "executor" and model.reasoning_parser == "qwen3":
             body["messages"] = qwen_messages(body.get("messages", []))
             template_options = dict(body.get("chat_template_kwargs") or {})
-            template_options["enable_thinking"] = reasoning_effort in QWEN_REASONING_BUDGETS
-            if reasoning_effort in QWEN_REASONING_BUDGETS:
+            enable_thinking = (
+                not body.get("tools") and reasoning_effort in QWEN_REASONING_BUDGETS
+            )
+            template_options["enable_thinking"] = enable_thinking
+            if enable_thinking:
                 template_options["reasoning_budget"] = QWEN_REASONING_BUDGETS[reasoning_effort]
             else:
                 template_options.pop("reasoning_budget", None)

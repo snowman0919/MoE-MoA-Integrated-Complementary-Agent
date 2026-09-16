@@ -14,7 +14,7 @@ import httpx
 
 from .config import ModelConfig, SpecialistRoutingConfig
 from .executor_backend import ExecutorBackend
-from .http_client import managed_http_client
+from .http_client import managed_http_client, opencode_headers
 from .providers import StageTimeout
 
 SpecialistRole = Literal["planner", "reviewer"]
@@ -109,6 +109,7 @@ class _RemoteProvider:
         if not api_key:
             raise SpecialistUnavailable(f"{self.role} remote credential is unavailable")
         body = request.copy()
+        session_id = body.pop("_opencode_session", None)
         body["model"] = self.model
         body["stream"] = False
         body["max_tokens"] = max(int(body.get("max_tokens", 0) or 0), self.min_completion_tokens)
@@ -140,7 +141,9 @@ class _RemoteProvider:
                 async with managed_http_client(timeout=None, transport=self.transport) as client:
                     response = await client.post(
                         f"{self.endpoint}/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {api_key}"},
+                        headers=opencode_headers(
+                            api_key, session_id if isinstance(session_id, str) else None
+                        ),
                         json=body,
                     )
                     response.raise_for_status()
@@ -403,6 +406,7 @@ class SpecialistRouter:
         request_id: str,
         revision: str,
         timeout_seconds: float,
+        session_id: str | None = None,
         local_only: bool = False,
         mandatory: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -510,7 +514,11 @@ class SpecialistRouter:
             timeout_seconds if use_local else min(timeout_seconds, self.config.timeout_seconds)
         )
         try:
-            response = await provider.complete(request, timeout_seconds=provider_timeout)
+            provider_request = request if use_local else {
+                **request,
+                "_opencode_session": session_id or request_id,
+            }
+            response = await provider.complete(provider_request, timeout_seconds=provider_timeout)
         except Exception as error:
             if use_local:
                 self._mark_local_failed(role, error)

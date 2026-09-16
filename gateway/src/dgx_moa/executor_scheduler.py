@@ -1,4 +1,4 @@
-"""API-key-fair admission for the single local Executor."""
+"""API-key-fair admission for the local Executor."""
 
 from __future__ import annotations
 
@@ -55,19 +55,23 @@ class ExecutorScheduler:
     def __init__(
         self,
         *,
+        max_local_concurrency: int = 1,
         same_key_max_local_queue: int = 1,
         max_total_local_queue: int = 1,
         queue_timeout_seconds: float = 45,
     ) -> None:
+        if max_local_concurrency < 1:
+            raise ValueError("Executor concurrency must be positive")
         if same_key_max_local_queue < 1 or max_total_local_queue < 1:
             raise ValueError("Executor queue limits must be positive")
         if queue_timeout_seconds <= 0:
             raise ValueError("Executor queue timeout must be positive")
+        self.max_local_concurrency = max_local_concurrency
         self.same_key_max_local_queue = same_key_max_local_queue
         self.max_total_local_queue = max_total_local_queue
         self.queue_timeout_seconds = queue_timeout_seconds
         self._lock = threading.Lock()
-        self._owner: ExecutorAdmission | None = None
+        self._owners: dict[str, ExecutorAdmission] = {}
         self._queues: dict[str, deque[_Queued]] = {}
         self._round_robin: deque[str] = deque()
         self._pins: dict[str, ExecutorAdmission] = {}
@@ -107,7 +111,9 @@ class ExecutorScheduler:
             return pin
         return replace(
             pin,
-            lease_owner_api_key_id=(self._owner.api_key_id if self._owner else None),
+            lease_owner_api_key_id=(
+                next(iter(self._owners.values())).api_key_id if self._owners else None
+            ),
             queue_position=self._queue_position(request_id),
             round_robin_epoch=self._epoch,
         )
@@ -118,11 +124,14 @@ class ExecutorScheduler:
 
     def snapshot(self) -> dict[str, object]:
         with self._lock:
+            owner = next(iter(self._owners.values()), None)
             return {
-                "owner_api_key_id": self._owner.api_key_id if self._owner else None,
-                "owner_request_id": self._owner.request_id if self._owner else None,
-                "acquired_at": self._owner.acquired_at if self._owner else None,
-                "lease_state": self._owner.lease_state if self._owner else "idle",
+                "owner_api_key_id": owner.api_key_id if owner else None,
+                "owner_request_id": owner.request_id if owner else None,
+                "acquired_at": owner.acquired_at if owner else None,
+                "lease_state": owner.lease_state if owner else "idle",
+                "active": len(self._owners),
+                "capacity": self.max_local_concurrency,
                 "queued": sum(len(queue) for queue in self._queues.values()),
                 "round_robin_epoch": self._epoch,
             }
@@ -157,7 +166,7 @@ class ExecutorScheduler:
                     request_id,
                     api_key_id,
                     "remote_overflow",
-                    self._owner.api_key_id if self._owner else None,
+                    next(iter(self._owners.values())).api_key_id if self._owners else None,
                     self._now(),
                     "overflow",
                     0,
@@ -166,7 +175,7 @@ class ExecutorScheduler:
                 )
                 self._pins[request_id] = admission
                 return admission
-            if self._owner is None and not self._queues:
+            if len(self._owners) < self.max_local_concurrency and not self._queues:
                 self._epoch += 1
                 admission = ExecutorAdmission(
                     request_id,
@@ -179,20 +188,17 @@ class ExecutorScheduler:
                     self._epoch,
                     "local_idle",
                 )
-                self._owner = admission
+                self._owners[request_id] = admission
                 self._pins[request_id] = admission
                 return admission
 
-            owner_key = self._owner.api_key_id if self._owner else None
-            same_key = owner_key == api_key_id
+            owner = next(iter(self._owners.values()), None)
+            owner_key = owner.api_key_id if owner else None
+            same_key = any(item.api_key_id == api_key_id for item in self._owners.values())
             key_queue = self._queues.get(api_key_id)
             key_depth = len(key_queue) if key_queue else 0
             total_depth = sum(len(queue) for queue in self._queues.values())
-            if (
-                not high_risk
-                and flash_available
-                and total_depth >= self.max_total_local_queue
-            ):
+            if not high_risk and flash_available and total_depth >= self.max_total_local_queue:
                 admission = ExecutorAdmission(
                     request_id,
                     api_key_id,
@@ -274,7 +280,7 @@ class ExecutorScheduler:
             self._epoch,
             "round_robin_promoted",
         )
-        self._owner = admission
+        self._owners[entry.request_id] = admission
         self._pins[entry.request_id] = admission
         return entry.future, admission
 
@@ -284,9 +290,8 @@ class ExecutorScheduler:
             pin = self._pins.pop(request_id, None)
             if pin is None:
                 return False
-            if self._owner is not None and self._owner.request_id == request_id:
-                last_key = self._owner.api_key_id
-                self._owner = None
+            if request_id in self._owners:
+                last_key = self._owners.pop(request_id).api_key_id
                 promoted = self._promote(last_key)
             elif pin.lease_state == "queued":
                 queue = self._queues.get(pin.api_key_id)

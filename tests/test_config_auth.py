@@ -235,6 +235,7 @@ def test_executor_scheduler_is_bounded_disabled_and_requires_remote_endpoint() -
     settings = Settings(auth_enabled=False)
 
     assert settings.executor_scheduling.enabled is False
+    assert settings.executor_scheduling.max_local_concurrency == 1
     assert settings.executor_scheduling.same_key_max_local_queue == 1
     assert settings.executor_scheduling.max_total_local_queue == 1
     assert settings.executor_scheduling.queue_timeout_seconds == 45
@@ -268,6 +269,73 @@ def test_role_model_environment_overrides_yaml(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setenv("DGX_MOA_PLANNER_MODEL", "openrouter/vendor/new")
 
     assert str(load_settings(config).model_routing.planner) == "openrouter/vendor/new"
+
+
+def test_role_routing_resolves_local_catalog_and_ollama_name(tmp_path: Path) -> None:
+    def model(name: str, provider: str = "openai") -> ModelConfig:
+        return ModelConfig(
+            repository=name,
+            revision="revision",
+            classification="test",
+            base_url="http://127.0.0.1:1",
+            served_name=name,
+            destination=tmp_path / name,
+            provider=provider,
+            context_length=65_536,
+        )
+
+    settings = Settings(
+        auth_enabled=False,
+        models={"reasoner": model("old-reasoner", "ollama")},
+        local_models={"new-executor": model("new-executor")},
+        model_routing={
+            "executor": "local/new-executor",
+            "reasoner": "ollama/new-reasoner:Q4",
+        },
+    )
+
+    assert settings.models["executor"].served_name == "new-executor"
+    assert settings.models["reasoner"].served_name == "new-reasoner:Q4"
+
+
+def test_enabled_remote_roles_reject_incompatible_role_routes(tmp_path: Path) -> None:
+    model = ModelConfig(
+        repository="test/model",
+        revision="revision",
+        classification="test",
+        base_url="http://127.0.0.1:1",
+        served_name="model",
+        destination=tmp_path / "model",
+        context_length=65_536,
+    )
+    with pytest.raises(ValidationError, match="opencode/planner"):
+        Settings(
+            auth_enabled=False,
+            models={"planner": model, "reviewer": model},
+            specialist_routing={"enabled": True, "provider": "opencode_go"},
+            model_routing={"planner": "local/planner"},
+        )
+
+
+def test_legacy_remote_role_models_migrate_into_model_routing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(
+        "gateway:\n"
+        "  specialist_routing:\n"
+        "    models: {planner: legacy-planner, reviewer: legacy-reviewer}\n"
+        "  remote_judge:\n"
+        "    model: legacy-judge\n"
+        "models: {}\n"
+    )
+    monkeypatch.setenv("DGX_MOA_AUTH_ENABLED", "false")
+
+    settings = load_settings(config)
+
+    assert settings.model_routing.planner.model == "legacy-planner"
+    assert settings.model_routing.reviewer.model == "legacy-reviewer"
+    assert settings.model_routing.judge.model == "legacy-judge"
 
 
 def test_training_store_is_disabled_separate_and_unknown_repositories_fail_closed(

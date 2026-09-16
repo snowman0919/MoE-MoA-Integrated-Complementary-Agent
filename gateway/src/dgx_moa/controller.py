@@ -612,6 +612,7 @@ class Controller:
             role,
             request,
             request_id=state.current_request_id or state.session_id,
+            session_id=state.session_id,
             revision=self.settings.models[role].revision,
             timeout_seconds=getattr(self.settings.limits, f"{role}_timeout_seconds"),
             local_only=role in state.specialist_local_only_roles,
@@ -1317,9 +1318,12 @@ class Controller:
             if invocation.get("model")
             else self.frontier.config.model
             if role == "frontier" and self.frontier is not None
-            else self.settings.remote_judge.model
+            else self.settings.model_routing.judge.model
             if role == "judge" and invocation.get("provider") == "opencode_go"
-            else self.settings.specialist_routing.models[cast(Literal["planner", "reviewer"], role)]
+            else getattr(
+                self.settings.model_routing,
+                cast(Literal["planner", "reviewer"], role),
+            ).model
             if role in {"planner", "reviewer"} and invocation.get("provider") == "remote"
             else self.settings.models[role].served_name
         )
@@ -5358,7 +5362,7 @@ class Controller:
             "judge_requested",
             {
                 "provider": "opencode_go",
-                "model": self.settings.remote_judge.model,
+                "model": self.settings.model_routing.judge.model,
                 "evidence_categories": [
                     key
                     for key, value in package.model_dump(mode="json").items()
@@ -5373,7 +5377,9 @@ class Controller:
         started = time.monotonic()
         provider_status = "completed"
         try:
-            verdict: RemoteJudgeVerdict = await self.remote_judge.judge(package)
+            verdict: RemoteJudgeVerdict = await self.remote_judge.judge(
+                package, session_id=state.session_id
+            )
         except JudgeProviderError as error:
             provider_status = "failed"
             failure_class = (
@@ -5441,7 +5447,7 @@ class Controller:
             {
                 "role": "judge",
                 "provider": "opencode_go",
-                "model": self.settings.remote_judge.model,
+                "model": self.settings.model_routing.judge.model,
                 "latency_ms": latency_seconds * 1000,
                 **judge_usage,
                 "status": "completed",
@@ -5462,7 +5468,7 @@ class Controller:
             safe_result
             | {
                 "provider": "opencode_go",
-                "model": self.settings.remote_judge.model,
+                "model": self.settings.model_routing.judge.model,
                 "latency_seconds": latency_seconds,
                 "total_tokens": judge_usage.get("total_tokens", 0),
             },
@@ -5473,7 +5479,7 @@ class Controller:
                 "target_type": "decision",
                 "target_id": decision_id,
                 "evaluator_type": "opencode_go",
-                "evaluator_model": self.settings.remote_judge.model,
+                "evaluator_model": self.settings.model_routing.judge.model,
                 "evaluator_revision": "remote",
                 "result": safe_result,
                 "evidence_references": [],

@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 import pytest
 from dgx_moa.config import SpecialistRoutingConfig
+from dgx_moa.http_client import opencode_headers
 from dgx_moa.specialists import (
     MockPlannerProvider,
     MockReviewerProvider,
@@ -377,6 +378,7 @@ async def test_opencode_specialist_uses_role_model_and_drops_tools(
     await provider.complete(
         {
             "messages": [],
+            "_opencode_session": "session-1",
             "tools": [{"type": "function"}],
             "metadata": {"private": True},
             "response_format": {"type": "json_schema", "json_schema": {}},
@@ -392,6 +394,9 @@ async def test_opencode_specialist_uses_role_model_and_drops_tools(
     assert "metadata" not in body
     assert body["response_format"] == {"type": "json_object"}
     assert requests[0].headers["authorization"] == "Bearer synthetic-secret"
+    assert requests[0].headers["x-opencode-session"] == opencode_headers(
+        "synthetic-secret", "session-1"
+    )["x-opencode-session"]
 
     reviewer = RemoteReviewerProvider(
         endpoint="https://opencode.invalid",

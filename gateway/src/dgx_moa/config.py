@@ -24,6 +24,7 @@ API_KEY_PLACEHOLDERS = {
 MODEL_ROLES = frozenset({"executor", "planner", "reviewer", "reasoner", "judge"})
 SYSTEMD_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@-]*\.service$")
 ProviderName = Literal["local", "ollama", "opencode", "openrouter", "codex"]
+ModelAPI = Literal["chat_completions", "responses"]
 
 
 class ModelRef(BaseModel):
@@ -31,6 +32,7 @@ class ModelRef(BaseModel):
 
     provider: ProviderName
     model: str = Field(min_length=1)
+    api: ModelAPI = "chat_completions"
 
     @model_validator(mode="before")
     @classmethod
@@ -87,7 +89,9 @@ class ModelRoutingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     executor: ModelRef = ModelRef(provider="local", model="qwen3.8-27b")
-    executor_fallback: ModelRef = ModelRef(provider="opencode", model="mimo-v2.5")
+    executor_fallback: ModelRef = ModelRef(
+        provider="opencode", model="muse-spark-1.3-contributor", api="responses"
+    )
     executor_rollback: ModelRef = ModelRef(provider="opencode", model="deepseek-v4-flash")
     planner: ModelRef = ModelRef(provider="opencode", model="deepseek-v4-pro")
     reviewer: ModelRef = ModelRef(provider="opencode", model="glm-5.2")
@@ -461,6 +465,7 @@ class ExecutorSchedulingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
+    max_local_concurrency: int = Field(default=1, ge=1, le=8)
     same_key_max_local_queue: Literal[1] = 1
     max_total_local_queue: Literal[1] = 1
     queue_timeout_seconds: float = Field(default=45, gt=0, le=86_400)
@@ -737,6 +742,44 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def validate_lifecycle_runtime(self) -> Settings:
+        if self.specialist_routing.enabled:
+            for role in ("planner", "reviewer"):
+                if getattr(self.model_routing, role).provider != "opencode":
+                    raise ValueError(
+                        f"enabled specialist routing requires opencode/{role} model routing"
+                    )
+        if self.remote_judge.enabled and self.model_routing.judge.provider != "opencode":
+            raise ValueError("enabled Remote Judge requires opencode/judge model routing")
+        if self.frontier_enabled and self.model_routing.frontier_a.provider != "codex":
+            raise ValueError("enabled Frontier requires codex/frontier_a model routing")
+        if (
+            self.frontier_enabled
+            and self.model_routing.frontier_b is not None
+            and self.model_routing.frontier_b.provider != "openrouter"
+        ):
+            raise ValueError("enabled Frontier B requires openrouter/frontier_b model routing")
+        for role in MODEL_ROLES:
+            route = getattr(self.model_routing, role)
+            if route.provider == "local" and route.model in self.local_models:
+                self.models[role] = self.local_models[route.model].model_copy(deep=True)
+            elif (
+                route.provider == "local"
+                and self.local_models
+                and role in self.model_routing.model_fields_set
+            ):
+                raise ValueError(f"unknown local {role} deployment: {route.model}")
+        reasoner_route = self.model_routing.reasoner
+        if (
+            reasoner_route.provider == "ollama"
+            and "reasoner" in self.models
+            and self.models["reasoner"].provider == "ollama"
+        ):
+            self.models["reasoner"] = self.models["reasoner"].model_copy(
+                update={
+                    "repository": reasoner_route.model,
+                    "served_name": reasoner_route.model,
+                }
+            )
         if self.runtime_channel != "main" and any(
             not unit.startswith("dgx-moa-dev-") for unit in self.lifecycle_unit_map.values()
         ):
@@ -785,6 +828,25 @@ def load_settings(path: str | Path | None = None) -> Settings:
     for field, environment in role_environment.items():
         if value := os.getenv(environment):
             routing[field] = value
+    if value := os.getenv("DGX_MOA_EXECUTOR_FALLBACK_API"):
+        fallback = ModelRef.model_validate(
+            routing.get("executor_fallback", ModelRoutingConfig().executor_fallback)
+        )
+        routing["executor_fallback"] = fallback.model_copy(update={"api": value})
+    legacy_specialists = gateway.get("specialist_routing", {})
+    if isinstance(legacy_specialists, dict):
+        legacy_models = legacy_specialists.get("models", {})
+        if isinstance(legacy_models, dict):
+            for role in ("planner", "reviewer"):
+                if role not in routing and isinstance(legacy_models.get(role), str):
+                    routing[role] = {"provider": "opencode", "model": legacy_models[role]}
+    legacy_judge = gateway.get("remote_judge", {})
+    if (
+        "judge" not in routing
+        and isinstance(legacy_judge, dict)
+        and isinstance(legacy_judge.get("model"), str)
+    ):
+        routing["judge"] = {"provider": "opencode", "model": legacy_judge["model"]}
     gateway["model_routing"] = routing
     executor_explicit = "executor" in routing
     executor_ref = ModelRef.model_validate(routing.get("executor", "local/qwen3.8-27b"))

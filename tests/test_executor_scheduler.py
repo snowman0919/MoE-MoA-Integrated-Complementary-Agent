@@ -12,9 +12,7 @@ async def test_executor_scheduler_overflow_fairness_and_high_risk_fail_closed() 
     owner = await scheduler.acquire("key-a", "a1", flash_available=True)
     assert owner.selected_executor == "local_primary"
 
-    queued = asyncio.create_task(
-        scheduler.acquire("key-a", "a2", flash_available=True)
-    )
+    queued = asyncio.create_task(scheduler.acquire("key-a", "a2", flash_available=True))
     await asyncio.sleep(0)
     assert scheduler.snapshot()["queued"] == 1
     assert scheduler.pinned("a2").reason == "local_busy_queue"  # type: ignore[union-attr]
@@ -59,6 +57,26 @@ async def test_executor_scheduler_cancellation_removes_queue_and_pin() -> None:
         await waiting
     assert scheduler.pinned("waiting") is None
     assert scheduler.snapshot()["queued"] == 0
+
+
+@pytest.mark.asyncio
+async def test_executor_scheduler_admits_configured_local_concurrency() -> None:
+    scheduler = ExecutorScheduler(max_local_concurrency=2, queue_timeout_seconds=1)
+
+    first = await scheduler.acquire("key-a", "first", flash_available=True)
+    second = await scheduler.acquire("key-b", "second", flash_available=True)
+    waiting = asyncio.create_task(scheduler.acquire("key-c", "waiting", flash_available=True))
+    await asyncio.sleep(0)
+
+    assert first.selected_executor == second.selected_executor == "local_primary"
+    assert scheduler.snapshot()["active"] == 2
+    assert scheduler.snapshot()["capacity"] == 2
+    assert scheduler.pinned("waiting").lease_state == "queued"  # type: ignore[union-attr]
+
+    scheduler.release("first")
+    assert (await waiting).reason == "round_robin_promoted"
+    scheduler.release("second")
+    scheduler.release("waiting")
 
 
 @pytest.mark.asyncio

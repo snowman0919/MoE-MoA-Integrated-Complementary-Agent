@@ -717,6 +717,7 @@ def create_app(
         app.state.executor_manual_drain = None
         scheduling = configured.executor_scheduling
         app.state.executor_scheduler = ExecutorScheduler(
+            max_local_concurrency=scheduling.max_local_concurrency,
             same_key_max_local_queue=scheduling.same_key_max_local_queue,
             max_total_local_queue=scheduling.max_total_local_queue,
             queue_timeout_seconds=scheduling.queue_timeout_seconds,
@@ -791,6 +792,17 @@ def create_app(
             if configured.frontier_enabled
             else None
         )
+        if frontier_config is not None:
+            frontier_updates: dict[str, Any] = {}
+            routing_fields = configured.model_routing.model_fields_set
+            if "frontier_a" in routing_fields:
+                frontier_updates["model"] = configured.model_routing.frontier_a.model
+            if "frontier_b" in routing_fields:
+                if configured.model_routing.frontier_b is None:
+                    frontier_updates["openrouter_fallback_enabled"] = False
+                else:
+                    frontier_updates["openrouter_model"] = configured.model_routing.frontier_b.model
+            frontier_config = frontier_config.model_copy(update=frontier_updates)
         app.state.frontier_config = frontier_config
         app.state.frontier_auth_active = set()
         app.state.admin_codex = AdminCodexRunner(configured, api_keys, store)
@@ -848,7 +860,7 @@ def create_app(
             remote_judge = OpenCodeGoJudgeProvider(
                 endpoint=endpoint,
                 api_key_env=configured.remote_judge.api_key_env,
-                model=configured.remote_judge.model,
+                model=configured.model_routing.judge.model,
                 timeout_seconds=configured.remote_judge.timeout_seconds,
                 max_retries=configured.remote_judge.max_retries,
                 max_calls_per_request=configured.remote_judge.max_calls_per_request,
@@ -937,14 +949,14 @@ def create_app(
                 remote={
                     "planner": RemotePlannerProvider(
                         **remote_values,
-                        model=configured.specialist_routing.models["planner"],
+                        model=configured.model_routing.planner.model,
                         min_completion_tokens=configured.specialist_routing.remote_min_completion_tokens[
                             "planner"
                         ],
                     ),
                     "reviewer": RemoteReviewerProvider(
                         **remote_values,
-                        model=configured.specialist_routing.models["reviewer"],
+                        model=configured.model_routing.reviewer.model,
                         min_completion_tokens=configured.specialist_routing.remote_min_completion_tokens[
                             "reviewer"
                         ],
@@ -1132,7 +1144,7 @@ def create_app(
                         ),
                         judge_configuration={
                             "provider": configured.remote_judge.provider,
-                            "model": configured.remote_judge.model,
+                            "model": configured.model_routing.judge.model,
                             "mode": configured.remote_judge.mode,
                         },
                         model_configuration={
@@ -3196,6 +3208,7 @@ def create_app(
                 scoped_request = {
                     **executor_request,
                     "_client_workspace_path": state.repository.get("workspace_path"),
+                    "_opencode_session": state_session_id,
                 }
                 if executor_flash and not force_frontier:
                     flash_provider = request.app.state.overflow_executor
@@ -5875,9 +5888,9 @@ def create_app(
         specialist = configured.specialist_routing
         frontier = app.state.frontier_config
         expected_remote_models = {
-            "Planner": specialist.models.get("planner", ""),
-            "Reviewer": specialist.models.get("reviewer", ""),
-            "Judge": configured.remote_judge.model,
+            "Planner": configured.model_routing.planner.model,
+            "Reviewer": configured.model_routing.reviewer.model,
+            "Judge": configured.model_routing.judge.model,
             "Frontier A": frontier.model if frontier else "",
             "Frontier B": frontier.openrouter_model if frontier else "",
         }
@@ -5930,8 +5943,8 @@ def create_app(
                 return local_role(label, role)
             return {
                 "role": label,
-                "model": specialist.models.get(role),
-                "served_name": specialist.models.get(role),
+                "model": getattr(configured.model_routing, role).model,
+                "served_name": getattr(configured.model_routing, role).model,
                 "provider": specialist.provider,
                 "enabled": True,
                 "available": None,
@@ -5965,14 +5978,14 @@ def create_app(
             {
                 "role": "Judge",
                 "model": (
-                    configured.remote_judge.model
+                    configured.model_routing.judge.model
                     if app.state.remote_judge is not None
                     else judge_model.repository
                     if judge_model
                     else None
                 ),
                 "served_name": (
-                    configured.remote_judge.model
+                    configured.model_routing.judge.model
                     if app.state.remote_judge is not None
                     else judge_model.served_name
                     if judge_model
@@ -6244,7 +6257,7 @@ def create_app(
             model_catalog.extend(
                 {
                     "role": role,
-                    "served_name": configured.specialist_routing.models[role],
+                    "served_name": getattr(configured.model_routing, role).model,
                     "repository": "OpenCode Go",
                 }
                 for role in ("planner", "reviewer")
@@ -6254,7 +6267,7 @@ def create_app(
             model_catalog.append(
                 {
                     "role": "judge",
-                    "served_name": configured.remote_judge.model,
+                    "served_name": configured.model_routing.judge.model,
                     "repository": "OpenCode Go",
                 }
             )
