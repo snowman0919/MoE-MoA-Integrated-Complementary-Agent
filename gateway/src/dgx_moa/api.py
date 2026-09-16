@@ -2008,6 +2008,7 @@ def create_app(
         descriptions = {
             "dgx-moa": "Reasoner + Executor Dynamic MoA model.",
             "dgx-moa-fast": "Executor-only compatibility model.",
+            "dgx-moa-unhold": "Local Executor-only model without remote fallback.",
         }
         return {
             "object": "list",
@@ -2193,6 +2194,7 @@ def create_app(
             mode = resolve_runtime_mode(model_alias, configured.model_name)
         except ValueError as error:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown model") from error
+        local_executor_only = model_alias == "dgx-moa-unhold"
         if "executor" not in configured.models:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "executor is not configured")
         raw = body.model_dump(exclude_none=True)
@@ -2770,7 +2772,8 @@ def create_app(
             )
         )
         executor_flash_fallback = bool(
-            configured.executor_scheduling.enabled
+            not local_executor_only
+            and configured.executor_scheduling.enabled
             and request.app.state.overflow_executor is not None
             and executor_local_unavailable
         )
@@ -2806,7 +2809,9 @@ def create_app(
                     api_token_id,
                     usage_request_id,
                     risk="high" if request_class == "high_risk_task" else "medium",
-                    flash_available=request.app.state.overflow_executor is not None,
+                    flash_available=(
+                        request.app.state.overflow_executor is not None and not local_executor_only
+                    ),
                     local_available=not executor_flash_fallback,
                     on_queued=lambda queued: request.app.state.store.event(
                         state_session_id,
@@ -2842,7 +2847,9 @@ def create_app(
             else:
                 async with request.app.state.executor_admission_lock:
                     executor_provider, executor_routing_reason = select_executor_provider(
-                        frontier_available=request.app.state.frontier is not None,
+                        frontier_available=(
+                            request.app.state.frontier is not None and not local_executor_only
+                        ),
                         local_busy=(
                             request.app.state.lifecycle_store.get("executor").active_request_count
                             > 0
@@ -2852,7 +2859,11 @@ def create_app(
             quality_retry_reason = str(
                 getattr(request.state, "responses_quality_retry_reason", "") or ""
             )
-            if quality_retry_reason and request.app.state.frontier is not None:
+            if (
+                quality_retry_reason
+                and request.app.state.frontier is not None
+                and not local_executor_only
+            ):
                 executor_remote = True
                 executor_flash = False
                 executor_routing_reason = f"local_{quality_retry_reason}"
@@ -3411,6 +3422,7 @@ def create_app(
                 nonlocal executor_remote, executor_routing_reason, stream_lease_ids
                 if (
                     error.response.status_code != status.HTTP_400_BAD_REQUEST
+                    or local_executor_only
                     or not configured.executor_scheduling.enabled
                     or request.app.state.overflow_executor is None
                     or executor_admission is None
@@ -3476,7 +3488,9 @@ def create_app(
                 else select_executor_provider(
                     "frontier" if executor_remote else "local",
                     executor_routing_reason,
-                    frontier_available=request.app.state.frontier is not None,
+                    frontier_available=(
+                        request.app.state.frontier is not None and not local_executor_only
+                    ),
                     duplicate_failure=duplicate_failure_recovery,
                     frontier_correction=state.frontier_correction_required,
                 )
@@ -3656,7 +3670,9 @@ def create_app(
                 else select_executor_provider(
                     "frontier" if executor_remote else "local",
                     executor_routing_reason,
-                    frontier_available=request.app.state.frontier is not None,
+                    frontier_available=(
+                        request.app.state.frontier is not None and not local_executor_only
+                    ),
                     context_exceeded=context_exceeded,
                     output_budget_exceeded=output_budget_exceeded,
                     frontier_correction=frontier_correction,

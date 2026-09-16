@@ -18,13 +18,14 @@ curl -fsS -H "Authorization: Bearer ${DGX_MOA_API_KEY}" \
   "${DGX_MOA_BASE_URL}/models"
 ```
 
-`GET /v1/models` returns only the two production aliases with
+`GET /v1/models` returns only the three production aliases with
 `context_length: 262144`.
 
 | Model alias | Gateway policy | Tool-loop owner |
 | --- | --- | --- |
 | `dgx-moa` | Reasoner + Executor core with runtime-selected optional roles | Client, when tools are supplied |
 | `dgx-moa-fast` | Explicit Executor-only compatibility path | Client, when tools are supplied |
+| `dgx-moa-unhold` | Local Executor only; never uses remote Executor fallback | Client, when tools are supplied |
 
 Both aliases accept text and image input and return text. OpenCode clients must
 use the checked-in custom-provider model metadata so PNG, JPEG, GIF, and WebP
@@ -34,8 +35,10 @@ They also expose `none`, `low`, `medium`, and `high` Qwen reasoning variants;
 reasoning summary. OpenCode's local `websearch` tool requires
 `OPENCODE_ENABLE_EXA=1` and `permission.websearch: allow`.
 
-`dgx-moa-fast` is always Executor-only. `dgx-moa` invokes the Reasoner and does
-not silently bypass it. The gateway preserves
+`dgx-moa-fast` is always Executor-only. `dgx-moa-unhold` additionally disables
+remote overflow, Frontier correction, and local-HTTP-400 fallback; local
+unavailability therefore returns a typed error. `dgx-moa` invokes the Reasoner
+and does not silently bypass it. The gateway preserves
 native OpenAI tool-call IDs, function names,
 and JSON arguments; the client executes each call and sends the assistant
 `tool_calls` message plus the matching `tool` result in its next request. The

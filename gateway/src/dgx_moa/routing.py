@@ -22,11 +22,12 @@ ExecutorProvider = Literal["local", "frontier"]
 MODEL_MODES: dict[str, RuntimeMode] = {
     "dgx-moa": "moa",
     "dgx-moa-fast": "fast",
+    "dgx-moa-unhold": "fast",
     "dgx-moa-agent": "agent",
     "dgx-moa-orchestrated": "orchestrated",
     "dgx-moa-chat": "fast",
 }
-PUBLIC_MODEL_ALIASES = ("dgx-moa", "dgx-moa-fast")
+PUBLIC_MODEL_ALIASES = ("dgx-moa", "dgx-moa-fast", "dgx-moa-unhold")
 COMPATIBILITY_MODEL_ALIASES = {
     "gpt-5.5": "dgx-moa",
     "gpt-5.6-luna": "dgx-moa-fast",

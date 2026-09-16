@@ -33,6 +33,7 @@ CLIENT_MARKERS: tuple[tuple[str, SafeClientClass], ...] = (
 ModelAlias = Literal[
     "dgx-moa",
     "dgx-moa-fast",
+    "dgx-moa-unhold",
     "dgx-moa-agent",
     "dgx-moa-orchestrated",
     "dgx-moa-chat",

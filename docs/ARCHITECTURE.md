@@ -22,13 +22,14 @@ Its process lifecycle remains externally managed, but its inference endpoint
 must not bind or route through LAN, tailnet, or a wildcard address.
 Resident and judge profiles remain mutually exclusive systemd targets.
 
-The public catalog exposes only `dgx-moa` and `dgx-moa-fast`. The primary
+The public catalog exposes `dgx-moa`, `dgx-moa-fast`, and `dgx-moa-unhold`. The primary
 `dgx-moa` starts an Executor draft and an asynchronous evidence fan-out, then
 joins relevant workers only at the finalization barrier. Deterministic Runtime
 Policy selects optional Planner, Reviewer, Frontier, or Heavy Judge work.
 `dgx-moa-fast` is a strict one-Executor path: it creates no auxiliary or hidden
 background model call. The Executor alone emits native tool calls and
-client-visible content.
+client-visible content. `dgx-moa-unhold` uses that same one-Executor path but
+disables remote Executor overflow and correction fallback.
 
 Reasoner, Planner, Reviewer, and Frontier start independently from an immutable
 pre-dispatch snapshot while the Executor continues useful work. Their inputs

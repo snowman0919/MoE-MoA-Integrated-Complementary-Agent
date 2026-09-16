@@ -3574,6 +3574,61 @@ def test_disabled_local_executor_routes_low_risk_request_to_flash(
     assert stub_provider.calls == []
 
 
+def test_unhold_fails_closed_when_local_executor_is_unavailable(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            },
+        }
+    )
+
+    class Flash:
+        async def available(self) -> bool:
+            return True
+
+        async def execute(self, request, correlation_id):  # type: ignore[no-untyped-def]
+            raise AssertionError("unhold must not call remote Executor fallback")
+
+    app = create_app(
+        controlled,
+        lifecycle_driver=FakeLifecycleDriver({"executor": "inactive"}),
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
+        overflow_executor=Flash(),  # type: ignore[arg-type]
+    )
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        generation = app.state.lifecycle_store.get("executor").generation
+        for index in range(3):
+            app.state.lifecycle_store.record_failure(
+                "executor",
+                "operator_disabled",
+                f"operator_disabled_{index}",
+                generation,
+                failure_limit=3,
+                failure_window_seconds=900,
+            )
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-unhold",
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+
+    assert response.status_code == 503
+    assert stub_provider.calls == []
+
+
 @pytest.mark.parametrize(
     ("flash_error", "expected_status"),
     [
@@ -4508,7 +4563,7 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert client.get("/v1/models").status_code == 401
         headers = {"Authorization": "Bearer test-secret", "X-Session-ID": "session-1"}
         models = client.get("/v1/models", headers=headers).json()
-        aliases = ["dgx-moa", "dgx-moa-fast"]
+        aliases = ["dgx-moa", "dgx-moa-fast", "dgx-moa-unhold"]
         context_length = settings.models["executor"].context_length
         assert models["data"] == [
             {
@@ -5717,6 +5772,7 @@ def test_reasoner_policy_requires_explicit_valid_orchestrated_mode(
     [
         ("dgx-moa-chat", ["executor"]),
         ("dgx-moa-fast", ["executor"]),
+        ("dgx-moa-unhold", ["executor"]),
         ("dgx-moa", ["executor", "reasoner", "executor"]),
         ("dgx-moa-agent", ["executor", "reasoner", "executor"]),
     ],
@@ -8217,6 +8273,63 @@ def test_local_executor_400_falls_back_once_to_mimo(
         "stage": "executor_first_byte" if stream else "executor_total",
     }
     assert_usage(app, "completed")
+
+
+def test_unhold_does_not_fallback_on_local_executor_400(
+    settings: Settings, stub_provider: StubProvider
+) -> None:
+    controlled = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "executor_scheduling": {
+                "enabled": True,
+                "flash_provider": "opencode_go",
+                "flash_endpoint": "https://opencode.invalid",
+            }
+        }
+    )
+
+    async def rejected(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        response = httpx.Response(
+            400,
+            json={"message": "local rejected request", "code": 400},
+            request=httpx.Request("POST", model.base_url),
+        )
+        raise httpx.HTTPStatusError("bad request", request=response.request, response=response)
+
+    stub_provider.complete = rejected  # type: ignore[method-assign]
+
+    class Flash:
+        async def available(self) -> bool:
+            return True
+
+        async def execute(self, request, correlation_id):  # type: ignore[no-untyped-def]
+            raise AssertionError("unhold must not call remote Executor fallback")
+
+    app = create_app(
+        controlled,
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
+        overflow_executor=Flash(),  # type: ignore[arg-type]
+    )
+    session_id = "unhold-local-400"
+    with TestClient(app) as client:
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer test-secret",
+                "X-Session-ID": session_id,
+            },
+            json={
+                "model": "dgx-moa-unhold",
+                "messages": [{"role": "user", "content": "work"}],
+            },
+        )
+        events = app.state.store.events(session_id)
+
+    assert response.status_code == 400
+    assert not any(event["event_type"] == "executor_local_http_400_fallback" for event in events)
 
 
 def test_api_validation(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

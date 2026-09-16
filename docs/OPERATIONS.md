@@ -12,8 +12,9 @@ and Remote Judge remain disabled.
 The ignored runtime overlay selects `local/qwen3.8-flash-next`, has lifecycle
 mode disabled and an empty unit map, and keeps the prior `local/qwen3.8-27b`
 definition as rollback data. Do not start `dgx-moa-executor.service` while the
-Flash-Next container owns GPU memory. The public aliases remain `dgx-moa`
-(Reasoner + Executor) and `dgx-moa-fast` (Executor-only).
+Flash-Next container owns GPU memory. The public aliases are `dgx-moa`
+(Reasoner + Executor), `dgx-moa-fast` (Executor-only with normal fallback), and
+`dgx-moa-unhold` (local Executor-only, no remote fallback).
 
 The public catalog reports context `262144`. The checked-in Qwen deployment is a
 fail-closed candidate (`runtime_validated: false`, memory fraction `0.5`, DSpark
@@ -77,6 +78,11 @@ implementation, changed-file, validation, or tool-result evidence. Audit
 request event window; any Reviewer, Frontier, or remote-Executor selection is a
 contract regression. Use exact service stop/start for isolated gateway rollback;
 do not alter candidate A or the production gateway for this compatibility path.
+
+`dgx-moa-unhold` uses the same single-Executor role invariant but never selects
+OpenCode Go overflow, Frontier correction, or local-HTTP-400 fallback. It queues
+for the local Executor when possible and fails closed when the local Executor is
+unavailable or rejects the request.
 
 The deployed Frontier uses an existing Codex OAuth profile and read-only
 `codex exec`; no OpenAI API key is configured. The current development config
@@ -703,10 +709,11 @@ unless `DGX_MOA_ADMIN_API_ENABLED=true`.
 
 ## API clients
 
-Use `/v1/models` to discover `dgx-moa` and `dgx-moa-fast`. Direct external
+Use `/v1/models` to discover `dgx-moa`, `dgx-moa-fast`, and `dgx-moa-unhold`. Direct external
 agents should select `dgx-moa` and own the native tool loop. Select
 `dgx-moa-fast` only for an intentional
-Executor-only request. Standard OpenAI request fields are sufficient; project
+Executor-only request with normal fallback, or `dgx-moa-unhold` when the request
+must remain on the local Executor and fail closed. Standard OpenAI request fields are sufficient; project
 metadata and provenance headers are optional.
 
 The default executor output budget is 4096 tokens and the server cap is 16384.

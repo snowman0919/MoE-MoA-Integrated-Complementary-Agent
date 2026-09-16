@@ -38,6 +38,21 @@
             "medium": {"reasoningEffort": "medium", "reasoningSummary": "auto"},
             "high": {"reasoningEffort": "high", "reasoningSummary": "auto"}
           }
+        },
+        "dgx-moa-unhold": {
+          "name": "DGX MoA Unhold (Local Executor Only)",
+          "attachment": true,
+          "reasoning": true,
+          "tool_call": true,
+          "modalities": {"input": ["text", "image"], "output": ["text"]},
+          "limit": {"context": 262144, "output": 16384},
+          "options": {"reasoningEffort": "low", "reasoningSummary": "auto"},
+          "variants": {
+            "none": {"reasoningEffort": "none", "reasoningSummary": "none"},
+            "low": {"reasoningEffort": "low", "reasoningSummary": "auto"},
+            "medium": {"reasoningEffort": "medium", "reasoningSummary": "auto"},
+            "high": {"reasoningEffort": "high", "reasoningSummary": "auto"}
+          }
         }
       }
     }

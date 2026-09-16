@@ -23,6 +23,7 @@ The discoverable production catalog contains only:
 | --- | --- | --- | --- |
 | `dgx-moa` | primary Reasoner + Executor path | client | `262144` |
 | `dgx-moa-fast` | Executor-only compatibility path | client | `262144` |
+| `dgx-moa-unhold` | local Executor-only, no remote fallback | client | `262144` |
 
 The client executes native tool calls and returns matching tool results. The
 Executor owns routing authority and client-visible final synthesis. Historical

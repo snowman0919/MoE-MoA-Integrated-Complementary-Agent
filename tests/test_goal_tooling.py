@@ -208,14 +208,18 @@ def test_api_client_mode_documentation() -> None:
     api_modes = Path("docs/API_CLIENT_MODES.md").read_text()
     hermes = Path("docs/HERMES_AGENT.md").read_text()
     opencode = json.loads(Path("config/opencode.example.json").read_text())
-    for alias in ("dgx-moa", "dgx-moa-fast"):
+    for alias in ("dgx-moa", "dgx-moa-fast", "dgx-moa-unhold"):
         assert alias in api_modes
     for retired_alias in ("dgx-moa-agent", "dgx-moa-orchestrated", "dgx-moa-chat"):
         assert retired_alias not in api_modes
     assert "context_length: 262144" in api_modes
     assert "public executor context is\n262,144 tokens" in api_modes
     assert opencode["model"] == "dgx-moa/dgx-moa"
-    assert set(opencode["provider"]["dgx-moa"]["models"]) == {"dgx-moa", "dgx-moa-fast"}
+    assert set(opencode["provider"]["dgx-moa"]["models"]) == {
+        "dgx-moa",
+        "dgx-moa-fast",
+        "dgx-moa-unhold",
+    }
     assert all(
         model["limit"] == {"context": 262_144, "output": 16_384}
         for model in opencode["provider"]["dgx-moa"]["models"].values()

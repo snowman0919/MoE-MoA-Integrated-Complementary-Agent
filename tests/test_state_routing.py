@@ -97,6 +97,7 @@ def test_executor_provider_selection_is_pinned_and_priority_ordered() -> None:
     [
         ("dgx-moa", "moa"),
         ("dgx-moa-fast", "fast"),
+        ("dgx-moa-unhold", "fast"),
         ("dgx-moa-chat", "fast"),
         ("dgx-moa-agent", "agent"),
         ("dgx-moa-orchestrated", "orchestrated"),
@@ -111,6 +112,7 @@ def test_public_model_aliases(model: str, mode: str) -> None:
     [
         ("dgx-moa", "moa"),
         ("dgx-moa-fast", "fast"),
+        ("dgx-moa-unhold", "fast"),
         ("dgx-moa-chat", "fast"),
         ("dgx-moa-orchestrated", "orchestrated"),
     ],

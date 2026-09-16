@@ -1,10 +1,10 @@
 # State
 
-Updated: 2026-09-15
+Updated: 2026-09-16
 
 ## Current operational overlay — 2026-09-15
 
-The operator-approved ignored overlay now routes both public aliases to the
+The operator-approved ignored overlay now routes all public aliases to the
 externally managed Qwen3.8 Flash-Next Executor at `127.0.0.1:30000`:
 
 | Item | Current fact |
@@ -16,7 +16,7 @@ externally managed Qwen3.8 Flash-Next Executor at `127.0.0.1:30000`:
 | Network | Executor loopback `30000`; authenticated Gateway wildcard `9000`; superseded Executor port `9001` is closed |
 | Lifecycle | Gateway lifecycle is disabled for the externally managed Executor; the old `qwen3.8-27b` entry remains in the overlay for rollback |
 | Health | Gateway `/healthz` and `/readyz` passed; unauthenticated `/v1/models` returned 401 |
-| Public behavior | `dgx-moa` remains Reasoner + Executor; `dgx-moa-fast` remains Executor-only |
+| Public behavior | `dgx-moa`: Reasoner + Executor; `dgx-moa-fast`: Executor-only with fallback; `dgx-moa-unhold`: local Executor-only without fallback |
 
 The new Executor passed quality 5/5, a real 250,000-input-token three-needle
 retrieval, native tool call/continuation, and OpenCode edit/test execution. Its
@@ -88,7 +88,7 @@ open. This does not promote policy-disabled paths or the overall project beyond
 | Source | Audit baseline and reported controller commit `75bee24a020fb2c36cd0eadd10357c8b09d8d968`; the 2026-08-20 production checkout was observed at `ea3831ea43c3b32aef712041a464f242fc2095fd`, so exact loaded-source identity remains a certification manifest requirement |
 | Rollback | Pre-Qwen environment, unit, model configuration, and lifecycle DB backup: `/home/kotori9/.local/state/dgx-moa/backups/qwen38-production-20260819T1245KST`; Phase 3 MARLIN evidence remains preserved |
 | Gateway | PID `2869097`, `NRestarts=0`, healthy authenticated listener on `0.0.0.0:9000`; `/healthz` and `/readyz` passed on 2026-08-20 |
-| Public catalog | only `dgx-moa` and `dgx-moa-fast`, both `context_length: 262144` |
+| Public catalog | `dgx-moa`, `dgx-moa-fast`, and `dgx-moa-unhold`, all `context_length: 262144` |
 | Active Executor | Qwen3.8 27B NVFP4 + DSpark on loopback `127.0.0.1:9001`; PID `2700788`, `NRestarts=0` |
 | Superseded Pilot | transient `dgx-moa-pilot-v1-release-attempt12.service` was stopped and collected; tailnet `19000` fails closed |
 | Lifecycle | status `READY`, desired `ON`, effective route `local/qwen3.8-27b`, generation `35`; checked-in lifecycle defaults remain disabled and empty |
@@ -138,6 +138,8 @@ or current provider.
 
 - `dgx-moa` is the primary Reasoner + Executor policy path.
 - `dgx-moa-fast` is the intentional Executor-only compatibility path.
+- `dgx-moa-unhold` is the local Executor-only path with all remote Executor
+  fallback disabled.
 - The client owns tool execution and sends matching tool results back to the
   gateway; the Executor owns routing and client-visible final synthesis.
 - Historical inputs such as `dgx-moa-agent`, `dgx-moa-orchestrated`, and
