@@ -10588,4 +10588,31 @@ deterministic regression reproduces the observed event boundary and proves that
 no markup reaches the client, the finish reason is `tool_calls`, and the emitted
 call is `bash({"command":"ls"})`. Ruff, formatting, strict mypy over 54 source
 files, 361 streaming/API tests, and all 1,230 tests passed. Production runtime
-validation is recorded after deployment rather than inferred from these tests.
+validation is recorded below rather than inferred from these tests.
+
+The first deployed smoke exposed a second, independent interruption path. For a
+non-fast streamed request, the asynchronous runtime performs a preliminary
+Executor completion while Reasoner work is pending. The active SGLang Executor
+occasionally returned HTTP 200 with an empty body for that optional preliminary
+completion. JSON decoding then raised before the authoritative final stream was
+opened, producing Gateway HTTP 502 even though the Executor service remained
+healthy. The runtime now records `executor_preliminary_work_failed` with bounded
+failure metadata, reconciles the completed auxiliary work with an empty draft
+hypothesis, and continues to the final Executor stream. It does not suppress a
+failure from the final authoritative stream.
+
+The focused overlap and preliminary-failure regressions passed, followed by
+Ruff, strict mypy over 54 source files, and all 1,231 tests. Commit
+`c0bba96f4a826bb73b2e2978409cf4fddb0b539c` was fast-forwarded to the production
+checkout and only `dgx-moa-gateway.service` was restarted. The restarted Gateway
+reported PID `3654383`, `NRestarts=0`, and `/readyz` HTTP 200 with both Executor
+and Reasoner ready.
+
+The deployed `scripts/validate-opencode-loop.sh` run completed as session
+`opencode-loop-1789538543`: native tool request/result continuation passed and a
+separate streamed response reached `[DONE]`. An actual local OpenCode 1.18.29
+staging client then completed the `read-1` fixture as Gateway session
+`ses_f572fdf62ffed7vu1XFPgmpL5U` in 32.282 seconds with OpenCode exit 0,
+validation exit 0, and finalization exit 0. This is physical client evidence for
+the deployed path; it is not a synthetic benchmark or a frontier-performance
+claim.
