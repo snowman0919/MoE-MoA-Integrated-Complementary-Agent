@@ -105,6 +105,7 @@ class SessionState(BaseModel):
     resolved_objective: str = ""
     resolved_objective_orchestrated: bool = False
     reasoner_context_fingerprint: str = ""
+    delegation_fingerprints: dict[str, float] = Field(default_factory=dict)
     repository: dict[str, str] = Field(default_factory=dict)
     media_assets: list[dict[str, Any]] = Field(default_factory=list)
     route: str = "standard"

@@ -14,6 +14,12 @@ from typing import Any, Literal, cast
 
 import httpx
 
+from .async_moa import (
+    ArtifactRef,
+    DelegationSnapshot,
+    EvidenceClass,
+    reasoner_signal,
+)
 from .compression import compress_messages, compress_text
 from .config import Settings
 from .context_projection import (
@@ -581,6 +587,150 @@ class Controller:
             if settings.execution_graph.mode == "shadow"
             else None
         )
+
+    def delegation_snapshot(
+        self,
+        state: SessionState,
+        evidence: RuntimeEvidenceSnapshot,
+    ) -> DelegationSnapshot:
+        repository_head = (
+            state.repository.get("head")
+            or state.repository.get("commit")
+            or state.controller_commit
+        )
+        refs = [
+            ArtifactRef(
+                evidence.snapshot_id,
+                "runtime_evidence_snapshot",
+                f"runtime://snapshots/{evidence.snapshot_id}",
+                evidence.snapshot_hash,
+            )
+        ]
+        refs.extend(
+            ArtifactRef(
+                item.evidence_id,
+                item.kind,
+                f"runtime://evidence/{item.evidence_id}",
+                hashlib.sha256(item.payload_json.encode()).hexdigest(),
+            )
+            for item in evidence.runtime_evidence
+        )
+        return DelegationSnapshot(
+            task_state_version=self.store.event_cursor(state.session_id),
+            repository_head=repository_head,
+            working_tree_hash=evidence.snapshot_hash,
+            decision_version=len(state.decisions),
+            artifact_refs=tuple(refs),
+        )
+
+    def reconcile_async_collaboration(
+        self,
+        state: SessionState,
+        launched_from: DelegationSnapshot,
+        artifact_start: int,
+        invocation_start: int,
+    ) -> dict[str, Any]:
+        """Tag mature fan-out results with launch provenance before final synthesis."""
+        current = DelegationSnapshot(
+            task_state_version=self.store.event_cursor(state.session_id),
+            repository_head=(
+                state.repository.get("head")
+                or state.repository.get("commit")
+                or state.controller_commit
+            ),
+            working_tree_hash=launched_from.working_tree_hash,
+            decision_version=len(state.decisions),
+            artifact_refs=launched_from.artifact_refs,
+        )
+        staleness = launched_from.classify(current)
+        findings = []
+        resolved_roles: set[str] = set()
+        for index, artifact in enumerate(state.agent_artifacts[artifact_start:], start=1):
+            role = str(artifact.get("role", "auxiliary"))
+            resolved_roles.add(role)
+            output = artifact.get("output", artifact)
+            handle_id = f"delegate_{index:04d}_{launched_from.evidence_hash[:12]}"
+            finding = {
+                "role": role,
+                "staleness": staleness,
+                "snapshot_hash": launched_from.evidence_hash,
+                "artifact_refs": [item.uri for item in launched_from.artifact_refs],
+                "claims": [
+                    {
+                        "classification": EvidenceClass.AGENT_RECOMMENDATION,
+                        "statement": output,
+                    }
+                ],
+            }
+            findings.append(finding)
+            self.store.event(
+                state.session_id,
+                "async_delegate_resolved",
+                {
+                    "handle_id": handle_id,
+                    "role": role,
+                    "staleness": staleness,
+                    "snapshot_hash": launched_from.evidence_hash,
+                },
+            )
+        for invocation in state.agent_invocations[invocation_start:]:
+            role = str(invocation.get("role", ""))
+            if role == "executor" or role in resolved_roles:
+                continue
+            resolved_roles.add(role)
+            handle_id = f"delegate_{len(findings) + 1:04d}_{launched_from.evidence_hash[:12]}"
+            finding = {
+                "role": role,
+                "staleness": staleness,
+                "snapshot_hash": launched_from.evidence_hash,
+                "artifact_refs": [item.uri for item in launched_from.artifact_refs],
+                "claims": [
+                    {
+                        "classification": EvidenceClass.OBSERVATION,
+                        "statement": {"status": invocation.get("status", "completed")},
+                    }
+                ],
+            }
+            findings.append(finding)
+            self.store.event(
+                state.session_id,
+                "async_delegate_resolved",
+                {
+                    "handle_id": handle_id,
+                    "role": role,
+                    "staleness": staleness,
+                    "snapshot_hash": launched_from.evidence_hash,
+                },
+            )
+        reloop_required = state.review_status.startswith("rejected") and staleness.value != "STALE"
+        notification = None
+        decisions: list[dict[str, Any]] = []
+        if reloop_required:
+            notification = (
+                "새로 도착한 독립 리뷰 결과에서 현재 구현 방향을 수정해야 할 근거가 "
+                "확인됐습니다. 영향받은 가정을 폐기하고 재루프해 검증하겠습니다."
+            )
+            decision = {
+                "type": "direction_invalidated",
+                "old_assumptions": ["executor_direction"],
+                "new_evidence": ["independent reviewer rejection"],
+                "reason": "material auxiliary evidence",
+                "new_direction": "repair_then_revalidate",
+                "affected_work": ["executor_reloop", "validation"],
+                "snapshot_id": launched_from.evidence_hash,
+            }
+            decisions.append(decision)
+            self._record_decision("executor", state, decision, str(decision["reason"]))
+            self.store.event(state.session_id, "executor_direction_invalidated", decision)
+            self.store.event(
+                state.session_id, "executor_reloop_notification", {"message": notification}
+            )
+        return {
+            "findings": findings,
+            "reloop_required": reloop_required,
+            "notification": notification,
+            "decisions": decisions,
+        }
 
     async def complete_specialist(
         self,
@@ -2881,6 +3031,46 @@ class Controller:
         )
         return decision
 
+    def prepare_executor_draft(
+        self, state: SessionState, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Build an Executor-only draft request without waiting on or mutating the task graph."""
+        body = request.copy()
+        body["max_tokens"] = self.executor_tokens(body)
+        snapshot = self.runtime_evidence_snapshot(
+            state,
+            request_inputs=cast(list[dict[str, Any]], body.get("messages", [])),
+            metadata=cast(dict[str, Any], body.get("metadata", {})),
+        )
+        projection = self.project_runtime_context(state, snapshot, "executor", "fan_in")
+        messages = compress_messages(body["messages"], self.settings.limits)
+        available_tools = tuple(
+            sorted(
+                {
+                    str(tool.get("name") or tool.get("function", {}).get("name"))
+                    for tool in body.get("tools") or []
+                    if isinstance(tool, dict)
+                    and (tool.get("name") or tool.get("function", {}).get("name"))
+                }
+            )
+        )
+        messages.insert(
+            0,
+            {
+                "role": "system",
+                "content": self.prompt_sandwich(
+                    "executor",
+                    state,
+                    "Auxiliary evidence is pending; use current first-party evidence now.",
+                    "Take one useful independent step",
+                    available_tools=available_tools,
+                    runtime_projection=projection,
+                ),
+            },
+        )
+        body["messages"] = messages
+        return body
+
     async def prepare_executor(
         self,
         state: SessionState,
@@ -2961,6 +3151,103 @@ class Controller:
                 {role: self.settings.models[role].revision for role in ("planner", "reviewer")},
             )
         roles = tuple(dict.fromkeys((*roles, *state.roles_required)))
+        allowed_role_set: set[str] = set()
+        if state.runtime_mode == "fast":
+            rejected_roles = [role for role in roles if role != "executor"]
+            roles = ("executor",)
+            state.roles_required = ["executor"]
+            if rejected_roles:
+                self.store.event(
+                    state.session_id,
+                    "fast_mode_auxiliary_roles_rejected",
+                    {"roles": rejected_roles},
+                )
+        else:
+            if state.runtime_mode == "orchestrated":
+                roles = tuple(
+                    dict.fromkeys(
+                        (*roles, *self.orchestration_policy(state, metadata).required_agents)
+                    )
+                )
+            requested_effort = request.get("reasoning_effort") or metadata.get("think_effort")
+            effort = str(requested_effort or self.settings.async_moa.default_effort)
+            if effort == "none":
+                effort = "low"
+            if effort not in self.settings.async_moa.efforts:
+                effort = self.settings.async_moa.default_effort
+            async_budget = self.settings.async_moa.efforts[cast(Any, effort)]
+            semantic_events = ["goal_alignment_check"]
+            if state.failures:
+                semantic_events.append("new_failure")
+            semantic_events.extend(
+                event
+                for event in (
+                    "unexpected_test_result",
+                    "conflicting_evidence",
+                    "strategy_changed",
+                    "major_tool_output",
+                    "new_subsystem",
+                    "multiple_hypotheses",
+                )
+                if metadata.get(event)
+            )
+            if metadata.get("no_progress"):
+                semantic_events.append("no_progress")
+            signals = {
+                "reasoner": reasoner_signal(semantic_events),
+                "planner": 100 if "planner" in roles else 0,
+                "reviewer": 100 if "reviewer" in roles else 0,
+                "frontier": 100 if "frontier" in roles else 0,
+            }
+            if (
+                "reasoner" not in roles
+                and "reasoner" in self.settings.models
+                and signals["reasoner"] >= async_budget.activation_thresholds["reasoner"]
+            ):
+                roles = (*roles, "reasoner")
+            evidence_key = hashlib.sha256(
+                json.dumps(
+                    {
+                        "objective": effective_objective(state),
+                        "repository": state.repository,
+                        "messages": body.get("messages", []),
+                        "semantic_events": semantic_events,
+                        "failures": active_failures(state),
+                        "evidence": state.evidence_nodes[-1:],
+                        "tool_results": state.tool_results[-1:],
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ).encode()
+            ).hexdigest()
+            launched_at = time.time()
+            allowed_auxiliary = []
+            for role in ("reasoner", "planner", "reviewer", "frontier"):
+                fingerprint = f"{role}:{evidence_key}"
+                last = state.delegation_fingerprints.get(fingerprint)
+                if (
+                    role not in roles
+                    or async_budget.role_budgets[role] <= 0
+                    or signals[role] < async_budget.activation_thresholds[role]
+                    or last is not None
+                    and launched_at - last < async_budget.semantic_cooldown_seconds
+                ):
+                    continue
+                allowed_auxiliary.append(role)
+                state.delegation_fingerprints[fingerprint] = launched_at
+                if len(allowed_auxiliary) == async_budget.delegation_budget:
+                    break
+            state.delegation_fingerprints = dict(
+                sorted(state.delegation_fingerprints.items(), key=lambda item: item[1])[-64:]
+            )
+            allowed_role_set = set(allowed_auxiliary)
+            roles = tuple(
+                dict.fromkeys(
+                    ("executor", *allowed_auxiliary, *({"judge"} if "judge" in roles else set()))
+                )
+            )
+            state.roles_required = list(roles)
         if state.control_state != "running":
             raise PolicyBlocked(f"request control state is {state.control_state}")
         body["max_tokens"] = self.executor_tokens(body)
@@ -3015,6 +3302,14 @@ class Controller:
         fanout_started = False
         fan_in_deadline: float | None = None
         fanout_contributions: list[ModelContribution] = []
+        delegate_semaphore = asyncio.Semaphore(
+            max(1, async_budget.max_concurrent_delegates) if state.runtime_mode != "fast" else 1
+        )
+
+        async def bounded_delegate(factory: Callable[[], Awaitable[Any]]) -> Any:
+            async with delegate_semaphore:
+                return await factory()
+
         fanout_snapshot = self.runtime_evidence_snapshot(
             state,
             request_inputs=cast(list[dict[str, Any]], body.get("messages", [])),
@@ -3040,6 +3335,11 @@ class Controller:
             if state.runtime_mode == "orchestrated":
                 policy = self.orchestration_policy(state, metadata)
                 roles = tuple(dict.fromkeys((*roles, *policy.required_agents)))
+                roles = tuple(
+                    role
+                    for role in roles
+                    if role == "executor" or role == "judge" or (role in allowed_role_set)
+                )
                 state.roles_required = list(roles)
                 lifecycle_roles = tuple(
                     role for role in policy.required_agents if role in {"planner", "reviewer"}
@@ -3088,11 +3388,13 @@ class Controller:
                 planner_started = time.monotonic()
                 self.admit_loop_action(state, "planner_calls")
                 planner_task = asyncio.create_task(
-                    self.complete_specialist(
-                        state,
-                        "planner",
-                        planner_request,
-                        mandatory=state.request_class == "high_risk_task",
+                    bounded_delegate(
+                        lambda: self.complete_specialist(
+                            state,
+                            "planner",
+                            planner_request,
+                            mandatory=state.request_class == "high_risk_task",
+                        )
                     )
                 )
             if "frontier" not in roles:
@@ -3192,7 +3494,9 @@ class Controller:
                     else []
                 ),
             }
-            frontier_task = asyncio.create_task(self._frontier_collaborate(state, mode, evidence))
+            frontier_task = asyncio.create_task(
+                bounded_delegate(lambda: self._frontier_collaborate(state, mode, evidence))
+            )
             self.store.event(
                 state.session_id,
                 "frontier_collaboration_started",
@@ -3305,12 +3609,14 @@ class Controller:
                             await cancel_fanout()
                             raise
                         reasoner_task = asyncio.create_task(
-                            self.provider.complete(
-                                "reasoner",
-                                reasoner,
-                                reasoner_request,
-                                timeout_seconds=self.settings.limits.reasoner_timeout_seconds,
-                                stage="reasoner",
+                            bounded_delegate(
+                                lambda: self.provider.complete(
+                                    "reasoner",
+                                    reasoner,
+                                    reasoner_request,
+                                    timeout_seconds=self.settings.limits.reasoner_timeout_seconds,
+                                    stage="reasoner",
+                                )
                             )
                         )
                         reasoner_response = await reasoner_task
@@ -3570,7 +3876,9 @@ class Controller:
                 ensure_ascii=False,
             )
             review_evidence = compress_text(review_evidence, self.settings.limits)
-            pre_review_task = asyncio.create_task(self.review(state, review_evidence))
+            pre_review_task = asyncio.create_task(
+                bounded_delegate(lambda: self.review(state, review_evidence))
+            )
         if reasoner_contribution is not None:
             state.derived_confidence = self.derived_confidence(
                 state,
@@ -3755,7 +4063,11 @@ class Controller:
                         mode="json"
                     )
                     frontier_task = asyncio.create_task(
-                        self._frontier_collaborate(state, "code_review", frontier_review_evidence)
+                        bounded_delegate(
+                            lambda: self._frontier_collaborate(
+                                state, "code_review", frontier_review_evidence
+                            )
+                        )
                     )
                     self.store.event(
                         state.session_id,
@@ -3875,8 +4187,10 @@ class Controller:
                                 frontier_projection.model_dump(mode="json")
                             )
                             frontier_task = asyncio.create_task(
-                                self._frontier_collaborate(
-                                    state, "code_review", frontier_review_evidence
+                                bounded_delegate(
+                                    lambda: self._frontier_collaborate(
+                                        state, "code_review", frontier_review_evidence
+                                    )
                                 )
                             )
                             self.store.event(
@@ -4330,8 +4644,7 @@ class Controller:
                 executor_system
                 + "\n\n"
                 + "\n\n".join(
-                    text_content(message.get("content"))
-                    for message in messages[:leading_systems]
+                    text_content(message.get("content")) for message in messages[:leading_systems]
                 )
             )
             del messages[1:leading_systems]

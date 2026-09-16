@@ -32,7 +32,7 @@ class ChatMessage(BaseModel):
 class ReasoningOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    effort: Literal["none", "low", "medium", "high"] | None = None
+    effort: Literal["none", "low", "medium", "high", "xhigh"] | None = None
     summary: Literal["none", "auto"] | None = None
 
 
@@ -51,7 +51,7 @@ class ChatRequest(BaseModel):
     stop: str | list[str] | None = None
     stream_options: dict[str, Any] | None = None
     response_format: dict[str, Any] | None = None
-    reasoning_effort: Literal["none", "low", "medium", "high"] | None = Field(
+    reasoning_effort: Literal["none", "low", "medium", "high", "xhigh"] | None = Field(
         default=None,
         validation_alias=AliasChoices("reasoning_effort", "reasoningEffort"),
     )

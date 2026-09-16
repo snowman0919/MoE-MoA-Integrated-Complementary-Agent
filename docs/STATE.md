@@ -116,6 +116,16 @@ or current provider.
 - Bearer authentication remains mandatory. Role inference endpoints are not
   exposed on wildcard interfaces.
 
+The current source candidate adds Executor-led asynchronous fan-out for Chat and
+Responses requests. Delegates receive immutable first-party Runtime
+projections and launch provenance; the Executor performs an initial model step
+while they run, then synchronizes and re-synthesizes at finalization. Effort
+budgets bound role activation and concurrency, and materially corrective review
+evidence records a direction invalidation plus re-loop notification. This source
+change is test-verified only: it has not been committed, deployed, or physically
+validated against the production role endpoints. Streaming holds model output
+until this barrier, then emits only the reconciled final stream.
+
 See `docs/API_CLIENT_MODES.md` for the public request contract and
 `docs/MODEL_LIFECYCLE.md` for lifecycle semantics.
 

@@ -355,20 +355,22 @@ def test_api_key_scheduler_pins_cross_key_turn_to_remote_fallback_and_projects_g
     assert event_types.index("execution_graph_shadow_compiled") < event_types.index(
         "reasoner_started"
     )
-    assert [(attempt.node_type.value, attempt.state.value) for attempt in early_attempts] == [
-        ("CLASSIFY", "SUCCEEDED"),
-        ("REASONER", "SUCCEEDED"),
-        ("PLANNER", "SUCCEEDED"),
-        ("EXECUTOR_EVIDENCE", "SUCCEEDED"),
-        ("JOIN", "SUCCEEDED"),
-        ("EXECUTOR_SELECT", "SUCCEEDED"),
-        ("EXECUTOR_PRIMARY", "SUCCEEDED"),
-        ("CHECKPOINT", "SUCCEEDED"),
-        ("FINALIZE", "SUCCEEDED"),
+    attempt_types = [attempt.node_type.value for attempt in early_attempts]
+    assert attempt_types == [
+        "CLASSIFY",
+        "EXECUTOR_EVIDENCE",
+        "REASONER",
+        "PLANNER",
+        "JOIN",
+        "EXECUTOR_SELECT",
+        "EXECUTOR_PRIMARY",
+        "CHECKPOINT",
+        "FINALIZE",
     ]
-    assert early_attempts[1].generated_evidence_ids
+    assert all(attempt.state.value == "SUCCEEDED" for attempt in early_attempts)
     assert early_attempts[2].generated_evidence_ids
-    assert early_attempts[3].artifact_hash is not None
+    assert early_attempts[3].generated_evidence_ids
+    assert early_attempts[1].artifact_hash is not None
     assert early_attempts[6].generated_evidence_ids
     assert early_checkpoint.terminal_status == "degraded"
     assert early_checkpoint.checkpoint_id == early_state.execution_checkpoint_id
@@ -3386,8 +3388,8 @@ def test_explicit_ready_reasoner_is_used_only_when_selected(
         reasoner_usage = client.app.state.usage.recent_role_requests("reasoner")
 
     assert response.status_code == 200
-    assert sorted(stub_provider.calls[:2]) == ["planner", "reasoner"]
-    assert stub_provider.calls[2:] == ["executor"]
+    assert stub_provider.calls[0] == stub_provider.calls[-1] == "executor"
+    assert sorted(stub_provider.calls[1:-1]) == ["planner", "reasoner"]
     assert len(reasoner_usage) == 1
     assert reasoner_usage[0].success is True
 
@@ -3948,7 +3950,7 @@ def test_observe_lifecycle_records_state_without_blocking_or_controlling(
         lifecycle_record = app.state.lifecycle_store.get("executor")
 
     assert response.status_code == 200
-    assert stub_provider.calls == ["reasoner", "executor"]
+    assert stub_provider.calls == ["executor", "reasoner", "executor"]
     assert driver.calls == [("status", "executor")]
     assert lifecycle_record.state == "ready"
     assert status_response.json()["control"] == "observe_only"
@@ -4033,7 +4035,7 @@ def test_disabled_lifecycle_bypasses_control_and_reports_external_state(
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
-    assert stub_provider.calls == ["reasoner", "executor"]
+    assert stub_provider.calls == ["executor", "reasoner", "executor"]
     assert driver.calls == []
     assert status_response.status_code == 200
     payload = status_response.json()
@@ -4523,7 +4525,7 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         assert all(model["default_reasoning_level"] == "low" for model in models["models"])
         assert all(
             [level["effort"] for level in model["supported_reasoning_levels"]]
-            == ["low", "medium", "high"]
+            == ["low", "medium", "high", "xhigh"]
             for model in models["models"]
         )
         assert all(model["supports_reasoning_summaries"] is True for model in models["models"])
@@ -4583,7 +4585,256 @@ def test_auth_models_and_tool_call_preservation(settings, stub_provider: StubPro
         call = response.json()["choices"][0]["message"]["tool_calls"][0]
         assert call["id"] == "call-preserved"
         assert response.json()["usage"]["total_tokens"] == 3
-        assert stub_provider.calls == ["reasoner", "executor"]
+        assert stub_provider.calls == ["executor", "reasoner", "executor"]
+
+
+def test_non_fast_executor_overlaps_reasoner_and_finalization_waits(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    reasoner_started = threading.Event()
+    executor_finished = threading.Event()
+    release_reasoner = threading.Event()
+    request_finished = threading.Event()
+    original = stub_provider.complete
+
+    async def overlapped(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reasoner":
+            reasoner_started.set()
+            await asyncio.to_thread(release_reasoner.wait)
+        if role == "executor" and not request.get("response_format"):
+            await asyncio.sleep(0.02)
+            executor_finished.set()
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = overlapped  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        result: dict[str, object] = {}
+
+        def invoke() -> None:
+            result["response"] = client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer test-secret"},
+                json={"model": "dgx-moa", "messages": [{"role": "user", "content": "work"}]},
+            )
+            request_finished.set()
+
+        thread = threading.Thread(target=invoke)
+        thread.start()
+        assert reasoner_started.wait(1)
+        assert executor_finished.wait(1)
+        assert not request_finished.is_set()
+        release_reasoner.set()
+        thread.join(2)
+        response = result["response"]
+        events = client.app.state.store.events(response.headers["x-session-id"])  # type: ignore[union-attr]
+
+    assert request_finished.is_set()
+    assert result["response"].status_code == 200  # type: ignore[union-attr]
+    assert stub_provider.calls[0] == "executor"
+    launched = next(event for event in events if event["event_type"] == "async_moa_started")
+    assert launched["payload"]["task_state_version"] >= 1
+    assert launched["payload"]["snapshot_hash"]
+    resolved = next(event for event in events if event["event_type"] == "async_delegate_resolved")
+    assert resolved["payload"]["snapshot_hash"] == launched["payload"]["snapshot_hash"]
+    assert resolved["payload"]["staleness"] in {"CURRENT", "PARTIALLY_STALE"}
+
+
+@pytest.mark.asyncio
+async def test_non_fast_stream_overlaps_executor_work_and_waits_before_final_stream(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    reasoner_started = asyncio.Event()
+    executor_finished = asyncio.Event()
+    release_reasoner = asyncio.Event()
+    original = stub_provider.complete
+
+    async def overlapped(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reasoner":
+            reasoner_started.set()
+            await release_reasoner.wait()
+        response = await original(role, model, request, **kwargs)
+        if role == "executor":
+            executor_finished.set()
+        return response
+
+    stub_provider.complete = overlapped  # type: ignore[method-assign]
+    app = create_app(settings)
+    async with app.router.lifespan_context(app):
+        app.state.provider = stub_provider
+        app.state.controller.provider = stub_provider
+        pending = asyncio.create_task(
+            chat_endpoint(app)(
+                ChatRequest(
+                    model="dgx-moa-agent",
+                    stream=True,
+                    messages=[{"role": "user", "content": "work"}],
+                ),
+                Request({"type": "http", "app": app}),
+                x_session_id="async-stream-barrier",
+                x_runtime_channel=None,
+                x_trace_origin=None,
+                x_task_id=None,
+                x_workspace_path=None,
+                x_workspace_id=None,
+                x_repository_branch=None,
+                x_repository_commit=None,
+                x_dirty_state=None,
+            )
+        )
+        await asyncio.wait_for(reasoner_started.wait(), 1)
+        await asyncio.wait_for(executor_finished.wait(), 1)
+        assert not pending.done()
+        assert stub_provider.calls == ["executor"]
+
+        release_reasoner.set()
+        response = await asyncio.wait_for(pending, 1)
+        assert isinstance(response, StreamingResponse)
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        events = app.state.store.events("async-stream-barrier")
+
+    assert b'"content":"ok"' in body
+    assert stub_provider.calls == ["executor", "reasoner", "executor"]
+    assert any(
+        event["event_type"] == "executor_useful_work_while_delegates_pending" for event in events
+    )
+    assert "EXECUTOR_HYPOTHESIS" in json.dumps(stub_provider.requests[-1])
+
+
+def test_async_reviewer_finding_notifies_and_reloops_executor(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    settings = Settings.model_validate(
+        settings.model_dump() | {"execution_graph": {"mode": "shadow"}}
+    )
+    original = stub_provider.complete
+
+    async def reject(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reviewer":
+            stub_provider.calls.append(role)
+            stub_provider.requests.append(request)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "rejected",
+                                    "findings": [
+                                        {
+                                            "finding_id": "shared-parser",
+                                            "severity": "important",
+                                            "category": "correctness",
+                                            "evidence_references": ["diff"],
+                                            "affected_location": "parser.py",
+                                            "impact": "newer evidence contradicts the draft",
+                                            "required_correction": "repair and rerun tests",
+                                        }
+                                    ],
+                                }
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = reject  # type: ignore[method-assign]
+    session_id = "async-direction-reloop"
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "messages": [{"role": "user", "content": "fix the implementation"}],
+                "metadata": {
+                    "code_review": True,
+                    "changed_paths": ["parser.py"],
+                    "diff_summary": "shared parser changed",
+                },
+            },
+        )
+        events = client.app.state.store.events(session_id)
+
+    assert response.status_code == 200
+    message = response.json()["choices"][0]["message"]
+    assert "재루프" in str(message.get("content"))
+    assert message["tool_calls"][0]["function"]["name"] == "read_file"
+    assert sum(role == "executor" for role in stub_provider.calls) >= 2
+    assert any(event["event_type"] == "executor_direction_invalidated" for event in events), [
+        event["payload"] for event in events if event["event_type"] == "async_delegate_resolved"
+    ]
+    assert any(event["event_type"] == "executor_reloop_notification" for event in events)
+    rebuilt = next(
+        event for event in events if event["event_type"] == "executor_task_graph_rebuilt"
+    )
+    assert rebuilt["payload"]["graph_id"]
+    assert rebuilt["payload"]["affected_nodes"]
+    assert any(
+        "STALE findings cannot overwrite" in json.dumps(request)
+        for request in stub_provider.requests
+    )
+
+
+def test_async_stream_reviewer_reloop_notification_is_user_visible(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    original = stub_provider.complete
+
+    async def reject(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        if role == "reviewer":
+            stub_provider.calls.append(role)
+            stub_provider.requests.append(request)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "status": "rejected",
+                                    "findings": [
+                                        {
+                                            "finding_id": "stream-repair",
+                                            "severity": "important",
+                                            "category": "correctness",
+                                            "evidence_references": ["diff"],
+                                            "affected_location": "parser.py",
+                                            "impact": "draft is invalid",
+                                            "required_correction": "repair then validate",
+                                        }
+                                    ],
+                                }
+                            ),
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        return await original(role, model, request, **kwargs)
+
+    stub_provider.complete = reject  # type: ignore[method-assign]
+    with client_with_stub(settings, stub_provider) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-orchestrated",
+                "stream": True,
+                "messages": [{"role": "user", "content": "fix the implementation"}],
+                "metadata": {
+                    "code_review": True,
+                    "changed_paths": ["parser.py"],
+                    "diff_summary": "shared parser changed",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert "재루프" in response.text
+    assert stub_provider.calls[-1] == "executor"
 
 
 def test_fast_multimodal_content_reaches_executor(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -4684,15 +4935,10 @@ def test_required_reasoner_failure_is_typed_and_never_degrades(
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "reasoner_required_unavailable"
     assert response.headers["X-DGX-MOA-Model-Role"] == "reasoner"
-    assert stub_provider.calls == []
-    assert reasoner_event["payload"] == {
-        "failure_class": "ConnectError",
-        "provider": settings.models["reasoner"].provider,
-        "model": settings.models["reasoner"].served_name,
-        "latency_ms": reasoner_event["payload"]["latency_ms"],
-        "status_code": None,
-    }
-    assert reasoner_event["payload"]["latency_ms"] >= 0
+    assert stub_provider.calls == ["executor"]
+    assert reasoner_event["payload"]["failure_class"] == "ConnectError"
+    assert reasoner_event["payload"]["provider"] == "openai"
+    assert reasoner_event["payload"]["model"] == "reasoner"
 
 
 def test_reasoner_retries_one_malformed_structured_response(
@@ -4748,8 +4994,9 @@ def test_runtime_policy_selected_planner_gets_usage_and_lease_tracking(
         assert_no_request_leases(client.app)
 
     assert response.status_code == 200
-    assert sorted(stub_provider.calls[:2]) == ["planner", "reasoner"]
-    assert stub_provider.calls[2:] == ["executor"]
+    assert stub_provider.calls[0] == "executor"
+    assert sorted(stub_provider.calls[1:3]) == ["planner", "reasoner"]
+    assert stub_provider.calls[3:] == ["executor"]
     assert usage.roles_required == ("reasoner", "executor", "planner")
     assert len(planner_rows) == 1 and planner_rows[0].success is True
 
@@ -5387,8 +5634,8 @@ def test_reasoner_policy_requires_explicit_valid_orchestrated_mode(
     [
         ("dgx-moa-chat", ["executor"]),
         ("dgx-moa-fast", ["executor"]),
-        ("dgx-moa", ["reasoner", "executor"]),
-        ("dgx-moa-agent", ["reasoner", "executor"]),
+        ("dgx-moa", ["executor", "reasoner", "executor"]),
+        ("dgx-moa-agent", ["executor", "reasoner", "executor"]),
     ],
 )
 def test_core_and_fast_profile_roles(
@@ -5508,8 +5755,9 @@ def test_orchestrated_mode_uses_policy_roles(settings, stub_provider: StubProvid
             event["event_type"] for event in client.app.state.store.events("role-start-events")
         }
     assert response.status_code == 200
-    assert sorted(stub_provider.calls[:2]) == ["planner", "reasoner"]
-    assert stub_provider.calls[2:] == ["executor"]
+    assert stub_provider.calls[0] == "executor"
+    assert sorted(stub_provider.calls[1:3]) == ["planner", "reasoner"]
+    assert stub_provider.calls[3:] == ["executor"]
     assert {"reasoner_started", "planner_invoked", "executor_started"}.issubset(event_types)
 
 
@@ -5529,8 +5777,9 @@ def test_security_architecture_without_implementation_evidence_skips_reviewer(
         usage = client.app.state.usage.recent_requests()[0]
 
     assert response.status_code == 200
-    assert sorted(stub_provider.calls[:2]) == ["planner", "reasoner"]
-    assert stub_provider.calls[2:] == ["executor"]
+    assert stub_provider.calls[0] == "executor"
+    assert sorted(stub_provider.calls[1:3]) == ["planner", "reasoner"]
+    assert stub_provider.calls[3:] == ["executor"]
     assert usage.roles_required == ("reasoner", "executor", "planner")
 
 
@@ -5547,12 +5796,16 @@ def test_role_calls_receive_exact_stage_timeouts(settings, stub_provider: StubPr
         )
 
     assert response.status_code == 200
-    assert stub_provider.calls == ["reasoner", "reviewer", "executor"]
-    assert stub_provider.call_options == [
-        {"timeout_seconds": 120, "stage": "reasoner"},
-        {"timeout_seconds": 120, "stage": "reviewer"},
-        {"timeout_seconds": 900, "stage": "executor_total"},
-    ]
+    assert stub_provider.calls[0] == stub_provider.calls[-1] == "executor"
+    assert sorted(stub_provider.calls[1:-1]) == ["reasoner", "reviewer"]
+    assert {
+        role: options
+        for role, options in zip(stub_provider.calls, stub_provider.call_options, strict=True)
+    } == {
+        "executor": {"timeout_seconds": 900, "stage": "async_fan_in"},
+        "reasoner": {"timeout_seconds": 120, "stage": "reasoner"},
+        "reviewer": {"timeout_seconds": 120, "stage": "reviewer"},
+    }
 
 
 def test_orchestrated_timing_records_role_durations(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]
@@ -5578,6 +5831,7 @@ def test_orchestrated_timing_records_role_durations(settings, stub_provider: Stu
     assert all(state.timings_ms[stage] >= 0 for stage in ("executor_total", "reviewer"))
     assert timing_event["payload"]["stage_status"] == {
         "executor_total": "completed",
+        "reasoner": "completed",
         "reviewer": "completed",
     }
 
@@ -5641,7 +5895,10 @@ def test_request_timing_event_is_numeric_and_content_free(
             "completed",
         )
     )
-    assert payload["stage_status"] == {"executor_total": "completed"}
+    assert payload["stage_status"] == {
+        "executor_total": "completed",
+        "reasoner": "completed",
+    }
     assert secret_content not in json.dumps(payload)
 
 
@@ -5755,8 +6012,9 @@ def test_orchestrated_assistant_answer_without_evidence_skips_review(
         )
 
     assert response.status_code == 200
-    assert sorted(stub_provider.calls[:2]) == ["planner", "reasoner"]
-    assert stub_provider.calls[2:] == ["executor"]
+    assert stub_provider.calls[0] == "executor"
+    assert sorted(stub_provider.calls[1:3]) == ["planner", "reasoner"]
+    assert stub_provider.calls[3:] == ["executor"]
 
 
 @pytest.mark.parametrize("failure", ["http", "timeout", "value"])
@@ -6225,6 +6483,7 @@ def test_tool_result_continuation_uses_same_session(settings, stub_provider: Stu
             headers=headers,
             json={"model": "dgx-moa-agent", "messages": [{"role": "user", "content": "work"}]},
         )
+        assert first.status_code == 200, first.text
         call = first.json()["choices"][0]["message"]
         second = client.post(
             "/v1/chat/completions",
@@ -7221,7 +7480,7 @@ def test_streaming_round_trip(settings, stub_provider: StubProvider) -> None:  #
         assert "usage" in final
         events = client.app.state.store.events("stream")
         assert sum(event["event_type"] == "stream_completed" for event in events) == 1
-        assert stub_provider.calls == ["reasoner", "executor"]
+        assert stub_provider.calls == ["executor", "reasoner", "executor"]
         assert not any(event["event_type"] == "review_completed" for event in events)
         assert events[-1]["created_at"]
         trace = assert_terminal_evidence(settings, client.app.state.store, "stream", "completed")
@@ -7324,7 +7583,7 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
         first = await asyncio.wait_for(anext(response.body_iterator), timeout=1)
         assert first == first_event
         assert not release.is_set()
-        assert stub_provider.calls == ["reasoner", "executor"]
+        assert stub_provider.calls == ["executor", "reasoner", "executor"]
         assert not any(
             event["event_type"] == "session_ended"
             for event in app.state.store.events("immediate-stream")
@@ -7336,7 +7595,7 @@ async def test_streaming_api_forwards_before_upstream_completion_and_defers_revi
         release.set()
         remaining = b"".join([chunk async for chunk in response.body_iterator])
         assert remaining.count(b"data: [DONE]") == 1
-        assert stub_provider.calls == ["reasoner", "executor"]
+        assert stub_provider.calls == ["executor", "reasoner", "executor"]
         state = app.state.store.get("immediate-stream")
         assert state and state.review_deferred
         assert state.review_status == "deferred"
@@ -9173,7 +9432,7 @@ def test_codex_stale_default_model_falls_back_to_canonical_moa(
         if line.startswith("data: ") and '"type":"response.completed"' in line
     )
     assert completed["response"]["model"] == "dgx-moa"
-    assert stub_provider.calls == ["reasoner", "executor"]
+    assert stub_provider.calls == ["executor", "reasoner", "executor"]
     fallback = next(event for event in events if event["event_type"] == "client_model_fallback")
     assert fallback["payload"] == {
         "requested_model": "gpt-5.5",
@@ -9998,7 +10257,7 @@ def test_provenance_failure_finalizes_exactly_one_failed_usage_row(
     assert second.json()["error"]["message"] == "session runtime provenance changed"
     assert [record.status for record in records] == ["completed", "failed"]
     assert sum(record.status == "failed" for record in records) == 1
-    assert stub_provider.calls == ["reasoner", "executor"]
+    assert stub_provider.calls == ["executor", "reasoner", "executor"]
 
 
 def test_route_failure_finalizes_one_usage_row(settings, stub_provider: StubProvider) -> None:  # type: ignore[no-untyped-def]

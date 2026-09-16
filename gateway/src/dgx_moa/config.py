@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from .async_moa import DEFAULT_EFFORT_BUDGETS, Effort, EffortBudget, Role
 from .executor_backend import ExecutorCapability, ExecutorEngine, ExecutorSlot
 from .policy import PolicyRule, PolicySet
 
@@ -166,6 +167,58 @@ class Limits(BaseModel):
                     f"{role_class} idle thresholds must satisfy minimum <= fallback <= maximum"
                 )
         return self
+
+
+class AsyncMoAEffortPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_concurrent_delegates: int = Field(ge=0, le=16)
+    delegation_budget: int = Field(ge=0, le=64)
+    max_depth: int = Field(ge=0, le=4)
+    role_budgets: dict[Role, int]
+    activation_thresholds: dict[Role, int]
+    semantic_cooldown_seconds: float = Field(ge=0, le=3_600)
+
+    def runtime_budget(self) -> EffortBudget:
+        return EffortBudget(**self.model_dump())
+
+
+def default_async_moa_efforts() -> dict[Effort, AsyncMoAEffortPolicy]:
+    return {
+        effort: AsyncMoAEffortPolicy(
+            max_concurrent_delegates=budget.max_concurrent_delegates,
+            delegation_budget=budget.delegation_budget,
+            max_depth=budget.max_depth,
+            role_budgets=budget.role_budgets,
+            activation_thresholds=budget.activation_thresholds,
+            semantic_cooldown_seconds=budget.semantic_cooldown_seconds,
+        )
+        for effort, budget in DEFAULT_EFFORT_BUDGETS.items()
+    }
+
+
+class AsyncMoAPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    default_effort: Literal["low", "medium", "high", "xhigh"] = "medium"
+    efforts: dict[Effort, AsyncMoAEffortPolicy] = Field(default_factory=default_async_moa_efforts)
+
+    @model_validator(mode="after")
+    def require_every_effort(self) -> AsyncMoAPolicy:
+        missing = set(DEFAULT_EFFORT_BUDGETS) - set(self.efforts)
+        if missing:
+            raise ValueError(f"async MoA policy missing effort: {sorted(missing)[0]}")
+        fast = self.efforts["fast"]
+        if (
+            fast.max_concurrent_delegates
+            or fast.delegation_budget
+            or any(fast.role_budgets.values())
+        ):
+            raise ValueError("fast effort must disable every auxiliary delegation")
+        return self
+
+    def runtime_budgets(self) -> dict[Effort, EffortBudget]:
+        return {effort: policy.runtime_budget() for effort, policy in self.efforts.items()}
 
 
 class LifecycleRolePolicy(BaseModel):
@@ -679,6 +732,7 @@ class Settings(BaseModel):
     specialist_routing: SpecialistRoutingConfig = Field(default_factory=SpecialistRoutingConfig)
     declarative_policy: DeclarativePolicyConfig = Field(default_factory=DeclarativePolicyConfig)
     execution_graph: ExecutionGraphConfig = Field(default_factory=ExecutionGraphConfig)
+    async_moa: AsyncMoAPolicy = Field(default_factory=AsyncMoAPolicy)
     model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig)
     executor_scheduling: ExecutorSchedulingConfig = Field(default_factory=ExecutorSchedulingConfig)
     dashboard_enabled: bool = False

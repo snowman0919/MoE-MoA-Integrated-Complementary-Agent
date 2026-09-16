@@ -5,6 +5,8 @@ gateway:
   bind_port: 9000
   lifecycle_mode: disabled
   lifecycle_unit_map: {}
+  async_moa:
+    default_effort: medium
   loop_engineering:
     enabled: false
     defaults: {iterations: 32, tool_calls: 500, reasoner_reentries: 32, planner_calls: 8, reviewer_calls: 32, frontier_calls: 16, judge_calls: 4, tokens: 5000000, external_cost_usd: 10, wall_clock_seconds: 43200}

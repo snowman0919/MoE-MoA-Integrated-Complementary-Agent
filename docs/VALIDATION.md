@@ -10403,3 +10403,59 @@ gateway remained on port 9000. Unauthenticated model discovery returned HTTP
 401, both public models advertised context 262,144 and reasoning summaries,
 and `dgx-moa-fast` returned HTTP 200 from `dgx-moa-executor` with exact content
 `DEPLOY_OK`.
+
+## Async evidence-grounded MoA source validation — 2026-09-16
+
+The Chat/Responses path now starts one Executor draft concurrently
+with the existing independent Reasoner/Planner/Reviewer/Frontier fan-out. The
+finalization barrier tags returned artifacts with launch snapshot provenance and
+staleness, then performs Executor-owned synthesis. A material Reviewer rejection
+records direction invalidation, rebuilds the affected Executor Evidence Graph
+descendants, and emits a Korean re-loop progress notification.
+`dgx-moa-fast` remains one Executor with zero auxiliary calls. The prior ordinary
+`dgx-moa` unit behavior was Reasoner then Executor (two calls); the new converged
+path is Executor draft, concurrent auxiliaries, then final Executor synthesis
+(three calls for the Reasoner-only case). This intentionally spends one extra
+Executor call to overlap useful work with collaboration.
+
+Ruff and targeted Ruff formatting passed on the changed source and tests, strict
+mypy passed all 54 source files, and the final pytest run passed all 1,222 tests
+in 64.45 seconds. The deterministic HTTP
+harness held a Reasoner future open, observed the Executor finish useful work,
+verified that the request remained pending at the finalization barrier, then
+released the Reasoner. Separate tests covered fast isolation, automatic semantic
+Reasoner activation, first-party artifact references, snapshot provenance,
+CURRENT/PARTIALLY_STALE/STALE handling, stale overwrite prevention, material
+direction invalidation, user notification, re-loop synthesis, cancellation, and
+duplicate/budget bounds.
+
+A source-tree gateway started successfully on loopback `127.0.0.1:19090`.
+`/healthz` returned HTTP 200, authenticated `/v1/models` returned both public
+aliases with `xhigh`, and unauthenticated discovery returned HTTP 401. The real
+fast completion and standard streaming smokes reached the gateway but returned
+HTTP 502 (`All connection attempts failed`) because the checked-in Executor
+endpoint on `127.0.0.1:9001` was unavailable; no model-path success is claimed.
+The already-running production gateway on port
+9000 was read-only healthy (HTTP 200 in 0.000890 seconds) and was not restarted.
+
+The existing synthetic MVP benchmark initially reproduced `KeyError: executor`:
+its loader ignored the current `local_models` plus `model_routing.executor`
+configuration. Reusing that selection contract fixed the harness. Its ten tasks
+then remained 10/10 successful with identical route, failure, Reviewer, Judge,
+and 1.2 tool-calls/success metrics; measured synthetic time/success changed from
+0.0420419 to 0.0722444 seconds and token metrics remain unavailable.
+Compose validation was likewise blocked by the intentionally absent `.env`.
+Whole-worktree Ruff formatting is not a valid gate in this checkout because
+pre-existing untracked experiment repositories contain malformed/unformatted
+fixtures; every changed Python file passes the targeted format check. A focused
+streaming harness held Reasoner pending while the preliminary Executor completed,
+proved the final stream did not start before the barrier, and then observed the
+reconciled stream after release. A rejected Reviewer also produced a user-visible
+Korean re-loop SSE delta before the corrected stream. No production deployment,
+commit, release, or frontier-performance claim was made.
+
+The required post-change `graphify . --update --code-only` completed with
+3,698 nodes, 9,668 edges, 225 communities, and all 19 curated hyperedges. The
+machine-local untracked experiment directories were excluded from extraction;
+documentation extraction remained unavailable without an LLM key, so this was
+an incremental code-only graph refresh over the retained canonical graph.

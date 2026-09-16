@@ -16,6 +16,8 @@ gateway:
   lifecycle_mode: disabled
   lifecycle_poll_seconds: 30
   lifecycle_unit_map: {}
+  async_moa:
+    default_effort: medium
   loop_engineering:
     enabled: false
     defaults:

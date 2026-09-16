@@ -299,6 +299,22 @@ def test_benchmark_shape_and_improvement_tools(tmp_path) -> None:  # type: ignor
     assert proposal["statistics"]["failure_frequency"] == {"REPEATED_ACTION": 1}
     assert statistics({"tasks": []})["replan_rate"] == 0
     assert benchmark_models(tmp_path / "missing.yaml") == {}
+    config = tmp_path / "models.yaml"
+    config.write_text(
+        """gateway:
+  model_routing: {executor: local/current}
+local_models:
+  current:
+    repository: test/executor
+    revision: abc123
+    classification: official
+    base_url: http://127.0.0.1:9001
+    served_name: executor
+    destination: /tmp/executor
+    context_length: 65536
+"""
+    )
+    assert benchmark_models(config)["executor"].repository == "test/executor"
     candidate = tmp_path / "candidate.json"
     candidate.write_text(json.dumps({"summary": summarize([])}))
     verdict = compare(benchmark, candidate, tmp_path / "comparison.json")

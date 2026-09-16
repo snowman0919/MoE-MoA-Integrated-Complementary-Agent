@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from .config import ModelConfig
+from .config import ModelConfig, ModelRef
 from .state import Phase, SessionState, StateStore
 from .trace import TraceRecorder
 
@@ -132,9 +132,17 @@ def benchmark_models(config_path: Path = Path("config/models.yaml")) -> dict[str
     if not config_path.is_file():
         return {}
     raw = yaml.safe_load(config_path.read_text()) or {}
-    return {
+    models = {
         role: ModelConfig.model_validate(model) for role, model in raw.get("models", {}).items()
     }
+    executor = ModelRef.model_validate(
+        raw.get("gateway", {}).get("model_routing", {}).get("executor", "local/qwen3.8-27b")
+    )
+    if executor.provider == "local" and executor.model in raw.get("local_models", {}):
+        models.setdefault(
+            "executor", ModelConfig.model_validate(raw["local_models"][executor.model])
+        )
+    return models
 
 
 def _run_task(

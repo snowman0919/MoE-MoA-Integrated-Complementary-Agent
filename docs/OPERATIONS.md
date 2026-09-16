@@ -1002,11 +1002,13 @@ signal, high-risk implementation evidence, or bounded implementation evidence
 paired with a change objective. Reasoner recommendations cannot add roles.
 Audit `executor_orchestration_decided.payload.authority`; the current value must
 be `runtime_policy`. Lifecycle admission for policy-selected roles occurs before
-the Reasoner call, so a typed cold/unmanaged response must have no model usage.
-After admission, optional Reasoner, Planner, and Frontier A tasks start before
-the join; none waits for another role's output. Their inputs therefore contain
-only the pre-fan-out active state. A completed sibling artifact remains durable
-when another branch fails, while the failed join still prevents synthesis.
+dispatch, so a typed cold/unmanaged response must have no model usage. For every
+non-fast request, the Runtime launches the mature role fan-out as a task and
+immediately sends an independent first-party projection to the Executor. The
+Executor draft is recorded as useful work, never as shared fact. Final synthesis
+waits for every relevant role, classifies result staleness, and may re-enter the
+Executor after a material correction. Streaming opens only after this barrier,
+so no unreconciled draft bytes need revision.
 
 ## Weekly and training administration
 
@@ -1155,11 +1157,13 @@ failed until the inspected endpoint is loopback and the required four Compose
 services use digest-pinned images.
 
 Optional Planner, Reviewer, and Frontier joins share the configured
-`optional_fan_in_timeout_seconds` deadline after mandatory Reasoner work. A
-completed optional result is retained; an overdue optional task is cancelled
-and recorded as `optional_role_deadline_exceeded`. High-risk Planner,
-fail-closed Reviewer, and explicitly required Frontier calls keep their normal
-role timeout and cannot be skipped by this deadline.
+`optional_fan_in_timeout_seconds` deadline. The per-effort policy additionally
+bounds activation thresholds, total/per-role calls, concurrent delegates,
+depth, and semantic cooldown; `fast` must keep every value at zero. A completed
+optional result is retained; an overdue optional task is cancelled and recorded
+as `optional_role_deadline_exceeded`. High-risk Planner, fail-closed Reviewer,
+and explicitly required Frontier calls keep their normal role timeout and cannot
+be skipped by this deadline.
 
 Treat `apply_patch verification failed:` without an explicit numeric exit code
 as failure evidence. Do not treat `Do not modify any other file` as global

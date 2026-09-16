@@ -1991,6 +1991,7 @@ def create_app(
                 "description": "Balances speed and reasoning depth for everyday tasks",
             },
             {"effort": "high", "description": "Greater reasoning depth for complex problems"},
+            {"effort": "xhigh", "description": "Broad adaptive MoA for the hardest tasks"},
         ]
         descriptions = {
             "dgx-moa": "Reasoner + Executor Dynamic MoA model.",
@@ -2246,6 +2247,11 @@ def create_app(
         executor_flash = False
         executor_admission: ExecutorAdmission | None = None
         executor_routing_reason = "local_ready"
+        async_prepare_task: asyncio.Task[dict[str, Any]] | None = None
+        async_snapshot = None
+        async_artifact_start = 0
+        async_invocation_start = 0
+        async_reloop_notification: str | None = None
         task_id = str(raw["metadata"].get("task_id") or "")
         request_class = classify_request(mode, raw["messages"], raw.get("tools"), raw["metadata"])
         reasoner_mode = cast(ReasonerMode | None, raw["metadata"].get("reasoner_mode"))
@@ -2431,6 +2437,54 @@ def create_app(
                     request.app.state.store, state_session_id, node_type.value.lower(), error
                 )
                 return None
+
+        def rebuild_execution_after_async_invalidation(
+            current_prepared: dict[str, Any], reconciliation: dict[str, Any]
+        ) -> None:
+            nonlocal execution_runtime
+            if not reconciliation["reloop_required"]:
+                return
+            affected: tuple[str, ...] = ()
+            graph_id: str | None = None
+            if execution_runtime is not None:
+                graph_id = execution_runtime.graph.graph_id
+                try:
+                    evidence_node = next(
+                        node
+                        for node in execution_runtime.graph.nodes
+                        if node.node_type == NodeType.EXECUTOR_EVIDENCE
+                    )
+                    affected = execution_runtime.partial_rerun(
+                        {evidence_node.node_id},
+                        verified_artifact_hashes=dict(execution_runtime.artifact_hashes),
+                    )
+                    attempt = execution_runtime.start_attempt(evidence_node.node_id)
+                    execution_runtime.finish_attempt(
+                        attempt.attempt_id,
+                        artifact_hash=hashlib.sha256(
+                            json.dumps(
+                                redact(current_prepared),
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                                default=str,
+                            ).encode()
+                        ).hexdigest(),
+                    )
+                except (StopIteration, ValueError, sqlite3.Error) as error:
+                    record_shadow_failure(
+                        request.app.state.store, state_session_id, "async_reloop", error
+                    )
+                    execution_runtime = None
+            request.app.state.store.event(
+                state_session_id,
+                "executor_task_graph_rebuilt",
+                {
+                    "graph_id": graph_id,
+                    "affected_nodes": list(affected),
+                    "affected_work": reconciliation["decisions"][0]["affected_work"],
+                },
+            )
 
         def finish_execution_role(
             current: Any,
@@ -3444,16 +3498,57 @@ def create_app(
                 or bool(getattr(request.state, "responses_tool_owner_recovered", False))
             ) and not new_failure_observed
             fan_in_started = time.monotonic()
-            prepared = await request.app.state.controller.prepare_executor(
-                state,
-                raw,
-                roles,
-                ensure_dynamic_roles,
-                tool_continuation=tool_continuation,
-                reasoner_complete=(
-                    remote_reasoner_complete if request.app.state.frontier is not None else None
-                ),
-                execution_runtime=execution_runtime,
+            if state.runtime_mode != "fast":
+                evidence = request.app.state.controller.runtime_evidence_snapshot(
+                    state,
+                    request_inputs=cast(list[dict[str, Any]], raw.get("messages", [])),
+                    metadata=cast(dict[str, Any], raw.get("metadata", {})),
+                )
+                async_snapshot = request.app.state.controller.delegation_snapshot(state, evidence)
+                async_artifact_start = len(state.agent_artifacts)
+                async_invocation_start = len(state.agent_invocations)
+                async_prepare_task = asyncio.create_task(
+                    request.app.state.controller.prepare_executor(
+                        state,
+                        raw,
+                        roles,
+                        ensure_dynamic_roles,
+                        tool_continuation=tool_continuation,
+                        reasoner_complete=(
+                            remote_reasoner_complete
+                            if request.app.state.frontier is not None
+                            else None
+                        ),
+                        execution_runtime=execution_runtime,
+                    ),
+                    name=f"async-moa:{state_session_id}",
+                )
+                request.app.state.store.event(
+                    state_session_id,
+                    "async_moa_started",
+                    {
+                        "roles": [role for role in roles if role != "executor"],
+                        "snapshot_hash": async_snapshot.evidence_hash,
+                        "task_state_version": async_snapshot.task_state_version,
+                        "repository_head": async_snapshot.repository_head,
+                        "working_tree_hash": async_snapshot.working_tree_hash,
+                        "decision_version": async_snapshot.decision_version,
+                    },
+                )
+            prepared = (
+                request.app.state.controller.prepare_executor_draft(state, raw)
+                if async_prepare_task is not None
+                else await request.app.state.controller.prepare_executor(
+                    state,
+                    raw,
+                    roles,
+                    ensure_dynamic_roles,
+                    tool_continuation=tool_continuation,
+                    reasoner_complete=(
+                        remote_reasoner_complete if request.app.state.frontier is not None else None
+                    ),
+                    execution_runtime=execution_runtime,
+                )
             )
             state.timings_ms["fan_in"] = round((time.monotonic() - fan_in_started) * 1000, 3)
             executor_projection_manifest = state.role_context_projections[-1]
@@ -3617,7 +3712,102 @@ def create_app(
                 )
             active_stage = "executor_first_byte" if body.stream else "executor_total"
             executor_started = time.monotonic()
-            if execution_runtime is not None:
+            if body.stream and async_prepare_task is not None and async_snapshot is not None:
+                draft_started = time.monotonic()
+                draft_response = (
+                    await remote_executor_correction(prepared, "executor_work")
+                    if executor_remote
+                    else await request.app.state.provider.complete(
+                        "executor",
+                        configured.models["executor"],
+                        prepared,
+                        timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                        stage="executor_work",
+                    )
+                )
+                validate_executor_response(draft_response)
+                draft_message = draft_response.get("choices", [{}])[0].get("message", {})
+                request.app.state.controller.record_invocation(
+                    state,
+                    "executor",
+                    draft_response,
+                    draft_started,
+                    mode="executor_work",
+                    fallback_reason=executor_routing_reason if executor_remote else None,
+                    projection_id=executor_projection_id,
+                    rendered_prompt=(
+                        prepared
+                        if executor_remote
+                        else request.app.state.controller.rendered_model_request(
+                            "executor", prepared
+                        )
+                    ),
+                )
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_useful_work_while_delegates_pending",
+                    {"work": "executor_model_call", "snapshot_hash": async_snapshot.evidence_hash},
+                )
+                prepared = await async_prepare_task
+                async_prepare_task = None
+                executor_projection_manifest = state.role_context_projections[-1]
+                if executor_projection_manifest.get("role") != "executor":
+                    raise ValueError("Executor fan-in projection is missing")
+                executor_projection_id = str(executor_projection_manifest["projection_id"])
+                reconciliation = request.app.state.controller.reconcile_async_collaboration(
+                    state, async_snapshot, async_artifact_start, async_invocation_start
+                )
+                rebuild_execution_after_async_invalidation(prepared, reconciliation)
+                async_reloop_notification = reconciliation["notification"]
+                for role in ("reasoner", "planner", "reviewer", "frontier"):
+                    if role in state.timings_ms:
+                        stage_status[role] = "completed"
+                prepared = {
+                    **prepared,
+                    "messages": [
+                        *prepared.get("messages", []),
+                        {
+                            "role": "system",
+                            "content": (
+                                (
+                                    async_reloop_notification + "\n"
+                                    if async_reloop_notification
+                                    else ""
+                                )
+                                + "Reconcile the independent evidence and the preliminary "
+                                "Executor hypothesis below against current Runtime evidence. "
+                                "Auxiliary output is advisory; STALE findings cannot overwrite "
+                                "newer validated work. Return a native tool call if more work is "
+                                "required, otherwise return the final user-facing answer.\n"
+                                + json.dumps(
+                                    {
+                                        "executor_hypothesis": {
+                                            "classification": "EXECUTOR_HYPOTHESIS",
+                                            "statement": draft_message,
+                                        },
+                                        "auxiliary_findings": reconciliation["findings"],
+                                    },
+                                    ensure_ascii=False,
+                                    sort_keys=True,
+                                )
+                            ),
+                        },
+                    ],
+                }
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_async_fan_in_started",
+                    {
+                        "finding_count": len(reconciliation["findings"]),
+                        "reloop": reconciliation["reloop_required"],
+                    },
+                )
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_async_fan_in_completed",
+                    {"reloop": reconciliation["reloop_required"]},
+                )
+            if execution_runtime is not None and async_prepare_task is None:
                 try:
                     for control_type in (
                         NodeType.CLASSIFY,
@@ -3741,6 +3931,7 @@ def create_app(
                     async for chunk in completed_chat_sse(remote_response):
                         yield chunk
 
+                upstream: AsyncIterator[bytes]
                 if executor_remote:
                     upstream = keepalive_sse(remote_upstream(), interval_seconds=10)
                 else:
@@ -3765,6 +3956,32 @@ def create_app(
                         if not select_local_http_400_fallback(error, "executor_first_byte"):
                             raise
                         upstream = keepalive_sse(remote_upstream(), interval_seconds=10)
+                if async_reloop_notification:
+                    source = upstream
+
+                    async def notified_upstream() -> AsyncIterator[bytes]:
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "choices": [
+                                        {
+                                            "delta": {
+                                                "content": async_reloop_notification + "\n\n"
+                                            },
+                                            "finish_reason": None,
+                                        }
+                                    ]
+                                },
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                            + "\n\n"
+                        ).encode()
+                        async for chunk in source:
+                            yield chunk
+
+                    upstream = notified_upstream()
                 state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
                 state.timings_ms["executor_ttft"] = round(
                     (time.monotonic() - executor_started) * 1000, 3
@@ -4150,16 +4367,12 @@ def create_app(
             state.timings_ms["executor_ttft"] = state.timings_ms["executor_total"]
             state.timings_ms["executor_decode"] = 0.0
             stage_status["executor_total"] = "completed"
-            final_usage = reported_usage(response.get("usage"))
-            token_usage.update(
-                {key: value + retry_usage.get(key, 0) for key, value in final_usage.items()}
-            )
             request.app.state.controller.record_invocation(
                 state,
                 "executor",
                 response,
                 attempt_started,
-                mode="final_synthesis",
+                mode=("executor_work" if async_prepare_task is not None else "final_synthesis"),
                 fallback_reason=executor_routing_reason if executor_remote else None,
                 projection_id=executor_projection_id,
                 rendered_prompt=(
@@ -4167,6 +4380,132 @@ def create_app(
                     if executor_remote
                     else request.app.state.controller.rendered_model_request("executor", prepared)
                 ),
+            )
+            async_executor_usage: dict[str, int] = {}
+            if async_prepare_task is not None and async_snapshot is not None:
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_useful_work_while_delegates_pending",
+                    {"work": "executor_model_call", "snapshot_hash": async_snapshot.evidence_hash},
+                )
+                prepared = await async_prepare_task
+                async_prepare_task = None
+                executor_projection_manifest = state.role_context_projections[-1]
+                if executor_projection_manifest.get("role") != "executor":
+                    raise ValueError("Executor fan-in projection is missing")
+                executor_projection_id = str(executor_projection_manifest["projection_id"])
+                if execution_runtime is not None:
+                    for control_type in (NodeType.JOIN, NodeType.EXECUTOR_SELECT):
+                        node = next(
+                            (
+                                candidate
+                                for candidate in execution_runtime.graph.nodes
+                                if candidate.node_type == control_type
+                            ),
+                            None,
+                        )
+                        if node is not None and node.node_id in execution_runtime.ready_node_ids():
+                            attempt = execution_runtime.start_attempt(node.node_id)
+                            execution_runtime.finish_attempt(attempt.attempt_id)
+                    execution_attempt_id = start_execution_role(NodeType.EXECUTOR_PRIMARY)
+                reconciliation = request.app.state.controller.reconcile_async_collaboration(
+                    state, async_snapshot, async_artifact_start, async_invocation_start
+                )
+                rebuild_execution_after_async_invalidation(prepared, reconciliation)
+                for role in ("reasoner", "planner", "reviewer", "frontier"):
+                    if role in state.timings_ms:
+                        stage_status[role] = "completed"
+                findings = reconciliation["findings"]
+                if findings:
+                    async_executor_usage = reported_usage(response.get("usage"))
+                    synthesis_request = {
+                        **prepared,
+                        "messages": [
+                            *prepared.get("messages", []),
+                            {
+                                "role": "system",
+                                "content": (
+                                    (
+                                        reconciliation["notification"] + "\n"
+                                        if reconciliation["notification"]
+                                        else ""
+                                    )
+                                    + "Reconcile the independent auxiliary evidence below "
+                                    "against current Runtime evidence. Auxiliary output is "
+                                    "advisory; STALE findings cannot overwrite newer validated "
+                                    "work. Return a native tool call if more work is required, "
+                                    "otherwise return the final user-facing answer.\n"
+                                    + json.dumps(
+                                        {
+                                            "executor_hypothesis": {
+                                                "classification": "EXECUTOR_HYPOTHESIS",
+                                                "statement": assistant_message,
+                                            },
+                                            "auxiliary_findings": findings,
+                                        },
+                                        ensure_ascii=False,
+                                        sort_keys=True,
+                                    )
+                                ),
+                            },
+                        ],
+                    }
+                    request.app.state.store.event(
+                        state_session_id,
+                        "executor_async_fan_in_started",
+                        {
+                            "finding_count": len(findings),
+                            "reloop": reconciliation["reloop_required"],
+                        },
+                    )
+                    synthesis_started = time.monotonic()
+                    response = (
+                        await remote_executor_correction(synthesis_request, "async_fan_in")
+                        if executor_remote
+                        else await request.app.state.provider.complete(
+                            "executor",
+                            configured.models["executor"],
+                            synthesis_request,
+                            timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                            stage="async_fan_in",
+                        )
+                    )
+                    validate_executor_response(response)
+                    assistant_message = response.get("choices", [{}])[0].get("message", {})
+                    notification = reconciliation["notification"]
+                    if notification:
+                        content = assistant_message.get("content")
+                        assistant_message["content"] = (
+                            notification if not content else f"{notification}\n\n{content}"
+                        )
+                    assistant_tool_calls = assistant_message.get("tool_calls") or []
+                    request.app.state.controller.record_invocation(
+                        state,
+                        "executor",
+                        response,
+                        synthesis_started,
+                        mode="async_final_synthesis",
+                        fallback_reason=executor_routing_reason if executor_remote else None,
+                        projection_id=executor_projection_id,
+                        rendered_prompt=(
+                            synthesis_request
+                            if executor_remote
+                            else request.app.state.controller.rendered_model_request(
+                                "executor", synthesis_request
+                            )
+                        ),
+                    )
+                    request.app.state.store.event(
+                        state_session_id,
+                        "executor_async_fan_in_completed",
+                        {"reloop": reconciliation["reloop_required"]},
+                    )
+            final_usage = reported_usage(response.get("usage"))
+            token_usage.update(
+                {
+                    key: value + retry_usage.get(key, 0) + async_executor_usage.get(key, 0)
+                    for key, value in final_usage.items()
+                }
             )
             for call in assistant_tool_calls:
                 request.app.state.controller.admit_tool_call(
@@ -4955,6 +5294,10 @@ def create_app(
                 "backend_error",
                 "backend_error",
             )
+        finally:
+            if async_prepare_task is not None and not async_prepare_task.done():
+                async_prepare_task.cancel()
+                await asyncio.gather(async_prepare_task, return_exceptions=True)
 
     @app.post("/v1/judge/adjudications/{session_id}", dependencies=[Depends(auth)])
     async def adjudicate(session_id: str, request: Request) -> Response:

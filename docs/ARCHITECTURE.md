@@ -23,22 +23,33 @@ must not bind or route through LAN, tailnet, or a wildcard address.
 Resident and judge profiles remain mutually exclusive systemd targets.
 
 The public catalog exposes only `dgx-moa` and `dgx-moa-fast`. The primary
-`dgx-moa` invokes the Reasoner before the Executor and applies deterministic
-safety overrides to select optional Planner, Reviewer, Frontier, or Heavy Judge.
-`dgx-moa-fast` alone bypasses the Reasoner. The Executor alone emits native tool
-calls and client-visible content.
+`dgx-moa` starts an Executor draft and an asynchronous evidence fan-out, then
+joins relevant workers only at the finalization barrier. Deterministic Runtime
+Policy selects optional Planner, Reviewer, Frontier, or Heavy Judge work.
+`dgx-moa-fast` is a strict one-Executor path: it creates no auxiliary or hidden
+background model call. The Executor alone emits native tool calls and
+client-visible content.
 
-Reasoner, Planner, and Frontier A start concurrently from the same immutable
-pre-dispatch snapshot and cannot observe one another's output. Their independent
-contributions are joined by the Runtime into a new Executor projection.
+Reasoner, Planner, Reviewer, and Frontier start independently from an immutable
+pre-dispatch snapshot while the Executor continues useful work. Their inputs
+contain first-party artifact references, repository identity, working evidence
+hash, task-state version, and decision version; an Executor summary is never the
+sole source. Results are tagged `CURRENT`, `PARTIALLY_STALE`, or `STALE` before
+reconciliation. A stale result is advisory and cannot overwrite newer validated
+work. A current material rejection creates a direction-invalidation decision,
+emits a short user-visible re-loop notice, and returns control to the Executor
+for repair and validation.
 Reviewer, Judge, and Frontier B each receive a direct projection from the
 current Runtime snapshot; the Executor draft is merely one explicitly labeled
 model contribution. All projection manifests are durable and visible in the
 Dashboard without hidden reasoning or secrets.
 
-Streaming is a bounded forwarding path, not a review buffer. Complete SSE events
-are released immediately, native deltas are preserved, duplicate DONE events
-are filtered, and EOF without either a finish reason or DONE fails instead of
+Streaming uses the same asynchronous Executor-first path. The Executor performs
+a preliminary model step while delegates run, waits at the finalization barrier,
+then opens the upstream stream from the reconciled evidence projection; no
+unreconciled draft bytes are exposed. Once opened, complete SSE events are
+released immediately, native deltas are preserved, duplicate DONE events are
+filtered, and EOF without either a finish reason or DONE fails instead of
 promoting a partial draft. Capture and per-event bounds are
 both 1,000,000 bytes. Streaming review is deferred. Non-streaming review uses at
 most 16,000 characters of external evidence; low-risk review failure preserves
@@ -76,12 +87,16 @@ Runtime compares graph role attempts with the Controller invocation ledger and
 records a parity result. Any delta makes the graph ineligible for authority;
 there is no checked-in authoritative mode.
 
-After mandatory Reasoner work, optional Planner, Reviewer, and Frontier fan-in
-shares one bounded deadline. Finished artifacts participate; late optional
-tasks are cancelled before Executor preparation. Required safety roles bypass
-that optimization. Projection manifests retain source IDs and a per-role
-evidence/contribution delta while role inputs remain independent one-shot
-artifacts.
+`think_effort`/`reasoning_effort` deterministically controls Executor effort,
+role activation thresholds, per-role and total delegation budgets, graph width,
+depth, semantic cooldown, and the per-request delegate semaphore. Reasoner uses
+semantic triggers such as new failures, conflicting evidence, tool output,
+strategy changes, and subsystem entry rather than random or token-interval
+sampling. Existing context fingerprints, task/evidence fingerprints, role
+budgets, and Frontier invocation limits suppress unchanged duplicate work.
+Optional joins retain their bounded deadline; required safety roles keep their
+normal timeout. Relevant pending workers are cancelled on request failure and
+must resolve before final output.
 
 `main` is the reviewed production control plane and trace producer. `dev` is the
 integration branch. Future recursive work follows `main` MoA -> OpenCode -> an

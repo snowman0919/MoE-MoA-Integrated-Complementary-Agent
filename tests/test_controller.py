@@ -2799,6 +2799,37 @@ async def test_fast_mode_keeps_implementation_evidence_executor_only(
 
 
 @pytest.mark.asyncio
+async def test_fast_mode_rejects_contaminated_auxiliary_roles(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(settings.state_db)
+    controller = Controller(settings, store, stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="fast-contaminated-roles",
+        objective="work",
+        runtime_mode="fast",
+        roles_required=["reasoner", "planner", "reviewer", "frontier", "executor"],
+    )
+
+    await controller.prepare_executor(
+        state,
+        {
+            "model": "dgx-moa-fast",
+            "messages": [{"role": "user", "content": state.objective}],
+            "metadata": {"architecture": True, "code_review": True},
+        },
+        tuple(state.roles_required),
+    )
+
+    assert state.roles_required == ["executor"]
+    assert not ({"reasoner", "planner", "reviewer"} & set(stub_provider.calls))
+    assert any(
+        event["event_type"] == "fast_mode_auxiliary_roles_rejected"
+        for event in store.events(state.session_id)
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("progress_retry", "correction_required", "reuse_trigger"),
     [
