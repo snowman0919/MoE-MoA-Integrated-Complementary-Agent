@@ -15,7 +15,7 @@ from .http_client import make_http_client
 
 PLANNER_REASONING_TOKENS = 768
 PLANNER_FINAL_TOKENS = 1_536
-QWEN_REASONING_BUDGETS = {"low": 1_024, "medium": 4_096, "high": 8_192}
+QWEN_REASONING_BUDGETS = {"low": 1_024, "medium": 4_096, "high": 8_192, "xhigh": 8_192}
 MISTRAL_TOOL_CALL_ID = re.compile(r"^[A-Za-z0-9]{9}$")
 
 
@@ -221,10 +221,13 @@ class ModelProvider:
         if role == "executor" and model.reasoning_parser == "qwen3":
             body["messages"] = qwen_messages(body.get("messages", []))
             template_options = dict(body.get("chat_template_kwargs") or {})
-            enable_thinking = not body.get("tools") and reasoning_effort in QWEN_REASONING_BUDGETS
+            enable_thinking = reasoning_effort in QWEN_REASONING_BUDGETS
             template_options["enable_thinking"] = enable_thinking
             if enable_thinking:
-                template_options["reasoning_budget"] = QWEN_REASONING_BUDGETS[reasoning_effort]
+                reasoning_budget = QWEN_REASONING_BUDGETS[reasoning_effort]
+                if body.get("max_tokens") is not None:
+                    reasoning_budget = min(reasoning_budget, max(1, int(body["max_tokens"]) // 2))
+                template_options["reasoning_budget"] = reasoning_budget
             else:
                 template_options.pop("reasoning_budget", None)
             body["chat_template_kwargs"] = template_options

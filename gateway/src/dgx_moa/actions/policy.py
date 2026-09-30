@@ -82,6 +82,7 @@ class PolicyEngine:
     shadow_mode: bool = True
     shadow_agreements: int = 0
     shadow_disagreements: int = 0
+    shadow_event: Any = None
 
     def decide(
         self,
@@ -127,6 +128,12 @@ class PolicyEngine:
             self.shadow_agreements += 1
         else:
             self.shadow_disagreements += 1
+        record = self.shadow_event
+        if record is not None:
+            try:
+                record(bool(shadow == chosen))
+            except Exception:
+                return
 
     def shadow_metrics(self) -> dict[str, int]:
         return {

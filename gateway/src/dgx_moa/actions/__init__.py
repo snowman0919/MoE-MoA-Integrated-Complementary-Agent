@@ -2,6 +2,7 @@
 
 from .compat import (
     AdapterTelemetry,
+    local_file_compat_applies,
     normalize_arguments,
     normalize_edit_call,
     normalize_legacy_call,
@@ -13,6 +14,7 @@ from .compat import (
 from .gate import (
     CompiledAction,
     PreflightContext,
+    PreflightPolicy,
     PreflightResult,
     compile_action,
     preflight_action,
@@ -62,6 +64,7 @@ __all__ = [
     "LayaPolicyAdapter",
     "PolicyEngine",
     "PreflightContext",
+    "PreflightPolicy",
     "PreflightResult",
     "ResourceAuthority",
     "ResourceRef",
@@ -74,6 +77,7 @@ __all__ = [
     "compile_action",
     "execution_fingerprint",
     "legacy_failure_key",
+    "local_file_compat_applies",
     "normalize_arguments",
     "normalize_edit_call",
     "normalize_legacy_call",

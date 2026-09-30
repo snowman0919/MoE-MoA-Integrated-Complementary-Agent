@@ -178,7 +178,7 @@ class RuntimeMetrics:
             code = str(payload.get("code", ""))
             if code == "unknown_tool":
                 self.increment("unknown_tool_rejected")
-            elif code in {"unknown_resource", "workspace_violation"}:
+            elif code in {"unknown_resource", "workspace_violation", "permission_denied"}:
                 self.increment("unknown_resource_rejected")
             elif code == "duplicate_failed_action":
                 self.increment("duplicate_failed_action_rejected")

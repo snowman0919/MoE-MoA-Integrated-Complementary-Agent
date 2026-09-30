@@ -96,7 +96,7 @@ def test_chat_nonstream_records_schema_mismatch(settings, stub_provider: StubPro
             },
         )
 
-    assert response.status_code == 200
+    assert response.status_code == 502
     assert _rejected_events(client.app, "gate-chat")
     assert _rejected_events(client.app, "gate-chat")[0]["payload"]["code"] == "schema_mismatch"
 
@@ -269,6 +269,27 @@ def test_tool_result_continuation_does_not_double_execute(
                         }
                     ]
                 }
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-preserved",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "terminal",
+                                        "arguments": '{"command":"echo hi"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            }
         return await original(role, model, request, **kwargs)
 
     stub_provider.complete = observe  # type: ignore[method-assign]
@@ -279,7 +300,11 @@ def test_tool_result_continuation_does_not_double_execute(
         first = client.post(
             "/v1/chat/completions",
             headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
-            json={"model": "dgx-moa-fast", "messages": [{"role": "user", "content": "work"}]},
+            json={
+                "model": "dgx-moa-fast",
+                "messages": [{"role": "user", "content": "work"}],
+                "tools": _tools(),
+            },
         )
         call = first.json()["choices"][0]["message"]
         second = client.post(
@@ -296,6 +321,7 @@ def test_tool_result_continuation_does_not_double_execute(
                         "content": '{"stdout":"ok","exit_code":0}',
                     },
                 ],
+                "tools": _tools(),
             },
         )
 

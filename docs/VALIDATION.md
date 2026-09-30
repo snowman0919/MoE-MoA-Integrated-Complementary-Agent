@@ -10756,3 +10756,30 @@ backend return provider errors, never a bypassed tool call.
 
 Production was not restarted, deployed, or merged. Promotion requires review of
 this branch plus a real-executor harness matrix.
+
+## Action Runtime v1 follow-up (uncommitted) — 2026-10-01
+
+Follow-up deltas on `auto/runtime/action-policy-v1` close the remaining
+fail-closed gaps found during review: every Chat/Responses stream and
+non-stream gate now blocks `unknown_tool` (the legacy bypass that let an
+ungated call through was removed), schema/authority/permission rejections
+carry the semantic fingerprint plus state revision, observed tool outcomes
+record into the canonical ledger with the same revision the gate checks, the
+delta gate tolerates nameless/partial stream fragments and enforces the
+complete call at the terminal gate, and invalid Responses custom-tool input
+fails closed (`failed` + `schema_mismatch`) instead of emitting an
+unsanitized echo.
+
+Measured evidence: `tests/test_actions.py` 21 passed (added denied
+tool/side-effect coverage); API convergence `tests/test_action_gates.py` 5
+passed (schema mismatch fails closed at 502 in every path; tool-result
+continuation completes without double execution); full `tests/test_api.py`
+280 passed; all non-API suites 983 passed; Ruff clean; strict mypy clean
+over the touched modules. `test_responses_post_preserves_custom_tool_loop`
+was updated so the continuation assertion indexes `requests[1]` and the
+invalid-input assertion expects the fail-closed payload; both changes match
+verified runtime behavior, not weakened expectations.
+
+Production was not restarted, deployed, or merged. No real-executor harness
+matrix (raw/Codex/OpenCode/Hermes adversarial cases) has been run from this
+checkout; that remains the promotion blocker.

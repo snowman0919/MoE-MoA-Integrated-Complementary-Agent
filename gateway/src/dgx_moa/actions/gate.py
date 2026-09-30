@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from .compat import AdapterTelemetry, normalize_arguments, normalize_tool_name
+from .compat import (
+    AdapterTelemetry,
+    normalize_arguments,
+    normalize_local_file_compat,
+    normalize_tool_name,
+)
 from .ledger import FailureLedger
 from .resources import ResourceAuthority
 from .types import (
@@ -36,6 +42,15 @@ class PreflightResult:
     compiled: CompiledAction | None = None
     adapters: tuple[str, ...] = ()
     recovered: bool = False
+    semantic_fingerprint: str = ""
+    state_revision: str = ""
+    sanitized_call: dict[str, Any] | None = None
+
+
+@dataclass
+class PreflightPolicy:
+    denied_tools: tuple[str, ...] = ()
+    denied_side_effects: tuple[str, ...] = ()
 
 
 @dataclass
@@ -44,6 +59,7 @@ class PreflightContext:
     authority: ResourceAuthority
     ledger: FailureLedger
     state_revision: str = ""
+    policy: PreflightPolicy | None = None
     telemetry: AdapterTelemetry = field(default_factory=AdapterTelemetry)
 
 
@@ -115,6 +131,38 @@ def preflight_action(
         context.telemetry.record("tool_alias")
     capability_id = snapshot.capability_id_for(resolved_name)
     if capability_id is None:
+        parsed_for_compat: dict[str, Any] | None = None
+        if isinstance(raw_arguments, dict):
+            parsed_for_compat = dict(raw_arguments)
+        elif isinstance(raw_arguments, str) and raw_arguments.strip():
+            try:
+                decoded = json.loads(raw_arguments)
+            except ValueError:
+                decoded = None
+            parsed_for_compat = decoded if isinstance(decoded, dict) else None
+        local_adapted = (
+            normalize_local_file_compat(
+                tool_name, parsed_for_compat, available, telemetry=context.telemetry
+            )
+            if parsed_for_compat is not None
+            else None
+        )
+        if local_adapted is not None:
+            adapted = preflight_action(
+                snapshot, local_adapted.tool_name, local_adapted.arguments, context
+            )
+            if adapted.ok:
+                return PreflightResult(
+                    adapted.ok,
+                    adapted.code,
+                    adapted.message,
+                    decision=adapted.decision,
+                    compiled=adapted.compiled,
+                    adapters=tuple([*adapters, "local_file", *adapted.adapters]),
+                    recovered=True,
+                    semantic_fingerprint=adapted.semantic_fingerprint,
+                    state_revision=adapted.state_revision,
+                )
         return PreflightResult(False, "unknown_tool", f"unknown tool '{tool_name}'")
     capability = snapshot.capabilities[capability_id]
     if isinstance(raw_arguments, dict):
@@ -136,19 +184,55 @@ def preflight_action(
     if aliased:
         adapters.append("argument_alias")
         context.telemetry.record("argument_alias")
+    canonical = canonical_arguments(arguments)
+    fingerprint = semantic_fingerprint(capability, canonical)
     schema_problem = _schema_error(capability.schema, arguments)
     if schema_problem is not None:
-        return PreflightResult(False, "schema_mismatch", schema_problem)
+        return PreflightResult(
+            False,
+            "schema_mismatch",
+            schema_problem,
+            semantic_fingerprint=fingerprint,
+            state_revision=context.state_revision,
+        )
     authority_ok, authority_message = context.authority.check(capability, arguments)
     if not authority_ok:
         code = "workspace_violation" if "workspace" in authority_message else "unknown_resource"
-        return PreflightResult(False, code, authority_message)
-    canonical = canonical_arguments(arguments)
-    fingerprint = semantic_fingerprint(capability, canonical)
+        return PreflightResult(
+            False,
+            code,
+            authority_message,
+            semantic_fingerprint=fingerprint,
+            state_revision=context.state_revision,
+        )
     if context.state_revision and context.ledger.is_blocked(fingerprint, context.state_revision):
         return PreflightResult(
-            False, "duplicate_failed_action", "identical failed action is blocked"
+            False,
+            "duplicate_failed_action",
+            "identical failed action is blocked",
+            semantic_fingerprint=fingerprint,
+            state_revision=context.state_revision,
         )
+    policy = context.policy
+    if policy is not None:
+        if any(
+            fnmatch.fnmatch(capability.external_name, pattern) for pattern in policy.denied_tools
+        ):
+            return PreflightResult(
+                False,
+                "permission_denied",
+                f"tool '{capability.external_name}' is denied",
+                semantic_fingerprint=fingerprint,
+                state_revision=context.state_revision,
+            )
+        if capability.side_effect_class in policy.denied_side_effects:
+            return PreflightResult(
+                False,
+                "permission_denied",
+                f"side effect '{capability.side_effect_class}' is denied",
+                semantic_fingerprint=fingerprint,
+                state_revision=context.state_revision,
+            )
     candidate = CandidateAction(capability_id=capability_id, arguments=canonical)
     decision = ActionDecision(
         candidate=candidate,
@@ -169,6 +253,13 @@ def preflight_action(
         compiled=compiled,
         adapters=tuple(adapters),
         recovered=recovered,
+        semantic_fingerprint=fingerprint,
+        state_revision=context.state_revision,
+        sanitized_call={
+            "id": "",
+            "type": "function",
+            "function": {"name": compiled.external_name, "arguments": compiled.arguments_json},
+        },
     )
 
 

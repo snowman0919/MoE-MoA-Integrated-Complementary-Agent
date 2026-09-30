@@ -33,6 +33,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .actions.compat import normalize_edit_call
 from .admin_codex import AdminCodexRequest, AdminCodexRunner
 from .admin_dashboard import ADMIN_DASHBOARD
 from .config import Settings, get_settings
@@ -145,7 +146,6 @@ from .state import Phase, SessionState, StateStore
 from .streaming import (
     ProgressOnlyResponse,
     StreamObservation,
-    compatible_edit_call,
     completed_chat_sse,
     forward_sse,
     has_internal_protocol_leak,
@@ -476,7 +476,7 @@ def _responses_payload(
             )
         for tool_call in message.get("tool_calls") or []:
             function = tool_call.get("function") or {}
-            name, arguments = compatible_edit_call(
+            name, arguments = normalize_edit_call(
                 str(function.get("name", "")),
                 str(function.get("arguments", "")),
                 custom_tool_names,
@@ -4158,29 +4158,30 @@ def create_app(
                                 "tool_calls" in observation.finish_reasons
                                 or observation.tool_call_ids
                             ):
-                                for index in sorted(observation.tool_call_names):
-                                    gate = request.app.state.controller.check_action(
-                                        state,
-                                        observation.tool_call_names.get(index, ""),
-                                        observation.tool_call_arguments.get(index, ""),
-                                        prepared.get("tools"),
-                                    )
-                                    if not gate.ok and gate.code != "unknown_tool":
-                                        state.final_status = "failed"
-                                        request.app.state.store.event(
-                                            state_session_id,
-                                            "action_preflight_rejected",
-                                            {
-                                                "code": gate.code,
-                                                "path": "chat_stream",
-                                                "capability": observation.tool_call_names.get(
-                                                    index, ""
-                                                ),
-                                            },
+                                if prepared.get("tools"):
+                                    for index in sorted(observation.tool_call_names):
+                                        gate = request.app.state.controller.check_action(
+                                            state,
+                                            observation.tool_call_names.get(index, ""),
+                                            observation.tool_call_arguments.get(index, ""),
+                                            prepared.get("tools"),
                                         )
-                                        raise ValueError(
-                                            f"invalid tool call: {gate.code}: {gate.message}"
-                                        )
+                                        if not gate.ok:
+                                            state.final_status = "failed"
+                                            request.app.state.store.event(
+                                                state_session_id,
+                                                "action_preflight_rejected",
+                                                {
+                                                    "code": gate.code,
+                                                    "path": "chat_stream",
+                                                    "capability": observation.tool_call_names.get(
+                                                        index, ""
+                                                    ),
+                                                },
+                                            )
+                                            raise ValueError(
+                                                f"invalid tool call: {gate.code}: {gate.message}"
+                                            )
                                 state.pending_tool_call_ids = list(
                                     dict.fromkeys(
                                         [
@@ -4301,27 +4302,44 @@ def create_app(
                                 )
                                 while admitted_tool_calls < required_admissions:
                                     tool_name = observation.tool_call_names.get(admitted_tool_calls)
-                                    gate = request.app.state.controller.check_action(
-                                        state,
-                                        tool_name or "",
-                                        observation.tool_call_arguments.get(
-                                            admitted_tool_calls, ""
-                                        ),
-                                        prepared.get("tools"),
-                                    )
-                                    if not gate.ok and gate.code != "unknown_tool":
-                                        request.app.state.store.event(
-                                            state_session_id,
-                                            "action_preflight_rejected",
-                                            {
-                                                "code": gate.code,
-                                                "path": "chat_stream_delta",
-                                                "capability": tool_name or "unknown",
-                                            },
+                                    if not tool_name:
+                                        # Nameless fragment: the tool call is not
+                                        # complete yet, so there is nothing to
+                                        # validate. Wait for more chunks; the
+                                        # terminal gate enforces unknown tools.
+                                        break
+                                    if prepared.get("tools"):
+                                        gate = request.app.state.controller.check_action(
+                                            state,
+                                            tool_name,
+                                            observation.tool_call_arguments.get(
+                                                admitted_tool_calls, ""
+                                            ),
+                                            prepared.get("tools"),
                                         )
-                                        raise ValueError(
-                                            f"invalid tool call: {gate.code}: {gate.message}"
-                                        )
+                                        if not gate.ok:
+                                            if gate.code in (
+                                                "malformed_arguments",
+                                                "schema_mismatch",
+                                                "unknown_resource",
+                                                "workspace_violation",
+                                            ):
+                                                # Possibly a partial argument
+                                                # fragment; the terminal gate
+                                                # validates complete arguments.
+                                                break
+                                            request.app.state.store.event(
+                                                state_session_id,
+                                                "action_preflight_rejected",
+                                                {
+                                                    "code": gate.code,
+                                                    "path": "chat_stream_delta",
+                                                    "capability": tool_name,
+                                                },
+                                            )
+                                            raise ValueError(
+                                                f"invalid tool call: {gate.code}: {gate.message}"
+                                            )
                                     request.app.state.controller.admit_tool_call(state, tool_name)
                                     admitted_tool_calls += 1
                                 observed_total_tokens = observation.usage.get("total_tokens", 0)
@@ -4417,6 +4435,19 @@ def create_app(
                 assistant_tool_calls = assistant_message.get("tool_calls") or []
                 if prepared.get("tool_choice") == "required" and not assistant_tool_calls:
                     retry_reason = "executor omitted required tool call"
+                if retry_reason is None and assistant_tool_calls and prepared.get("tools"):
+                    for call in assistant_tool_calls:
+                        gate = request.app.state.controller.check_action_call(
+                            state, call, prepared.get("tools")
+                        )
+                        if not gate.ok:
+                            request.app.state.store.event(
+                                state_session_id,
+                                "action_preflight_rejected",
+                                {"code": gate.code, "path": "chat_nonstream_retry"},
+                            )
+                            retry_reason = f"invalid tool call: {gate.code}: {gate.message}"
+                            break
                 if retry_reason is None:
                     break
                 if executor_remote or invalid_output_attempt:
@@ -4438,8 +4469,6 @@ def create_app(
                     "executor_invalid_output_retried",
                     {"reason": retry_reason, "attempt": 2},
                 )
-                if retry_reason.startswith("invalid tool call:"):
-                    raise ValueError(retry_reason)
                 if prepared.get("tool_choice") == "required":
                     retry_instruction = (
                         "The previous response omitted the required native tool call. Call one "
@@ -4606,27 +4635,29 @@ def create_app(
                 }
             )
             if prepared.get("tools"):
+                sanitized_calls: list[dict[str, Any]] = []
                 for call in assistant_tool_calls:
                     gate = request.app.state.controller.check_action_call(
                         state, call, prepared.get("tools")
                     )
-                    if not gate.ok and gate.code != "unknown_tool":
+                    if not gate.ok:
                         request.app.state.store.event(
                             state_session_id,
                             "action_preflight_rejected",
                             {"code": gate.code, "path": "chat_nonstream"},
                         )
                         break
+                    if gate.sanitized_call is not None:
+                        sanitized = dict(gate.sanitized_call)
+                        sanitized["id"] = str(call.get("id") or "")
+                        sanitized_calls.append(sanitized)
                     request.app.state.controller.admit_tool_call(
                         state,
                         str(call.get("function", {}).get("name", "")) or None,
                     )
-            else:
-                for call in assistant_tool_calls:
-                    request.app.state.controller.admit_tool_call(
-                        state,
-                        str(call.get("function", {}).get("name", "")) or None,
-                    )
+                else:
+                    assistant_tool_calls = sanitized_calls
+                    assistant_message["tool_calls"] = sanitized_calls
             assistant_tool_call_ids = [
                 str(call.get("id"))
                 for call in assistant_tool_calls

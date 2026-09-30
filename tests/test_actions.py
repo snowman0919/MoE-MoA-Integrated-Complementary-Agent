@@ -304,3 +304,38 @@ def test_preflight_tool_call_shape() -> None:
         "function": {"name": "terminal", "arguments": '{"command":"x"}'},
     }
     assert preflight_tool_call(call, snapshot, _context(snapshot)).ok
+
+
+def test_denied_tool_and_side_effect_rejected_with_fingerprint() -> None:
+    from dgx_moa.actions import PreflightPolicy
+
+    snapshot = build_capability_snapshot(_tools())
+    denied = preflight_action(
+        snapshot,
+        "terminal",
+        {"command": "x"},
+        PreflightContext(
+            snapshot=snapshot,
+            authority=ResourceAuthority(workspace_roots=("/work",)),
+            ledger=FailureLedger(),
+            state_revision="rev-1",
+            policy=PreflightPolicy(denied_tools=("terminal",)),
+        ),
+    )
+    assert not denied.ok and denied.code == "permission_denied"
+    assert denied.semantic_fingerprint
+    capability = snapshot.capabilities[snapshot.names["terminal"]]
+    blocked = preflight_action(
+        snapshot,
+        "terminal",
+        {"command": "x"},
+        PreflightContext(
+            snapshot=snapshot,
+            authority=ResourceAuthority(workspace_roots=("/work",)),
+            ledger=FailureLedger(),
+            state_revision="rev-1",
+            policy=PreflightPolicy(denied_side_effects=(capability.side_effect_class,)),
+        ),
+    )
+    assert not blocked.ok and blocked.code == "permission_denied"
+    assert blocked.semantic_fingerprint == denied.semantic_fingerprint

@@ -11,6 +11,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 _TOOL_CALL_PATTERN = re.compile(
     r"\s*<tool_call>\s*<function=(?P<name>[A-Za-z_][A-Za-z0-9_]*)>"
@@ -167,6 +168,14 @@ def normalize_legacy_call(
     )
 
 
+def local_file_compat_applies(tool_name: str, available_tool_names: set[str]) -> bool:
+    return (
+        tool_name in {"read_file", "read_mcp_resource"}
+        and "exec_command" in available_tool_names
+        and (tool_name == "read_mcp_resource" or "read_file" not in available_tool_names)
+    )
+
+
 def normalize_local_file_compat(
     tool_name: str,
     arguments: dict[str, Any],
@@ -174,15 +183,22 @@ def normalize_local_file_compat(
     *,
     telemetry: AdapterTelemetry | None = None,
 ) -> AdaptationResult | None:
-    """Bounded historical compatibility: local read helpers become ``cat``.
-
-    Only applies when the requested helper is unavailable and ``exec_command``
-    is actually advertised. ``read_mcp_resource`` URIs are never rewritten here;
-    MCP authority stays with preflight resource checks.
-    """
-    if tool_name not in {"read_file"} or "exec_command" not in available_tool_names:
+    if not local_file_compat_applies(tool_name, available_tool_names):
         return None
     path = arguments.get("path", arguments.get("file", arguments.get("file_path")))
+    if path is None and tool_name == "read_mcp_resource":
+        uri = arguments.get("uri", arguments.get("resource_uri", ""))
+        try:
+            parsed = urlsplit(uri) if isinstance(uri, str) else None
+        except ValueError:
+            parsed = None
+        if parsed is not None and (
+            parsed.scheme == "file"
+            and parsed.netloc in {"", "localhost"}
+            or not parsed.scheme
+            and parsed.path.startswith("/")
+        ):
+            path = unquote(parsed.path)
     if not isinstance(path, str) or not path or "\n" in path:
         return None
     if telemetry is not None:
