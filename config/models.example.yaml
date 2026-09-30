@@ -62,6 +62,13 @@ gateway:
     policies: []
   execution_graph:
     mode: disabled
+  action_runtime:
+    enabled: true
+    workspace_roots: []
+    laya_enabled: false
+    laya_endpoint: ""
+    laya_timeout_seconds: 2.0
+    laya_shadow: true
   # Canonical role-to-model switches. Local names resolve through local_models;
   # remote model names are passed to their provider unchanged.
   model_routing:

@@ -285,7 +285,8 @@ Local files and `file://` attachment paths are native filesystem inputs. Use
 Codex file or shell tools for them. Call `read_mcp_resource` only with the exact
 server identifier and resource URI returned by MCP discovery; a connector's
 display name such as `local_filesystem` is not evidence that such an MCP server
-exists.
+exists. The Action Runtime additionally enforces this before execution: guessed
+servers/URIs never become executable capabilities.
 
 Lifecycle states and safety rules are canonical in
 `docs/MODEL_LIFECYCLE.md`.

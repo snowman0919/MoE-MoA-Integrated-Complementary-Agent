@@ -14,6 +14,15 @@ from typing import Any, Literal, cast
 
 import httpx
 
+from .actions import (
+    FailureLedger,
+    PreflightContext,
+    ResourceAuthority,
+    build_capability_snapshot,
+    preflight_action,
+    preflight_tool_call,
+    state_revision_from_session,
+)
 from .async_moa import (
     ArtifactRef,
     DelegationSnapshot,
@@ -902,6 +911,108 @@ class Controller:
                 "action": action,
                 "remaining": getattr(loop.remaining_budget, action),
             },
+        )
+
+    def action_workspace_roots(self, state: SessionState) -> tuple[str, ...]:
+        configured = tuple(self.settings.action_runtime.workspace_roots or ())
+        workspace_path = state.repository.get("workspace_path", "")
+        if workspace_path and workspace_path not in configured:
+            return (*configured, workspace_path)
+        return configured
+
+    def action_snapshot(self, tools: list[dict[str, Any]] | None) -> Any:
+        return build_capability_snapshot(tools)
+
+    def action_authority(self, state: SessionState) -> ResourceAuthority:
+        return ResourceAuthority.from_session(
+            state, workspace_roots=self.action_workspace_roots(state)
+        )
+
+    def action_revision(self, state: SessionState, snapshot: Any) -> Any:
+        authority = self.action_authority(state)
+        return state_revision_from_session(
+            state,
+            capability_revision=snapshot.revision,
+            discovered_mcp_servers=sorted(authority.discovered_mcp_servers),
+            discovered_mcp_uris=sorted(authority.discovered_mcp_uris),
+            observed_runtime_ids=sorted(authority.observed_runtime_ids),
+        )
+
+    def action_ledger(self, state: SessionState) -> FailureLedger:
+        return FailureLedger.from_dict(state.action_failures)
+
+    def save_action_ledger(self, state: SessionState, ledger: FailureLedger) -> None:
+        state.action_failures = ledger.to_dict()
+
+    def action_preflight_context(
+        self, state: SessionState, snapshot: Any, revision: Any = None
+    ) -> PreflightContext:
+        revision_id = revision.revision if revision is not None else ""
+        if revision is None:
+            revision = self.action_revision(state, snapshot)
+            revision_id = revision.revision
+        return PreflightContext(
+            snapshot=snapshot,
+            authority=self.action_authority(state),
+            ledger=self.action_ledger(state),
+            state_revision=revision_id,
+        )
+
+    def record_action_failure(
+        self,
+        state: SessionState,
+        semantic: str,
+        snapshot: Any,
+        failure_class: str,
+        revision: Any = None,
+    ) -> None:
+        ledger = self.action_ledger(state)
+        resolved = revision if revision is not None else self.action_revision(state, snapshot)
+        ledger.record_failure(semantic, resolved, failure_class)
+        self.save_action_ledger(state, ledger)
+
+    def resolve_action_failure(self, state: SessionState, semantic: str) -> None:
+        ledger = self.action_ledger(state)
+        if semantic in ledger.entries:
+            ledger.record_success(semantic)
+            self.save_action_ledger(state, ledger)
+
+    def check_action_call(
+        self,
+        state: SessionState,
+        call: dict[str, Any],
+        tools: list[dict[str, Any]] | None,
+    ) -> Any:
+        snapshot = self.action_snapshot(tools)
+        if not snapshot.capabilities and tools is None:
+            snapshot = build_capability_snapshot([self._legacy_tool_definition(call)])
+        revision = self.action_revision(state, snapshot)
+        return preflight_tool_call(
+            call, snapshot, self.action_preflight_context(state, snapshot, revision)
+        )
+
+    @staticmethod
+    def _legacy_tool_definition(call: dict[str, Any]) -> dict[str, Any]:
+        function = call.get("function") if isinstance(call, dict) else None
+        name = function.get("name") if isinstance(function, dict) else ""
+        return {"type": "function", "function": {"name": name or "unknown", "parameters": {}}}
+
+    def check_action(
+        self,
+        state: SessionState,
+        tool_name: str,
+        raw_arguments: Any,
+        tools: list[dict[str, Any]] | None,
+    ) -> Any:
+        snapshot = self.action_snapshot(tools)
+        if not snapshot.capabilities and tools is None:
+            snapshot = build_capability_snapshot(
+                [{"type": "function", "function": {"name": tool_name, "parameters": {}}}]
+            )
+        revision = self.action_revision(state, snapshot)
+        arguments = raw_arguments if isinstance(raw_arguments, dict) else str(raw_arguments or "")
+        return preflight_action(
+            snapshot, tool_name, arguments, self.action_preflight_context(state, snapshot, revision)
         )
 
     def admit_tool_call(self, state: SessionState, tool_name: str | None) -> None:

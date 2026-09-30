@@ -31,6 +31,17 @@ background model call. The Executor alone emits native tool calls and
 client-visible content. `dgx-moa-unhold` uses that same one-Executor path but
 disables remote Executor overflow and correction fallback.
 
+The Executor proposes work, but the canonical Action Runtime
+(`gateway/src/dgx_moa/actions/`) is the final execution authority. Each
+request builds a `CapabilitySnapshot` from its actually advertised tools, maps
+stable internal capability IDs to external names only in deterministic code,
+normalizes legacy representations through explicit adapters, and runs one
+preflight validator before any Chat/Responses, stream/non-stream tool call
+reaches the harness. Guessed MCP servers/URIs, invented session IDs, and
+out-of-workspace paths are rejected; unchanged identical failed actions stay
+blocked until relevant state changes. Laya exists only as an optional
+finite-choice shadow policy behind deterministic fallback.
+
 Reasoner, Planner, Reviewer, and Frontier start independently from an immutable
 pre-dispatch snapshot while the Executor continues useful work. Their inputs
 contain first-party artifact references, repository identity, working evidence

@@ -89,6 +89,13 @@ gateway:
     policies: []
   execution_graph:
     mode: disabled
+  action_runtime:
+    enabled: true
+    workspace_roots: []
+    laya_enabled: false
+    laya_endpoint: ""
+    laya_timeout_seconds: 2.0
+    laya_shadow: true
   model_routing:
     executor: local/qwen3.8-27b
     executor_fallback:

@@ -4224,6 +4224,29 @@ def test_successful_inspection_fingerprints_reset_after_change(
     assert controller.successful_inspection_fingerprints(state) == frozenset({"after-change"})
 
 
+def test_latest_successful_tool_fingerprint_blocks_exact_repeat(
+    settings, stub_provider: StubProvider
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)  # type: ignore[arg-type]
+    state = SessionState(
+        session_id="successful-tool-repeat",
+        tool_executions=[
+            {
+                "tool_name": "exec_command",
+                "normalized_arguments": {"cmd": "cat probe.txt"},
+                "argument_fingerprint": "same-probe",
+                "exit_code": 0,
+            }
+        ],
+    )
+
+    assert controller.successful_inspection_fingerprints(state) == frozenset({"same-probe"})
+    state.tool_executions[-1].update(
+        {"tool_name": "apply_patch", "argument_fingerprint": "same-poll"}
+    )
+    assert controller.successful_inspection_fingerprints(state) == frozenset()
+
+
 @pytest.mark.asyncio
 async def test_completed_implementation_is_told_to_return_final(
     settings, stub_provider: StubProvider

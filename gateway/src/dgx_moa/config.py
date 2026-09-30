@@ -497,6 +497,23 @@ class SpecialistRoutingConfig(BaseModel):
         return self
 
 
+class ActionRuntimeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    workspace_roots: tuple[str, ...] = ()
+    laya_enabled: bool = False
+    laya_endpoint: str = ""
+    laya_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+    laya_shadow: bool = True
+
+    @model_validator(mode="after")
+    def validate_laya(self) -> ActionRuntimeConfig:
+        if self.laya_enabled and not self.laya_endpoint:
+            raise ValueError("enabled Laya policy requires an endpoint")
+        return self
+
+
 class DeclarativePolicyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -736,6 +753,7 @@ class Settings(BaseModel):
     remote_judge: RemoteJudgeConfig = Field(default_factory=RemoteJudgeConfig)
     specialist_routing: SpecialistRoutingConfig = Field(default_factory=SpecialistRoutingConfig)
     declarative_policy: DeclarativePolicyConfig = Field(default_factory=DeclarativePolicyConfig)
+    action_runtime: ActionRuntimeConfig = Field(default_factory=ActionRuntimeConfig)
     execution_graph: ExecutionGraphConfig = Field(default_factory=ExecutionGraphConfig)
     async_moa: AsyncMoAPolicy = Field(default_factory=AsyncMoAPolicy)
     model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig)
@@ -1019,6 +1037,11 @@ def load_settings(path: str | Path | None = None) -> Settings:
         with suppress(json.JSONDecodeError):
             specialist_routing = json.loads(specialist_routing)
     gateway["specialist_routing"] = specialist_routing
+    action_runtime: Any = os.getenv("DGX_MOA_ACTION_RUNTIME", gateway.get("action_runtime", {}))
+    if isinstance(action_runtime, str):
+        with suppress(json.JSONDecodeError):
+            action_runtime = json.loads(action_runtime)
+    gateway["action_runtime"] = action_runtime
     declarative_policy: Any = os.getenv(
         "DGX_MOA_DECLARATIVE_POLICY", gateway.get("declarative_policy", {})
     )

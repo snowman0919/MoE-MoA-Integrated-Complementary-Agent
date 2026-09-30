@@ -145,6 +145,7 @@ class SessionState(BaseModel):
     pending_tool_call_ids: list[str] = Field(default_factory=list)
     last_decision_id: str | None = None
     failed_call_fingerprints: list[str] = Field(default_factory=list)
+    action_failures: dict[str, dict[str, Any]] = Field(default_factory=dict)
     failure_families: dict[str, int] = Field(default_factory=dict)
     no_progress_count: int = 0
     step_count: int = 0

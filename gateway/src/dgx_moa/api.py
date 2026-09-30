@@ -2199,6 +2199,7 @@ def create_app(
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "executor is not configured")
         raw = body.model_dump(exclude_none=True)
         raw["model"] = model_alias
+        raw.setdefault("reasoning_effort", configured.async_moa.default_effort)
         provided_session_id = x_session_id or str(body.metadata.get("session_id") or "")
         session_id = provided_session_id or str(uuid.uuid4())
         if model_alias != body.model:
@@ -4157,6 +4158,29 @@ def create_app(
                                 "tool_calls" in observation.finish_reasons
                                 or observation.tool_call_ids
                             ):
+                                for index in sorted(observation.tool_call_names):
+                                    gate = request.app.state.controller.check_action(
+                                        state,
+                                        observation.tool_call_names.get(index, ""),
+                                        observation.tool_call_arguments.get(index, ""),
+                                        prepared.get("tools"),
+                                    )
+                                    if not gate.ok and gate.code != "unknown_tool":
+                                        state.final_status = "failed"
+                                        request.app.state.store.event(
+                                            state_session_id,
+                                            "action_preflight_rejected",
+                                            {
+                                                "code": gate.code,
+                                                "path": "chat_stream",
+                                                "capability": observation.tool_call_names.get(
+                                                    index, ""
+                                                ),
+                                            },
+                                        )
+                                        raise ValueError(
+                                            f"invalid tool call: {gate.code}: {gate.message}"
+                                        )
                                 state.pending_tool_call_ids = list(
                                     dict.fromkeys(
                                         [
@@ -4276,10 +4300,29 @@ def create_app(
                                     1 if observation.tool_delta_seen else 0,
                                 )
                                 while admitted_tool_calls < required_admissions:
-                                    request.app.state.controller.admit_tool_call(
+                                    tool_name = observation.tool_call_names.get(admitted_tool_calls)
+                                    gate = request.app.state.controller.check_action(
                                         state,
-                                        observation.tool_call_names.get(admitted_tool_calls),
+                                        tool_name or "",
+                                        observation.tool_call_arguments.get(
+                                            admitted_tool_calls, ""
+                                        ),
+                                        prepared.get("tools"),
                                     )
+                                    if not gate.ok and gate.code != "unknown_tool":
+                                        request.app.state.store.event(
+                                            state_session_id,
+                                            "action_preflight_rejected",
+                                            {
+                                                "code": gate.code,
+                                                "path": "chat_stream_delta",
+                                                "capability": tool_name or "unknown",
+                                            },
+                                        )
+                                        raise ValueError(
+                                            f"invalid tool call: {gate.code}: {gate.message}"
+                                        )
+                                    request.app.state.controller.admit_tool_call(state, tool_name)
                                     admitted_tool_calls += 1
                                 observed_total_tokens = observation.usage.get("total_tokens", 0)
                                 if observed_total_tokens > accounted_total_tokens:
@@ -4395,13 +4438,18 @@ def create_app(
                     "executor_invalid_output_retried",
                     {"reason": retry_reason, "attempt": 2},
                 )
-                retry_instruction = (
-                    "The previous response omitted the required native tool call. Call one "
-                    "available tool now; do not return final text."
-                    if prepared.get("tool_choice") == "required"
-                    else "Return one concise user-facing final answer now, without internal "
-                    "protocol markup or hidden-only reasoning."
-                )
+                if retry_reason.startswith("invalid tool call:"):
+                    raise ValueError(retry_reason)
+                if prepared.get("tool_choice") == "required":
+                    retry_instruction = (
+                        "The previous response omitted the required native tool call. Call one "
+                        "available tool now; do not return final text."
+                    )
+                else:
+                    retry_instruction = (
+                        "Return one concise user-facing final answer now, without internal "
+                        "protocol markup or hidden-only reasoning."
+                    )
                 prepared = {
                     **prepared,
                     "messages": [
@@ -4557,11 +4605,28 @@ def create_app(
                     for key, value in final_usage.items()
                 }
             )
-            for call in assistant_tool_calls:
-                request.app.state.controller.admit_tool_call(
-                    state,
-                    str(call.get("function", {}).get("name", "")) or None,
-                )
+            if prepared.get("tools"):
+                for call in assistant_tool_calls:
+                    gate = request.app.state.controller.check_action_call(
+                        state, call, prepared.get("tools")
+                    )
+                    if not gate.ok and gate.code != "unknown_tool":
+                        request.app.state.store.event(
+                            state_session_id,
+                            "action_preflight_rejected",
+                            {"code": gate.code, "path": "chat_nonstream"},
+                        )
+                        break
+                    request.app.state.controller.admit_tool_call(
+                        state,
+                        str(call.get("function", {}).get("name", "")) or None,
+                    )
+            else:
+                for call in assistant_tool_calls:
+                    request.app.state.controller.admit_tool_call(
+                        state,
+                        str(call.get("function", {}).get("name", "")) or None,
+                    )
             assistant_tool_call_ids = [
                 str(call.get("id"))
                 for call in assistant_tool_calls
