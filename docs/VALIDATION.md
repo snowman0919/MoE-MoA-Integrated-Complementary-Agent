@@ -10770,16 +10770,32 @@ complete call at the terminal gate, and invalid Responses custom-tool input
 fails closed (`failed` + `schema_mismatch`) instead of emitting an
 unsanitized echo.
 
-Measured evidence: `tests/test_actions.py` 21 passed (added denied
-tool/side-effect coverage); API convergence `tests/test_action_gates.py` 5
-passed (schema mismatch fails closed at 502 in every path; tool-result
-continuation completes without double execution); full `tests/test_api.py`
-280 passed; all non-API suites 983 passed; Ruff clean; strict mypy clean
-over the touched modules. `test_responses_post_preserves_custom_tool_loop`
-was updated so the continuation assertion indexes `requests[1]` and the
-invalid-input assertion expects the fail-closed payload; both changes match
-verified runtime behavior, not weakened expectations.
+Measured evidence (re-verified 2026-10-01 on final commit `b8dfa2192`):
+`tests/test_actions.py` 21 passed (denied tool/side-effect with fingerprint
+plus all required capability/schema/resource/ledger/compat cases); API
+convergence `tests/test_action_gates.py` 5 passed (Chat/Responses x
+stream/non-stream share one gate; tool-result continuation completes without
+double execution); full `tests/test_api.py` 280 passed; all non-API suites
+984 passed; `ruff check` plus `ruff format --check` clean (116 files);
+strict mypy clean over the 10 touched modules; `git diff --check` clean.
+`test_responses_post_preserves_custom_tool_loop` indexes `requests[1]` and
+expects the fail-closed payload; both match verified runtime behavior, not
+weakened expectations.
 
-Production was not restarted, deployed, or merged. No real-executor harness
-matrix (raw/Codex/OpenCode/Hermes adversarial cases) has been run from this
-checkout; that remains the promotion blocker.
+Direct adversarial preflight matrix against branch code (no harness needed
+for the gate itself): nonexistent tool -> `unknown_tool`; guessed MCP
+server/URI -> `unknown_tool`/`unknown_resource`; invented session ID ->
+`unknown_resource`; wrong argument type -> `schema_mismatch`; malformed
+JSON -> `malformed_arguments`; out-of-workspace path ->
+`workspace_violation`; `shell` -> `bash` only when `bash` is advertised
+(with `tool_alias` + `argument_alias` + sanitized canonical call), otherwise
+`unknown_tool`; same semantic failure + same revision ->
+`duplicate_failed_action`; changed revision -> eligible; alternative action
+-> eligible; success -> resolved.
+
+Production was not restarted, deployed, or merged. No live-executor harness
+matrix (raw/Codex/OpenCode/Hermes against a running backend) has been run
+from this checkout: the executor at `127.0.0.1:9001` is closed and the
+checked-in config points at an unvalidated local target, so gateway-level
+live adversarial traffic was out of scope for this closed-box checkout. That
+remains the promotion blocker.
