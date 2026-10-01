@@ -64,7 +64,7 @@ def test_stale_progress_rejected() -> None:
     result = decide_output(manifest, context)
     # No material completion assertion exists, so the draft is rewrite-only
     # rather than a false completion claim.
-    assert result.decision == "PASS"
+    assert result.decision == "REWRITE_ONLY"
 
 
 def test_pending_tool_calls_reexecute() -> None:
@@ -111,7 +111,7 @@ def test_rewrite_only_empty_or_plain_text() -> None:
     for text in ["", "Hello, how can I help?"]:
         context = OutputGateContext(objective="chat", final_text=text)
         manifest = build_completion_manifest(context)
-        assert decide_output(manifest, context).decision == "PASS"
+        assert decide_output(manifest, context).decision == "REWRITE_ONLY"
 
 
 def test_laya_shadow_never_overrides() -> None:

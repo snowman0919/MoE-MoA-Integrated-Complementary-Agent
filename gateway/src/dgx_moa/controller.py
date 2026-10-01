@@ -961,7 +961,8 @@ class Controller:
 
         Builds a CompletionManifest from canonical runtime evidence only,
         resolves every material claim, and returns one bounded deterministic
-        decision. Only PASS may reach final user-visible synthesis unchanged.
+        decision. Only PASS and claim-free REWRITE_ONLY reach final
+        user-visible synthesis unchanged.
         """
         from .actions.output import OutputGateContext
 

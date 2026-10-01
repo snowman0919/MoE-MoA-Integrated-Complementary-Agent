@@ -439,8 +439,8 @@ def decide_output(manifest: CompletionManifest, context: OutputGateContext) -> O
         )
     if not manifest.claims:
         return OutputGateResult(
-            "PASS",
-            "no material completion claims; plain user-facing text passes unchanged",
+            "REWRITE_ONLY",
+            "no material completion claims; concise user-facing rewrite only",
             manifest,
         )
     return OutputGateResult("PASS", "all material claims resolve to runtime evidence", manifest)
