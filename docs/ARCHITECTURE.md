@@ -31,6 +31,27 @@ background model call. The Executor alone emits native tool calls and
 client-visible content. `dgx-moa-unhold` uses that same one-Executor path but
 disables remote Executor overflow and correction fallback.
 
+The Executor proposes work, but the canonical Action Runtime
+(`gateway/src/dgx_moa/actions/`) is the final execution authority. Each
+request builds a `CapabilitySnapshot` from its actually advertised tools, maps
+stable internal capability IDs to external names only in deterministic code,
+normalizes legacy representations through explicit adapters, and runs one
+preflight validator before any Chat/Responses, stream/non-stream tool call
+reaches the harness. Guessed MCP servers/URIs, invented session IDs, and
+out-of-workspace paths are rejected; unchanged identical failed actions stay
+blocked until relevant state changes. Laya exists only as an optional
+finite-choice shadow policy behind deterministic fallback.
+
+The Executor must not decide that work is complete. Before any final
+user-visible answer, the Runtime builds a structured `CompletionManifest`
+from canonical runtime evidence only (tool results, verified facts, changed
+paths, evidence nodes, completion evidence), resolves every material claim,
+rejects stale or unsupported evidence, and runs one bounded deterministic
+Output Decision: `PASS`, `REWRITE_ONLY`, `REEXECUTE`, `RESOLVE_RESOURCE`,
+`ESCALATE_REVIEW`, or `FAIL_CLOSED`. Only `PASS` and claim-free `REWRITE_ONLY`
+reach synthesis unchanged; all other decisions fail closed through the same
+Chat/Responses, stream/non-stream gate. Laya may shadow-assist semantic
+validation from the same finite set but never establishes facts.
 Reasoner, Planner, Reviewer, and Frontier start independently from an immutable
 pre-dispatch snapshot while the Executor continues useful work. Their inputs
 contain first-party artifact references, repository identity, working evidence

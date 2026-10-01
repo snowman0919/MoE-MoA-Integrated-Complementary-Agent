@@ -5612,9 +5612,21 @@ def test_default_executor_output_budget_is_4096(settings, stub_provider: StubPro
                 "messages": [{"role": "user", "content": "work"}],
             },
         )
+        disabled = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-secret"},
+            json={
+                "model": "dgx-moa-agent",
+                "messages": [{"role": "user", "content": "work without thinking"}],
+                "reasoning_effort": "none",
+            },
+        )
 
     assert response.status_code == 200
-    assert stub_provider.requests[-1]["max_tokens"] == 4096
+    assert disabled.status_code == 200
+    assert stub_provider.requests[-2]["max_tokens"] == 4096
+    assert stub_provider.requests[-2]["reasoning_effort"] == "medium"
+    assert stub_provider.requests[-1]["reasoning_effort"] == "none"
 
 
 def test_excessive_executor_output_budget_is_rejected(
@@ -9947,7 +9959,7 @@ def test_responses_post_preserves_custom_tool_loop(  # type: ignore[no-untyped-d
         "function": {"name": "apply_patch"},
     }
     assert continuation.status_code == 200
-    assert stub_provider.requests[-2]["messages"][-2:] == [
+    assert stub_provider.requests[1]["messages"][-2:] == [
         {
             "role": "assistant",
             "tool_calls": [
@@ -9964,7 +9976,8 @@ def test_responses_post_preserves_custom_tool_loop(  # type: ignore[no-untyped-d
         {"role": "tool", "content": "Done!", "tool_call_id": "call-edit"},
     ]
     assert invalid_input.status_code == 200
-    assert invalid_input.json()["output"][0]["input"] == '{"input":null}'
+    assert invalid_input.json()["status"] == "failed"
+    assert "schema_mismatch" in invalid_input.json()["error"]["message"]
 
 
 def test_responses_post_maps_upstream_502_to_http_200(  # type: ignore[no-untyped-def]

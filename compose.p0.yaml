@@ -1,3 +1,10 @@
+# P0 diagnostic stack only - NOT production authority and NOT the Phase 3 baseline.
+# The Phase 3 MARLIN baseline (context 65536, one sequence, 1700000000 KV bytes,
+# gpu_memory_utilization=0.5, MARLIN) is preserved per AGENTS.md.
+# Executor values below mirror the separately reviewed promoted overlay in
+# docs/STATE.md (context 262144, mem-fraction 0.35, FP8 E4M3 KV, 270000 total
+# KV tokens, chunked prefill 4096). FP8 KV and chunking remain rejected as
+# production changes per AGENTS.md. Do not deploy without separate approval.
 services:
   gateway:
     image: sha256:c0cabfa4c9d7daa38507ebf24ebc5049b85b8b3c2f0aa4cc45fa07f9b8f89b80

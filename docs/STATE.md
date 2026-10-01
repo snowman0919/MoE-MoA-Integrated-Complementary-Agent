@@ -195,3 +195,16 @@ The audit implementation branch starts at canonical
 read-only inspected at `ea3831ea43c3b32aef712041a464f242fc2095fd`; it was not
 merged, reset, restarted, or deployed. Historical cleanup and archive tags
 remain recorded in the append-only validation history.
+
+Branch `auto/runtime/action-policy-v1` (uncommitted follow-up on this
+checkout) adds the canonical `gateway/src/dgx_moa/actions/` runtime: one
+request-scoped CapabilitySnapshot plus deterministic preflight gate shared by
+Chat/Responses stream and non-stream paths, a state-aware `FailureLedger`
+kept in `state.action_failures`, and an optional Laya shadow policy that is
+disabled by default. It further adds the post-execution Output Validation
+Gate: a structured `CompletionManifest` built from canonical runtime
+evidence only, with one bounded deterministic decision (`PASS`,
+`REWRITE_ONLY`, `REEXECUTE`, `RESOLVE_RESOURCE`, `ESCALATE_REVIEW`,
+`FAIL_CLOSED`) shared by all four synthesis paths. It is test-verified
+only and has not been deployed, merged, or physically validated against
+production role endpoints.

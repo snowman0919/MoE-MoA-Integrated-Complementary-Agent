@@ -14,6 +14,25 @@ from typing import Any, Literal, cast
 
 import httpx
 
+from .actions import (
+    FailureLedger,
+    LayaPolicyAdapter,
+    PreflightContext,
+    PreflightPolicy,
+    ResourceAuthority,
+    build_capability_snapshot,
+    build_completion_manifest,
+    canonical_semantic_key,
+    decide_output,
+    observe_output_shadow,
+    preflight_action,
+    preflight_tool_call,
+    shadow_agreement,
+    state_revision_from_session,
+)
+from .actions import (
+    PolicyEngine as ActionPolicyEngine,
+)
 from .async_moa import (
     ArtifactRef,
     DelegationSnapshot,
@@ -587,6 +606,15 @@ class Controller:
             if settings.execution_graph.mode == "shadow"
             else None
         )
+        runtime = settings.action_runtime
+        self.action_policy = ActionPolicyEngine(
+            laya=LayaPolicyAdapter(
+                endpoint=runtime.laya_endpoint,
+                timeout_seconds=runtime.laya_timeout_seconds,
+                enabled=runtime.laya_enabled,
+            ),
+            shadow_mode=runtime.laya_shadow,
+        )
 
     def delegation_snapshot(
         self,
@@ -903,6 +931,366 @@ class Controller:
                 "remaining": getattr(loop.remaining_budget, action),
             },
         )
+
+    def action_workspace_roots(self, state: SessionState) -> tuple[str, ...]:
+        configured = tuple(self.settings.action_runtime.workspace_roots or ())
+        workspace_path = state.repository.get("workspace_path", "")
+        if workspace_path and workspace_path not in configured:
+            return (*configured, workspace_path)
+        return configured
+
+    def action_snapshot(self, tools: list[dict[str, Any]] | None) -> Any:
+        return build_capability_snapshot(tools)
+
+    def action_authority(self, state: SessionState) -> ResourceAuthority:
+        return ResourceAuthority.from_session(
+            state, workspace_roots=self.action_workspace_roots(state)
+        )
+
+    def check_output_completion(
+        self,
+        state: SessionState,
+        *,
+        final_text: str,
+        finish_reason: str | None = None,
+        has_tool_calls_in_draft: bool = False,
+        metadata: dict[str, Any] | None = None,
+        messages: list[dict[str, Any]] | None = None,
+    ) -> Any:
+        """Run the canonical post-execution Output Validation Gate.
+
+        Builds a CompletionManifest from canonical runtime evidence only,
+        resolves every material claim, and returns one bounded deterministic
+        decision. Only PASS and claim-free REWRITE_ONLY reach final
+        user-visible synthesis unchanged.
+        """
+        from .actions.output import OutputGateContext
+
+        metadata = metadata if isinstance(metadata, dict) else {}
+        successful = tuple(item for item in state.tool_executions if item.get("exit_code") == 0)
+        failed = tuple(item for item in state.tool_executions if item.get("exit_code") != 0)
+        nodes = tuple(item for item in state.evidence_nodes if isinstance(item, dict))
+        failures = tuple(item for item in state.failures if isinstance(item, dict))
+        unresolved = tuple(
+            str(item.get("failure_class") or item.get("class") or "failure")
+            for item in failures
+            if item.get("resolution_status", "active") == "active"
+        )
+        review_required = "reviewer" in state.roles_required or bool(metadata.get("heavy_review"))
+        result_ids = {
+            str(message.get("tool_call_id", ""))
+            for message in (messages or [])
+            if isinstance(message, dict) and message.get("role") == "tool"
+        }
+        pending = tuple(
+            call_id for call_id in state.pending_tool_call_ids if call_id not in result_ids
+        )
+        context = OutputGateContext(
+            objective=state.resolved_objective or state.objective,
+            final_text=final_text,
+            finish_reason=finish_reason,
+            has_tool_calls_in_draft=has_tool_calls_in_draft,
+            pending_tool_call_ids=pending,
+            review_status=state.review_status,
+            review_required=review_required,
+            truncated=bool(state.truncated),
+            successful_executions=successful,
+            failed_executions=failed,
+            evidence_nodes=nodes,
+            verified_facts=tuple(state.verified_facts),
+            changed_paths=tuple(changed_paths_evidence(state, metadata)),
+            completion_evidence=dict(state.completion_evidence),
+            acceptance_criteria=tuple(state.acceptance_criteria),
+            unresolved_discovery=unresolved,
+        )
+        manifest = build_completion_manifest(context)
+        result = decide_output(manifest, context)
+        self.store.event(
+            state.session_id,
+            "output_validation_decided",
+            {
+                "decision": result.decision,
+                "reason": result.reason,
+                "manifest_id": manifest.manifest_id,
+                "supported": manifest.supported_claims,
+                "unsupported": manifest.unsupported_claims,
+                "stale_rejected": manifest.stale_rejected,
+            },
+        )
+        laya_choice, _ = observe_output_shadow(manifest, choose=self._output_laya_choice)
+        agrees = shadow_agreement(result.decision, laya_choice)
+        if laya_choice is not None:
+            self.store.event(
+                state.session_id,
+                "output_validation_laya_shadow",
+                {
+                    "choice": laya_choice,
+                    "agreement": bool(agrees),
+                    "manifest_id": manifest.manifest_id,
+                },
+            )
+        return result
+
+    def _output_laya_choice(
+        self, candidates: tuple[str, ...], manifest: dict[str, Any]
+    ) -> str | None:
+        """Laya semantic assist: finite candidate set only, never fact authority."""
+        adapter = self.action_policy.laya
+        if not adapter.enabled or not adapter.endpoint:
+            return None
+        try:
+            from urllib.parse import urlsplit
+
+            host = (urlsplit(adapter.endpoint).hostname or "").lower()
+            if host not in {"localhost", "127.0.0.1", "::1"}:
+                return None
+        except ValueError:
+            return None
+        payload = json.dumps(
+            {"candidates": list(candidates), "manifest_digest": manifest.get("manifest_id")}
+        ).encode()
+        try:
+            from urllib.error import HTTPError
+            from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+            class _NoRedirect(HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+                    return None
+
+            opener = build_opener(_NoRedirect)
+            request = Request(
+                adapter.endpoint, data=payload, headers={"Content-Type": "application/json"}
+            )
+            with opener.open(request, timeout=adapter.timeout_seconds) as response:
+                body = json.loads(response.read().decode() or "{}")
+            choice = body.get("choice", body.get("index"))
+            if isinstance(choice, int) and 0 <= choice < len(candidates):
+                return str(candidates[choice])
+            if isinstance(choice, str) and choice in candidates:
+                return choice
+        except (Exception, HTTPError):
+            return None
+        return None
+
+    def action_revision(self, state: SessionState, snapshot: Any) -> Any:
+        authority = self.action_authority(state)
+        return state_revision_from_session(
+            state,
+            capability_revision=snapshot.revision,
+            discovered_mcp_servers=sorted(authority.discovered_mcp_servers),
+            discovered_mcp_uris=sorted(authority.discovered_mcp_uris),
+            observed_runtime_ids=sorted(authority.observed_runtime_ids),
+        )
+
+    def action_ledger(self, state: SessionState) -> FailureLedger:
+        return FailureLedger.from_dict(state.action_failures)
+
+    def save_action_ledger(self, state: SessionState, ledger: FailureLedger) -> None:
+        state.action_failures = ledger.to_dict()
+
+    def action_preflight_context(
+        self, state: SessionState, snapshot: Any, revision: Any = None
+    ) -> PreflightContext:
+        revision_id = revision.revision if revision is not None else ""
+        if revision is None:
+            revision = self.action_revision(state, snapshot)
+            revision_id = revision.revision
+        return PreflightContext(
+            snapshot=snapshot,
+            authority=self.action_authority(state),
+            ledger=self.action_ledger(state),
+            state_revision=revision_id,
+            policy=PreflightPolicy(denied_tools=tuple(state.policy_denied_tools or ())),
+        )
+
+    def record_action_failure(
+        self,
+        state: SessionState,
+        semantic: str,
+        snapshot: Any,
+        failure_class: str,
+        revision: Any = None,
+    ) -> None:
+        ledger = self.action_ledger(state)
+        resolved = revision if revision is not None else self.action_revision(state, snapshot)
+        ledger.record_failure(semantic, resolved, failure_class)
+        self.save_action_ledger(state, ledger)
+
+    def resolve_action_failure(self, state: SessionState, semantic: str) -> None:
+        ledger = self.action_ledger(state)
+        if semantic in ledger.entries:
+            ledger.record_success(semantic)
+            self.save_action_ledger(state, ledger)
+
+    @staticmethod
+    def _advertised_tools_for_outcome(
+        state: SessionState, call: dict[str, Any]
+    ) -> list[dict[str, Any]] | None:
+        """Rebuild the advertised tool list so outcome revision matches preflight.
+
+        Tool-result observation only sees the executed call, not the original
+        request tools. Rebuilding a snapshot from ``None`` would hash a
+        different capability revision than the gate checked, so the ledger
+        could never match. Re-advertise the executed tool with the schema the
+        gate saw (recorded on the sanitized call); unknown shapes fall back
+        to ``None`` rather than a fabricated capability set.
+        """
+        call_function = call.get("function") if isinstance(call, dict) else None
+        call_name = call_function.get("name") if isinstance(call_function, dict) else None
+        if not isinstance(call_name, str) or not call_name:
+            return None
+        last = state.last_tool_call if isinstance(state.last_tool_call, dict) else None
+        function = (last or {}).get("function") if isinstance(last, dict) else None
+        name = function.get("name") if isinstance(function, dict) else None
+        if name != call_name:
+            # Parallel or out-of-order tool results: rebuild from the executed
+            # call itself rather than the trailing last_tool_call.
+            name = call_name
+            function = call_function
+        arguments = function.get("arguments") if isinstance(function, dict) else None
+        decoded: dict[str, Any] | None = None
+        if isinstance(arguments, str) and arguments.strip():
+            try:
+                parsed = json.loads(arguments)
+            except ValueError:
+                parsed = None
+            decoded = parsed if isinstance(parsed, dict) else None
+        properties: dict[str, Any] = {}
+        for key, value in (decoded or {}).items():
+            if isinstance(value, str):
+                properties[key] = {"type": "string"}
+            elif isinstance(value, bool):
+                properties[key] = {"type": "boolean"}
+            elif isinstance(value, int):
+                properties[key] = {"type": "integer"}
+            elif isinstance(value, float):
+                properties[key] = {"type": "number"}
+            elif isinstance(value, list):
+                properties[key] = {"type": "array"}
+            elif isinstance(value, dict):
+                properties[key] = {"type": "object"}
+            else:
+                properties[key] = {}
+        schema: dict[str, Any] = {"type": "object", "properties": properties}
+        if decoded:
+            schema["required"] = sorted(decoded)
+        return [{"type": "function", "function": {"name": name, "parameters": schema}}]
+
+    def _record_canonical_action_outcome(
+        self,
+        state: SessionState,
+        call: dict[str, Any],
+        arguments: Any,
+        failed: bool,
+        failure_class: str | None,
+        revision: Any = None,
+        semantic: str | None = None,
+    ) -> None:
+        function = call.get("function") if isinstance(call, dict) else None
+        tool_name = str(function.get("name", "")) if isinstance(function, dict) else ""
+        if not tool_name:
+            return
+        parsed: dict[str, Any] = {}
+        if isinstance(arguments, dict):
+            parsed = arguments
+        elif isinstance(arguments, str) and arguments.strip():
+            try:
+                decoded = json.loads(arguments)
+                parsed = decoded if isinstance(decoded, dict) else {}
+            except ValueError:
+                return
+        resolved_semantic = semantic or canonical_semantic_key(tool_name, parsed)
+        ledger = self.action_ledger(state)
+        if failed:
+            resolved = revision if revision is not None else self.action_snapshot(None)
+            ledger.record_failure(
+                resolved_semantic, resolved, str(failure_class or "TOOL_EXECUTION_FAILURE")
+            )
+            self.save_action_ledger(state, ledger)
+        else:
+            self.resolve_action_failure(state, resolved_semantic)
+
+    def check_action_call(
+        self,
+        state: SessionState,
+        call: dict[str, Any],
+        tools: list[dict[str, Any]] | None,
+    ) -> Any:
+        snapshot = self.action_snapshot(tools)
+        revision = self.action_revision(state, snapshot)
+        result = preflight_tool_call(
+            call, snapshot, self.action_preflight_context(state, snapshot, revision)
+        )
+        self._observe_action_gate(state, snapshot, revision, result)
+        return result
+
+    def check_action(
+        self,
+        state: SessionState,
+        tool_name: str,
+        raw_arguments: Any,
+        tools: list[dict[str, Any]] | None,
+    ) -> Any:
+        snapshot = self.action_snapshot(tools)
+        revision = self.action_revision(state, snapshot)
+        arguments = raw_arguments if isinstance(raw_arguments, dict) else str(raw_arguments or "")
+        result = preflight_action(
+            snapshot, tool_name, arguments, self.action_preflight_context(state, snapshot, revision)
+        )
+        self._observe_action_gate(state, snapshot, revision, result)
+        return result
+
+    def _observe_action_gate(
+        self, state: SessionState, snapshot: Any, revision: Any, result: Any
+    ) -> None:
+        if (
+            not getattr(result, "ok", False)
+            and getattr(result, "code", "") == "duplicate_failed_action"
+        ):
+            semantic = str(getattr(result, "semantic_fingerprint", "") or "")
+            if semantic:
+                revision_id = getattr(revision, "revision", "")
+                ledger = self.action_ledger(state)
+                code = str(getattr(result, "code", "error"))
+                ledger.record_failure(semantic, str(revision_id), code)
+                self.save_action_ledger(state, ledger)
+        self._emit_action_decision_events(state, result)
+
+    def _emit_action_decision_events(self, state: SessionState, result: Any) -> None:
+        adapters = getattr(result, "adapters", ()) or ()
+        if getattr(result, "recovered", False) and adapters:
+            self.store.event(
+                state.session_id,
+                "action_compat_recovered",
+                {"adapters": list(adapters)},
+            )
+        decision = getattr(result, "decision", None)
+        if decision is None or not self.action_policy.laya.enabled:
+            return
+        candidate = getattr(decision, "candidate", None)
+        capability = getattr(decision, "capability", None)
+        if candidate is None or capability is None:
+            return
+        snapshot = self.action_snapshot(
+            [
+                {
+                    "type": "function",
+                    "function": {"name": capability.external_name, "parameters": {}},
+                }
+            ]
+        )
+        before = dict(self.action_policy.shadow_metrics())
+        self.action_policy._observe_shadow(snapshot, [candidate], 0)
+        after = dict(self.action_policy.shadow_metrics())
+        if after != before:
+            self.store.event(
+                state.session_id,
+                "action_laya_shadow",
+                {
+                    "agreement": after.get("laya_shadow_agreement", 0)
+                    > before.get("laya_shadow_agreement", 0)
+                },
+            )
 
     def admit_tool_call(self, state: SessionState, tool_name: str | None) -> None:
         denied = state.policy_denied_tools
@@ -2235,7 +2623,18 @@ class Controller:
                 {**result, "target_paths": sorted(target_paths)},
                 generated_from=state.last_decision_id,
             )
-            state.no_progress_count = 0
+            advertised = self._advertised_tools_for_outcome(state, call)
+            snapshot = self.action_snapshot(advertised)
+            revision = self.action_revision(state, snapshot)
+            gate = preflight_tool_call(
+                call, snapshot, self.action_preflight_context(state, snapshot, revision)
+            )
+            semantic = gate.semantic_fingerprint or None
+            if semantic is None:
+                return
+            self._record_canonical_action_outcome(
+                state, call, arguments, failed, failure_class, revision=revision, semantic=semantic
+            )
             if actionable_failure and call:
                 call_fingerprint = fingerprint(call)
                 failure_strategy_fingerprint = (

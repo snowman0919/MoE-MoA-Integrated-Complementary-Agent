@@ -6,7 +6,13 @@ The `dev` source contains the Phase A state foundation and the Phase B bounded
 action loop. It is disabled by checked-in default and enabled by the protected
 production environment after the live-provider gate passed on 2026-07-22.
 An isolated synthetic physical run has exercised successful, no-progress, and
-duplicate-failure termination.
+duplicate-failure termination. The canonical Action Runtime keeps its own
+state-aware `FailureLedger` (`state.action_failures`) for retry eligibility;
+the legacy `failed_call_fingerprints` list remains as a compatibility
+projection and Loop evidence, not as the retry authority. The post-execution
+Output Validation Gate (`gateway/src/dgx_moa/actions/output.py`) applies the
+same evidence discipline at synthesis: completion claims resolve only against
+tool-observed and test-confirmed facts, never against model assertions alone.
 
 `LoopState` is persisted inside the existing task-scoped `SessionState`, so it
 uses the existing SQLite WAL transaction and rollback boundary. It records:

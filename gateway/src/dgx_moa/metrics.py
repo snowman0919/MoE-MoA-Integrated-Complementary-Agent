@@ -51,7 +51,6 @@ METRIC_NAMES = (
     "weekly_packages_created_total",
     "weekly_package_failures_total",
     "weekly_package_bytes",
-    "archive_verification_failures_total",
     "specialist_local_calls_total",
     "specialist_remote_calls_total",
     "specialist_cold_miss_total",
@@ -64,6 +63,21 @@ METRIC_NAMES = (
     "specialist_load_latency_seconds",
     "specialist_remote_cost_total",
     "specialist_provider_switch_prevented_total",
+    "invalid_action_rejected",
+    "unknown_tool_rejected",
+    "unknown_resource_rejected",
+    "duplicate_failed_action_rejected",
+    "compatibility_action_recovered",
+    "laya_shadow_agreement",
+    "laya_shadow_disagreement",
+    "output_validation_pass",
+    "output_validation_rewrite_only",
+    "output_validation_reexecute",
+    "output_validation_resolve_resource",
+    "output_validation_escalate_review",
+    "output_validation_fail_closed",
+    "output_validation_laya_shadow_agreement",
+    "output_validation_laya_shadow_disagreement",
 )
 
 
@@ -167,6 +181,39 @@ class RuntimeMetrics:
             self.increment("specialist_warmup_failed_total")
         elif event_type == "specialist_unused_warmup":
             self.increment("specialist_unused_warmup_total")
+        elif event_type == "action_preflight_rejected":
+            self.increment("invalid_action_rejected")
+            code = str(payload.get("code", ""))
+            if code == "unknown_tool":
+                self.increment("unknown_tool_rejected")
+            elif code in {"unknown_resource", "workspace_violation", "permission_denied"}:
+                self.increment("unknown_resource_rejected")
+            elif code == "duplicate_failed_action":
+                self.increment("duplicate_failed_action_rejected")
+        elif event_type == "action_compat_recovered":
+            self.increment("compatibility_action_recovered")
+        elif event_type == "action_laya_shadow":
+            if payload.get("agreement"):
+                self.increment("laya_shadow_agreement")
+            else:
+                self.increment("laya_shadow_disagreement")
+        elif event_type == "output_validation_decided":
+            decision = str(payload.get("decision", ""))
+            mapping = {
+                "PASS": "output_validation_pass",
+                "REWRITE_ONLY": "output_validation_rewrite_only",
+                "REEXECUTE": "output_validation_reexecute",
+                "RESOLVE_RESOURCE": "output_validation_resolve_resource",
+                "ESCALATE_REVIEW": "output_validation_escalate_review",
+                "FAIL_CLOSED": "output_validation_fail_closed",
+            }
+            if decision in mapping:
+                self.increment(mapping[decision])
+        elif event_type == "output_validation_laya_shadow":
+            if payload.get("agreement"):
+                self.increment("output_validation_laya_shadow_agreement")
+            else:
+                self.increment("output_validation_laya_shadow_disagreement")
 
     def snapshot(self, overlays: dict[str, int | float] | None = None) -> dict[str, int | float]:
         values = {name: self._values[name] for name in METRIC_NAMES}

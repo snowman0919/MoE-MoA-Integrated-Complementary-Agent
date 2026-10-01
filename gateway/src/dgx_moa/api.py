@@ -33,6 +33,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .actions.compat import normalize_edit_call
+from .actions.output import extract_material_claims as _output_claims
 from .admin_codex import AdminCodexRequest, AdminCodexRunner
 from .admin_dashboard import ADMIN_DASHBOARD
 from .config import Settings, get_settings
@@ -145,7 +147,6 @@ from .state import Phase, SessionState, StateStore
 from .streaming import (
     ProgressOnlyResponse,
     StreamObservation,
-    compatible_edit_call,
     completed_chat_sse,
     forward_sse,
     has_internal_protocol_leak,
@@ -476,7 +477,7 @@ def _responses_payload(
             )
         for tool_call in message.get("tool_calls") or []:
             function = tool_call.get("function") or {}
-            name, arguments = compatible_edit_call(
+            name, arguments = normalize_edit_call(
                 str(function.get("name", "")),
                 str(function.get("arguments", "")),
                 custom_tool_names,
@@ -2199,6 +2200,7 @@ def create_app(
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "executor is not configured")
         raw = body.model_dump(exclude_none=True)
         raw["model"] = model_alias
+        raw.setdefault("reasoning_effort", configured.async_moa.default_effort)
         provided_session_id = x_session_id or str(body.metadata.get("session_id") or "")
         session_id = provided_session_id or str(uuid.uuid4())
         if model_alias != body.model:
@@ -4139,7 +4141,35 @@ def create_app(
                                 mode="final_synthesis",
                             )
                             if terminal:
-                                state.final_output = "".join(observation.assistant_content)
+                                draft_text = "".join(observation.assistant_content)
+                                if not observation.tool_call_ids:
+                                    gate_result = (
+                                        request.app.state.controller.check_output_completion(
+                                            state,
+                                            final_text=draft_text,
+                                            finish_reason=next(
+                                                iter(observation.finish_reasons), None
+                                            ),
+                                            has_tool_calls_in_draft=False,
+                                            metadata=raw.get("metadata", {}),
+                                            messages=raw.get("messages", []),
+                                        )
+                                    )
+                                    request.app.state.store.event(
+                                        state_session_id,
+                                        "output_validation_passed"
+                                        if gate_result.decision in ("PASS", "REWRITE_ONLY")
+                                        else "output_validation_blocked",
+                                        {
+                                            "decision": gate_result.decision,
+                                            "reason": gate_result.reason,
+                                            "manifest_id": gate_result.manifest.manifest_id,
+                                            "path": "chat_stream",
+                                        },
+                                    )
+                                    if gate_result.decision not in ("PASS", "REWRITE_ONLY"):
+                                        state.final_status = "failed"
+                                state.final_output = draft_text
                                 execution_evidence_ids.append(
                                     request.app.state.controller.record_evidence(
                                         state,
@@ -4157,6 +4187,30 @@ def create_app(
                                 "tool_calls" in observation.finish_reasons
                                 or observation.tool_call_ids
                             ):
+                                if prepared.get("tools"):
+                                    for index in sorted(observation.tool_call_names):
+                                        gate = request.app.state.controller.check_action(
+                                            state,
+                                            observation.tool_call_names.get(index, ""),
+                                            observation.tool_call_arguments.get(index, ""),
+                                            prepared.get("tools"),
+                                        )
+                                        if not gate.ok:
+                                            state.final_status = "failed"
+                                            request.app.state.store.event(
+                                                state_session_id,
+                                                "action_preflight_rejected",
+                                                {
+                                                    "code": gate.code,
+                                                    "path": "chat_stream",
+                                                    "capability": observation.tool_call_names.get(
+                                                        index, ""
+                                                    ),
+                                                },
+                                            )
+                                            raise ValueError(
+                                                f"invalid tool call: {gate.code}: {gate.message}"
+                                            )
                                 state.pending_tool_call_ids = list(
                                     dict.fromkeys(
                                         [
@@ -4245,6 +4299,63 @@ def create_app(
                     admitted_tool_calls = 0
                     accounted_total_tokens = 0
                     published_output_characters = 0
+                    buffered_tool_chunks: list[bytes] = []
+                    buffered_content_chunks: list[bytes] = []
+                    buffered_content_bytes = 0
+                    content_gate_limit = configured.limits.max_stream_capture_bytes
+                    content_blocked = False
+                    content_block_message = ""
+
+                    def check_content_gate() -> str | None:
+                        """Return a block reason if the draft must not stream yet."""
+                        draft_text = "".join(observation.assistant_content)
+                        if not _output_claims(draft_text):
+                            return None
+                        gate_result = request.app.state.controller.check_output_completion(
+                            state,
+                            final_text=draft_text,
+                            finish_reason=next(iter(observation.finish_reasons), None),
+                            has_tool_calls_in_draft=False,
+                            metadata=raw.get("metadata", {}),
+                            messages=raw.get("messages", []),
+                        )
+                        if gate_result.decision in ("PASS", "REWRITE_ONLY"):
+                            return None
+                        state.final_status = "failed"
+                        request.app.state.store.event(
+                            state_session_id,
+                            "output_validation_blocked",
+                            {
+                                "decision": gate_result.decision,
+                                "reason": gate_result.reason,
+                                "manifest_id": gate_result.manifest.manifest_id,
+                                "path": "chat_stream",
+                            },
+                        )
+                        return f"output validation {gate_result.decision}: {gate_result.reason}"
+
+                    def draft_sentence_complete() -> bool:
+                        draft_text = "".join(observation.assistant_content)
+                        if not _output_claims(draft_text):
+                            return True
+                        return bool(re.search(r"[.!?][\"')\]]?\s*$", draft_text))
+
+                    def is_content_chunk(chunk: bytes) -> bool:
+                        for line in chunk.decode(errors="replace").splitlines():
+                            if not line.startswith("data: ") or line == "data: [DONE]":
+                                continue
+                            try:
+                                payload = json.loads(line[6:])
+                            except ValueError:
+                                continue
+                            choice = (payload.get("choices") or [{}])[0]
+                            delta = choice.get("delta") or {}
+                            if isinstance(delta.get("content"), str):
+                                return True
+                            if choice.get("finish_reason") and not delta.get("tool_calls"):
+                                return True
+                        return False
+
                     forwarder = forward_sse(
                         upstream,
                         observation,
@@ -4275,12 +4386,61 @@ def create_app(
                                     len(observation.tool_call_ids),
                                     1 if observation.tool_delta_seen else 0,
                                 )
+                                pending_tool_seen = observation.tool_delta_seen or bool(
+                                    observation.tool_call_ids
+                                )
                                 while admitted_tool_calls < required_admissions:
-                                    request.app.state.controller.admit_tool_call(
-                                        state,
-                                        observation.tool_call_names.get(admitted_tool_calls),
-                                    )
+                                    tool_name = observation.tool_call_names.get(admitted_tool_calls)
+                                    if not tool_name:
+                                        # Nameless fragment: the tool call is not
+                                        # complete yet, so there is nothing to
+                                        # validate. Wait for more chunks; the
+                                        # terminal gate enforces unknown tools.
+                                        break
+                                    if prepared.get("tools"):
+                                        gate = request.app.state.controller.check_action(
+                                            state,
+                                            tool_name,
+                                            observation.tool_call_arguments.get(
+                                                admitted_tool_calls, ""
+                                            ),
+                                            prepared.get("tools"),
+                                        )
+                                        if not gate.ok:
+                                            if gate.code in (
+                                                "malformed_arguments",
+                                                "schema_mismatch",
+                                                "unknown_resource",
+                                                "workspace_violation",
+                                            ):
+                                                # Possibly a partial argument
+                                                # fragment; the terminal gate
+                                                # validates complete arguments.
+                                                break
+                                            request.app.state.store.event(
+                                                state_session_id,
+                                                "action_preflight_rejected",
+                                                {
+                                                    "code": gate.code,
+                                                    "path": "chat_stream_delta",
+                                                    "capability": tool_name,
+                                                },
+                                            )
+                                            raise ValueError(
+                                                f"invalid tool call: {gate.code}: {gate.message}"
+                                            )
+                                    request.app.state.controller.admit_tool_call(state, tool_name)
                                     admitted_tool_calls += 1
+                                tool_chunk_pending = pending_tool_seen and (
+                                    admitted_tool_calls < len(observation.tool_call_ids)
+                                    or admitted_tool_calls < required_admissions
+                                )
+                                if tool_chunk_pending:
+                                    # A tool call is still incomplete: buffer this
+                                    # chunk until its complete arguments pass the
+                                    # terminal preflight gate.
+                                    buffered_tool_chunks.append(chunk)
+                                    continue
                                 observed_total_tokens = observation.usage.get("total_tokens", 0)
                                 if observed_total_tokens > accounted_total_tokens:
                                     request.app.state.controller.record_loop_usage(
@@ -4290,9 +4450,6 @@ def create_app(
                                         ),
                                     )
                                     accounted_total_tokens = observed_total_tokens
-                                if "first_downstream_byte" not in state.timings_ms:
-                                    state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
-                                    first_byte_at = time.time()
                                 draft = "".join(observation.assistant_content)
                                 if len(draft) > published_output_characters:
                                     delta = draft[published_output_characters:]
@@ -4304,7 +4461,58 @@ def create_app(
                                         "assistant_output_delta",
                                         {"role": "executor", "delta": delta},
                                     )
+                                for buffered in buffered_tool_chunks:
+                                    yield buffered
+                                buffered_tool_chunks.clear()
+                                if (
+                                    not content_blocked
+                                    and not observation.tool_call_ids
+                                    and not observation.tool_delta_seen
+                                    and is_content_chunk(chunk)
+                                    and chunk != b"data: [DONE]\n\n"
+                                ):
+                                    buffered_content_chunks.append(chunk)
+                                    buffered_content_bytes += len(chunk)
+                                    while (
+                                        buffered_content_chunks
+                                        and buffered_content_bytes > content_gate_limit
+                                    ):
+                                        oldest = buffered_content_chunks.pop(0)
+                                        buffered_content_bytes -= len(oldest)
+                                    if draft_sentence_complete():
+                                        content_block_message = check_content_gate() or ""
+                                        content_blocked = bool(content_block_message)
+                                        if content_blocked:
+                                            raise ValueError(content_block_message)
+                                        for buffered in buffered_content_chunks:
+                                            if "first_downstream_byte" not in state.timings_ms:
+                                                first_at = elapsed_ms(accepted)
+                                                state.timings_ms["first_downstream_byte"] = first_at
+                                                first_byte_at = time.time()
+                                            yield buffered
+                                        buffered_content_chunks.clear()
+                                        buffered_content_bytes = 0
+                                    continue
+                                if "first_downstream_byte" not in state.timings_ms:
+                                    state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                                    first_byte_at = time.time()
                                 yield chunk
+                        if content_blocked:
+                            raise ValueError(content_block_message)
+                        if not (observation.tool_call_ids or observation.tool_delta_seen):
+                            content_block_message = check_content_gate() or ""
+                            if content_block_message:
+                                raise ValueError(content_block_message)
+                        for buffered in buffered_content_chunks:
+                            if "first_downstream_byte" not in state.timings_ms:
+                                state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                                first_byte_at = time.time()
+                            yield buffered
+                        buffered_content_chunks.clear()
+                        buffered_content_bytes = 0
+                        for buffered in buffered_tool_chunks:
+                            yield buffered
+                        buffered_tool_chunks.clear()
                         stream_completed = not remote_failure
                     except LoopAdmissionError:
                         loop_admission_failed = True
@@ -4374,6 +4582,19 @@ def create_app(
                 assistant_tool_calls = assistant_message.get("tool_calls") or []
                 if prepared.get("tool_choice") == "required" and not assistant_tool_calls:
                     retry_reason = "executor omitted required tool call"
+                if retry_reason is None and assistant_tool_calls and prepared.get("tools"):
+                    for call in assistant_tool_calls:
+                        gate = request.app.state.controller.check_action_call(
+                            state, call, prepared.get("tools")
+                        )
+                        if not gate.ok:
+                            request.app.state.store.event(
+                                state_session_id,
+                                "action_preflight_rejected",
+                                {"code": gate.code, "path": "chat_nonstream_retry"},
+                            )
+                            retry_reason = f"invalid tool call: {gate.code}: {gate.message}"
+                            break
                 if retry_reason is None:
                     break
                 if executor_remote or invalid_output_attempt:
@@ -4395,13 +4616,16 @@ def create_app(
                     "executor_invalid_output_retried",
                     {"reason": retry_reason, "attempt": 2},
                 )
-                retry_instruction = (
-                    "The previous response omitted the required native tool call. Call one "
-                    "available tool now; do not return final text."
-                    if prepared.get("tool_choice") == "required"
-                    else "Return one concise user-facing final answer now, without internal "
-                    "protocol markup or hidden-only reasoning."
-                )
+                if prepared.get("tool_choice") == "required":
+                    retry_instruction = (
+                        "The previous response omitted the required native tool call. Call one "
+                        "available tool now; do not return final text."
+                    )
+                else:
+                    retry_instruction = (
+                        "Return one concise user-facing final answer now, without internal "
+                        "protocol markup or hidden-only reasoning."
+                    )
                 prepared = {
                     **prepared,
                     "messages": [
@@ -4529,6 +4753,18 @@ def create_app(
                             notification if not content else f"{notification}\n\n{content}"
                         )
                     assistant_tool_calls = assistant_message.get("tool_calls") or []
+                    if assistant_tool_calls and prepared.get("tools"):
+                        for call in assistant_tool_calls:
+                            gate = request.app.state.controller.check_action_call(
+                                state, call, prepared.get("tools")
+                            )
+                            if not gate.ok:
+                                request.app.state.store.event(
+                                    state_session_id,
+                                    "action_preflight_rejected",
+                                    {"code": gate.code, "path": "chat_nonstream_fanin"},
+                                )
+                                raise ValueError(f"invalid tool call: {gate.code}: {gate.message}")
                     request.app.state.controller.record_invocation(
                         state,
                         "executor",
@@ -4557,11 +4793,46 @@ def create_app(
                     for key, value in final_usage.items()
                 }
             )
-            for call in assistant_tool_calls:
-                request.app.state.controller.admit_tool_call(
-                    state,
-                    str(call.get("function", {}).get("name", "")) or None,
-                )
+            if prepared.get("tools"):
+                sanitized_calls: list[dict[str, Any]] = []
+                preflight_failed: dict[str, Any] | None = None
+                for call in assistant_tool_calls:
+                    gate = request.app.state.controller.check_action_call(
+                        state, call, prepared.get("tools")
+                    )
+                    if not gate.ok:
+                        request.app.state.store.event(
+                            state_session_id,
+                            "action_preflight_rejected",
+                            {"code": gate.code, "path": "chat_nonstream"},
+                        )
+                        preflight_failed = {
+                            "code": gate.code,
+                            "message": gate.message,
+                        }
+                        break
+                    if gate.sanitized_call is not None:
+                        sanitized = dict(gate.sanitized_call)
+                        sanitized["id"] = str(call.get("id") or "")
+                        sanitized_calls.append(sanitized)
+                    request.app.state.controller.admit_tool_call(
+                        state,
+                        str(call.get("function", {}).get("name", "")) or None,
+                    )
+                else:
+                    assistant_tool_calls = sanitized_calls
+                    assistant_message["tool_calls"] = sanitized_calls
+                    if sanitized_calls:
+                        state.last_tool_call = sanitized_calls[-1]
+                if preflight_failed is not None:
+                    assistant_tool_calls = []
+                    assistant_message["tool_calls"] = []
+                    response["choices"][0]["finish_reason"] = "stop"
+                    assistant_message["content"] = (
+                        "The proposed tool call failed runtime validation "
+                        f"({preflight_failed['code']}: {preflight_failed['message']}). "
+                        "No tool call was executed."
+                    )
             assistant_tool_call_ids = [
                 str(call.get("id"))
                 for call in assistant_tool_calls
@@ -5023,6 +5294,51 @@ def create_app(
                     else:
                         raise JudgeCorrectionRequired(correction_verdict)
             assistant_content = assistant_message.get("content")
+            draft_claims = (
+                _output_claims(assistant_content) if isinstance(assistant_content, str) else []
+            )
+            if (
+                finish_reason != "tool_calls"
+                and not assistant_message.get("tool_calls")
+                and draft_claims
+            ):
+                gate_result = request.app.state.controller.check_output_completion(
+                    state,
+                    final_text=assistant_content if isinstance(assistant_content, str) else "",
+                    finish_reason=finish_reason,
+                    has_tool_calls_in_draft=False,
+                    metadata=body.metadata,
+                    messages=raw.get("messages", []),
+                )
+                if gate_result.decision in ("PASS", "REWRITE_ONLY"):
+                    request.app.state.store.event(
+                        state_session_id,
+                        "output_validation_passed",
+                        {
+                            "decision": gate_result.decision,
+                            "reason": gate_result.reason,
+                            "manifest_id": gate_result.manifest.manifest_id,
+                            "path": "chat_nonstream",
+                        },
+                    )
+                else:
+                    state.final_status = "failed"
+                    request.app.state.store.event(
+                        state_session_id,
+                        "output_validation_blocked",
+                        {
+                            "decision": gate_result.decision,
+                            "reason": gate_result.reason,
+                            "manifest_id": gate_result.manifest.manifest_id,
+                            "path": "chat_nonstream",
+                        },
+                    )
+                    state.current_draft = (
+                        assistant_content if isinstance(assistant_content, str) else ""
+                    )
+                    raise ValueError(
+                        f"output validation {gate_result.decision}: {gate_result.reason}"
+                    )
             if isinstance(assistant_content, str):
                 state.current_draft = assistant_content
                 state.final_output = assistant_content
@@ -5798,6 +6114,39 @@ def create_app(
                             and not upstream_error
                         ):
                             response_state = request.app.state.store.get(response_session_id)
+                            if response_state is not None:
+                                message = (chat_payload.get("choices") or [{}])[0].get(
+                                    "message", {}
+                                )
+                                if not message.get("tool_calls"):
+                                    gate_result = (
+                                        request.app.state.controller.check_output_completion(
+                                            response_state,
+                                            final_text=message.get("content")
+                                            if isinstance(message.get("content"), str)
+                                            else "",
+                                            finish_reason=(chat_payload.get("choices") or [{}])[
+                                                0
+                                            ].get("finish_reason"),
+                                            has_tool_calls_in_draft=False,
+                                            metadata=dict(chat_body.metadata),
+                                            messages=list(messages),
+                                        )
+                                    )
+                                    request.app.state.store.event(
+                                        response_session_id,
+                                        "output_validation_passed"
+                                        if gate_result.decision in ("PASS", "REWRITE_ONLY")
+                                        else "output_validation_blocked",
+                                        {
+                                            "decision": gate_result.decision,
+                                            "reason": gate_result.reason,
+                                            "manifest_id": gate_result.manifest.manifest_id,
+                                            "path": "responses_stream",
+                                        },
+                                    )
+                                    if gate_result.decision not in ("PASS", "REWRITE_ONLY"):
+                                        response_state.final_status = "failed"
                             async for chunk in responses_sse(
                                 completed_chat_sse(chat_payload),
                                 response_model,
@@ -5934,6 +6283,36 @@ def create_app(
                 _responses_payload(response_model, chat_payload, status="failed"),
                 status_code=status.HTTP_200_OK,
             )
+        message = (chat_payload.get("choices") or [{}])[0].get("message", {})
+        if not message.get("tool_calls"):
+            response_state = request.app.state.store.get(
+                str(body.metadata.get("session_id") or x_session_id or "")
+            )
+            if response_state is not None:
+                gate_result = request.app.state.controller.check_output_completion(
+                    response_state,
+                    final_text=message.get("content")
+                    if isinstance(message.get("content"), str)
+                    else "",
+                    finish_reason=(chat_payload.get("choices") or [{}])[0].get("finish_reason"),
+                    has_tool_calls_in_draft=False,
+                    metadata=dict(body.metadata),
+                    messages=list(messages),
+                )
+                request.app.state.store.event(
+                    response_state.session_id,
+                    "output_validation_passed"
+                    if gate_result.decision in ("PASS", "REWRITE_ONLY")
+                    else "output_validation_blocked",
+                    {
+                        "decision": gate_result.decision,
+                        "reason": gate_result.reason,
+                        "manifest_id": gate_result.manifest.manifest_id,
+                        "path": "responses_nonstream",
+                    },
+                )
+                if gate_result.decision not in ("PASS", "REWRITE_ONLY"):
+                    response_state.final_status = "failed"
         return JSONResponse(
             _responses_payload(
                 response_model,

@@ -341,9 +341,24 @@ def test_qwen_executor_collapses_leading_instructions_without_mutation(settings)
             "tools": [{"type": "function", "function": {"name": "terminal"}}],
             "tool_choice": "auto",
             "reasoning_effort": "low",
+            "max_tokens": 1_024,
         },
     )
-    assert automatic_with_reasoning["chat_template_kwargs"] == {"enable_thinking": False}
+    assert automatic_with_reasoning["chat_template_kwargs"] == {
+        "enable_thinking": True,
+        "reasoning_budget": 512,
+    }
+
+    tools_without_reasoning = ModelProvider.body(
+        "executor",
+        model,
+        {
+            "messages": [{"role": "user", "content": "Use a tool if needed."}],
+            "tools": [{"type": "function", "function": {"name": "terminal"}}],
+            "reasoning_effort": "none",
+        },
+    )
+    assert tools_without_reasoning["chat_template_kwargs"] == {"enable_thinking": False}
 
     reasoned = ModelProvider.body(
         "executor",

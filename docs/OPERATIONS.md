@@ -285,7 +285,19 @@ Local files and `file://` attachment paths are native filesystem inputs. Use
 Codex file or shell tools for them. Call `read_mcp_resource` only with the exact
 server identifier and resource URI returned by MCP discovery; a connector's
 display name such as `local_filesystem` is not evidence that such an MCP server
-exists.
+exists. The Action Runtime additionally enforces this before execution: guessed
+servers/URIs never become executable capabilities.
+
+Output completion is Runtime-owned, not Executor-claimed. Before any final
+user-visible answer, the Output Validation Gate builds a `CompletionManifest`
+from tool results, verified facts, changed paths, evidence nodes, and
+completion evidence, then decides `PASS`, `REWRITE_ONLY`, `REEXECUTE`,
+`RESOLVE_RESOURCE`, `ESCALATE_REVIEW`, or `FAIL_CLOSED` through the same
+Chat/Responses, stream/non-stream gate. Unsupported completion claims fail
+closed; only `PASS` and claim-free `REWRITE_ONLY` reach synthesis unchanged.
+Decisions and Laya shadow agreement are observable as
+`output_validation_*` metrics and `output_validation_decided` /
+`output_validation_blocked` / `output_validation_passed` events.
 
 Lifecycle states and safety rules are canonical in
 `docs/MODEL_LIFECYCLE.md`.

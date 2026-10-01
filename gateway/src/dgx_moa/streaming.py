@@ -10,8 +10,14 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import unquote, urlsplit
 
+from .actions.compat import (
+    local_file_compat_applies,
+    normalize_edit_call,
+    normalize_legacy_call,
+    normalize_local_file_compat,
+    parse_textual_tool_calls,
+)
 from .controller import fingerprint, is_workspace_objective
 from .usage import SQLITE_MAX_INTEGER
 
@@ -66,64 +72,6 @@ class ProgressOnlyResponse(Exception):
     def __init__(self, reason: str = "progress_only") -> None:
         super().__init__(reason)
         self.reason = reason
-
-
-def compatible_edit_call(
-    name: str, raw_arguments: str, custom_tool_names: set[str] | None
-) -> tuple[str, str]:
-    if "apply_patch" not in (custom_tool_names or set()):
-        return name, raw_arguments
-    try:
-        arguments = json.loads(raw_arguments)
-        if name == "write_stdin" and "chars" not in arguments:
-            path = arguments.get("path", arguments.get("file", arguments.get("file_path")))
-            content = arguments.get("content")
-            if (
-                not isinstance(path, str)
-                or not path
-                or "\n" in path
-                or not isinstance(content, str)
-            ):
-                raise TypeError
-            patch = "\n".join(
-                (
-                    "*** Begin Patch",
-                    f"*** Delete File: {path}",
-                    f"*** Add File: {path}",
-                    *(f"+{line}" for line in content.splitlines()),
-                    "*** End Patch",
-                )
-            )
-            return "apply_patch", json.dumps(
-                {"input": patch}, ensure_ascii=False, separators=(",", ":")
-            )
-        if name not in {"edit", "edit_file"}:
-            return name, raw_arguments
-        path = arguments.get("file", arguments.get("path", arguments.get("file_path")))
-        old_text = arguments.get("old_text", arguments.get("old_string", arguments.get("old")))
-        new_text = arguments.get("new_text", arguments.get("new_string", arguments.get("new")))
-        if (
-            not isinstance(path, str)
-            or not path
-            or "\n" in path
-            or not isinstance(old_text, str)
-            or not old_text
-            or not isinstance(new_text, str)
-        ):
-            raise TypeError
-    except (TypeError, ValueError):
-        return name, raw_arguments
-    patch = "\n".join(
-        (
-            "*** Begin Patch",
-            f"*** Update File: {path}",
-            "@@",
-            *(f"-{line}" for line in old_text.splitlines()),
-            *(f"+{line}" for line in new_text.splitlines()),
-            "*** End Patch",
-        )
-    )
-    return "apply_patch", json.dumps({"input": patch}, ensure_ascii=False, separators=(",", ":"))
 
 
 def is_progress_only(text: str) -> bool:
@@ -214,64 +162,29 @@ def has_internal_protocol_leak(text: str) -> bool:
     )
 
 
-_TEXT_TOOL_CALL = re.compile(
-    r"\s*<tool_call>\s*<function=(?P<name>[A-Za-z_][A-Za-z0-9_]*)>"
-    r"(?P<parameters>.*?)</function>\s*</tool_call>",
-    re.DOTALL,
-)
-_TEXT_TOOL_PARAMETER = re.compile(
-    r"\s*<parameter=(?P<name>[A-Za-z_][A-Za-z0-9_]*)>"
-    r"(?P<value>.*?)</parameter>",
-    re.DOTALL,
-)
-
-
 def recover_text_tool_calls(
     text: str, available_tool_names: set[str] | None = None
 ) -> list[dict[str, object]] | None:
+    parsed = parse_textual_tool_calls(text)
+    if not parsed:
+        return None
     calls: list[dict[str, object]] = []
-    cursor = 0
-    for match in _TEXT_TOOL_CALL.finditer(text):
-        if text[cursor : match.start()].strip():
-            return None
-        arguments: dict[str, object] = {}
-        parameter_cursor = 0
-        parameters = match.group("parameters")
-        for parameter in _TEXT_TOOL_PARAMETER.finditer(parameters):
-            if parameters[parameter_cursor : parameter.start()].strip():
-                return None
-            name = parameter.group("name")
-            if name in arguments:
-                return None
-            value = parameter.group("value").strip()
-            try:
-                arguments[name] = json.loads(value)
-            except ValueError:
-                arguments[name] = value
-            parameter_cursor = parameter.end()
-        if parameters[parameter_cursor:].strip():
-            return None
-        tool_name = match.group("name")
-        if tool_name == "shell" and tool_name not in (available_tool_names or set()):
-            if "bash" in (available_tool_names or set()):
-                tool_name = "bash"
-                if "cmd" in arguments and "command" not in arguments:
-                    arguments["command"] = arguments.pop("cmd")
-            elif "exec_command" in (available_tool_names or set()):
-                tool_name = "exec_command"
+    for tool_name, arguments in parsed:
+        adapted = normalize_legacy_call(tool_name, arguments, available_tool_names or set())
         calls.append(
             {
                 "index": len(calls),
                 "id": f"call_{uuid.uuid4().hex}",
                 "type": "function",
                 "function": {
-                    "name": tool_name,
-                    "arguments": json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
+                    "name": adapted.tool_name,
+                    "arguments": json.dumps(
+                        adapted.arguments, ensure_ascii=False, separators=(",", ":")
+                    ),
                 },
             }
         )
-        cursor = match.end()
-    return calls if calls and not text[cursor:].strip() else None
+    return calls
 
 
 def is_read_only_evaluation(objective: str) -> bool:
@@ -1022,13 +935,8 @@ async def responses_sse(
                         item["call_id"] = tool_delta["id"]
                     if function.get("name"):
                         name = str(function["name"])
-                        compat_local_file = (
-                            name in {"read_file", "read_mcp_resource"}
-                            and "exec_command" in (function_tool_names or set())
-                            and (
-                                name == "read_mcp_resource"
-                                or "read_file" not in (function_tool_names or set())
-                            )
+                        compat_local_file = local_file_compat_applies(
+                            name, function_tool_names or set()
                         )
                         item["name"] = name
                         item["_original_name"] = name
@@ -1166,7 +1074,7 @@ async def responses_sse(
         for index, item in sorted(tool_calls.items()):
             tool_output_index = index + message_output_index + 1
             original_name = str(item["name"])
-            item["name"], item["_arguments"] = compatible_edit_call(
+            item["name"], item["_arguments"] = normalize_edit_call(
                 original_name,
                 str(item["_arguments"]),
                 custom_tool_names,
@@ -1188,30 +1096,22 @@ async def responses_sse(
                 )
             if item["_compat_local_file"]:
                 try:
-                    arguments = json.loads(str(item["_arguments"]))
-                    if item["_original_name"] == "read_mcp_resource":
-                        uri = arguments["uri"]
-                        parsed = urlsplit(uri)
-                        path = (
-                            unquote(parsed.path)
-                            if (
-                                parsed.scheme == "file"
-                                and parsed.netloc in {"", "localhost"}
-                                or not parsed.scheme
-                                and parsed.path.startswith("/")
-                            )
-                            else ""
-                        )
-                    else:
-                        path = arguments["path"]
-                    if not isinstance(path, str) or not path:
-                        raise TypeError
-                except (KeyError, TypeError, ValueError):
-                    path = ""
-                if path:
-                    item["name"] = "exec_command"
+                    local_arguments = json.loads(str(item["_arguments"]))
+                except ValueError:
+                    local_arguments = None
+                adapted = (
+                    normalize_local_file_compat(
+                        str(item["_original_name"]),
+                        local_arguments,
+                        set(function_tool_names or set()),
+                    )
+                    if isinstance(local_arguments, dict)
+                    else None
+                )
+                if adapted is not None:
+                    item["name"] = adapted.tool_name
                     item["_arguments"] = json.dumps(
-                        {"cmd": f"cat -- {shlex.quote(path)}"},
+                        adapted.arguments,
                         ensure_ascii=False,
                         separators=(",", ":"),
                     )
