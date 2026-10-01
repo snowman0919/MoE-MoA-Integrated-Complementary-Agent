@@ -148,15 +148,16 @@ or current provider.
 - Bearer authentication remains mandatory. Role inference endpoints are not
   exposed on wildcard interfaces.
 
-The current source candidate adds Executor-led asynchronous fan-out for Chat and
-Responses requests. Delegates receive immutable first-party Runtime
+The current source includes Executor-led asynchronous fan-out for Chat and
+Responses requests, integrated with production in commit `5aba1ab5f` and
+recorded in `docs/VALIDATION.md` ("Async MoA + Qwen3.8 production integration
+— 2026-09-16"). Delegates receive immutable first-party Runtime
 projections and launch provenance; the Executor performs an initial model step
 while they run, then synchronizes and re-synthesizes at finalization. Effort
 budgets bound role activation and concurrency, and materially corrective review
-evidence records a direction invalidation plus re-loop notification. This source
-change is test-verified only: it has not been committed, deployed, or physically
-validated against the production role endpoints. Streaming holds model output
-until this barrier, then emits only the reconciled final stream.
+evidence records a direction invalidation plus re-loop notification. Streaming
+holds model output until this barrier, then emits only the reconciled final
+stream.
 
 See `docs/API_CLIENT_MODES.md` for the public request contract and
 `docs/MODEL_LIFECYCLE.md` for lifecycle semantics.
@@ -196,15 +197,16 @@ read-only inspected at `ea3831ea43c3b32aef712041a464f242fc2095fd`; it was not
 merged, reset, restarted, or deployed. Historical cleanup and archive tags
 remain recorded in the append-only validation history.
 
-Branch `auto/runtime/action-policy-v1` (uncommitted follow-up on this
-checkout) adds the canonical `gateway/src/dgx_moa/actions/` runtime: one
-request-scoped CapabilitySnapshot plus deterministic preflight gate shared by
-Chat/Responses stream and non-stream paths, a state-aware `FailureLedger`
+The canonical `gateway/src/dgx_moa/actions/` runtime is merged in this
+checkout (`dev@69bc3c2b5`, promoted to `origin/main@261fa22ca` via PR #119):
+one request-scoped CapabilitySnapshot plus deterministic preflight gate shared
+by Chat/Responses stream and non-stream paths, a state-aware `FailureLedger`
 kept in `state.action_failures`, and an optional Laya shadow policy that is
 disabled by default. It further adds the post-execution Output Validation
 Gate: a structured `CompletionManifest` built from canonical runtime
 evidence only, with one bounded deterministic decision (`PASS`,
 `REWRITE_ONLY`, `REEXECUTE`, `RESOLVE_RESOURCE`, `ESCALATE_REVIEW`,
-`FAIL_CLOSED`) shared by all four synthesis paths. It is test-verified
-only and has not been deployed, merged, or physically validated against
-production role endpoints.
+`FAIL_CLOSED`) shared by all four synthesis paths. Measured unit/API evidence
+is recorded in `docs/VALIDATION.md`; no live-executor harness matrix
+(raw/Codex/OpenCode/Hermes against a running backend) has been run from this
+checkout, which remains the promotion blocker for further claims.
