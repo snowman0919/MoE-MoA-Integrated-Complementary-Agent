@@ -4270,6 +4270,7 @@ def create_app(
                     admitted_tool_calls = 0
                     accounted_total_tokens = 0
                     published_output_characters = 0
+                    buffered_tool_chunks: list[bytes] = []
                     forwarder = forward_sse(
                         upstream,
                         observation,
@@ -4299,6 +4300,9 @@ def create_app(
                                 required_admissions = max(
                                     len(observation.tool_call_ids),
                                     1 if observation.tool_delta_seen else 0,
+                                )
+                                pending_tool_seen = observation.tool_delta_seen or bool(
+                                    observation.tool_call_ids
                                 )
                                 while admitted_tool_calls < required_admissions:
                                     tool_name = observation.tool_call_names.get(admitted_tool_calls)
@@ -4342,6 +4346,16 @@ def create_app(
                                             )
                                     request.app.state.controller.admit_tool_call(state, tool_name)
                                     admitted_tool_calls += 1
+                                tool_chunk_pending = pending_tool_seen and (
+                                    admitted_tool_calls < len(observation.tool_call_ids)
+                                    or admitted_tool_calls < required_admissions
+                                )
+                                if tool_chunk_pending:
+                                    # A tool call is still incomplete: buffer this
+                                    # chunk until its complete arguments pass the
+                                    # terminal preflight gate.
+                                    buffered_tool_chunks.append(chunk)
+                                    continue
                                 observed_total_tokens = observation.usage.get("total_tokens", 0)
                                 if observed_total_tokens > accounted_total_tokens:
                                     request.app.state.controller.record_loop_usage(
@@ -4365,7 +4379,13 @@ def create_app(
                                         "assistant_output_delta",
                                         {"role": "executor", "delta": delta},
                                     )
+                                for buffered in buffered_tool_chunks:
+                                    yield buffered
+                                buffered_tool_chunks.clear()
                                 yield chunk
+                        for buffered in buffered_tool_chunks:
+                            yield buffered
+                        buffered_tool_chunks.clear()
                         stream_completed = not remote_failure
                     except LoopAdmissionError:
                         loop_admission_failed = True
@@ -4606,6 +4626,18 @@ def create_app(
                             notification if not content else f"{notification}\n\n{content}"
                         )
                     assistant_tool_calls = assistant_message.get("tool_calls") or []
+                    if assistant_tool_calls and prepared.get("tools"):
+                        for call in assistant_tool_calls:
+                            gate = request.app.state.controller.check_action_call(
+                                state, call, prepared.get("tools")
+                            )
+                            if not gate.ok:
+                                request.app.state.store.event(
+                                    state_session_id,
+                                    "action_preflight_rejected",
+                                    {"code": gate.code, "path": "chat_nonstream_fanin"},
+                                )
+                                raise ValueError(f"invalid tool call: {gate.code}: {gate.message}")
                     request.app.state.controller.record_invocation(
                         state,
                         "executor",
@@ -4636,6 +4668,7 @@ def create_app(
             )
             if prepared.get("tools"):
                 sanitized_calls: list[dict[str, Any]] = []
+                preflight_failed: dict[str, Any] | None = None
                 for call in assistant_tool_calls:
                     gate = request.app.state.controller.check_action_call(
                         state, call, prepared.get("tools")
@@ -4646,6 +4679,10 @@ def create_app(
                             "action_preflight_rejected",
                             {"code": gate.code, "path": "chat_nonstream"},
                         )
+                        preflight_failed = {
+                            "code": gate.code,
+                            "message": gate.message,
+                        }
                         break
                     if gate.sanitized_call is not None:
                         sanitized = dict(gate.sanitized_call)
@@ -4658,6 +4695,17 @@ def create_app(
                 else:
                     assistant_tool_calls = sanitized_calls
                     assistant_message["tool_calls"] = sanitized_calls
+                    if sanitized_calls:
+                        state.last_tool_call = sanitized_calls[-1]
+                if preflight_failed is not None:
+                    assistant_tool_calls = []
+                    assistant_message["tool_calls"] = []
+                    response["choices"][0]["finish_reason"] = "stop"
+                    assistant_message["content"] = (
+                        "The proposed tool call failed runtime validation "
+                        f"({preflight_failed['code']}: {preflight_failed['message']}). "
+                        "No tool call was executed."
+                    )
             assistant_tool_call_ids = [
                 str(call.get("id"))
                 for call in assistant_tool_calls

@@ -993,6 +993,60 @@ class Controller:
             ledger.record_success(semantic)
             self.save_action_ledger(state, ledger)
 
+    @staticmethod
+    def _advertised_tools_for_outcome(
+        state: SessionState, call: dict[str, Any]
+    ) -> list[dict[str, Any]] | None:
+        """Rebuild the advertised tool list so outcome revision matches preflight.
+
+        Tool-result observation only sees the executed call, not the original
+        request tools. Rebuilding a snapshot from ``None`` would hash a
+        different capability revision than the gate checked, so the ledger
+        could never match. Re-advertise the executed tool with the schema the
+        gate saw (recorded on the sanitized call); unknown shapes fall back
+        to ``None`` rather than a fabricated capability set.
+        """
+        call_function = call.get("function") if isinstance(call, dict) else None
+        call_name = call_function.get("name") if isinstance(call_function, dict) else None
+        if not isinstance(call_name, str) or not call_name:
+            return None
+        last = state.last_tool_call if isinstance(state.last_tool_call, dict) else None
+        function = (last or {}).get("function") if isinstance(last, dict) else None
+        name = function.get("name") if isinstance(function, dict) else None
+        if name != call_name:
+            # Parallel or out-of-order tool results: rebuild from the executed
+            # call itself rather than the trailing last_tool_call.
+            name = call_name
+            function = call_function
+        arguments = function.get("arguments") if isinstance(function, dict) else None
+        decoded: dict[str, Any] | None = None
+        if isinstance(arguments, str) and arguments.strip():
+            try:
+                parsed = json.loads(arguments)
+            except ValueError:
+                parsed = None
+            decoded = parsed if isinstance(parsed, dict) else None
+        properties: dict[str, Any] = {}
+        for key, value in (decoded or {}).items():
+            if isinstance(value, str):
+                properties[key] = {"type": "string"}
+            elif isinstance(value, bool):
+                properties[key] = {"type": "boolean"}
+            elif isinstance(value, int):
+                properties[key] = {"type": "integer"}
+            elif isinstance(value, float):
+                properties[key] = {"type": "number"}
+            elif isinstance(value, list):
+                properties[key] = {"type": "array"}
+            elif isinstance(value, dict):
+                properties[key] = {"type": "object"}
+            else:
+                properties[key] = {}
+        schema: dict[str, Any] = {"type": "object", "properties": properties}
+        if decoded:
+            schema["required"] = sorted(decoded)
+        return [{"type": "function", "function": {"name": name, "parameters": schema}}]
+
     def _record_canonical_action_outcome(
         self,
         state: SessionState,
@@ -1001,6 +1055,7 @@ class Controller:
         failed: bool,
         failure_class: str | None,
         revision: Any = None,
+        semantic: str | None = None,
     ) -> None:
         function = call.get("function") if isinstance(call, dict) else None
         tool_name = str(function.get("name", "")) if isinstance(function, dict) else ""
@@ -1015,16 +1070,16 @@ class Controller:
                 parsed = decoded if isinstance(decoded, dict) else {}
             except ValueError:
                 return
-        semantic = canonical_semantic_key(tool_name, parsed)
+        resolved_semantic = semantic or canonical_semantic_key(tool_name, parsed)
         ledger = self.action_ledger(state)
         if failed:
             resolved = revision if revision is not None else self.action_snapshot(None)
             ledger.record_failure(
-                semantic, resolved, str(failure_class or "TOOL_EXECUTION_FAILURE")
+                resolved_semantic, resolved, str(failure_class or "TOOL_EXECUTION_FAILURE")
             )
             self.save_action_ledger(state, ledger)
         else:
-            self.resolve_action_failure(state, semantic)
+            self.resolve_action_failure(state, resolved_semantic)
 
     def check_action_call(
         self,
@@ -2439,9 +2494,17 @@ class Controller:
                 {**result, "target_paths": sorted(target_paths)},
                 generated_from=state.last_decision_id,
             )
-            revision = self.action_revision(state, self.action_snapshot(None))
+            advertised = self._advertised_tools_for_outcome(state, call)
+            snapshot = self.action_snapshot(advertised)
+            revision = self.action_revision(state, snapshot)
+            gate = preflight_tool_call(
+                call, snapshot, self.action_preflight_context(state, snapshot, revision)
+            )
+            semantic = gate.semantic_fingerprint or None
+            if semantic is None:
+                return
             self._record_canonical_action_outcome(
-                state, call, arguments, failed, failure_class, revision=revision
+                state, call, arguments, failed, failure_class, revision=revision, semantic=semantic
             )
             if actionable_failure and call:
                 call_fingerprint = fingerprint(call)

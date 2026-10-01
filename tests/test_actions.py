@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from dgx_moa.actions import (
     AdapterTelemetry,
     FailureLedger,
@@ -174,6 +175,16 @@ def test_workspace_new_file_accepted_and_escape_rejected() -> None:
         snapshot, "read_file", {"path": "/etc/passwd"}, _context(snapshot)
     )
     assert not bad_result.ok and bad_result.code == "workspace_violation"
+    file_path_result = preflight_action(
+        snapshot, "read_file", {"file_path": "/etc/passwd"}, _context(snapshot)
+    )
+    assert not file_path_result.ok
+    assert file_path_result.code in {"workspace_violation", "schema_mismatch"}
+    target_path_result = preflight_action(
+        snapshot, "terminal", {"command": "x", "target_path": "/etc/passwd"}, _context(snapshot)
+    )
+    assert not target_path_result.ok
+    assert target_path_result.code in {"workspace_violation", "schema_mismatch"}
 
 
 def test_failed_action_blocked_until_state_changes() -> None:
@@ -339,3 +350,15 @@ def test_denied_tool_and_side_effect_rejected_with_fingerprint() -> None:
     )
     assert not blocked.ok and blocked.code == "permission_denied"
     assert blocked.semantic_fingerprint == denied.semantic_fingerprint
+
+
+def test_laya_endpoint_rejects_non_loopback() -> None:
+    from dgx_moa.actions import LayaPolicyAdapter
+    from dgx_moa.config import ActionRuntimeConfig
+
+    adapter = LayaPolicyAdapter(endpoint="https://example.com/decide", enabled=True)
+    assert adapter.choose(build_capability_snapshot(_tools()), []) is None
+    with pytest.raises(ValueError, match="loopback"):
+        ActionRuntimeConfig(laya_enabled=True, laya_endpoint="https://example.com/decide")
+    allowed = ActionRuntimeConfig(laya_enabled=True, laya_endpoint="http://127.0.0.1:8080/decide")
+    assert allowed.laya_endpoint == "http://127.0.0.1:8080/decide"

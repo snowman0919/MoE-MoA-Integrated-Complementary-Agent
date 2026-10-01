@@ -37,7 +37,7 @@ _DISCOVER_TOOL_HINTS = ("discover", "list", "template")
 _KNOWN_SESSION_ARGUMENTS = frozenset(
     {"session_id", "process_id", "continuation_id", "container_id", "handle", "run_id"}
 )
-_PATH_ARGUMENTS = frozenset(
+_PATH_ARGUMENT_KEYS = frozenset(
     {"path", "file", "filepath", "filename", "target", "targetpath", "uri", "workdir", "cwd"}
 )
 
@@ -270,7 +270,8 @@ def resource_references(
             if text:
                 references.append(ResourceRef("runtime_id", text, "OBSERVED_ONLY"))
     for key, value in arguments.items():
-        if str(key) in _PATH_ARGUMENTS and isinstance(value, str) and value.strip():
+        normalized_key = str(key).lower().replace("_", "")
+        if normalized_key in _PATH_ARGUMENT_KEYS and isinstance(value, str) and value.strip():
             references.append(ResourceRef("filesystem_path", value.strip(), "WORKSPACE_BOUNDED"))
     seen: set[tuple[str, str, str]] = set()
     unique: list[ResourceRef] = []

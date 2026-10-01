@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -52,6 +51,14 @@ class LayaPolicyAdapter:
     def choose(self, snapshot: CapabilitySnapshot, candidates: list[CandidateAction]) -> int | None:
         if not self.enabled or not self.endpoint or not candidates:
             return None
+        try:
+            from urllib.parse import urlsplit
+
+            host = (urlsplit(self.endpoint).hostname or "").lower()
+            if host not in {"localhost", "127.0.0.1", "::1"}:
+                return None
+        except ValueError:
+            return None
         payload = json.dumps(
             {
                 "capabilities": sorted(snapshot.capabilities),
@@ -62,15 +69,23 @@ class LayaPolicyAdapter:
             }
         ).encode()
         try:
-            request = urllib.request.Request(
+            from urllib.error import HTTPError
+            from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+            class _NoRedirect(HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+                    return None
+
+            opener = build_opener(_NoRedirect)
+            request = Request(
                 self.endpoint, data=payload, headers={"Content-Type": "application/json"}
             )
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+            with opener.open(request, timeout=self.timeout_seconds) as response:
                 body = json.loads(response.read().decode() or "{}")
             index = body.get("index")
             if isinstance(index, int) and 0 <= index < len(candidates):
                 return index
-        except Exception:
+        except (Exception, HTTPError):
             return None
         return None
 

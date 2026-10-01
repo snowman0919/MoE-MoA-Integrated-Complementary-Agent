@@ -509,8 +509,17 @@ class ActionRuntimeConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_laya(self) -> ActionRuntimeConfig:
-        if self.laya_enabled and not self.laya_endpoint:
-            raise ValueError("enabled Laya policy requires an endpoint")
+        if self.laya_enabled:
+            if not self.laya_endpoint:
+                raise ValueError("enabled Laya policy requires an endpoint")
+            from urllib.parse import urlsplit
+
+            try:
+                host = (urlsplit(self.laya_endpoint).hostname or "").lower()
+            except ValueError as error:
+                raise ValueError("Laya endpoint must be a loopback URL") from error
+            if host not in {"localhost", "127.0.0.1", "::1"}:
+                raise ValueError("Laya endpoint must be a loopback URL")
         return self
 
 
