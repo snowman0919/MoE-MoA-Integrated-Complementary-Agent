@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -40,6 +41,22 @@ _KNOWN_SESSION_ARGUMENTS = frozenset(
 _PATH_ARGUMENT_KEYS = frozenset(
     {"path", "file", "filepath", "filename", "target", "targetpath", "uri", "workdir", "cwd"}
 )
+_SHELL_COMMAND_KEYS = frozenset({"cmd", "command"})
+_ABS_PATH_TOKEN_RE = re.compile(r"/[^\s\"'` ,;|&<>()${}=]+")
+
+
+def _shell_path_tokens(command: str) -> list[str]:
+    tokens: list[str] = []
+    for match in _ABS_PATH_TOKEN_RE.finditer(command):
+        start = match.start()
+        if start >= 1 and command[start - 1] == ":":
+            continue
+        if start >= 2 and command[start - 2] == ":" and command[start - 1] == "/":
+            continue
+        token = match.group(0).rstrip(".,:;!?)")
+        if token:
+            tokens.append(token)
+    return tokens
 
 
 def _tool_external_name(tool: dict[str, Any]) -> str:
@@ -273,6 +290,10 @@ def resource_references(
         normalized_key = str(key).lower().replace("_", "")
         if normalized_key in _PATH_ARGUMENT_KEYS and isinstance(value, str) and value.strip():
             references.append(ResourceRef("filesystem_path", value.strip(), "WORKSPACE_BOUNDED"))
+    for key, value in arguments.items():
+        if str(key).lower().replace("_", "") in _SHELL_COMMAND_KEYS and isinstance(value, str):
+            for token in _shell_path_tokens(value.strip()):
+                references.append(ResourceRef("filesystem_path", token, "WORKSPACE_BOUNDED"))
     seen: set[tuple[str, str, str]] = set()
     unique: list[ResourceRef] = []
     for reference in references:
