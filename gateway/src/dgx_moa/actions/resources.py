@@ -146,17 +146,29 @@ class ResourceAuthority:
             marker in failure_text
             for marker in ("unknown mcp server", "resources/read failed", "not found", "no such")
         )
+        tool_name = str(item.get("tool_name", ""))
         arguments = item.get("normalized_arguments", item.get("arguments"))
         if succeeded and not failed_discovery and isinstance(arguments, dict):
             for key in ("server", "server_id"):
                 value = arguments.get(key)
                 if isinstance(value, str) and value.strip():
                     authority.note_discovered_server(value.strip())
-            for key in ("uri", "resource_uri"):
-                value = arguments.get(key)
-                if isinstance(value, str) and value.strip():
-                    authority.note_discovered_uri(value.strip())
-        tool_name = str(item.get("tool_name", ""))
+            # URIs authorize later read_mcp_resource calls, so only trust them
+            # from MCP tools whose own arguments are preflight-gated; a custom
+            # tool carrying a guessed uri must not discover it.
+            if (
+                tool_name
+                in {
+                    "list_mcp_resources",
+                    "list_mcp_resource_templates",
+                    "read_mcp_resource",
+                }
+                or "mcp" in tool_name.lower()
+            ):
+                for key in ("uri", "resource_uri"):
+                    value = arguments.get(key)
+                    if isinstance(value, str) and value.strip():
+                        authority.note_discovered_uri(value.strip())
         if (
             tool_name in {"list_mcp_resources", "list_mcp_resource_templates"}
             and succeeded
