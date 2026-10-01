@@ -185,7 +185,7 @@ def test_chat_stream_records_output_validation_block(settings, stub_provider: St
         return upstream()
 
     stub_provider.stream = streamed  # type: ignore[method-assign]
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings), raise_server_exceptions=False) as client:
         client.app.state.provider = stub_provider
         client.app.state.controller.provider = stub_provider
         response = client.post(
@@ -198,6 +198,7 @@ def test_chat_stream_records_output_validation_block(settings, stub_provider: St
             },
         )
     assert response.status_code == 200
+    assert "Fixed /etc/passwd." not in response.text
     blocked = [
         event
         for event in client.app.state.store.events("gate-output-stream")
@@ -340,7 +341,7 @@ def test_responses_stream_records_output_validation_block(
             )
             assert isinstance(response, StreamingResponse)
             text = b"".join([chunk async for chunk in response.body_iterator]).decode()
-            assert "Fixed /etc/passwd." in text
+            assert "Fixed /etc/passwd." not in text
 
     import asyncio
 

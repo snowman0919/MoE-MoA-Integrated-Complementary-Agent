@@ -247,12 +247,39 @@ def _execution_text(execution: dict[str, Any]) -> str:
     return "\n".join(parts).lower()
 
 
+_VERB_LEMMAS = {
+    "implemented": "implement",
+    "fixed": "fix",
+    "created": "create",
+    "updated": "update",
+    "deleted": "delete",
+    "migrated": "migrate",
+    "refactored": "refactor",
+    "tested": "test",
+    "passing": "pass",
+    "passed": "pass",
+    "deployed": "deploy",
+    "resolved": "resolve",
+}
+
+
+def _claim_verb_lemmas(claim: dict[str, Any]) -> set[str]:
+    text = str(claim.get("text", "")).lower()
+    padded = f" {text} "
+    return {_VERB_LEMMAS[verb] for verb in _COMPLETION_VERBS if f" {verb} " in padded}
+
+
+def _evidence_verb_lemmas(haystack_padded: str) -> set[str]:
+    return {lemma for verb, lemma in _VERB_LEMMAS.items() if f" {verb} " in haystack_padded}
+
+
 def _claim_supported_by_executions(
     claim: dict[str, Any], executions: tuple[dict[str, Any], ...]
 ) -> tuple[bool, str, tuple[str, ...]]:
     paths = [str(item).lower() for item in claim.get("paths", []) if isinstance(item, str)]
     if not claim.get("states_completion") and not paths:
         return True, "no material completion assertion", ()
+    claim_lemmas = _claim_verb_lemmas(claim)
     matched: list[str] = []
     for execution in executions:
         haystack = _execution_text(execution)
@@ -260,11 +287,15 @@ def _claim_supported_by_executions(
             continue
         execution_id = str(execution.get("tool_execution_id", ""))
         haystack = f" {haystack} "
-        path_hit = paths and any(path and path in haystack for path in paths)
-        verb_hit = claim.get("states_completion") and any(
-            f" {verb} " in haystack for verb in _COMPLETION_VERBS
-        )
-        if path_hit or verb_hit:
+        if paths:
+            if any(path and path in haystack for path in paths):
+                matched.append(execution_id)
+            continue
+        if (
+            claim.get("states_completion")
+            and claim_lemmas
+            and claim_lemmas & _evidence_verb_lemmas(haystack)
+        ):
             matched.append(execution_id)
     if matched:
         return True, "tool-observed execution evidence", tuple(matched[:4])
@@ -279,13 +310,18 @@ def _claim_supported_by_facts(
 ) -> tuple[bool, str, tuple[str, ...]]:
     paths = [str(item).lower() for item in claim.get("paths", []) if isinstance(item, str)]
     matched: list[str] = []
+    claim_lemmas = _claim_verb_lemmas(claim)
     for fact in verified_facts:
         fact_lower = f" {str(fact).lower()} "
-        path_hit = paths and any(path and path in fact_lower for path in paths)
-        verb_hit = claim.get("states_completion") and any(
-            f" {verb} " in fact_lower for verb in _COMPLETION_VERBS
-        )
-        if path_hit or verb_hit:
+        if paths:
+            if any(path and path in fact_lower for path in paths):
+                matched.append("verified_fact")
+                break
+        elif (
+            claim.get("states_completion")
+            and claim_lemmas
+            and claim_lemmas & _evidence_verb_lemmas(fact_lower)
+        ):
             matched.append("verified_fact")
             break
     lowered_paths = [str(item).lower() for item in changed_paths]
@@ -297,8 +333,16 @@ def _claim_supported_by_facts(
                 continue
             if node.get("trust_class") not in {"tool_observed_fact", "test_confirmed_fact"}:
                 continue
-            payload = _canonical_json(node.get("payload")).lower()
-            if paths and any(path and path in payload for path in paths):
+            payload = f" {_canonical_json(node.get('payload')).lower()} "
+            if paths:
+                if any(path and path in payload for path in paths):
+                    matched.append(str(node.get("node_id", "evidence")))
+                    break
+            elif (
+                claim.get("states_completion")
+                and claim_lemmas
+                and claim_lemmas & _evidence_verb_lemmas(payload)
+            ):
                 matched.append(str(node.get("node_id", "evidence")))
                 break
     if matched:
