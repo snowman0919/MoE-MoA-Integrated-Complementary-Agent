@@ -4300,6 +4300,62 @@ def create_app(
                     accounted_total_tokens = 0
                     published_output_characters = 0
                     buffered_tool_chunks: list[bytes] = []
+                    buffered_content_chunks: list[bytes] = []
+                    buffered_content_bytes = 0
+                    content_gate_limit = configured.limits.max_stream_capture_bytes
+                    content_blocked = False
+                    content_block_message = ""
+
+                    def check_content_gate() -> str | None:
+                        """Return a block reason if the draft must not stream yet."""
+                        draft_text = "".join(observation.assistant_content)
+                        if not _output_claims(draft_text):
+                            return None
+                        gate_result = request.app.state.controller.check_output_completion(
+                            state,
+                            final_text=draft_text,
+                            finish_reason=next(iter(observation.finish_reasons), None),
+                            has_tool_calls_in_draft=False,
+                            metadata=raw.get("metadata", {}),
+                            messages=raw.get("messages", []),
+                        )
+                        if gate_result.decision in ("PASS", "REWRITE_ONLY"):
+                            return None
+                        state.final_status = "failed"
+                        request.app.state.store.event(
+                            state_session_id,
+                            "output_validation_blocked",
+                            {
+                                "decision": gate_result.decision,
+                                "reason": gate_result.reason,
+                                "manifest_id": gate_result.manifest.manifest_id,
+                                "path": "chat_stream",
+                            },
+                        )
+                        return f"output validation {gate_result.decision}: {gate_result.reason}"
+
+                    def draft_sentence_complete() -> bool:
+                        draft_text = "".join(observation.assistant_content)
+                        if not _output_claims(draft_text):
+                            return True
+                        return bool(re.search(r"[.!?][\"')\]]?\s*$", draft_text))
+
+                    def is_content_chunk(chunk: bytes) -> bool:
+                        for line in chunk.decode(errors="replace").splitlines():
+                            if not line.startswith("data: ") or line == "data: [DONE]":
+                                continue
+                            try:
+                                payload = json.loads(line[6:])
+                            except ValueError:
+                                continue
+                            choice = (payload.get("choices") or [{}])[0]
+                            delta = choice.get("delta") or {}
+                            if isinstance(delta.get("content"), str):
+                                return True
+                            if choice.get("finish_reason") and not delta.get("tool_calls"):
+                                return True
+                        return False
+
                     forwarder = forward_sse(
                         upstream,
                         observation,
@@ -4394,9 +4450,6 @@ def create_app(
                                         ),
                                     )
                                     accounted_total_tokens = observed_total_tokens
-                                if "first_downstream_byte" not in state.timings_ms:
-                                    state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
-                                    first_byte_at = time.time()
                                 draft = "".join(observation.assistant_content)
                                 if len(draft) > published_output_characters:
                                     delta = draft[published_output_characters:]
@@ -4411,7 +4464,52 @@ def create_app(
                                 for buffered in buffered_tool_chunks:
                                     yield buffered
                                 buffered_tool_chunks.clear()
+                                if (
+                                    not content_blocked
+                                    and not observation.tool_call_ids
+                                    and not observation.tool_delta_seen
+                                    and is_content_chunk(chunk)
+                                    and chunk != b"data: [DONE]\n\n"
+                                ):
+                                    buffered_content_chunks.append(chunk)
+                                    buffered_content_bytes += len(chunk)
+                                    while (
+                                        buffered_content_chunks
+                                        and buffered_content_bytes > content_gate_limit
+                                    ):
+                                        oldest = buffered_content_chunks.pop(0)
+                                        buffered_content_bytes -= len(oldest)
+                                    if draft_sentence_complete():
+                                        content_block_message = check_content_gate() or ""
+                                        content_blocked = bool(content_block_message)
+                                        if content_blocked:
+                                            raise ValueError(content_block_message)
+                                        for buffered in buffered_content_chunks:
+                                            if "first_downstream_byte" not in state.timings_ms:
+                                                first_at = elapsed_ms(accepted)
+                                                state.timings_ms["first_downstream_byte"] = first_at
+                                                first_byte_at = time.time()
+                                            yield buffered
+                                        buffered_content_chunks.clear()
+                                        buffered_content_bytes = 0
+                                    continue
+                                if "first_downstream_byte" not in state.timings_ms:
+                                    state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                                    first_byte_at = time.time()
                                 yield chunk
+                        if content_blocked:
+                            raise ValueError(content_block_message)
+                        if not (observation.tool_call_ids or observation.tool_delta_seen):
+                            content_block_message = check_content_gate() or ""
+                            if content_block_message:
+                                raise ValueError(content_block_message)
+                        for buffered in buffered_content_chunks:
+                            if "first_downstream_byte" not in state.timings_ms:
+                                state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                                first_byte_at = time.time()
+                            yield buffered
+                        buffered_content_chunks.clear()
+                        buffered_content_bytes = 0
                         for buffered in buffered_tool_chunks:
                             yield buffered
                         buffered_tool_chunks.clear()
