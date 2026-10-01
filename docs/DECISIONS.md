@@ -120,7 +120,7 @@
   architecture, code-review, and disagreement modes. Authenticate only through
   an existing Codex OAuth profile; do not add an OpenAI API key dependency.
 - Keep Heavy Judge for unresolved high-risk adjudication and promotion only.
-- Keep the external Ollama Reasoner normally resident with external lifecycle
+- Keep the loopback Ollama Reasoner normally resident with external lifecycle
   ownership. Keep local Executor normally resident and idle unload disabled;
   Planner and Reviewer remain adaptive/on-demand.
 - Add multiple authenticated gateway tokens identified by non-secret token IDs,

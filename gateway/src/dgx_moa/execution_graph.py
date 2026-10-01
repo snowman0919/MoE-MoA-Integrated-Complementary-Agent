@@ -8,7 +8,7 @@ import math
 import os
 import re
 import sqlite3
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -31,6 +31,42 @@ VALIDATION_COMMAND: Final = re.compile(
 GraphEventListener = Callable[[str, str, str, str, dict[str, Any], str], None]
 
 
+def execution_graph_parity(runtime: ExecutionGraphRuntime, state: SessionState) -> dict[str, Any]:
+    """Compare shadow role attempts with the Controller's actual invocation ledger."""
+    actual = Counter(
+        str(item.get("role"))
+        for item in state.agent_invocations
+        if item.get("role") in {"reasoner", "planner", "reviewer", "judge", "frontier", "executor"}
+        and (not state.current_request_id or item.get("request_id") == state.current_request_id)
+    )
+    graph: Counter[str] = Counter()
+    for attempt in runtime.attempts:
+        if attempt.node_type == NodeType.EXECUTOR_EVIDENCE:
+            continue
+        role = {
+            NodeType.REASONER: "reasoner",
+            NodeType.PLANNER: "planner",
+            NodeType.REVIEWER: "reviewer",
+            NodeType.JUDGE: "judge",
+            NodeType.FRONTIER_A: "frontier",
+            NodeType.FRONTIER_B: "frontier",
+            NodeType.EXECUTOR: "executor",
+            NodeType.EXECUTOR_PRIMARY: "executor",
+            NodeType.EXECUTOR_FALLBACK: "executor",
+        }.get(attempt.node_type)
+        if role is not None:
+            graph[role] += 1
+    keys = sorted(set(actual) | set(graph))
+    delta = {key: graph[key] - actual[key] for key in keys if graph[key] != actual[key]}
+    return {
+        "matches": not delta,
+        "actual_invocations": dict(sorted(actual.items())),
+        "graph_attempts": dict(sorted(graph.items())),
+        "delta": delta,
+        "authority_eligible": not delta,
+    }
+
+
 def record_shadow_failure(store: StateStore, session_id: str, stage: str, error: Exception) -> None:
     store.event(
         session_id,
@@ -45,6 +81,10 @@ class NodeType(StrEnum):
     PLANNER = "PLANNER"
     FRONTIER_A = "FRONTIER_A"
     EXECUTOR_SELECT = "EXECUTOR_SELECT"
+    EXECUTOR_EVIDENCE = "EXECUTOR_EVIDENCE"
+    EXECUTOR_PRIMARY = "EXECUTOR_PRIMARY"
+    EXECUTOR_FALLBACK = "EXECUTOR_FALLBACK"
+    # Historical execution-graph-v1 compatibility only; new graphs use explicit types.
     EXECUTOR = "EXECUTOR"
     TOOL = "TOOL"
     TEST = "TEST"
@@ -177,9 +217,23 @@ class GraphNode(BaseModel):
     @model_validator(mode="after")
     def mutation_is_executor_owned(self) -> GraphNode:
         if self.mutation_allowed and (
-            self.node_type not in {NodeType.EXECUTOR, NodeType.TOOL} or self.role != "executor"
+            self.node_type
+            not in {
+                NodeType.EXECUTOR,
+                NodeType.EXECUTOR_PRIMARY,
+                NodeType.EXECUTOR_FALLBACK,
+                NodeType.TOOL,
+            }
+            or self.role != "executor"
         ):
             raise ValueError("only Executor-owned EXECUTOR/TOOL nodes may mutate")
+        expected_purpose = {
+            NodeType.EXECUTOR_EVIDENCE: "evidence",
+            NodeType.EXECUTOR_PRIMARY: "primary",
+            NodeType.EXECUTOR_FALLBACK: "fallback",
+        }.get(self.node_type)
+        if expected_purpose is not None and self.purpose != expected_purpose:
+            raise ValueError("explicit Executor node type and purpose disagree")
         if not self.mutation_allowed and self.allowed_mutation_paths:
             raise ValueError("read-only nodes cannot carry mutation paths")
         if self.join_all != (self.node_type == NodeType.JOIN):
@@ -246,25 +300,23 @@ class ExecutionGraph(BaseModel):
                 if edge.from_node != edge.to_node or edge.max_traversals != TRANSIENT_RETRY_LIMIT:
                     raise ValueError("retry edges must be bounded self-edges")
             elif edge.edge_type == EdgeType.ON_FINDING and edge.max_traversals:
-                if (
-                    by_id[edge.from_node].node_type
-                    not in {
-                        NodeType.REVIEWER,
-                        NodeType.JUDGE,
-                        NodeType.FRONTIER_B,
-                        NodeType.TOOL,
-                        NodeType.TEST,
-                    }
-                    or by_id[edge.to_node].node_type != NodeType.EXECUTOR
-                ):
+                if by_id[edge.from_node].node_type not in {
+                    NodeType.REVIEWER,
+                    NodeType.JUDGE,
+                    NodeType.FRONTIER_B,
+                    NodeType.TOOL,
+                    NodeType.TEST,
+                } or by_id[edge.to_node].node_type not in {
+                    NodeType.EXECUTOR,
+                    NodeType.EXECUTOR_PRIMARY,
+                }:
                     raise ValueError(
                         "repair edges must be bounded evidence/tool/test-to-executor edges"
                     )
             elif edge.edge_type == EdgeType.ON_FALLBACK and edge.max_traversals:
-                if (
-                    by_id[edge.from_node].node_type != NodeType.TOOL
-                    or by_id[edge.to_node].node_type != NodeType.EXECUTOR
-                ):
+                if by_id[edge.from_node].node_type != NodeType.TOOL or by_id[
+                    edge.to_node
+                ].node_type not in {NodeType.EXECUTOR, NodeType.EXECUTOR_PRIMARY}:
                     raise ValueError("bounded fallback edges must be tool-to-executor edges")
             elif edge.max_traversals:
                 raise ValueError("only retry and repair edges may traverse repeatedly")
@@ -540,7 +592,7 @@ def compile_execution_graph(
             )
         parallel.append(
             node(
-                NodeType.EXECUTOR,
+                NodeType.EXECUTOR_EVIDENCE,
                 role="executor",
                 purpose="evidence",
                 parallel_group_id=group,
@@ -568,7 +620,7 @@ def compile_execution_graph(
         EdgeType.ON_APPROVAL if approval else EdgeType.ON_SUCCESS,
     )
     primary = node(
-        NodeType.EXECUTOR,
+        NodeType.EXECUTOR_PRIMARY,
         role="executor",
         purpose="primary",
         provider=request.scheduling.selected_executor,
@@ -579,7 +631,7 @@ def compile_execution_graph(
     executors = [primary]
     if request.scheduling.fallback_executor:
         fallback = node(
-            NodeType.EXECUTOR,
+            NodeType.EXECUTOR_FALLBACK,
             role="executor",
             purpose="fallback",
             provider=request.scheduling.fallback_executor,
@@ -1591,7 +1643,8 @@ class ExecutionGraphRuntime:
                 edge
                 for edge in self._outgoing(node.node_id)
                 if edge.edge_type == EdgeType.ON_FINDING
-                and self._nodes[edge.to_node].node_type == NodeType.EXECUTOR
+                and self._nodes[edge.to_node].node_type
+                in {NodeType.EXECUTOR, NodeType.EXECUTOR_PRIMARY}
             ]
             if repairs and has_progress:
                 edge = repairs[0]

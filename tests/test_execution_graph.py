@@ -19,6 +19,7 @@ from dgx_moa.execution_graph import (
     _graph_hash,
     compact_session_active_state,
     compile_execution_graph,
+    execution_graph_parity,
     validate_execution_graph,
 )
 from dgx_moa.state import SessionState, StateStore
@@ -148,8 +149,8 @@ def test_fanout_runs_independently_and_join_waits_for_every_branch() -> None:
 
 def test_transient_retries_are_bounded_before_separate_fallback_attempt() -> None:
     runtime = ExecutionGraphRuntime(compile_execution_graph(request("simple")))
-    primary = find_node(runtime, NodeType.EXECUTOR, "primary")
-    fallback = find_node(runtime, NodeType.EXECUTOR, "fallback")
+    primary = find_node(runtime, NodeType.EXECUTOR_PRIMARY, "primary")
+    fallback = find_node(runtime, NodeType.EXECUTOR_FALLBACK, "fallback")
     finish_ready_until(runtime, primary)
 
     for expected_attempt in range(1, 4):
@@ -167,23 +168,51 @@ def test_transient_retries_are_bounded_before_separate_fallback_attempt() -> Non
     assert primary not in runtime.ready_node_ids()
     assert fallback in runtime.ready_node_ids()
     assert runtime.node_states[primary] == NodeState.DEGRADED
-
     fallback_attempt = runtime.start_attempt(fallback)
     assert fallback_attempt.provider == "remote_overflow"
     assert fallback_attempt.selected_incoming_edge is not None
 
 
+def test_explicit_executor_types_and_actual_controller_parity() -> None:
+    runtime = ExecutionGraphRuntime(
+        compile_execution_graph(
+            request(
+                "simple",
+                tools_requested=False,
+                validation_required=False,
+                scheduling=SchedulingSnapshot(selected_executor="local_primary"),
+            )
+        )
+    )
+    primary = find_node(runtime, NodeType.EXECUTOR_PRIMARY)
+    finish_ready_until(runtime, primary)
+    attempt = runtime.start_attempt(primary)
+    runtime.finish_attempt(attempt.attempt_id)
+    state = SessionState(
+        session_id="parity",
+        current_request_id="request-2",
+        agent_invocations=[
+            {"role": "planner", "request_id": "request-1", "status": "completed"},
+            {"role": "executor", "request_id": "request-2", "status": "completed"},
+        ],
+    )
+
+    assert execution_graph_parity(runtime, state)["matches"] is True
+    state.agent_invocations.append(
+        {"role": "planner", "request_id": "request-2", "status": "completed"}
+    )
+    assert execution_graph_parity(runtime, state)["authority_eligible"] is False
+
+
 def test_runtime_owns_observed_attempt_metrics_and_failure_fingerprint() -> None:
     graph = compile_execution_graph(request("simple"))
     primary = next(
-        node.node_id
-        for node in graph.nodes
-        if node.node_type == NodeType.EXECUTOR and node.purpose == "primary"
+        node.node_id for node in graph.nodes if node.node_type == NodeType.EXECUTOR_PRIMARY
     )
     runtime = ExecutionGraphRuntime(graph)
     finish_ready_until(runtime, primary)
 
-    attempt = runtime.start_node_type(NodeType.EXECUTOR, purpose="primary")
+    attempt = runtime.start_node_type(NodeType.EXECUTOR_PRIMARY)
     assert attempt is not None
     finished = runtime.finish_observed_attempt(
         attempt.attempt_id,
@@ -200,7 +229,7 @@ def test_runtime_owns_observed_attempt_metrics_and_failure_fingerprint() -> None
 
     failed_runtime = ExecutionGraphRuntime(graph)
     finish_ready_until(failed_runtime, primary)
-    failed = failed_runtime.start_node_type(NodeType.EXECUTOR, purpose="primary")
+    failed = failed_runtime.start_node_type(NodeType.EXECUTOR_PRIMARY)
     assert failed is not None
     failed_runtime.fail_role_attempt(failed.attempt_id, "executor", TimeoutError())
     assert failed.failure_code == "EXECUTOR_TIMEOUTERROR"
@@ -217,7 +246,7 @@ def test_repair_cycle_requires_new_evidence_and_stops_at_bound() -> None:
         )
     )
     reviewer = find_node(runtime, NodeType.REVIEWER)
-    primary = find_node(runtime, NodeType.EXECUTOR, "primary")
+    primary = find_node(runtime, NodeType.EXECUTOR_PRIMARY, "primary")
 
     finish_ready_until(runtime, reviewer)
     for traversal in range(2):
@@ -278,7 +307,7 @@ def test_tool_continuation_cycle_stops_at_bound() -> None:
             )
         )
     )
-    primary = find_node(runtime, NodeType.EXECUTOR, "primary")
+    primary = find_node(runtime, NodeType.EXECUTOR_PRIMARY, "primary")
     tool = find_node(runtime, NodeType.TOOL)
     finalize = find_node(runtime, NodeType.FINALIZE)
     finish_ready_until(runtime, primary)
@@ -305,7 +334,7 @@ def test_frontier_b_finding_opens_bounded_executor_repair() -> None:
     runtime = ExecutionGraphRuntime(compile_execution_graph(request("critical")))
     judge = find_node(runtime, NodeType.JUDGE)
     frontier_b = find_node(runtime, NodeType.FRONTIER_B)
-    primary = find_node(runtime, NodeType.EXECUTOR, "primary")
+    primary = find_node(runtime, NodeType.EXECUTOR_PRIMARY, "primary")
     finish_ready_until(runtime, judge)
 
     judge_attempt = runtime.start_attempt(judge)
@@ -343,7 +372,7 @@ def test_failed_tool_fallback_stops_at_bound() -> None:
             )
         )
     )
-    primary = find_node(runtime, NodeType.EXECUTOR, "primary")
+    primary = find_node(runtime, NodeType.EXECUTOR_PRIMARY, "primary")
     tool = find_node(runtime, NodeType.TOOL)
     finalize = find_node(runtime, NodeType.FINALIZE)
     finish_ready_until(runtime, primary)
@@ -461,7 +490,7 @@ def test_checkpoint_restart_partial_rerun_and_exactly_once_final(tmp_path) -> No
         clean.partial_rerun({reviewer_node})
     affected = clean.partial_rerun(
         {reviewer_node},
-        verified_artifact_hashes={find_node(clean, NodeType.EXECUTOR, "primary"): "a" * 64},
+        verified_artifact_hashes={find_node(clean, NodeType.EXECUTOR_PRIMARY, "primary"): "a" * 64},
     )
     assert reviewer_node in affected and finalize in affected
     assert unaffected not in affected

@@ -38,6 +38,7 @@ from dgx_moa.frontier import (
     run_codex_app_server,
     run_codex_exec,
     sanitize_executor_tool_paths,
+    select_frontier_floor,
     select_frontier_profile,
     validate_isolated_worktree,
     validate_profile_name,
@@ -45,6 +46,20 @@ from dgx_moa.frontier import (
 )
 from dgx_moa.state import Phase, SessionState
 from pydantic import ValidationError
+
+
+def test_frontier_floor_selects_local_only_when_objectively_superior() -> None:
+    baseline = {
+        "isolated": True,
+        "verifier_kind": "objective",
+        "verifier_sha256": "a" * 64,
+        "passed": True,
+        "score": 0.9,
+    }
+    assert select_frontier_floor(baseline | {"score": 0.91}, baseline)["selected"] == "local"
+    assert select_frontier_floor(baseline, baseline)["selected"] == "frontier"
+    with pytest.raises(ValueError, match="one pinned verifier"):
+        select_frontier_floor(baseline, baseline | {"verifier_sha256": "b" * 64})
 
 
 @pytest.mark.asyncio

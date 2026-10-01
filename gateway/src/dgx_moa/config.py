@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from .async_moa import DEFAULT_EFFORT_BUDGETS, Effort, EffortBudget, Role
 from .executor_backend import ExecutorCapability, ExecutorEngine, ExecutorSlot
 from .policy import PolicyRule, PolicySet
 
@@ -24,6 +25,7 @@ API_KEY_PLACEHOLDERS = {
 MODEL_ROLES = frozenset({"executor", "planner", "reviewer", "reasoner", "judge"})
 SYSTEMD_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@-]*\.service$")
 ProviderName = Literal["local", "ollama", "opencode", "openrouter", "codex"]
+ModelAPI = Literal["chat_completions", "responses"]
 
 
 class ModelRef(BaseModel):
@@ -31,6 +33,7 @@ class ModelRef(BaseModel):
 
     provider: ProviderName
     model: str = Field(min_length=1)
+    api: ModelAPI = "chat_completions"
 
     @model_validator(mode="before")
     @classmethod
@@ -87,7 +90,9 @@ class ModelRoutingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     executor: ModelRef = ModelRef(provider="local", model="qwen3.8-27b")
-    executor_fallback: ModelRef = ModelRef(provider="opencode", model="mimo-v2.5")
+    executor_fallback: ModelRef = ModelRef(
+        provider="opencode", model="muse-spark-1.3-contributor", api="responses"
+    )
     executor_rollback: ModelRef = ModelRef(provider="opencode", model="deepseek-v4-flash")
     planner: ModelRef = ModelRef(provider="opencode", model="deepseek-v4-pro")
     reviewer: ModelRef = ModelRef(provider="opencode", model="glm-5.2")
@@ -139,6 +144,7 @@ class Limits(BaseModel):
     executor_total_timeout_seconds: float = 900
     reviewer_timeout_seconds: float = 120
     judge_timeout_seconds: float = 300
+    optional_fan_in_timeout_seconds: float = Field(default=30, gt=0, le=300)
     model_load_timeout_seconds: float = 1_200
     tool_continuation_timeout_seconds: float = 600
     usage_sample_window: int = Field(default=512, ge=1)
@@ -165,6 +171,58 @@ class Limits(BaseModel):
                     f"{role_class} idle thresholds must satisfy minimum <= fallback <= maximum"
                 )
         return self
+
+
+class AsyncMoAEffortPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_concurrent_delegates: int = Field(ge=0, le=16)
+    delegation_budget: int = Field(ge=0, le=64)
+    max_depth: int = Field(ge=0, le=4)
+    role_budgets: dict[Role, int]
+    activation_thresholds: dict[Role, int]
+    semantic_cooldown_seconds: float = Field(ge=0, le=3_600)
+
+    def runtime_budget(self) -> EffortBudget:
+        return EffortBudget(**self.model_dump())
+
+
+def default_async_moa_efforts() -> dict[Effort, AsyncMoAEffortPolicy]:
+    return {
+        effort: AsyncMoAEffortPolicy(
+            max_concurrent_delegates=budget.max_concurrent_delegates,
+            delegation_budget=budget.delegation_budget,
+            max_depth=budget.max_depth,
+            role_budgets=budget.role_budgets,
+            activation_thresholds=budget.activation_thresholds,
+            semantic_cooldown_seconds=budget.semantic_cooldown_seconds,
+        )
+        for effort, budget in DEFAULT_EFFORT_BUDGETS.items()
+    }
+
+
+class AsyncMoAPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    default_effort: Literal["low", "medium", "high", "xhigh"] = "medium"
+    efforts: dict[Effort, AsyncMoAEffortPolicy] = Field(default_factory=default_async_moa_efforts)
+
+    @model_validator(mode="after")
+    def require_every_effort(self) -> AsyncMoAPolicy:
+        missing = set(DEFAULT_EFFORT_BUDGETS) - set(self.efforts)
+        if missing:
+            raise ValueError(f"async MoA policy missing effort: {sorted(missing)[0]}")
+        fast = self.efforts["fast"]
+        if (
+            fast.max_concurrent_delegates
+            or fast.delegation_budget
+            or any(fast.role_budgets.values())
+        ):
+            raise ValueError("fast effort must disable every auxiliary delegation")
+        return self
+
+    def runtime_budgets(self) -> dict[Effort, EffortBudget]:
+        return {effort: policy.runtime_budget() for effort, policy in self.efforts.items()}
 
 
 class LifecycleRolePolicy(BaseModel):
@@ -439,6 +497,34 @@ class SpecialistRoutingConfig(BaseModel):
         return self
 
 
+class ActionRuntimeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    workspace_roots: tuple[str, ...] = ()
+    laya_enabled: bool = False
+    laya_endpoint: str = ""
+    laya_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+    laya_shadow: bool = True
+    output_validation_enabled: bool = True
+    output_validation_max_claims: int = Field(default=8, ge=1, le=32)
+
+    @model_validator(mode="after")
+    def validate_laya(self) -> ActionRuntimeConfig:
+        if self.laya_enabled:
+            if not self.laya_endpoint:
+                raise ValueError("enabled Laya policy requires an endpoint")
+            from urllib.parse import urlsplit
+
+            try:
+                host = (urlsplit(self.laya_endpoint).hostname or "").lower()
+            except ValueError as error:
+                raise ValueError("Laya endpoint must be a loopback URL") from error
+            if host not in {"localhost", "127.0.0.1", "::1"}:
+                raise ValueError("Laya endpoint must be a loopback URL")
+        return self
+
+
 class DeclarativePolicyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -460,9 +546,10 @@ class ExecutorSchedulingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    same_key_max_local_queue: Literal[3] = 3
-    max_total_local_queue: int = Field(default=256, ge=3, le=10_000)
-    queue_timeout_seconds: float = Field(default=14_400, gt=0, le=86_400)
+    max_local_concurrency: int = Field(default=1, ge=1, le=8)
+    same_key_max_local_queue: Literal[1] = 1
+    max_total_local_queue: Literal[1] = 1
+    queue_timeout_seconds: float = Field(default=45, gt=0, le=86_400)
     remote_provider: Literal["disabled", "opencode"] = "disabled"
     remote_endpoint: str | None = None
     remote_api_key_env: str = "OPENCODE_GO_API_KEY"
@@ -585,7 +672,7 @@ class SpeculativeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    method: Literal["dspark"] = "dspark"
+    method: Literal["dspark", "dflash"] = "dspark"
     model: str | None = None
     revision: str | None = None
     num_speculative_tokens: int | None = Field(default=None, ge=1)
@@ -677,7 +764,9 @@ class Settings(BaseModel):
     remote_judge: RemoteJudgeConfig = Field(default_factory=RemoteJudgeConfig)
     specialist_routing: SpecialistRoutingConfig = Field(default_factory=SpecialistRoutingConfig)
     declarative_policy: DeclarativePolicyConfig = Field(default_factory=DeclarativePolicyConfig)
+    action_runtime: ActionRuntimeConfig = Field(default_factory=ActionRuntimeConfig)
     execution_graph: ExecutionGraphConfig = Field(default_factory=ExecutionGraphConfig)
+    async_moa: AsyncMoAPolicy = Field(default_factory=AsyncMoAPolicy)
     model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig)
     executor_scheduling: ExecutorSchedulingConfig = Field(default_factory=ExecutorSchedulingConfig)
     dashboard_enabled: bool = False
@@ -736,6 +825,44 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def validate_lifecycle_runtime(self) -> Settings:
+        if self.specialist_routing.enabled:
+            for role in ("planner", "reviewer"):
+                if getattr(self.model_routing, role).provider != "opencode":
+                    raise ValueError(
+                        f"enabled specialist routing requires opencode/{role} model routing"
+                    )
+        if self.remote_judge.enabled and self.model_routing.judge.provider != "opencode":
+            raise ValueError("enabled Remote Judge requires opencode/judge model routing")
+        if self.frontier_enabled and self.model_routing.frontier_a.provider != "codex":
+            raise ValueError("enabled Frontier requires codex/frontier_a model routing")
+        if (
+            self.frontier_enabled
+            and self.model_routing.frontier_b is not None
+            and self.model_routing.frontier_b.provider != "openrouter"
+        ):
+            raise ValueError("enabled Frontier B requires openrouter/frontier_b model routing")
+        for role in MODEL_ROLES:
+            route = getattr(self.model_routing, role)
+            if route.provider == "local" and route.model in self.local_models:
+                self.models[role] = self.local_models[route.model].model_copy(deep=True)
+            elif (
+                route.provider == "local"
+                and self.local_models
+                and role in self.model_routing.model_fields_set
+            ):
+                raise ValueError(f"unknown local {role} deployment: {route.model}")
+        reasoner_route = self.model_routing.reasoner
+        if (
+            reasoner_route.provider == "ollama"
+            and "reasoner" in self.models
+            and self.models["reasoner"].provider == "ollama"
+        ):
+            self.models["reasoner"] = self.models["reasoner"].model_copy(
+                update={
+                    "repository": reasoner_route.model,
+                    "served_name": reasoner_route.model,
+                }
+            )
         if self.runtime_channel != "main" and any(
             not unit.startswith("dgx-moa-dev-") for unit in self.lifecycle_unit_map.values()
         ):
@@ -784,6 +911,25 @@ def load_settings(path: str | Path | None = None) -> Settings:
     for field, environment in role_environment.items():
         if value := os.getenv(environment):
             routing[field] = value
+    if value := os.getenv("DGX_MOA_EXECUTOR_FALLBACK_API"):
+        fallback = ModelRef.model_validate(
+            routing.get("executor_fallback", ModelRoutingConfig().executor_fallback)
+        )
+        routing["executor_fallback"] = fallback.model_copy(update={"api": value})
+    legacy_specialists = gateway.get("specialist_routing", {})
+    if isinstance(legacy_specialists, dict):
+        legacy_models = legacy_specialists.get("models", {})
+        if isinstance(legacy_models, dict):
+            for role in ("planner", "reviewer"):
+                if role not in routing and isinstance(legacy_models.get(role), str):
+                    routing[role] = {"provider": "opencode", "model": legacy_models[role]}
+    legacy_judge = gateway.get("remote_judge", {})
+    if (
+        "judge" not in routing
+        and isinstance(legacy_judge, dict)
+        and isinstance(legacy_judge.get("model"), str)
+    ):
+        routing["judge"] = {"provider": "opencode", "model": legacy_judge["model"]}
     gateway["model_routing"] = routing
     executor_explicit = "executor" in routing
     executor_ref = ModelRef.model_validate(routing.get("executor", "local/qwen3.8-27b"))
@@ -902,6 +1048,11 @@ def load_settings(path: str | Path | None = None) -> Settings:
         with suppress(json.JSONDecodeError):
             specialist_routing = json.loads(specialist_routing)
     gateway["specialist_routing"] = specialist_routing
+    action_runtime: Any = os.getenv("DGX_MOA_ACTION_RUNTIME", gateway.get("action_runtime", {}))
+    if isinstance(action_runtime, str):
+        with suppress(json.JSONDecodeError):
+            action_runtime = json.loads(action_runtime)
+    gateway["action_runtime"] = action_runtime
     declarative_policy: Any = os.getenv(
         "DGX_MOA_DECLARATIVE_POLICY", gateway.get("declarative_policy", {})
     )

@@ -33,6 +33,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .actions.compat import normalize_edit_call
+from .actions.output import extract_material_claims as _output_claims
 from .admin_codex import AdminCodexRequest, AdminCodexRunner
 from .admin_dashboard import ADMIN_DASHBOARD
 from .config import Settings, get_settings
@@ -55,6 +57,7 @@ from .execution_graph import (
     ExecutionGraphStore,
     NodeType,
     SchedulingSnapshot,
+    execution_graph_parity,
     record_shadow_failure,
 )
 from .executor_backend import ExecutorBackend
@@ -144,7 +147,6 @@ from .state import Phase, SessionState, StateStore
 from .streaming import (
     ProgressOnlyResponse,
     StreamObservation,
-    compatible_edit_call,
     completed_chat_sse,
     forward_sse,
     has_internal_protocol_leak,
@@ -189,6 +191,21 @@ from .weekly import (
     weekly_runtime_improvement_report,
     weekly_skill_report,
 )
+
+
+def validate_executor_response(response: dict[str, Any]) -> None:
+    validate_assistant_response(response)
+    message = response.get("choices", [{}])[0].get("message", {})
+    content = message.get("content") if isinstance(message, dict) else None
+    if not message.get("tool_calls") and not (isinstance(content, str) and content.strip()):
+        raise ValueError("executor response missing public output")
+    if (
+        isinstance(content, str)
+        and not message.get("tool_calls")
+        and has_internal_protocol_leak(content)
+    ):
+        raise ValueError("executor response contains internal protocol markup")
+
 
 TIMEOUT_FAILURE_CLASSES: dict[str, RetryableFailureClass] = {
     "planner": "planner_timeout",
@@ -437,9 +454,18 @@ def _responses_payload(
     choices = chat_response.get("choices") or []
     if choices:
         message = choices[0].get("message", {})
+        reasoning_content = message.get("reasoning_content")
+        if isinstance(reasoning_content, str) and reasoning_content:
+            payload["output"].append(
+                {
+                    "id": f"rs_{uuid.uuid4().hex}",
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": reasoning_content}],
+                }
+            )
         content = message.get("content")
         if isinstance(content, str) and content:
-            payload["output"] = [
+            payload["output"].append(
                 {
                     "type": "message",
                     "status": "completed",
@@ -448,10 +474,10 @@ def _responses_payload(
                         {"type": "output_text", "text": content},
                     ],
                 }
-            ]
+            )
         for tool_call in message.get("tool_calls") or []:
             function = tool_call.get("function") or {}
-            name, arguments = compatible_edit_call(
+            name, arguments = normalize_edit_call(
                 str(function.get("name", "")),
                 str(function.get("arguments", "")),
                 custom_tool_names,
@@ -692,6 +718,7 @@ def create_app(
         app.state.executor_manual_drain = None
         scheduling = configured.executor_scheduling
         app.state.executor_scheduler = ExecutorScheduler(
+            max_local_concurrency=scheduling.max_local_concurrency,
             same_key_max_local_queue=scheduling.same_key_max_local_queue,
             max_total_local_queue=scheduling.max_total_local_queue,
             queue_timeout_seconds=scheduling.queue_timeout_seconds,
@@ -766,6 +793,17 @@ def create_app(
             if configured.frontier_enabled
             else None
         )
+        if frontier_config is not None:
+            frontier_updates: dict[str, Any] = {}
+            routing_fields = configured.model_routing.model_fields_set
+            if "frontier_a" in routing_fields:
+                frontier_updates["model"] = configured.model_routing.frontier_a.model
+            if "frontier_b" in routing_fields:
+                if configured.model_routing.frontier_b is None:
+                    frontier_updates["openrouter_fallback_enabled"] = False
+                else:
+                    frontier_updates["openrouter_model"] = configured.model_routing.frontier_b.model
+            frontier_config = frontier_config.model_copy(update=frontier_updates)
         app.state.frontier_config = frontier_config
         app.state.frontier_auth_active = set()
         app.state.admin_codex = AdminCodexRunner(configured, api_keys, store)
@@ -823,7 +861,7 @@ def create_app(
             remote_judge = OpenCodeGoJudgeProvider(
                 endpoint=endpoint,
                 api_key_env=configured.remote_judge.api_key_env,
-                model=configured.remote_judge.model,
+                model=configured.model_routing.judge.model,
                 timeout_seconds=configured.remote_judge.timeout_seconds,
                 max_retries=configured.remote_judge.max_retries,
                 max_calls_per_request=configured.remote_judge.max_calls_per_request,
@@ -912,14 +950,14 @@ def create_app(
                 remote={
                     "planner": RemotePlannerProvider(
                         **remote_values,
-                        model=configured.specialist_routing.models["planner"],
+                        model=configured.model_routing.planner.model,
                         min_completion_tokens=configured.specialist_routing.remote_min_completion_tokens[
                             "planner"
                         ],
                     ),
                     "reviewer": RemoteReviewerProvider(
                         **remote_values,
-                        model=configured.specialist_routing.models["reviewer"],
+                        model=configured.model_routing.reviewer.model,
                         min_completion_tokens=configured.specialist_routing.remote_min_completion_tokens[
                             "reviewer"
                         ],
@@ -1107,7 +1145,7 @@ def create_app(
                         ),
                         judge_configuration={
                             "provider": configured.remote_judge.provider,
-                            "model": configured.remote_judge.model,
+                            "model": configured.model_routing.judge.model,
                             "mode": configured.remote_judge.mode,
                         },
                         model_configuration={
@@ -1156,6 +1194,10 @@ def create_app(
             if app.state.specialists is not None:
                 await app.state.specialists.close()
             await app.state.lifecycle.close()
+            app.state.usage.close()
+            close_provider = getattr(provider, "aclose", None)
+            if close_provider is not None:
+                await close_provider()
 
     app = FastAPI(title="DGX MoA Agent", version="2.0.0", lifespan=lifespan)
     app.add_middleware(DrainMiddleware)
@@ -1955,9 +1997,19 @@ def create_app(
     async def models() -> dict[str, Any]:
         aliases = list(PUBLIC_MODEL_ALIASES)
         context_length = configured.models["executor"].context_length
+        reasoning_levels = [
+            {"effort": "low", "description": "Fast responses with lighter reasoning"},
+            {
+                "effort": "medium",
+                "description": "Balances speed and reasoning depth for everyday tasks",
+            },
+            {"effort": "high", "description": "Greater reasoning depth for complex problems"},
+            {"effort": "xhigh", "description": "Broad adaptive MoA for the hardest tasks"},
+        ]
         descriptions = {
             "dgx-moa": "Reasoner + Executor Dynamic MoA model.",
             "dgx-moa-fast": "Executor-only compatibility model.",
+            "dgx-moa-unhold": "Local Executor-only model without remote fallback.",
         }
         return {
             "object": "list",
@@ -1976,8 +2028,8 @@ def create_app(
                     "slug": alias,
                     "display_name": alias,
                     "description": descriptions[alias],
-                    "default_reasoning_level": None,
-                    "supported_reasoning_levels": [],
+                    "default_reasoning_level": "low",
+                    "supported_reasoning_levels": reasoning_levels,
                     "shell_type": "shell_command",
                     "visibility": "list",
                     "supported_in_api": True,
@@ -1999,22 +2051,23 @@ def create_app(
                     ),
                     "model_messages": None,
                     "include_skills_usage_instructions": False,
-                    "supports_reasoning_summaries": False,
-                    "default_reasoning_summary": "none",
+                    "supports_reasoning_summaries": True,
+                    "supports_reasoning_summary_parameter": True,
+                    "default_reasoning_summary": "auto",
                     "support_verbosity": False,
                     "default_verbosity": None,
                     "apply_patch_tool_type": "freeform",
-                    "web_search_tool_type": "text",
+                    "web_search_tool_type": "text_and_image",
                     "truncation_policy": {"mode": "tokens", "limit": 10_000},
                     "supports_parallel_tool_calls": True,
                     "supports_image_detail_original": False,
                     "context_window": context_length,
                     "max_context_window": context_length,
-                    "comp_hash": f"dgx-moa-{context_length}-v1",
+                    "comp_hash": f"dgx-moa-{context_length}-v2",
                     "effective_context_window_percent": 95,
                     "experimental_supported_tools": [],
-                    "input_modalities": ["text"],
-                    "supports_search_tool": False,
+                    "input_modalities": ["text", "image"],
+                    "supports_search_tool": True,
                     "use_responses_lite": False,
                     "tool_mode": "direct",
                     "multi_agent_version": None,
@@ -2142,10 +2195,12 @@ def create_app(
             mode = resolve_runtime_mode(model_alias, configured.model_name)
         except ValueError as error:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown model") from error
+        local_executor_only = model_alias == "dgx-moa-unhold"
         if "executor" not in configured.models:
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "executor is not configured")
         raw = body.model_dump(exclude_none=True)
         raw["model"] = model_alias
+        raw.setdefault("reasoning_effort", configured.async_moa.default_effort)
         provided_session_id = x_session_id or str(body.metadata.get("session_id") or "")
         session_id = provided_session_id or str(uuid.uuid4())
         if model_alias != body.model:
@@ -2208,6 +2263,11 @@ def create_app(
         executor_flash = False
         executor_admission: ExecutorAdmission | None = None
         executor_routing_reason = "local_ready"
+        async_prepare_task: asyncio.Task[dict[str, Any]] | None = None
+        async_snapshot = None
+        async_artifact_start = 0
+        async_invocation_start = 0
+        async_reloop_notification: str | None = None
         task_id = str(raw["metadata"].get("task_id") or "")
         request_class = classify_request(mode, raw["messages"], raw.get("tools"), raw["metadata"])
         reasoner_mode = cast(ReasonerMode | None, raw["metadata"].get("reasoner_mode"))
@@ -2394,6 +2454,54 @@ def create_app(
                 )
                 return None
 
+        def rebuild_execution_after_async_invalidation(
+            current_prepared: dict[str, Any], reconciliation: dict[str, Any]
+        ) -> None:
+            nonlocal execution_runtime
+            if not reconciliation["reloop_required"]:
+                return
+            affected: tuple[str, ...] = ()
+            graph_id: str | None = None
+            if execution_runtime is not None:
+                graph_id = execution_runtime.graph.graph_id
+                try:
+                    evidence_node = next(
+                        node
+                        for node in execution_runtime.graph.nodes
+                        if node.node_type == NodeType.EXECUTOR_EVIDENCE
+                    )
+                    affected = execution_runtime.partial_rerun(
+                        {evidence_node.node_id},
+                        verified_artifact_hashes=dict(execution_runtime.artifact_hashes),
+                    )
+                    attempt = execution_runtime.start_attempt(evidence_node.node_id)
+                    execution_runtime.finish_attempt(
+                        attempt.attempt_id,
+                        artifact_hash=hashlib.sha256(
+                            json.dumps(
+                                redact(current_prepared),
+                                ensure_ascii=False,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                                default=str,
+                            ).encode()
+                        ).hexdigest(),
+                    )
+                except (StopIteration, ValueError, sqlite3.Error) as error:
+                    record_shadow_failure(
+                        request.app.state.store, state_session_id, "async_reloop", error
+                    )
+                    execution_runtime = None
+            request.app.state.store.event(
+                state_session_id,
+                "executor_task_graph_rebuilt",
+                {
+                    "graph_id": graph_id,
+                    "affected_nodes": list(affected),
+                    "affected_work": reconciliation["decisions"][0]["affected_work"],
+                },
+            )
+
         def finish_execution_role(
             current: Any,
             attempt_id: str | None,
@@ -2538,6 +2646,11 @@ def create_app(
                                     execution_contradicted_evidence_ids
                                 ),
                             )
+                            request.app.state.store.event(
+                                current.session_id,
+                                "execution_graph_shadow_parity",
+                                execution_graph_parity(runtime, current),
+                            )
                             current.execution_checkpoint_id = runtime.last_checkpoint_id
                         except (ValueError, sqlite3.Error) as error:
                             record_shadow_failure(
@@ -2547,13 +2660,19 @@ def create_app(
                             execution_runtime = None
                             execution_attempt_id = None
                     request.app.state.controller.complete_loop_iteration(current, status_value)
-                    record_request_timing(current)
                     request.app.state.store.event(
                         current.session_id,
                         "session_ended",
                         {"request_id": state_session_id, "status": status_value},
                     )
+                    state_persistence_started = time.monotonic()
                     request.app.state.store.save(current)
+                    current.timings_ms["state_persistence"] = round(
+                        (time.monotonic() - state_persistence_started) * 1000, 3
+                    )
+                    if status_value == "completed" and current.final_status == "completed":
+                        current.timings_ms["verified_completion"] = elapsed_ms(accepted)
+                    record_request_timing(current)
                     record_trace_safely(request, current, task_id)
                 if usage_started:
                     completed_at = time.time()
@@ -2566,6 +2685,7 @@ def create_app(
                     ):
                         role_failures.pop("reviewer", None)
                         stage_status["reviewer"] = "completed"
+                    usage_persistence_started = time.monotonic()
                     request.app.state.usage.finalize(
                         usage_request_id,
                         RequestUsageFinalization(
@@ -2595,6 +2715,13 @@ def create_app(
                         },
                         role_failures=role_failures,
                     )
+                    if current is not None:
+                        current.timings_ms["usage_persistence"] = round(
+                            (time.monotonic() - usage_persistence_started) * 1000, 3
+                        )
+                        request.app.state.usage.record_stages(
+                            usage_request_id, current.timings_ms, stage_status
+                        )
             finally:
                 if disconnect_watcher is not None:
                     disconnect_watcher.cancel()
@@ -2647,7 +2774,8 @@ def create_app(
             )
         )
         executor_flash_fallback = bool(
-            configured.executor_scheduling.enabled
+            not local_executor_only
+            and configured.executor_scheduling.enabled
             and request.app.state.overflow_executor is not None
             and executor_local_unavailable
         )
@@ -2683,7 +2811,9 @@ def create_app(
                     api_token_id,
                     usage_request_id,
                     risk="high" if request_class == "high_risk_task" else "medium",
-                    flash_available=request.app.state.overflow_executor is not None,
+                    flash_available=(
+                        request.app.state.overflow_executor is not None and not local_executor_only
+                    ),
                     local_available=not executor_flash_fallback,
                     on_queued=lambda queued: request.app.state.store.event(
                         state_session_id,
@@ -2719,7 +2849,9 @@ def create_app(
             else:
                 async with request.app.state.executor_admission_lock:
                     executor_provider, executor_routing_reason = select_executor_provider(
-                        frontier_available=request.app.state.frontier is not None,
+                        frontier_available=(
+                            request.app.state.frontier is not None and not local_executor_only
+                        ),
                         local_busy=(
                             request.app.state.lifecycle_store.get("executor").active_request_count
                             > 0
@@ -2729,7 +2861,11 @@ def create_app(
             quality_retry_reason = str(
                 getattr(request.state, "responses_quality_retry_reason", "") or ""
             )
-            if quality_retry_reason and request.app.state.frontier is not None:
+            if (
+                quality_retry_reason
+                and request.app.state.frontier is not None
+                and not local_executor_only
+            ):
                 executor_remote = True
                 executor_flash = False
                 executor_routing_reason = f"local_{quality_retry_reason}"
@@ -3046,7 +3182,7 @@ def create_app(
             state.api_token_id = api_token_id
             task_id = task_id or state.task_id or state_session_id
             raw["metadata"]["task_id"] = task_id
-            state.timings_ms = {"accepted": 0.0}
+            state.timings_ms = {"accepted": 0.0, "admission": elapsed_ms(accepted)}
             for role, reason in degraded_roles.items():
                 stage_status[role] = "unavailable"
                 request.app.state.store.event(
@@ -3139,6 +3275,7 @@ def create_app(
                 scoped_request = {
                     **executor_request,
                     "_client_workspace_path": state.repository.get("workspace_path"),
+                    "_opencode_session": state_session_id,
                 }
                 if executor_flash and not force_frontier:
                     flash_provider = request.app.state.overflow_executor
@@ -3287,6 +3424,7 @@ def create_app(
                 nonlocal executor_remote, executor_routing_reason, stream_lease_ids
                 if (
                     error.response.status_code != status.HTTP_400_BAD_REQUEST
+                    or local_executor_only
                     or not configured.executor_scheduling.enabled
                     or request.app.state.overflow_executor is None
                     or executor_admission is None
@@ -3352,7 +3490,9 @@ def create_app(
                 else select_executor_provider(
                     "frontier" if executor_remote else "local",
                     executor_routing_reason,
-                    frontier_available=request.app.state.frontier is not None,
+                    frontier_available=(
+                        request.app.state.frontier is not None and not local_executor_only
+                    ),
                     duplicate_failure=duplicate_failure_recovery,
                     frontier_correction=state.frontier_correction_required,
                 )
@@ -3386,17 +3526,60 @@ def create_app(
                 or has_matching_tool_result(raw["messages"])
                 or bool(getattr(request.state, "responses_tool_owner_recovered", False))
             ) and not new_failure_observed
-            prepared = await request.app.state.controller.prepare_executor(
-                state,
-                raw,
-                roles,
-                ensure_dynamic_roles,
-                tool_continuation=tool_continuation,
-                reasoner_complete=(
-                    remote_reasoner_complete if request.app.state.frontier is not None else None
-                ),
-                execution_runtime=execution_runtime,
+            fan_in_started = time.monotonic()
+            if state.runtime_mode != "fast":
+                evidence = request.app.state.controller.runtime_evidence_snapshot(
+                    state,
+                    request_inputs=cast(list[dict[str, Any]], raw.get("messages", [])),
+                    metadata=cast(dict[str, Any], raw.get("metadata", {})),
+                )
+                async_snapshot = request.app.state.controller.delegation_snapshot(state, evidence)
+                async_artifact_start = len(state.agent_artifacts)
+                async_invocation_start = len(state.agent_invocations)
+                async_prepare_task = asyncio.create_task(
+                    request.app.state.controller.prepare_executor(
+                        state,
+                        raw,
+                        roles,
+                        ensure_dynamic_roles,
+                        tool_continuation=tool_continuation,
+                        reasoner_complete=(
+                            remote_reasoner_complete
+                            if request.app.state.frontier is not None
+                            else None
+                        ),
+                        execution_runtime=execution_runtime,
+                    ),
+                    name=f"async-moa:{state_session_id}",
+                )
+                request.app.state.store.event(
+                    state_session_id,
+                    "async_moa_started",
+                    {
+                        "roles": [role for role in roles if role != "executor"],
+                        "snapshot_hash": async_snapshot.evidence_hash,
+                        "task_state_version": async_snapshot.task_state_version,
+                        "repository_head": async_snapshot.repository_head,
+                        "working_tree_hash": async_snapshot.working_tree_hash,
+                        "decision_version": async_snapshot.decision_version,
+                    },
+                )
+            prepared = (
+                request.app.state.controller.prepare_executor_draft(state, raw)
+                if async_prepare_task is not None
+                else await request.app.state.controller.prepare_executor(
+                    state,
+                    raw,
+                    roles,
+                    ensure_dynamic_roles,
+                    tool_continuation=tool_continuation,
+                    reasoner_complete=(
+                        remote_reasoner_complete if request.app.state.frontier is not None else None
+                    ),
+                    execution_runtime=execution_runtime,
+                )
             )
+            state.timings_ms["fan_in"] = round((time.monotonic() - fan_in_started) * 1000, 3)
             executor_projection_manifest = state.role_context_projections[-1]
             if executor_projection_manifest.get("role") != "executor":
                 raise ValueError("Executor provider input is missing its Runtime projection")
@@ -3407,7 +3590,7 @@ def create_app(
                         (
                             node
                             for node in execution_runtime.graph.nodes
-                            if node.node_type == NodeType.EXECUTOR and node.purpose == "evidence"
+                            if node.node_type == NodeType.EXECUTOR_EVIDENCE
                         ),
                         None,
                     )
@@ -3489,7 +3672,9 @@ def create_app(
                 else select_executor_provider(
                     "frontier" if executor_remote else "local",
                     executor_routing_reason,
-                    frontier_available=request.app.state.frontier is not None,
+                    frontier_available=(
+                        request.app.state.frontier is not None and not local_executor_only
+                    ),
                     context_exceeded=context_exceeded,
                     output_budget_exceeded=output_budget_exceeded,
                     frontier_correction=frontier_correction,
@@ -3558,7 +3743,117 @@ def create_app(
                 )
             active_stage = "executor_first_byte" if body.stream else "executor_total"
             executor_started = time.monotonic()
-            if execution_runtime is not None:
+            if body.stream and async_prepare_task is not None and async_snapshot is not None:
+                draft_started = time.monotonic()
+                draft_message: dict[str, Any] = {}
+                try:
+                    draft_response = (
+                        await remote_executor_correction(prepared, "executor_work")
+                        if executor_remote
+                        else await request.app.state.provider.complete(
+                            "executor",
+                            configured.models["executor"],
+                            prepared,
+                            timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                            stage="executor_work",
+                        )
+                    )
+                    validate_executor_response(draft_response)
+                    draft_message = draft_response.get("choices", [{}])[0].get("message", {})
+                    request.app.state.controller.record_invocation(
+                        state,
+                        "executor",
+                        draft_response,
+                        draft_started,
+                        mode="executor_work",
+                        fallback_reason=executor_routing_reason if executor_remote else None,
+                        projection_id=executor_projection_id,
+                        rendered_prompt=(
+                            prepared
+                            if executor_remote
+                            else request.app.state.controller.rendered_model_request(
+                                "executor", prepared
+                            )
+                        ),
+                    )
+                    request.app.state.store.event(
+                        state_session_id,
+                        "executor_useful_work_while_delegates_pending",
+                        {
+                            "work": "executor_model_call",
+                            "snapshot_hash": async_snapshot.evidence_hash,
+                        },
+                    )
+                except Exception as error:
+                    request.app.state.store.event(
+                        state_session_id,
+                        "executor_preliminary_work_failed",
+                        {
+                            "failure_class": type(error).__name__,
+                            "failure_code": str(error)[:128],
+                            "snapshot_hash": async_snapshot.evidence_hash,
+                        },
+                    )
+                prepared = await async_prepare_task
+                async_prepare_task = None
+                executor_projection_manifest = state.role_context_projections[-1]
+                if executor_projection_manifest.get("role") != "executor":
+                    raise ValueError("Executor fan-in projection is missing")
+                executor_projection_id = str(executor_projection_manifest["projection_id"])
+                reconciliation = request.app.state.controller.reconcile_async_collaboration(
+                    state, async_snapshot, async_artifact_start, async_invocation_start
+                )
+                rebuild_execution_after_async_invalidation(prepared, reconciliation)
+                async_reloop_notification = reconciliation["notification"]
+                for role in ("reasoner", "planner", "reviewer", "frontier"):
+                    if role in state.timings_ms:
+                        stage_status[role] = "completed"
+                prepared = {
+                    **prepared,
+                    "messages": [
+                        *prepared.get("messages", []),
+                        {
+                            "role": "system",
+                            "content": (
+                                (
+                                    async_reloop_notification + "\n"
+                                    if async_reloop_notification
+                                    else ""
+                                )
+                                + "Reconcile the independent evidence and the preliminary "
+                                "Executor hypothesis below against current Runtime evidence. "
+                                "Auxiliary output is advisory; STALE findings cannot overwrite "
+                                "newer validated work. Return a native tool call if more work is "
+                                "required, otherwise return the final user-facing answer.\n"
+                                + json.dumps(
+                                    {
+                                        "executor_hypothesis": {
+                                            "classification": "EXECUTOR_HYPOTHESIS",
+                                            "statement": draft_message,
+                                        },
+                                        "auxiliary_findings": reconciliation["findings"],
+                                    },
+                                    ensure_ascii=False,
+                                    sort_keys=True,
+                                )
+                            ),
+                        },
+                    ],
+                }
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_async_fan_in_started",
+                    {
+                        "finding_count": len(reconciliation["findings"]),
+                        "reloop": reconciliation["reloop_required"],
+                    },
+                )
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_async_fan_in_completed",
+                    {"reloop": reconciliation["reloop_required"]},
+                )
+            if execution_runtime is not None and async_prepare_task is None:
                 try:
                     for control_type in (
                         NodeType.CLASSIFY,
@@ -3582,7 +3877,7 @@ def create_app(
                     primary_node = next(
                         node
                         for node in execution_runtime.graph.nodes
-                        if node.node_type == NodeType.EXECUTOR and node.purpose == "primary"
+                        if node.node_type == NodeType.EXECUTOR_PRIMARY
                     )
                     if primary_node.node_id in execution_runtime.ready_node_ids():
                         execution_attempt_id = execution_runtime.start_attempt(
@@ -3682,6 +3977,7 @@ def create_app(
                     async for chunk in completed_chat_sse(remote_response):
                         yield chunk
 
+                upstream: AsyncIterator[bytes]
                 if executor_remote:
                     upstream = keepalive_sse(remote_upstream(), interval_seconds=10)
                 else:
@@ -3706,7 +4002,36 @@ def create_app(
                         if not select_local_http_400_fallback(error, "executor_first_byte"):
                             raise
                         upstream = keepalive_sse(remote_upstream(), interval_seconds=10)
+                if async_reloop_notification:
+                    source = upstream
+
+                    async def notified_upstream() -> AsyncIterator[bytes]:
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "choices": [
+                                        {
+                                            "delta": {
+                                                "content": async_reloop_notification + "\n\n"
+                                            },
+                                            "finish_reason": None,
+                                        }
+                                    ]
+                                },
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                            + "\n\n"
+                        ).encode()
+                        async for chunk in source:
+                            yield chunk
+
+                    upstream = notified_upstream()
                 state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
+                state.timings_ms["executor_ttft"] = round(
+                    (time.monotonic() - executor_started) * 1000, 3
+                )
                 stage_status["executor_first_byte"] = "completed"
                 observation = StreamObservation(configured.limits.max_stream_capture_bytes)
                 stream_completed = False
@@ -3725,6 +4050,14 @@ def create_app(
                         ) and not remote_failure
                         state.timings_ms["executor_total"] = round(
                             (time.monotonic() - executor_started) * 1000, 3
+                        )
+                        state.timings_ms["executor_decode"] = round(
+                            max(
+                                0.0,
+                                state.timings_ms["executor_total"]
+                                - state.timings_ms.get("executor_ttft", 0.0),
+                            ),
+                            3,
                         )
                         stage_status.setdefault(
                             "executor_total", "completed" if terminal else "aborted"
@@ -3808,7 +4141,35 @@ def create_app(
                                 mode="final_synthesis",
                             )
                             if terminal:
-                                state.final_output = "".join(observation.assistant_content)
+                                draft_text = "".join(observation.assistant_content)
+                                if not observation.tool_call_ids:
+                                    gate_result = (
+                                        request.app.state.controller.check_output_completion(
+                                            state,
+                                            final_text=draft_text,
+                                            finish_reason=next(
+                                                iter(observation.finish_reasons), None
+                                            ),
+                                            has_tool_calls_in_draft=False,
+                                            metadata=raw.get("metadata", {}),
+                                            messages=raw.get("messages", []),
+                                        )
+                                    )
+                                    request.app.state.store.event(
+                                        state_session_id,
+                                        "output_validation_passed"
+                                        if gate_result.decision in ("PASS", "REWRITE_ONLY")
+                                        else "output_validation_blocked",
+                                        {
+                                            "decision": gate_result.decision,
+                                            "reason": gate_result.reason,
+                                            "manifest_id": gate_result.manifest.manifest_id,
+                                            "path": "chat_stream",
+                                        },
+                                    )
+                                    if gate_result.decision not in ("PASS", "REWRITE_ONLY"):
+                                        state.final_status = "failed"
+                                state.final_output = draft_text
                                 execution_evidence_ids.append(
                                     request.app.state.controller.record_evidence(
                                         state,
@@ -3826,6 +4187,30 @@ def create_app(
                                 "tool_calls" in observation.finish_reasons
                                 or observation.tool_call_ids
                             ):
+                                if prepared.get("tools"):
+                                    for index in sorted(observation.tool_call_names):
+                                        gate = request.app.state.controller.check_action(
+                                            state,
+                                            observation.tool_call_names.get(index, ""),
+                                            observation.tool_call_arguments.get(index, ""),
+                                            prepared.get("tools"),
+                                        )
+                                        if not gate.ok:
+                                            state.final_status = "failed"
+                                            request.app.state.store.event(
+                                                state_session_id,
+                                                "action_preflight_rejected",
+                                                {
+                                                    "code": gate.code,
+                                                    "path": "chat_stream",
+                                                    "capability": observation.tool_call_names.get(
+                                                        index, ""
+                                                    ),
+                                                },
+                                            )
+                                            raise ValueError(
+                                                f"invalid tool call: {gate.code}: {gate.message}"
+                                            )
                                 state.pending_tool_call_ids = list(
                                     dict.fromkeys(
                                         [
@@ -3914,10 +4299,73 @@ def create_app(
                     admitted_tool_calls = 0
                     accounted_total_tokens = 0
                     published_output_characters = 0
+                    buffered_tool_chunks: list[bytes] = []
+                    buffered_content_chunks: list[bytes] = []
+                    buffered_content_bytes = 0
+                    content_gate_limit = configured.limits.max_stream_capture_bytes
+                    content_blocked = False
+                    content_block_message = ""
+
+                    def check_content_gate() -> str | None:
+                        """Return a block reason if the draft must not stream yet."""
+                        draft_text = "".join(observation.assistant_content)
+                        if not _output_claims(draft_text):
+                            return None
+                        gate_result = request.app.state.controller.check_output_completion(
+                            state,
+                            final_text=draft_text,
+                            finish_reason=next(iter(observation.finish_reasons), None),
+                            has_tool_calls_in_draft=False,
+                            metadata=raw.get("metadata", {}),
+                            messages=raw.get("messages", []),
+                        )
+                        if gate_result.decision in ("PASS", "REWRITE_ONLY"):
+                            return None
+                        state.final_status = "failed"
+                        request.app.state.store.event(
+                            state_session_id,
+                            "output_validation_blocked",
+                            {
+                                "decision": gate_result.decision,
+                                "reason": gate_result.reason,
+                                "manifest_id": gate_result.manifest.manifest_id,
+                                "path": "chat_stream",
+                            },
+                        )
+                        return f"output validation {gate_result.decision}: {gate_result.reason}"
+
+                    def draft_sentence_complete() -> bool:
+                        draft_text = "".join(observation.assistant_content)
+                        if not _output_claims(draft_text):
+                            return True
+                        return bool(re.search(r"[.!?][\"')\]]?\s*$", draft_text))
+
+                    def is_content_chunk(chunk: bytes) -> bool:
+                        for line in chunk.decode(errors="replace").splitlines():
+                            if not line.startswith("data: ") or line == "data: [DONE]":
+                                continue
+                            try:
+                                payload = json.loads(line[6:])
+                            except ValueError:
+                                continue
+                            choice = (payload.get("choices") or [{}])[0]
+                            delta = choice.get("delta") or {}
+                            if isinstance(delta.get("content"), str):
+                                return True
+                            if choice.get("finish_reason") and not delta.get("tool_calls"):
+                                return True
+                        return False
+
                     forwarder = forward_sse(
                         upstream,
                         observation,
                         max_event_bytes=configured.limits.max_sse_event_bytes,
+                        available_tool_names={
+                            str(tool.get("name") or tool.get("function", {}).get("name"))
+                            for tool in prepared.get("tools", [])
+                            if isinstance(tool, dict)
+                            and (tool.get("name") or tool.get("function", {}).get("name"))
+                        },
                     )
                     try:
                         deadline = (
@@ -3938,12 +4386,61 @@ def create_app(
                                     len(observation.tool_call_ids),
                                     1 if observation.tool_delta_seen else 0,
                                 )
+                                pending_tool_seen = observation.tool_delta_seen or bool(
+                                    observation.tool_call_ids
+                                )
                                 while admitted_tool_calls < required_admissions:
-                                    request.app.state.controller.admit_tool_call(
-                                        state,
-                                        observation.tool_call_names.get(admitted_tool_calls),
-                                    )
+                                    tool_name = observation.tool_call_names.get(admitted_tool_calls)
+                                    if not tool_name:
+                                        # Nameless fragment: the tool call is not
+                                        # complete yet, so there is nothing to
+                                        # validate. Wait for more chunks; the
+                                        # terminal gate enforces unknown tools.
+                                        break
+                                    if prepared.get("tools"):
+                                        gate = request.app.state.controller.check_action(
+                                            state,
+                                            tool_name,
+                                            observation.tool_call_arguments.get(
+                                                admitted_tool_calls, ""
+                                            ),
+                                            prepared.get("tools"),
+                                        )
+                                        if not gate.ok:
+                                            if gate.code in (
+                                                "malformed_arguments",
+                                                "schema_mismatch",
+                                                "unknown_resource",
+                                                "workspace_violation",
+                                            ):
+                                                # Possibly a partial argument
+                                                # fragment; the terminal gate
+                                                # validates complete arguments.
+                                                break
+                                            request.app.state.store.event(
+                                                state_session_id,
+                                                "action_preflight_rejected",
+                                                {
+                                                    "code": gate.code,
+                                                    "path": "chat_stream_delta",
+                                                    "capability": tool_name,
+                                                },
+                                            )
+                                            raise ValueError(
+                                                f"invalid tool call: {gate.code}: {gate.message}"
+                                            )
+                                    request.app.state.controller.admit_tool_call(state, tool_name)
                                     admitted_tool_calls += 1
+                                tool_chunk_pending = pending_tool_seen and (
+                                    admitted_tool_calls < len(observation.tool_call_ids)
+                                    or admitted_tool_calls < required_admissions
+                                )
+                                if tool_chunk_pending:
+                                    # A tool call is still incomplete: buffer this
+                                    # chunk until its complete arguments pass the
+                                    # terminal preflight gate.
+                                    buffered_tool_chunks.append(chunk)
+                                    continue
                                 observed_total_tokens = observation.usage.get("total_tokens", 0)
                                 if observed_total_tokens > accounted_total_tokens:
                                     request.app.state.controller.record_loop_usage(
@@ -3953,9 +4450,6 @@ def create_app(
                                         ),
                                     )
                                     accounted_total_tokens = observed_total_tokens
-                                if "first_downstream_byte" not in state.timings_ms:
-                                    state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
-                                    first_byte_at = time.time()
                                 draft = "".join(observation.assistant_content)
                                 if len(draft) > published_output_characters:
                                     delta = draft[published_output_characters:]
@@ -3967,7 +4461,58 @@ def create_app(
                                         "assistant_output_delta",
                                         {"role": "executor", "delta": delta},
                                     )
+                                for buffered in buffered_tool_chunks:
+                                    yield buffered
+                                buffered_tool_chunks.clear()
+                                if (
+                                    not content_blocked
+                                    and not observation.tool_call_ids
+                                    and not observation.tool_delta_seen
+                                    and is_content_chunk(chunk)
+                                    and chunk != b"data: [DONE]\n\n"
+                                ):
+                                    buffered_content_chunks.append(chunk)
+                                    buffered_content_bytes += len(chunk)
+                                    while (
+                                        buffered_content_chunks
+                                        and buffered_content_bytes > content_gate_limit
+                                    ):
+                                        oldest = buffered_content_chunks.pop(0)
+                                        buffered_content_bytes -= len(oldest)
+                                    if draft_sentence_complete():
+                                        content_block_message = check_content_gate() or ""
+                                        content_blocked = bool(content_block_message)
+                                        if content_blocked:
+                                            raise ValueError(content_block_message)
+                                        for buffered in buffered_content_chunks:
+                                            if "first_downstream_byte" not in state.timings_ms:
+                                                first_at = elapsed_ms(accepted)
+                                                state.timings_ms["first_downstream_byte"] = first_at
+                                                first_byte_at = time.time()
+                                            yield buffered
+                                        buffered_content_chunks.clear()
+                                        buffered_content_bytes = 0
+                                    continue
+                                if "first_downstream_byte" not in state.timings_ms:
+                                    state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                                    first_byte_at = time.time()
                                 yield chunk
+                        if content_blocked:
+                            raise ValueError(content_block_message)
+                        if not (observation.tool_call_ids or observation.tool_delta_seen):
+                            content_block_message = check_content_gate() or ""
+                            if content_block_message:
+                                raise ValueError(content_block_message)
+                        for buffered in buffered_content_chunks:
+                            if "first_downstream_byte" not in state.timings_ms:
+                                state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                                first_byte_at = time.time()
+                            yield buffered
+                        buffered_content_chunks.clear()
+                        buffered_content_bytes = 0
+                        for buffered in buffered_tool_chunks:
+                            yield buffered
+                        buffered_tool_chunks.clear()
                         stream_completed = not remote_failure
                     except LoopAdmissionError:
                         loop_admission_failed = True
@@ -4010,33 +4555,98 @@ def create_app(
                     media_type="text/event-stream",
                     headers={"X-Session-ID": session_id},
                 )
-            if executor_remote:
-                response = await remote_executor_correction(prepared, "executor_total")
-            else:
-                try:
-                    response = await request.app.state.provider.complete(
-                        "executor",
-                        configured.models["executor"],
-                        prepared,
-                        timeout_seconds=configured.limits.executor_total_timeout_seconds,
-                        stage="executor_total",
-                    )
-                except httpx.HTTPStatusError as error:
-                    if not select_local_http_400_fallback(error, "executor_total"):
-                        raise
+            attempt_started = executor_started
+            retry_usage: dict[str, int] = {}
+            for invalid_output_attempt in range(2):
+                if executor_remote:
                     response = await remote_executor_correction(prepared, "executor_total")
+                else:
+                    try:
+                        response = await request.app.state.provider.complete(
+                            "executor",
+                            configured.models["executor"],
+                            prepared,
+                            timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                            stage="executor_total",
+                        )
+                    except httpx.HTTPStatusError as error:
+                        if not select_local_http_400_fallback(error, "executor_total"):
+                            raise
+                        response = await remote_executor_correction(prepared, "executor_total")
+                retry_reason: str | None = None
+                try:
+                    validate_executor_response(response)
+                except ValueError as error:
+                    retry_reason = str(error)
+                assistant_message = response.get("choices", [{}])[0].get("message", {})
+                assistant_tool_calls = assistant_message.get("tool_calls") or []
+                if prepared.get("tool_choice") == "required" and not assistant_tool_calls:
+                    retry_reason = "executor omitted required tool call"
+                if retry_reason is None and assistant_tool_calls and prepared.get("tools"):
+                    for call in assistant_tool_calls:
+                        gate = request.app.state.controller.check_action_call(
+                            state, call, prepared.get("tools")
+                        )
+                        if not gate.ok:
+                            request.app.state.store.event(
+                                state_session_id,
+                                "action_preflight_rejected",
+                                {"code": gate.code, "path": "chat_nonstream_retry"},
+                            )
+                            retry_reason = f"invalid tool call: {gate.code}: {gate.message}"
+                            break
+                if retry_reason is None:
+                    break
+                if executor_remote or invalid_output_attempt:
+                    raise ValueError(retry_reason)
+                retry_usage = reported_usage(response.get("usage"))
+                request.app.state.controller.record_invocation(
+                    state,
+                    "executor",
+                    response,
+                    attempt_started,
+                    mode="invalid_output_retry",
+                    projection_id=executor_projection_id,
+                    rendered_prompt=request.app.state.controller.rendered_model_request(
+                        "executor", prepared
+                    ),
+                )
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_invalid_output_retried",
+                    {"reason": retry_reason, "attempt": 2},
+                )
+                if prepared.get("tool_choice") == "required":
+                    retry_instruction = (
+                        "The previous response omitted the required native tool call. Call one "
+                        "available tool now; do not return final text."
+                    )
+                else:
+                    retry_instruction = (
+                        "Return one concise user-facing final answer now, without internal "
+                        "protocol markup or hidden-only reasoning."
+                    )
+                prepared = {
+                    **prepared,
+                    "messages": [
+                        *prepared.get("messages", []),
+                        {"role": "system", "content": retry_instruction},
+                    ],
+                }
+                attempt_started = time.monotonic()
             state.timings_ms["first_upstream_byte"] = elapsed_ms(accepted)
             state.timings_ms["executor_total"] = round(
                 (time.monotonic() - executor_started) * 1000, 3
             )
+            state.timings_ms["executor_ttft"] = state.timings_ms["executor_total"]
+            state.timings_ms["executor_decode"] = 0.0
             stage_status["executor_total"] = "completed"
-            token_usage.update(reported_usage(response.get("usage")))
             request.app.state.controller.record_invocation(
                 state,
                 "executor",
                 response,
-                executor_started,
-                mode="final_synthesis",
+                attempt_started,
+                mode=("executor_work" if async_prepare_task is not None else "final_synthesis"),
                 fallback_reason=executor_routing_reason if executor_remote else None,
                 projection_id=executor_projection_id,
                 rendered_prompt=(
@@ -4045,14 +4655,184 @@ def create_app(
                     else request.app.state.controller.rendered_model_request("executor", prepared)
                 ),
             )
-            validate_assistant_response(response)
-            assistant_message = response.get("choices", [{}])[0].get("message", {})
-            assistant_tool_calls = assistant_message.get("tool_calls") or []
-            for call in assistant_tool_calls:
-                request.app.state.controller.admit_tool_call(
-                    state,
-                    str(call.get("function", {}).get("name", "")) or None,
+            async_executor_usage: dict[str, int] = {}
+            if async_prepare_task is not None and async_snapshot is not None:
+                request.app.state.store.event(
+                    state_session_id,
+                    "executor_useful_work_while_delegates_pending",
+                    {"work": "executor_model_call", "snapshot_hash": async_snapshot.evidence_hash},
                 )
+                prepared = await async_prepare_task
+                async_prepare_task = None
+                executor_projection_manifest = state.role_context_projections[-1]
+                if executor_projection_manifest.get("role") != "executor":
+                    raise ValueError("Executor fan-in projection is missing")
+                executor_projection_id = str(executor_projection_manifest["projection_id"])
+                if execution_runtime is not None:
+                    for control_type in (NodeType.JOIN, NodeType.EXECUTOR_SELECT):
+                        node = next(
+                            (
+                                candidate
+                                for candidate in execution_runtime.graph.nodes
+                                if candidate.node_type == control_type
+                            ),
+                            None,
+                        )
+                        if node is not None and node.node_id in execution_runtime.ready_node_ids():
+                            attempt = execution_runtime.start_attempt(node.node_id)
+                            execution_runtime.finish_attempt(attempt.attempt_id)
+                    execution_attempt_id = start_execution_role(NodeType.EXECUTOR_PRIMARY)
+                reconciliation = request.app.state.controller.reconcile_async_collaboration(
+                    state, async_snapshot, async_artifact_start, async_invocation_start
+                )
+                rebuild_execution_after_async_invalidation(prepared, reconciliation)
+                for role in ("reasoner", "planner", "reviewer", "frontier"):
+                    if role in state.timings_ms:
+                        stage_status[role] = "completed"
+                findings = reconciliation["findings"]
+                if findings:
+                    async_executor_usage = reported_usage(response.get("usage"))
+                    synthesis_request = {
+                        **prepared,
+                        "messages": [
+                            *prepared.get("messages", []),
+                            {
+                                "role": "system",
+                                "content": (
+                                    (
+                                        reconciliation["notification"] + "\n"
+                                        if reconciliation["notification"]
+                                        else ""
+                                    )
+                                    + "Reconcile the independent auxiliary evidence below "
+                                    "against current Runtime evidence. Auxiliary output is "
+                                    "advisory; STALE findings cannot overwrite newer validated "
+                                    "work. Return a native tool call if more work is required, "
+                                    "otherwise return the final user-facing answer.\n"
+                                    + json.dumps(
+                                        {
+                                            "executor_hypothesis": {
+                                                "classification": "EXECUTOR_HYPOTHESIS",
+                                                "statement": assistant_message,
+                                            },
+                                            "auxiliary_findings": findings,
+                                        },
+                                        ensure_ascii=False,
+                                        sort_keys=True,
+                                    )
+                                ),
+                            },
+                        ],
+                    }
+                    request.app.state.store.event(
+                        state_session_id,
+                        "executor_async_fan_in_started",
+                        {
+                            "finding_count": len(findings),
+                            "reloop": reconciliation["reloop_required"],
+                        },
+                    )
+                    synthesis_started = time.monotonic()
+                    response = (
+                        await remote_executor_correction(synthesis_request, "async_fan_in")
+                        if executor_remote
+                        else await request.app.state.provider.complete(
+                            "executor",
+                            configured.models["executor"],
+                            synthesis_request,
+                            timeout_seconds=configured.limits.executor_total_timeout_seconds,
+                            stage="async_fan_in",
+                        )
+                    )
+                    validate_executor_response(response)
+                    assistant_message = response.get("choices", [{}])[0].get("message", {})
+                    notification = reconciliation["notification"]
+                    if notification:
+                        content = assistant_message.get("content")
+                        assistant_message["content"] = (
+                            notification if not content else f"{notification}\n\n{content}"
+                        )
+                    assistant_tool_calls = assistant_message.get("tool_calls") or []
+                    if assistant_tool_calls and prepared.get("tools"):
+                        for call in assistant_tool_calls:
+                            gate = request.app.state.controller.check_action_call(
+                                state, call, prepared.get("tools")
+                            )
+                            if not gate.ok:
+                                request.app.state.store.event(
+                                    state_session_id,
+                                    "action_preflight_rejected",
+                                    {"code": gate.code, "path": "chat_nonstream_fanin"},
+                                )
+                                raise ValueError(f"invalid tool call: {gate.code}: {gate.message}")
+                    request.app.state.controller.record_invocation(
+                        state,
+                        "executor",
+                        response,
+                        synthesis_started,
+                        mode="async_final_synthesis",
+                        fallback_reason=executor_routing_reason if executor_remote else None,
+                        projection_id=executor_projection_id,
+                        rendered_prompt=(
+                            synthesis_request
+                            if executor_remote
+                            else request.app.state.controller.rendered_model_request(
+                                "executor", synthesis_request
+                            )
+                        ),
+                    )
+                    request.app.state.store.event(
+                        state_session_id,
+                        "executor_async_fan_in_completed",
+                        {"reloop": reconciliation["reloop_required"]},
+                    )
+            final_usage = reported_usage(response.get("usage"))
+            token_usage.update(
+                {
+                    key: value + retry_usage.get(key, 0) + async_executor_usage.get(key, 0)
+                    for key, value in final_usage.items()
+                }
+            )
+            if prepared.get("tools"):
+                sanitized_calls: list[dict[str, Any]] = []
+                preflight_failed: dict[str, Any] | None = None
+                for call in assistant_tool_calls:
+                    gate = request.app.state.controller.check_action_call(
+                        state, call, prepared.get("tools")
+                    )
+                    if not gate.ok:
+                        request.app.state.store.event(
+                            state_session_id,
+                            "action_preflight_rejected",
+                            {"code": gate.code, "path": "chat_nonstream"},
+                        )
+                        preflight_failed = {
+                            "code": gate.code,
+                            "message": gate.message,
+                        }
+                        break
+                    if gate.sanitized_call is not None:
+                        sanitized = dict(gate.sanitized_call)
+                        sanitized["id"] = str(call.get("id") or "")
+                        sanitized_calls.append(sanitized)
+                    request.app.state.controller.admit_tool_call(
+                        state,
+                        str(call.get("function", {}).get("name", "")) or None,
+                    )
+                else:
+                    assistant_tool_calls = sanitized_calls
+                    assistant_message["tool_calls"] = sanitized_calls
+                    if sanitized_calls:
+                        state.last_tool_call = sanitized_calls[-1]
+                if preflight_failed is not None:
+                    assistant_tool_calls = []
+                    assistant_message["tool_calls"] = []
+                    response["choices"][0]["finish_reason"] = "stop"
+                    assistant_message["content"] = (
+                        "The proposed tool call failed runtime validation "
+                        f"({preflight_failed['code']}: {preflight_failed['message']}). "
+                        "No tool call was executed."
+                    )
             assistant_tool_call_ids = [
                 str(call.get("id"))
                 for call in assistant_tool_calls
@@ -4361,8 +5141,7 @@ def create_app(
                                 primary_node = next(
                                     node
                                     for node in execution_runtime.graph.nodes
-                                    if node.node_type == NodeType.EXECUTOR
-                                    and node.purpose == "primary"
+                                    if node.node_type == NodeType.EXECUTOR_PRIMARY
                                 )
                                 if primary_node.node_id not in (execution_runtime.ready_node_ids()):
                                     raise ValueError("Judge correction edge is not ready")
@@ -4418,7 +5197,7 @@ def create_app(
                                 )
                             ),
                         )
-                        validate_assistant_response(response)
+                        validate_executor_response(response)
                         assistant_message = response.get("choices", [{}])[0].get("message", {})
                         finish_reason = response.get("choices", [{}])[0].get("finish_reason")
                         state.finish_reasons = [str(finish_reason)] if finish_reason else []
@@ -4515,6 +5294,51 @@ def create_app(
                     else:
                         raise JudgeCorrectionRequired(correction_verdict)
             assistant_content = assistant_message.get("content")
+            draft_claims = (
+                _output_claims(assistant_content) if isinstance(assistant_content, str) else []
+            )
+            if (
+                finish_reason != "tool_calls"
+                and not assistant_message.get("tool_calls")
+                and draft_claims
+            ):
+                gate_result = request.app.state.controller.check_output_completion(
+                    state,
+                    final_text=assistant_content if isinstance(assistant_content, str) else "",
+                    finish_reason=finish_reason,
+                    has_tool_calls_in_draft=False,
+                    metadata=body.metadata,
+                    messages=raw.get("messages", []),
+                )
+                if gate_result.decision in ("PASS", "REWRITE_ONLY"):
+                    request.app.state.store.event(
+                        state_session_id,
+                        "output_validation_passed",
+                        {
+                            "decision": gate_result.decision,
+                            "reason": gate_result.reason,
+                            "manifest_id": gate_result.manifest.manifest_id,
+                            "path": "chat_nonstream",
+                        },
+                    )
+                else:
+                    state.final_status = "failed"
+                    request.app.state.store.event(
+                        state_session_id,
+                        "output_validation_blocked",
+                        {
+                            "decision": gate_result.decision,
+                            "reason": gate_result.reason,
+                            "manifest_id": gate_result.manifest.manifest_id,
+                            "path": "chat_nonstream",
+                        },
+                    )
+                    state.current_draft = (
+                        assistant_content if isinstance(assistant_content, str) else ""
+                    )
+                    raise ValueError(
+                        f"output validation {gate_result.decision}: {gate_result.reason}"
+                    )
             if isinstance(assistant_content, str):
                 state.current_draft = assistant_content
                 state.final_output = assistant_content
@@ -4836,6 +5660,10 @@ def create_app(
                 "backend_error",
                 "backend_error",
             )
+        finally:
+            if async_prepare_task is not None and not async_prepare_task.done():
+                async_prepare_task.cancel()
+                await asyncio.gather(async_prepare_task, return_exceptions=True)
 
     @app.post("/v1/judge/adjudications/{session_id}", dependencies=[Depends(auth)])
     async def adjudicate(session_id: str, request: Request) -> Response:
@@ -4955,6 +5783,8 @@ def create_app(
             temperature=body.temperature,
             top_p=body.top_p,
             stop=body.stop,
+            reasoning_effort=body.reasoning.effort if body.reasoning else None,
+            reasoning_summary=body.reasoning.summary if body.reasoning else None,
         )
         if body.stream:
             response_session_id = x_session_id or str(body.metadata.get("session_id") or "")
@@ -5146,6 +5976,8 @@ def create_app(
                                             if response_state
                                             else ()
                                         ),
+                                        reasoning_effort=chat_body.reasoning_effort,
+                                        reasoning_summary=chat_body.reasoning_summary,
                                     ),
                                     heartbeat=b"event: ping\ndata: {}\n\n",
                                 ):
@@ -5282,6 +6114,39 @@ def create_app(
                             and not upstream_error
                         ):
                             response_state = request.app.state.store.get(response_session_id)
+                            if response_state is not None:
+                                message = (chat_payload.get("choices") or [{}])[0].get(
+                                    "message", {}
+                                )
+                                if not message.get("tool_calls"):
+                                    gate_result = (
+                                        request.app.state.controller.check_output_completion(
+                                            response_state,
+                                            final_text=message.get("content")
+                                            if isinstance(message.get("content"), str)
+                                            else "",
+                                            finish_reason=(chat_payload.get("choices") or [{}])[
+                                                0
+                                            ].get("finish_reason"),
+                                            has_tool_calls_in_draft=False,
+                                            metadata=dict(chat_body.metadata),
+                                            messages=list(messages),
+                                        )
+                                    )
+                                    request.app.state.store.event(
+                                        response_session_id,
+                                        "output_validation_passed"
+                                        if gate_result.decision in ("PASS", "REWRITE_ONLY")
+                                        else "output_validation_blocked",
+                                        {
+                                            "decision": gate_result.decision,
+                                            "reason": gate_result.reason,
+                                            "manifest_id": gate_result.manifest.manifest_id,
+                                            "path": "responses_stream",
+                                        },
+                                    )
+                                    if gate_result.decision not in ("PASS", "REWRITE_ONLY"):
+                                        response_state.final_status = "failed"
                             async for chunk in responses_sse(
                                 completed_chat_sse(chat_payload),
                                 response_model,
@@ -5320,6 +6185,8 @@ def create_app(
                                     if response_state
                                     else ()
                                 ),
+                                reasoning_effort=chat_body.reasoning_effort,
+                                reasoning_summary=chat_body.reasoning_summary,
                             ):
                                 yield chunk
                             return
@@ -5416,6 +6283,36 @@ def create_app(
                 _responses_payload(response_model, chat_payload, status="failed"),
                 status_code=status.HTTP_200_OK,
             )
+        message = (chat_payload.get("choices") or [{}])[0].get("message", {})
+        if not message.get("tool_calls"):
+            response_state = request.app.state.store.get(
+                str(body.metadata.get("session_id") or x_session_id or "")
+            )
+            if response_state is not None:
+                gate_result = request.app.state.controller.check_output_completion(
+                    response_state,
+                    final_text=message.get("content")
+                    if isinstance(message.get("content"), str)
+                    else "",
+                    finish_reason=(chat_payload.get("choices") or [{}])[0].get("finish_reason"),
+                    has_tool_calls_in_draft=False,
+                    metadata=dict(body.metadata),
+                    messages=list(messages),
+                )
+                request.app.state.store.event(
+                    response_state.session_id,
+                    "output_validation_passed"
+                    if gate_result.decision in ("PASS", "REWRITE_ONLY")
+                    else "output_validation_blocked",
+                    {
+                        "decision": gate_result.decision,
+                        "reason": gate_result.reason,
+                        "manifest_id": gate_result.manifest.manifest_id,
+                        "path": "responses_nonstream",
+                    },
+                )
+                if gate_result.decision not in ("PASS", "REWRITE_ONLY"):
+                    response_state.final_status = "failed"
         return JSONResponse(
             _responses_payload(
                 response_model,
@@ -5750,9 +6647,9 @@ def create_app(
         specialist = configured.specialist_routing
         frontier = app.state.frontier_config
         expected_remote_models = {
-            "Planner": specialist.models.get("planner", ""),
-            "Reviewer": specialist.models.get("reviewer", ""),
-            "Judge": configured.remote_judge.model,
+            "Planner": configured.model_routing.planner.model,
+            "Reviewer": configured.model_routing.reviewer.model,
+            "Judge": configured.model_routing.judge.model,
             "Frontier A": frontier.model if frontier else "",
             "Frontier B": frontier.openrouter_model if frontier else "",
         }
@@ -5805,8 +6702,8 @@ def create_app(
                 return local_role(label, role)
             return {
                 "role": label,
-                "model": specialist.models.get(role),
-                "served_name": specialist.models.get(role),
+                "model": getattr(configured.model_routing, role).model,
+                "served_name": getattr(configured.model_routing, role).model,
                 "provider": specialist.provider,
                 "enabled": True,
                 "available": None,
@@ -5840,14 +6737,14 @@ def create_app(
             {
                 "role": "Judge",
                 "model": (
-                    configured.remote_judge.model
+                    configured.model_routing.judge.model
                     if app.state.remote_judge is not None
                     else judge_model.repository
                     if judge_model
                     else None
                 ),
                 "served_name": (
-                    configured.remote_judge.model
+                    configured.model_routing.judge.model
                     if app.state.remote_judge is not None
                     else judge_model.served_name
                     if judge_model
@@ -6119,7 +7016,7 @@ def create_app(
             model_catalog.extend(
                 {
                     "role": role,
-                    "served_name": configured.specialist_routing.models[role],
+                    "served_name": getattr(configured.model_routing, role).model,
                     "repository": "OpenCode Go",
                 }
                 for role in ("planner", "reviewer")
@@ -6129,7 +7026,7 @@ def create_app(
             model_catalog.append(
                 {
                     "role": "judge",
-                    "served_name": configured.remote_judge.model,
+                    "served_name": configured.model_routing.judge.model,
                     "repository": "OpenCode Go",
                 }
             )

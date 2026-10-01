@@ -121,6 +121,7 @@ def is_successful_validation_execution(execution: dict[str, Any]) -> bool:
         execution.get("exit_code") == 0
         and not execution.get("failure_class")
         and isinstance(command, str)
+        and (not re.search(r"(?<!\|)\|(?!\|)", command) or "pipefail" in command)
         and bool(
             re.search(
                 r"(?:^|&&|\|\||;|\n|[\"'])\s*"

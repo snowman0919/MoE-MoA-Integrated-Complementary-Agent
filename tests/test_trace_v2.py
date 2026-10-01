@@ -434,6 +434,21 @@ def test_trace_recorder_calls_optional_training_collector(tmp_path, settings) ->
     assert collected[0]["session_id"] == state.session_id
 
 
+def test_trace_recorder_atomically_replaces_the_session_snapshot(tmp_path, settings) -> None:  # type: ignore[no-untyped-def]
+    store = StateStore(tmp_path / "state.db")
+    state = complete_state()
+    recorder = TraceRecorder(tmp_path / "traces", store, settings.models)
+
+    path = recorder.record(state)
+    state.objective = "latest cumulative snapshot"
+    assert recorder.record(state) == path
+
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert len(records) == 1
+    assert records[0]["objective"] == "latest cumulative snapshot"
+    assert not list(path.parent.glob(f".{path.name}.*.tmp"))
+
+
 def test_proposal_cooldown_changes_with_material_evidence() -> None:
     first = proposal_fingerprint("TIMEOUT", 1, {"tasks": 1})
     same = proposal_fingerprint("TIMEOUT", 1, {"tasks": 1})

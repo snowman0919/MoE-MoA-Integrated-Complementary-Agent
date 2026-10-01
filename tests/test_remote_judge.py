@@ -5,6 +5,7 @@ import json
 import httpx
 import pytest
 from dgx_moa.controller import Controller
+from dgx_moa.http_client import opencode_headers
 from dgx_moa.remote_judge import (
     JudgeCallLimitExceeded,
     JudgeEvidencePackage,
@@ -63,7 +64,12 @@ async def test_opencode_judge_sends_redacted_bounded_strict_package(monkeypatch)
             request_id="req-1",
             objective="Review alice@example.invalid authorization: Bearer private-value",
             executor_draft="done",
-        )
+        ),
+        session_id="conversation-1",
+    )
+    await provider.judge(
+        JudgeEvidencePackage(request_id="req-2", objective="Review again"),
+        session_id="conversation-1",
     )
 
     assert result.verdict == "approve"
@@ -79,6 +85,11 @@ async def test_opencode_judge_sends_redacted_bounded_strict_package(monkeypatch)
     assert "alice@example.invalid" not in body["messages"][1]["content"]
     assert "private-value" not in body["messages"][1]["content"]
     assert requests[0].headers["authorization"] == "Bearer synthetic-secret"
+    assert (
+        requests[0].headers["x-opencode-session"]
+        == opencode_headers("synthetic-secret", "conversation-1")["x-opencode-session"]
+    )
+    assert requests[1].headers["x-opencode-session"] == requests[0].headers["x-opencode-session"]
     assert await provider.usage("req-1") == {
         "prompt_tokens": 12,
         "completion_tokens": 8,

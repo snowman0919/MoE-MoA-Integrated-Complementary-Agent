@@ -59,3 +59,33 @@ def test_runtime_metrics_record_judge_usage_and_later_corrected_labels() -> None
     assert snapshot["judge_false_approval_total"] == 1
     assert snapshot["judge_false_rejection_total"] == 1
     assert snapshot["approval_timeouts_total"] == 1
+
+
+def test_runtime_metrics_count_action_preflight_rejections() -> None:
+    metrics = RuntimeMetrics()
+    metrics.observe_event(
+        "request", "action_preflight_rejected", {"code": "unknown_tool"}, "timestamp"
+    )
+    metrics.observe_event(
+        "request", "action_preflight_rejected", {"code": "permission_denied"}, "timestamp"
+    )
+    metrics.observe_event(
+        "request",
+        "action_preflight_rejected",
+        {"code": "duplicate_failed_action"},
+        "timestamp",
+    )
+    metrics.observe_event(
+        "request", "action_compat_recovered", {"adapter": "tool_alias"}, "timestamp"
+    )
+    metrics.observe_event("request", "action_laya_shadow", {"agreement": True}, "timestamp")
+    metrics.observe_event("request", "action_laya_shadow", {"agreement": False}, "timestamp")
+
+    snapshot = metrics.snapshot()
+    assert snapshot["invalid_action_rejected"] == 3
+    assert snapshot["unknown_tool_rejected"] == 1
+    assert snapshot["unknown_resource_rejected"] == 1
+    assert snapshot["duplicate_failed_action_rejected"] == 1
+    assert snapshot["compatibility_action_recovered"] == 1
+    assert snapshot["laya_shadow_agreement"] == 1
+    assert snapshot["laya_shadow_disagreement"] == 1

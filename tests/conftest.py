@@ -87,6 +87,23 @@ class StubProvider:
                 }
             )
         else:
+            advertised = [
+                name
+                for tool in request.get("tools") or []
+                if isinstance(tool, dict)
+                and isinstance(
+                    name := (tool.get("function") or {}).get("name", tool.get("name")), str
+                )
+                and name
+            ]
+            if advertised:
+                tool_name = next((name for name in advertised if name != "read_file"), None)
+                if tool_name is None:
+                    tool_name = "read_file"
+                arguments = '{"path":"x"}' if tool_name == "read_file" else '{"command":"echo hi"}'
+            else:
+                tool_name = "read_file"
+                arguments = '{"path":"x"}'
             return {
                 "id": "chatcmpl-test",
                 "choices": [
@@ -98,7 +115,7 @@ class StubProvider:
                                 {
                                     "id": "call-preserved",
                                     "type": "function",
-                                    "function": {"name": "read_file", "arguments": '{"path":"x"}'},
+                                    "function": {"name": tool_name, "arguments": arguments},
                                 }
                             ],
                         },

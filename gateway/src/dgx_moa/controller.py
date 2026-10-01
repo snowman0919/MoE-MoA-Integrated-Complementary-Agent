@@ -14,6 +14,31 @@ from typing import Any, Literal, cast
 
 import httpx
 
+from .actions import (
+    FailureLedger,
+    LayaPolicyAdapter,
+    PreflightContext,
+    PreflightPolicy,
+    ResourceAuthority,
+    build_capability_snapshot,
+    build_completion_manifest,
+    canonical_semantic_key,
+    decide_output,
+    observe_output_shadow,
+    preflight_action,
+    preflight_tool_call,
+    shadow_agreement,
+    state_revision_from_session,
+)
+from .actions import (
+    PolicyEngine as ActionPolicyEngine,
+)
+from .async_moa import (
+    ArtifactRef,
+    DelegationSnapshot,
+    EvidenceClass,
+    reasoner_signal,
+)
 from .compression import compress_messages, compress_text
 from .config import Settings
 from .context_projection import (
@@ -575,11 +600,165 @@ class Controller:
         self.specialists: SpecialistRouter | None = None
         self.lifecycle_store: Any | None = None
         self._review_lock = asyncio.Lock()
+        self._projection_cache: dict[tuple[object, ...], RoleContextProjection] = {}
         self.execution_graph_store = (
             ExecutionGraphStore(settings.state_db)
             if settings.execution_graph.mode == "shadow"
             else None
         )
+        runtime = settings.action_runtime
+        self.action_policy = ActionPolicyEngine(
+            laya=LayaPolicyAdapter(
+                endpoint=runtime.laya_endpoint,
+                timeout_seconds=runtime.laya_timeout_seconds,
+                enabled=runtime.laya_enabled,
+            ),
+            shadow_mode=runtime.laya_shadow,
+        )
+
+    def delegation_snapshot(
+        self,
+        state: SessionState,
+        evidence: RuntimeEvidenceSnapshot,
+    ) -> DelegationSnapshot:
+        repository_head = (
+            state.repository.get("head")
+            or state.repository.get("commit")
+            or state.controller_commit
+        )
+        refs = [
+            ArtifactRef(
+                evidence.snapshot_id,
+                "runtime_evidence_snapshot",
+                f"runtime://snapshots/{evidence.snapshot_id}",
+                evidence.snapshot_hash,
+            )
+        ]
+        refs.extend(
+            ArtifactRef(
+                item.evidence_id,
+                item.kind,
+                f"runtime://evidence/{item.evidence_id}",
+                hashlib.sha256(item.payload_json.encode()).hexdigest(),
+            )
+            for item in evidence.runtime_evidence
+        )
+        return DelegationSnapshot(
+            task_state_version=self.store.event_cursor(state.session_id),
+            repository_head=repository_head,
+            working_tree_hash=evidence.snapshot_hash,
+            decision_version=len(state.decisions),
+            artifact_refs=tuple(refs),
+        )
+
+    def reconcile_async_collaboration(
+        self,
+        state: SessionState,
+        launched_from: DelegationSnapshot,
+        artifact_start: int,
+        invocation_start: int,
+    ) -> dict[str, Any]:
+        """Tag mature fan-out results with launch provenance before final synthesis."""
+        current = DelegationSnapshot(
+            task_state_version=self.store.event_cursor(state.session_id),
+            repository_head=(
+                state.repository.get("head")
+                or state.repository.get("commit")
+                or state.controller_commit
+            ),
+            working_tree_hash=launched_from.working_tree_hash,
+            decision_version=len(state.decisions),
+            artifact_refs=launched_from.artifact_refs,
+        )
+        staleness = launched_from.classify(current)
+        findings = []
+        resolved_roles: set[str] = set()
+        for index, artifact in enumerate(state.agent_artifacts[artifact_start:], start=1):
+            role = str(artifact.get("role", "auxiliary"))
+            resolved_roles.add(role)
+            output = artifact.get("output", artifact)
+            handle_id = f"delegate_{index:04d}_{launched_from.evidence_hash[:12]}"
+            finding = {
+                "role": role,
+                "staleness": staleness,
+                "snapshot_hash": launched_from.evidence_hash,
+                "artifact_refs": [item.uri for item in launched_from.artifact_refs],
+                "claims": [
+                    {
+                        "classification": EvidenceClass.AGENT_RECOMMENDATION,
+                        "statement": output,
+                    }
+                ],
+            }
+            findings.append(finding)
+            self.store.event(
+                state.session_id,
+                "async_delegate_resolved",
+                {
+                    "handle_id": handle_id,
+                    "role": role,
+                    "staleness": staleness,
+                    "snapshot_hash": launched_from.evidence_hash,
+                },
+            )
+        for invocation in state.agent_invocations[invocation_start:]:
+            role = str(invocation.get("role", ""))
+            if role == "executor" or role in resolved_roles:
+                continue
+            resolved_roles.add(role)
+            handle_id = f"delegate_{len(findings) + 1:04d}_{launched_from.evidence_hash[:12]}"
+            finding = {
+                "role": role,
+                "staleness": staleness,
+                "snapshot_hash": launched_from.evidence_hash,
+                "artifact_refs": [item.uri for item in launched_from.artifact_refs],
+                "claims": [
+                    {
+                        "classification": EvidenceClass.OBSERVATION,
+                        "statement": {"status": invocation.get("status", "completed")},
+                    }
+                ],
+            }
+            findings.append(finding)
+            self.store.event(
+                state.session_id,
+                "async_delegate_resolved",
+                {
+                    "handle_id": handle_id,
+                    "role": role,
+                    "staleness": staleness,
+                    "snapshot_hash": launched_from.evidence_hash,
+                },
+            )
+        reloop_required = state.review_status.startswith("rejected") and staleness.value != "STALE"
+        notification = None
+        decisions: list[dict[str, Any]] = []
+        if reloop_required:
+            notification = (
+                "새로 도착한 독립 리뷰 결과에서 현재 구현 방향을 수정해야 할 근거가 "
+                "확인됐습니다. 영향받은 가정을 폐기하고 재루프해 검증하겠습니다."
+            )
+            decision = {
+                "type": "direction_invalidated",
+                "old_assumptions": ["executor_direction"],
+                "new_evidence": ["independent reviewer rejection"],
+                "reason": "material auxiliary evidence",
+                "new_direction": "repair_then_revalidate",
+                "affected_work": ["executor_reloop", "validation"],
+                "snapshot_id": launched_from.evidence_hash,
+            }
+            decisions.append(decision)
+            self._record_decision("executor", state, decision, str(decision["reason"]))
+            self.store.event(state.session_id, "executor_direction_invalidated", decision)
+            self.store.event(
+                state.session_id, "executor_reloop_notification", {"message": notification}
+            )
+        return {
+            "findings": findings,
+            "reloop_required": reloop_required,
+            "notification": notification,
+            "decisions": decisions,
+        }
 
     async def complete_specialist(
         self,
@@ -611,6 +790,7 @@ class Controller:
             role,
             request,
             request_id=state.current_request_id or state.session_id,
+            session_id=state.session_id,
             revision=self.settings.models[role].revision,
             timeout_seconds=getattr(self.settings.limits, f"{role}_timeout_seconds"),
             local_only=role in state.specialist_local_only_roles,
@@ -751,6 +931,366 @@ class Controller:
                 "remaining": getattr(loop.remaining_budget, action),
             },
         )
+
+    def action_workspace_roots(self, state: SessionState) -> tuple[str, ...]:
+        configured = tuple(self.settings.action_runtime.workspace_roots or ())
+        workspace_path = state.repository.get("workspace_path", "")
+        if workspace_path and workspace_path not in configured:
+            return (*configured, workspace_path)
+        return configured
+
+    def action_snapshot(self, tools: list[dict[str, Any]] | None) -> Any:
+        return build_capability_snapshot(tools)
+
+    def action_authority(self, state: SessionState) -> ResourceAuthority:
+        return ResourceAuthority.from_session(
+            state, workspace_roots=self.action_workspace_roots(state)
+        )
+
+    def check_output_completion(
+        self,
+        state: SessionState,
+        *,
+        final_text: str,
+        finish_reason: str | None = None,
+        has_tool_calls_in_draft: bool = False,
+        metadata: dict[str, Any] | None = None,
+        messages: list[dict[str, Any]] | None = None,
+    ) -> Any:
+        """Run the canonical post-execution Output Validation Gate.
+
+        Builds a CompletionManifest from canonical runtime evidence only,
+        resolves every material claim, and returns one bounded deterministic
+        decision. Only PASS and claim-free REWRITE_ONLY reach final
+        user-visible synthesis unchanged.
+        """
+        from .actions.output import OutputGateContext
+
+        metadata = metadata if isinstance(metadata, dict) else {}
+        successful = tuple(item for item in state.tool_executions if item.get("exit_code") == 0)
+        failed = tuple(item for item in state.tool_executions if item.get("exit_code") != 0)
+        nodes = tuple(item for item in state.evidence_nodes if isinstance(item, dict))
+        failures = tuple(item for item in state.failures if isinstance(item, dict))
+        unresolved = tuple(
+            str(item.get("failure_class") or item.get("class") or "failure")
+            for item in failures
+            if item.get("resolution_status", "active") == "active"
+        )
+        review_required = "reviewer" in state.roles_required or bool(metadata.get("heavy_review"))
+        result_ids = {
+            str(message.get("tool_call_id", ""))
+            for message in (messages or [])
+            if isinstance(message, dict) and message.get("role") == "tool"
+        }
+        pending = tuple(
+            call_id for call_id in state.pending_tool_call_ids if call_id not in result_ids
+        )
+        context = OutputGateContext(
+            objective=state.resolved_objective or state.objective,
+            final_text=final_text,
+            finish_reason=finish_reason,
+            has_tool_calls_in_draft=has_tool_calls_in_draft,
+            pending_tool_call_ids=pending,
+            review_status=state.review_status,
+            review_required=review_required,
+            truncated=bool(state.truncated),
+            successful_executions=successful,
+            failed_executions=failed,
+            evidence_nodes=nodes,
+            verified_facts=tuple(state.verified_facts),
+            changed_paths=tuple(changed_paths_evidence(state, metadata)),
+            completion_evidence=dict(state.completion_evidence),
+            acceptance_criteria=tuple(state.acceptance_criteria),
+            unresolved_discovery=unresolved,
+        )
+        manifest = build_completion_manifest(context)
+        result = decide_output(manifest, context)
+        self.store.event(
+            state.session_id,
+            "output_validation_decided",
+            {
+                "decision": result.decision,
+                "reason": result.reason,
+                "manifest_id": manifest.manifest_id,
+                "supported": manifest.supported_claims,
+                "unsupported": manifest.unsupported_claims,
+                "stale_rejected": manifest.stale_rejected,
+            },
+        )
+        laya_choice, _ = observe_output_shadow(manifest, choose=self._output_laya_choice)
+        agrees = shadow_agreement(result.decision, laya_choice)
+        if laya_choice is not None:
+            self.store.event(
+                state.session_id,
+                "output_validation_laya_shadow",
+                {
+                    "choice": laya_choice,
+                    "agreement": bool(agrees),
+                    "manifest_id": manifest.manifest_id,
+                },
+            )
+        return result
+
+    def _output_laya_choice(
+        self, candidates: tuple[str, ...], manifest: dict[str, Any]
+    ) -> str | None:
+        """Laya semantic assist: finite candidate set only, never fact authority."""
+        adapter = self.action_policy.laya
+        if not adapter.enabled or not adapter.endpoint:
+            return None
+        try:
+            from urllib.parse import urlsplit
+
+            host = (urlsplit(adapter.endpoint).hostname or "").lower()
+            if host not in {"localhost", "127.0.0.1", "::1"}:
+                return None
+        except ValueError:
+            return None
+        payload = json.dumps(
+            {"candidates": list(candidates), "manifest_digest": manifest.get("manifest_id")}
+        ).encode()
+        try:
+            from urllib.error import HTTPError
+            from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+            class _NoRedirect(HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+                    return None
+
+            opener = build_opener(_NoRedirect)
+            request = Request(
+                adapter.endpoint, data=payload, headers={"Content-Type": "application/json"}
+            )
+            with opener.open(request, timeout=adapter.timeout_seconds) as response:
+                body = json.loads(response.read().decode() or "{}")
+            choice = body.get("choice", body.get("index"))
+            if isinstance(choice, int) and 0 <= choice < len(candidates):
+                return str(candidates[choice])
+            if isinstance(choice, str) and choice in candidates:
+                return choice
+        except (Exception, HTTPError):
+            return None
+        return None
+
+    def action_revision(self, state: SessionState, snapshot: Any) -> Any:
+        authority = self.action_authority(state)
+        return state_revision_from_session(
+            state,
+            capability_revision=snapshot.revision,
+            discovered_mcp_servers=sorted(authority.discovered_mcp_servers),
+            discovered_mcp_uris=sorted(authority.discovered_mcp_uris),
+            observed_runtime_ids=sorted(authority.observed_runtime_ids),
+        )
+
+    def action_ledger(self, state: SessionState) -> FailureLedger:
+        return FailureLedger.from_dict(state.action_failures)
+
+    def save_action_ledger(self, state: SessionState, ledger: FailureLedger) -> None:
+        state.action_failures = ledger.to_dict()
+
+    def action_preflight_context(
+        self, state: SessionState, snapshot: Any, revision: Any = None
+    ) -> PreflightContext:
+        revision_id = revision.revision if revision is not None else ""
+        if revision is None:
+            revision = self.action_revision(state, snapshot)
+            revision_id = revision.revision
+        return PreflightContext(
+            snapshot=snapshot,
+            authority=self.action_authority(state),
+            ledger=self.action_ledger(state),
+            state_revision=revision_id,
+            policy=PreflightPolicy(denied_tools=tuple(state.policy_denied_tools or ())),
+        )
+
+    def record_action_failure(
+        self,
+        state: SessionState,
+        semantic: str,
+        snapshot: Any,
+        failure_class: str,
+        revision: Any = None,
+    ) -> None:
+        ledger = self.action_ledger(state)
+        resolved = revision if revision is not None else self.action_revision(state, snapshot)
+        ledger.record_failure(semantic, resolved, failure_class)
+        self.save_action_ledger(state, ledger)
+
+    def resolve_action_failure(self, state: SessionState, semantic: str) -> None:
+        ledger = self.action_ledger(state)
+        if semantic in ledger.entries:
+            ledger.record_success(semantic)
+            self.save_action_ledger(state, ledger)
+
+    @staticmethod
+    def _advertised_tools_for_outcome(
+        state: SessionState, call: dict[str, Any]
+    ) -> list[dict[str, Any]] | None:
+        """Rebuild the advertised tool list so outcome revision matches preflight.
+
+        Tool-result observation only sees the executed call, not the original
+        request tools. Rebuilding a snapshot from ``None`` would hash a
+        different capability revision than the gate checked, so the ledger
+        could never match. Re-advertise the executed tool with the schema the
+        gate saw (recorded on the sanitized call); unknown shapes fall back
+        to ``None`` rather than a fabricated capability set.
+        """
+        call_function = call.get("function") if isinstance(call, dict) else None
+        call_name = call_function.get("name") if isinstance(call_function, dict) else None
+        if not isinstance(call_name, str) or not call_name:
+            return None
+        last = state.last_tool_call if isinstance(state.last_tool_call, dict) else None
+        function = (last or {}).get("function") if isinstance(last, dict) else None
+        name = function.get("name") if isinstance(function, dict) else None
+        if name != call_name:
+            # Parallel or out-of-order tool results: rebuild from the executed
+            # call itself rather than the trailing last_tool_call.
+            name = call_name
+            function = call_function
+        arguments = function.get("arguments") if isinstance(function, dict) else None
+        decoded: dict[str, Any] | None = None
+        if isinstance(arguments, str) and arguments.strip():
+            try:
+                parsed = json.loads(arguments)
+            except ValueError:
+                parsed = None
+            decoded = parsed if isinstance(parsed, dict) else None
+        properties: dict[str, Any] = {}
+        for key, value in (decoded or {}).items():
+            if isinstance(value, str):
+                properties[key] = {"type": "string"}
+            elif isinstance(value, bool):
+                properties[key] = {"type": "boolean"}
+            elif isinstance(value, int):
+                properties[key] = {"type": "integer"}
+            elif isinstance(value, float):
+                properties[key] = {"type": "number"}
+            elif isinstance(value, list):
+                properties[key] = {"type": "array"}
+            elif isinstance(value, dict):
+                properties[key] = {"type": "object"}
+            else:
+                properties[key] = {}
+        schema: dict[str, Any] = {"type": "object", "properties": properties}
+        if decoded:
+            schema["required"] = sorted(decoded)
+        return [{"type": "function", "function": {"name": name, "parameters": schema}}]
+
+    def _record_canonical_action_outcome(
+        self,
+        state: SessionState,
+        call: dict[str, Any],
+        arguments: Any,
+        failed: bool,
+        failure_class: str | None,
+        revision: Any = None,
+        semantic: str | None = None,
+    ) -> None:
+        function = call.get("function") if isinstance(call, dict) else None
+        tool_name = str(function.get("name", "")) if isinstance(function, dict) else ""
+        if not tool_name:
+            return
+        parsed: dict[str, Any] = {}
+        if isinstance(arguments, dict):
+            parsed = arguments
+        elif isinstance(arguments, str) and arguments.strip():
+            try:
+                decoded = json.loads(arguments)
+                parsed = decoded if isinstance(decoded, dict) else {}
+            except ValueError:
+                return
+        resolved_semantic = semantic or canonical_semantic_key(tool_name, parsed)
+        ledger = self.action_ledger(state)
+        if failed:
+            resolved = revision if revision is not None else self.action_snapshot(None)
+            ledger.record_failure(
+                resolved_semantic, resolved, str(failure_class or "TOOL_EXECUTION_FAILURE")
+            )
+            self.save_action_ledger(state, ledger)
+        else:
+            self.resolve_action_failure(state, resolved_semantic)
+
+    def check_action_call(
+        self,
+        state: SessionState,
+        call: dict[str, Any],
+        tools: list[dict[str, Any]] | None,
+    ) -> Any:
+        snapshot = self.action_snapshot(tools)
+        revision = self.action_revision(state, snapshot)
+        result = preflight_tool_call(
+            call, snapshot, self.action_preflight_context(state, snapshot, revision)
+        )
+        self._observe_action_gate(state, snapshot, revision, result)
+        return result
+
+    def check_action(
+        self,
+        state: SessionState,
+        tool_name: str,
+        raw_arguments: Any,
+        tools: list[dict[str, Any]] | None,
+    ) -> Any:
+        snapshot = self.action_snapshot(tools)
+        revision = self.action_revision(state, snapshot)
+        arguments = raw_arguments if isinstance(raw_arguments, dict) else str(raw_arguments or "")
+        result = preflight_action(
+            snapshot, tool_name, arguments, self.action_preflight_context(state, snapshot, revision)
+        )
+        self._observe_action_gate(state, snapshot, revision, result)
+        return result
+
+    def _observe_action_gate(
+        self, state: SessionState, snapshot: Any, revision: Any, result: Any
+    ) -> None:
+        if (
+            not getattr(result, "ok", False)
+            and getattr(result, "code", "") == "duplicate_failed_action"
+        ):
+            semantic = str(getattr(result, "semantic_fingerprint", "") or "")
+            if semantic:
+                revision_id = getattr(revision, "revision", "")
+                ledger = self.action_ledger(state)
+                code = str(getattr(result, "code", "error"))
+                ledger.record_failure(semantic, str(revision_id), code)
+                self.save_action_ledger(state, ledger)
+        self._emit_action_decision_events(state, result)
+
+    def _emit_action_decision_events(self, state: SessionState, result: Any) -> None:
+        adapters = getattr(result, "adapters", ()) or ()
+        if getattr(result, "recovered", False) and adapters:
+            self.store.event(
+                state.session_id,
+                "action_compat_recovered",
+                {"adapters": list(adapters)},
+            )
+        decision = getattr(result, "decision", None)
+        if decision is None or not self.action_policy.laya.enabled:
+            return
+        candidate = getattr(decision, "candidate", None)
+        capability = getattr(decision, "capability", None)
+        if candidate is None or capability is None:
+            return
+        snapshot = self.action_snapshot(
+            [
+                {
+                    "type": "function",
+                    "function": {"name": capability.external_name, "parameters": {}},
+                }
+            ]
+        )
+        before = dict(self.action_policy.shadow_metrics())
+        self.action_policy._observe_shadow(snapshot, [candidate], 0)
+        after = dict(self.action_policy.shadow_metrics())
+        if after != before:
+            self.store.event(
+                state.session_id,
+                "action_laya_shadow",
+                {
+                    "agreement": after.get("laya_shadow_agreement", 0)
+                    > before.get("laya_shadow_agreement", 0)
+                },
+            )
 
     def admit_tool_call(self, state: SessionState, tool_name: str | None) -> None:
         denied = state.policy_denied_tools
@@ -929,16 +1469,40 @@ class Controller:
         causal_parent_attempt_ids: tuple[str, ...] = (),
         join_node_id: str | None = None,
     ) -> RoleContextProjection:
-        projection = project_role_context(
-            snapshot,
+        projection_started = time.monotonic()
+        cache_key = (
+            snapshot.snapshot_hash,
             role,
-            stage=stage,
-            target_attempt_id=target_attempt_id,
-            causal_parent_attempt_ids=causal_parent_attempt_ids,
-            join_node_id=join_node_id,
+            stage,
+            target_attempt_id,
+            causal_parent_attempt_ids,
+            join_node_id,
         )
+        projection = self._projection_cache.get(cache_key)
+        cache_hit = projection is not None
+        if projection is None:
+            projection = project_role_context(
+                snapshot,
+                role,
+                stage=stage,
+                target_attempt_id=target_attempt_id,
+                causal_parent_attempt_ids=causal_parent_attempt_ids,
+                join_node_id=join_node_id,
+            )
+            if len(self._projection_cache) >= 256:
+                self._projection_cache.pop(next(iter(self._projection_cache)))
+            self._projection_cache[cache_key] = projection
         allowed_kinds = set(ROLE_PROJECTION_POLICIES[(role, stage)].allowed_runtime_kinds)
         included_evidence_ids = set(projection.provenance.included_evidence_ids)
+        included_contribution_ids = set(projection.provenance.included_contribution_ids)
+        previous = next(
+            (item for item in reversed(state.role_context_projections) if item.get("role") == role),
+            None,
+        )
+        previous_evidence_ids = set(previous.get("source_evidence_ids", [])) if previous else set()
+        previous_contribution_ids = (
+            set(previous.get("source_contribution_ids", [])) if previous else set()
+        )
         projection_bytes = len(projection.model_dump_json().encode())
         manifest = {
             "role": role,
@@ -949,6 +1513,18 @@ class Controller:
             "projection_hash": projection.projection_hash,
             "included_categories": list(projection.provenance.included_categories),
             "source_evidence_ids": list(projection.provenance.included_evidence_ids),
+            "source_contribution_ids": list(projection.provenance.included_contribution_ids),
+            "evidence_delta": {
+                "base_projection_id": previous.get("projection_id") if previous else None,
+                "added_evidence_ids": sorted(included_evidence_ids - previous_evidence_ids),
+                "removed_evidence_ids": sorted(previous_evidence_ids - included_evidence_ids),
+                "added_contribution_ids": sorted(
+                    included_contribution_ids - previous_contribution_ids
+                ),
+                "removed_contribution_ids": sorted(
+                    previous_contribution_ids - included_contribution_ids
+                ),
+            },
             "excluded_evidence_ids": list(projection.provenance.excluded_evidence_ids),
             "dropped_evidence": [
                 {
@@ -969,10 +1545,16 @@ class Controller:
             "rendered_prompt_bytes": None,
             "provider_prompt_tokens": None,
             "provider_invocations": [],
+            "cache_hit": cache_hit,
             "created_at": now(),
         }
         state.role_context_projections.append(manifest)
         state.role_context_projections = state.role_context_projections[-64:]
+        state.timings_ms["projection"] = round(
+            state.timings_ms.get("projection", 0.0)
+            + (time.monotonic() - projection_started) * 1000,
+            3,
+        )
         self.store.event(state.session_id, "collaboration_context_projected", manifest)
         return projection
 
@@ -1254,6 +1836,10 @@ class Controller:
         *,
         account_loop_usage: bool = True,
     ) -> None:
+        invocation = {
+            **invocation,
+            "request_id": state.current_request_id or state.session_id,
+        }
         state.agent_invocations.append(invocation)
         state.agent_invocations = state.agent_invocations[-self.settings.limits.max_steps :]
         if account_loop_usage:
@@ -1270,9 +1856,12 @@ class Controller:
             if invocation.get("model")
             else self.frontier.config.model
             if role == "frontier" and self.frontier is not None
-            else self.settings.remote_judge.model
+            else self.settings.model_routing.judge.model
             if role == "judge" and invocation.get("provider") == "opencode_go"
-            else self.settings.specialist_routing.models[cast(Literal["planner", "reviewer"], role)]
+            else getattr(
+                self.settings.model_routing,
+                cast(Literal["planner", "reviewer"], role),
+            ).model
             if role in {"planner", "reviewer"} and invocation.get("provider") == "remote"
             else self.settings.models[role].served_name
         )
@@ -1997,6 +2586,10 @@ class Controller:
                 for failure in active_failures(state):
                     if not target_paths.intersection(failure.get("target_paths", [])):
                         continue
+                    if failure.get(
+                        "failure_class"
+                    ) == "TEST_FAILURE" and not is_successful_validation_execution(execution):
+                        continue
                     failure["resolution_status"] = "resolved"
                     failure["resolved_at"] = now()
                     failure["resolution_evidence"] = [execution["tool_execution_id"]]
@@ -2030,7 +2623,18 @@ class Controller:
                 {**result, "target_paths": sorted(target_paths)},
                 generated_from=state.last_decision_id,
             )
-            state.no_progress_count = 0
+            advertised = self._advertised_tools_for_outcome(state, call)
+            snapshot = self.action_snapshot(advertised)
+            revision = self.action_revision(state, snapshot)
+            gate = preflight_tool_call(
+                call, snapshot, self.action_preflight_context(state, snapshot, revision)
+            )
+            semantic = gate.semantic_fingerprint or None
+            if semantic is None:
+                return
+            self._record_canonical_action_outcome(
+                state, call, arguments, failed, failure_class, revision=revision, semantic=semantic
+            )
             if actionable_failure and call:
                 call_fingerprint = fingerprint(call)
                 failure_strategy_fingerprint = (
@@ -2830,6 +3434,46 @@ class Controller:
         )
         return decision
 
+    def prepare_executor_draft(
+        self, state: SessionState, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Build an Executor-only draft request without waiting on or mutating the task graph."""
+        body = request.copy()
+        body["max_tokens"] = self.executor_tokens(body)
+        snapshot = self.runtime_evidence_snapshot(
+            state,
+            request_inputs=cast(list[dict[str, Any]], body.get("messages", [])),
+            metadata=cast(dict[str, Any], body.get("metadata", {})),
+        )
+        projection = self.project_runtime_context(state, snapshot, "executor", "fan_in")
+        messages = compress_messages(body["messages"], self.settings.limits)
+        available_tools = tuple(
+            sorted(
+                {
+                    str(tool.get("name") or tool.get("function", {}).get("name"))
+                    for tool in body.get("tools") or []
+                    if isinstance(tool, dict)
+                    and (tool.get("name") or tool.get("function", {}).get("name"))
+                }
+            )
+        )
+        messages.insert(
+            0,
+            {
+                "role": "system",
+                "content": self.prompt_sandwich(
+                    "executor",
+                    state,
+                    "Auxiliary evidence is pending; use current first-party evidence now.",
+                    "Take one useful independent step",
+                    available_tools=available_tools,
+                    runtime_projection=projection,
+                ),
+            },
+        )
+        body["messages"] = messages
+        return body
+
     async def prepare_executor(
         self,
         state: SessionState,
@@ -2910,6 +3554,103 @@ class Controller:
                 {role: self.settings.models[role].revision for role in ("planner", "reviewer")},
             )
         roles = tuple(dict.fromkeys((*roles, *state.roles_required)))
+        allowed_role_set: set[str] = set()
+        if state.runtime_mode == "fast":
+            rejected_roles = [role for role in roles if role != "executor"]
+            roles = ("executor",)
+            state.roles_required = ["executor"]
+            if rejected_roles:
+                self.store.event(
+                    state.session_id,
+                    "fast_mode_auxiliary_roles_rejected",
+                    {"roles": rejected_roles},
+                )
+        else:
+            if state.runtime_mode == "orchestrated":
+                roles = tuple(
+                    dict.fromkeys(
+                        (*roles, *self.orchestration_policy(state, metadata).required_agents)
+                    )
+                )
+            requested_effort = request.get("reasoning_effort") or metadata.get("think_effort")
+            effort = str(requested_effort or self.settings.async_moa.default_effort)
+            if effort == "none":
+                effort = "low"
+            if effort not in self.settings.async_moa.efforts:
+                effort = self.settings.async_moa.default_effort
+            async_budget = self.settings.async_moa.efforts[cast(Any, effort)]
+            semantic_events = ["goal_alignment_check"]
+            if state.failures:
+                semantic_events.append("new_failure")
+            semantic_events.extend(
+                event
+                for event in (
+                    "unexpected_test_result",
+                    "conflicting_evidence",
+                    "strategy_changed",
+                    "major_tool_output",
+                    "new_subsystem",
+                    "multiple_hypotheses",
+                )
+                if metadata.get(event)
+            )
+            if metadata.get("no_progress"):
+                semantic_events.append("no_progress")
+            signals = {
+                "reasoner": reasoner_signal(semantic_events),
+                "planner": 100 if "planner" in roles else 0,
+                "reviewer": 100 if "reviewer" in roles else 0,
+                "frontier": 100 if "frontier" in roles else 0,
+            }
+            if (
+                "reasoner" not in roles
+                and "reasoner" in self.settings.models
+                and signals["reasoner"] >= async_budget.activation_thresholds["reasoner"]
+            ):
+                roles = (*roles, "reasoner")
+            evidence_key = hashlib.sha256(
+                json.dumps(
+                    {
+                        "objective": effective_objective(state),
+                        "repository": state.repository,
+                        "messages": body.get("messages", []),
+                        "semantic_events": semantic_events,
+                        "failures": active_failures(state),
+                        "evidence": state.evidence_nodes[-1:],
+                        "tool_results": state.tool_results[-1:],
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ).encode()
+            ).hexdigest()
+            launched_at = time.time()
+            allowed_auxiliary = []
+            for role in ("reasoner", "planner", "reviewer", "frontier"):
+                fingerprint = f"{role}:{evidence_key}"
+                last = state.delegation_fingerprints.get(fingerprint)
+                if (
+                    role not in roles
+                    or async_budget.role_budgets[role] <= 0
+                    or signals[role] < async_budget.activation_thresholds[role]
+                    or last is not None
+                    and launched_at - last < async_budget.semantic_cooldown_seconds
+                ):
+                    continue
+                allowed_auxiliary.append(role)
+                state.delegation_fingerprints[fingerprint] = launched_at
+                if len(allowed_auxiliary) == async_budget.delegation_budget:
+                    break
+            state.delegation_fingerprints = dict(
+                sorted(state.delegation_fingerprints.items(), key=lambda item: item[1])[-64:]
+            )
+            allowed_role_set = set(allowed_auxiliary)
+            roles = tuple(
+                dict.fromkeys(
+                    ("executor", *allowed_auxiliary, *({"judge"} if "judge" in roles else set()))
+                )
+            )
+            state.roles_required = list(roles)
         if state.control_state != "running":
             raise PolicyBlocked(f"request control state is {state.control_state}")
         body["max_tokens"] = self.executor_tokens(body)
@@ -2962,7 +3703,16 @@ class Controller:
         collaboration_context = ""
         frontier_projection: RoleContextProjection | None = None
         fanout_started = False
+        fan_in_deadline: float | None = None
         fanout_contributions: list[ModelContribution] = []
+        delegate_semaphore = asyncio.Semaphore(
+            max(1, async_budget.max_concurrent_delegates) if state.runtime_mode != "fast" else 1
+        )
+
+        async def bounded_delegate(factory: Callable[[], Awaitable[Any]]) -> Any:
+            async with delegate_semaphore:
+                return await factory()
+
         fanout_snapshot = self.runtime_evidence_snapshot(
             state,
             request_inputs=cast(list[dict[str, Any]], body.get("messages", [])),
@@ -2988,6 +3738,11 @@ class Controller:
             if state.runtime_mode == "orchestrated":
                 policy = self.orchestration_policy(state, metadata)
                 roles = tuple(dict.fromkeys((*roles, *policy.required_agents)))
+                roles = tuple(
+                    role
+                    for role in roles
+                    if role == "executor" or role == "judge" or (role in allowed_role_set)
+                )
                 state.roles_required = list(roles)
                 lifecycle_roles = tuple(
                     role for role in policy.required_agents if role in {"planner", "reviewer"}
@@ -3036,11 +3791,13 @@ class Controller:
                 planner_started = time.monotonic()
                 self.admit_loop_action(state, "planner_calls")
                 planner_task = asyncio.create_task(
-                    self.complete_specialist(
-                        state,
-                        "planner",
-                        planner_request,
-                        mandatory=state.request_class == "high_risk_task",
+                    bounded_delegate(
+                        lambda: self.complete_specialist(
+                            state,
+                            "planner",
+                            planner_request,
+                            mandatory=state.request_class == "high_risk_task",
+                        )
                     )
                 )
             if "frontier" not in roles:
@@ -3140,7 +3897,9 @@ class Controller:
                     else []
                 ),
             }
-            frontier_task = asyncio.create_task(self._frontier_collaborate(state, mode, evidence))
+            frontier_task = asyncio.create_task(
+                bounded_delegate(lambda: self._frontier_collaborate(state, mode, evidence))
+            )
             self.store.event(
                 state.session_id,
                 "frontier_collaboration_started",
@@ -3159,6 +3918,29 @@ class Controller:
                     task.cancel()
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
+
+        async def await_fan_in(task: asyncio.Task[Any], role: str, *, required: bool) -> Any:
+            if required or task.done():
+                return await task
+            assert fan_in_deadline is not None
+            remaining = fan_in_deadline - time.monotonic()
+            if remaining > 0:
+                try:
+                    async with asyncio.timeout(remaining):
+                        return await task
+                except TimeoutError:
+                    pass
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            self.store.event(
+                state.session_id,
+                "optional_role_deadline_exceeded",
+                {
+                    "role": role,
+                    "deadline_seconds": self.settings.limits.optional_fan_in_timeout_seconds,
+                },
+            )
+            raise StageTimeout(f"{role}_optional_fan_in")
 
         if reasoner:
             reasoner_graph_attempt = graph_start(NodeType.REASONER)
@@ -3230,12 +4012,14 @@ class Controller:
                             await cancel_fanout()
                             raise
                         reasoner_task = asyncio.create_task(
-                            self.provider.complete(
-                                "reasoner",
-                                reasoner,
-                                reasoner_request,
-                                timeout_seconds=self.settings.limits.reasoner_timeout_seconds,
-                                stage="reasoner",
+                            bounded_delegate(
+                                lambda: self.provider.complete(
+                                    "reasoner",
+                                    reasoner,
+                                    reasoner_request,
+                                    timeout_seconds=self.settings.limits.reasoner_timeout_seconds,
+                                    stage="reasoner",
+                                )
                             )
                         )
                         reasoner_response = await reasoner_task
@@ -3326,6 +4110,7 @@ class Controller:
                         "latency_ms": round((time.monotonic() - reasoner_record_started) * 1000, 3),
                     },
                 )
+            state.timings_ms["reasoner"] = round((time.monotonic() - reasoner_started) * 1000, 3)
             self.record_invocation(
                 state,
                 "reasoner",
@@ -3494,7 +4279,9 @@ class Controller:
                 ensure_ascii=False,
             )
             review_evidence = compress_text(review_evidence, self.settings.limits)
-            pre_review_task = asyncio.create_task(self.review(state, review_evidence))
+            pre_review_task = asyncio.create_task(
+                bounded_delegate(lambda: self.review(state, review_evidence))
+            )
         if reasoner_contribution is not None:
             state.derived_confidence = self.derived_confidence(
                 state,
@@ -3504,6 +4291,7 @@ class Controller:
             )
             if frontier_degraded:
                 state.derived_confidence = "low"
+        fan_in_deadline = time.monotonic() + self.settings.limits.optional_fan_in_timeout_seconds
         if "planner" in roles and needs_planner(state) and "planner" in self.settings.models:
             assert planner_request is not None
             assert planner_started is not None
@@ -3512,7 +4300,11 @@ class Controller:
             planner_routing: dict[str, Any] = {}
             parsed: dict[str, Any] = {}
             try:
-                planner, planner_routing = await planner_task
+                planner, planner_routing = await await_fan_in(
+                    planner_task,
+                    "planner",
+                    required=state.request_class == "high_risk_task",
+                )
                 try:
                     parsed = PlannerPlan.model_validate(parse_json_content(planner)).model_dump()
                 except ValueError:
@@ -3613,7 +4405,11 @@ class Controller:
                 )
         if pre_review_task is not None:
             try:
-                pre_review_result = await pre_review_task
+                pre_review_result = await await_fan_in(
+                    pre_review_task,
+                    "reviewer",
+                    required=state.review_fail_closed,
+                )
             except (httpx.HTTPError, StageTimeout, ValueError) as error:
                 state.review_status = "failed"
                 self.record_provider_failure(state, "reviewer", error)
@@ -3670,7 +4466,11 @@ class Controller:
                         mode="json"
                     )
                     frontier_task = asyncio.create_task(
-                        self._frontier_collaborate(state, "code_review", frontier_review_evidence)
+                        bounded_delegate(
+                            lambda: self._frontier_collaborate(
+                                state, "code_review", frontier_review_evidence
+                            )
+                        )
                     )
                     self.store.event(
                         state.session_id,
@@ -3790,8 +4590,10 @@ class Controller:
                                 frontier_projection.model_dump(mode="json")
                             )
                             frontier_task = asyncio.create_task(
-                                self._frontier_collaborate(
-                                    state, "code_review", frontier_review_evidence
+                                bounded_delegate(
+                                    lambda: self._frontier_collaborate(
+                                        state, "code_review", frontier_review_evidence
+                                    )
                                 )
                             )
                             self.store.event(
@@ -3806,7 +4608,11 @@ class Controller:
         if frontier_task is not None:
             assert self.frontier is not None
             try:
-                frontier_result = await frontier_task
+                frontier_result = await await_fan_in(
+                    frontier_task,
+                    "frontier",
+                    required=bool(request.get("metadata", {}).get("frontier_required")),
+                )
             except LoopAdmissionError as error:
                 graph_fail(frontier_graph_attempt, "frontier", error)
                 raise
@@ -4241,8 +5047,7 @@ class Controller:
                 executor_system
                 + "\n\n"
                 + "\n\n".join(
-                    text_content(message.get("content"))
-                    for message in messages[:leading_systems]
+                    text_content(message.get("content")) for message in messages[:leading_systems]
                 )
             )
             del messages[1:leading_systems]
@@ -5051,6 +5856,7 @@ class Controller:
             timeout_seconds=self.settings.limits.judge_timeout_seconds,
             stage="judge",
         )
+        state.timings_ms["judge"] = round((time.monotonic() - judge_started) * 1000, 3)
         self.record_invocation(
             state,
             "judge",
@@ -5268,7 +6074,7 @@ class Controller:
             "judge_requested",
             {
                 "provider": "opencode_go",
-                "model": self.settings.remote_judge.model,
+                "model": self.settings.model_routing.judge.model,
                 "evidence_categories": [
                     key
                     for key, value in package.model_dump(mode="json").items()
@@ -5283,7 +6089,9 @@ class Controller:
         started = time.monotonic()
         provider_status = "completed"
         try:
-            verdict: RemoteJudgeVerdict = await self.remote_judge.judge(package)
+            verdict: RemoteJudgeVerdict = await self.remote_judge.judge(
+                package, session_id=state.session_id
+            )
         except JudgeProviderError as error:
             provider_status = "failed"
             failure_class = (
@@ -5351,7 +6159,7 @@ class Controller:
             {
                 "role": "judge",
                 "provider": "opencode_go",
-                "model": self.settings.remote_judge.model,
+                "model": self.settings.model_routing.judge.model,
                 "latency_ms": latency_seconds * 1000,
                 **judge_usage,
                 "status": "completed",
@@ -5372,7 +6180,7 @@ class Controller:
             safe_result
             | {
                 "provider": "opencode_go",
-                "model": self.settings.remote_judge.model,
+                "model": self.settings.model_routing.judge.model,
                 "latency_seconds": latency_seconds,
                 "total_tokens": judge_usage.get("total_tokens", 0),
             },
@@ -5383,7 +6191,7 @@ class Controller:
                 "target_type": "decision",
                 "target_id": decision_id,
                 "evaluator_type": "opencode_go",
-                "evaluator_model": self.settings.remote_judge.model,
+                "evaluator_model": self.settings.model_routing.judge.model,
                 "evaluator_revision": "remote",
                 "result": safe_result,
                 "evidence_references": [],

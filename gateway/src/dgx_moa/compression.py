@@ -37,8 +37,12 @@ def compress_messages(messages: list[dict[str, Any]], limits: Limits) -> list[di
     start = max(0, len(messages) - limits.max_retained_observations)
     while start and messages[start].get("role") == "tool":
         start -= 1
+    anchor = next(
+        (message for message in reversed(messages[:start]) if message.get("role") == "user"),
+        None,
+    )
     retained_reversed: list[dict[str, Any]] = []
-    for message in reversed(messages[start:]):
+    for message in reversed(([anchor] if anchor else []) + messages[start:]):
         item = redact(message.copy())
         fingerprint = message_fingerprint(item)
         if fingerprint in seen:

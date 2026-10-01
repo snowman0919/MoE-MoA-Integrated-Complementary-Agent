@@ -110,8 +110,16 @@ def _sglang_command(role: str, model: ModelConfig) -> list[str]:
         ]
         if model.speculative.num_speculative_tokens:
             arguments += [
-                "--speculative-dspark-block-size",
-                str(model.speculative.num_speculative_tokens - 1),
+                (
+                    "--speculative-dflash-block-size"
+                    if model.speculative.method == "dflash"
+                    else "--speculative-dspark-block-size"
+                ),
+                str(
+                    model.speculative.num_speculative_tokens
+                    if model.speculative.method == "dflash"
+                    else model.speculative.num_speculative_tokens - 1
+                ),
             ]
     return arguments
 

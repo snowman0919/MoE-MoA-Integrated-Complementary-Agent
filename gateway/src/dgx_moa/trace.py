@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -332,8 +334,27 @@ def export_trace(path: str | Path, trace: dict[str, Any]) -> None:
     validate_trace(output)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with destination.open("a") as stream:
-        stream.write(json.dumps(output, ensure_ascii=False, sort_keys=True) + "\n")
+    serialized = json.dumps(output, ensure_ascii=False, sort_keys=True) + "\n"
+    existing_mode = destination.stat().st_mode & 0o777 if destination.exists() else 0o600
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(serialized)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.chmod(existing_mode)
+        os.replace(temporary, destination)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 class TraceRecorder:

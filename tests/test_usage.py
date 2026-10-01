@@ -144,6 +144,7 @@ def test_schema_and_start_finalize_are_idempotent(tmp_path: Path) -> None:
         "role_request_usage",
         "lifecycle_samples",
         "model_invocation_usage",
+        "request_stage_latency",
     }
     assert request_columns == {
         "request_id",
@@ -586,6 +587,7 @@ def test_model_invocation_rates_are_written_to_runtime_csv(tmp_path: Path) -> No
         status="failed",
         latency_ms=5.0,
     )
+    store.close()
 
     rows = list(csv.DictReader(report.open()))
     executor = next(
@@ -613,6 +615,30 @@ def test_model_invocation_rates_are_written_to_runtime_csv(tmp_path: Path) -> No
     assert retired["failure_count"] == "1"
     assert frontier["invocation_rate_percent"] == "0.0"
     assert frontier["cached_tokens"] == ""
+
+
+def test_stage_latency_batches_and_rolls_back_without_request_loss(tmp_path: Path) -> None:
+    module = usage_module()
+    path = tmp_path / "usage.db"
+    store = module.UsageStore(path)
+    store.start(start_record(module, "request-1", 100.0))
+    store.record_stages(
+        "request-1",
+        {"admission": 2.0, "verified_completion": 10.0},
+        {"executor_total": "completed"},
+    )
+
+    assert store.request_stages("request-1") == {
+        "timings_ms": {"admission": 2.0, "verified_completion": 10.0},
+        "stage_status": {"executor_total": "completed"},
+        "recorded_at": store.request_stages("request-1")["recorded_at"],  # type: ignore[index]
+    }
+    store.rollback_stage_latency()
+    assert store.get("request-1") is not None
+    store.close()
+
+    rebuilt = module.UsageStore(path)
+    assert rebuilt.request_stages("request-1") is None
 
 
 def test_api_token_dashboard_tracks_fallback_provenance(tmp_path: Path) -> None:

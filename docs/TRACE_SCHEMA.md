@@ -18,6 +18,19 @@ facts, test-confirmed facts, and unverified assumptions. Edges use `supports`,
 `contradicts`, `depends_on`, `supersedes`, `generated_from`, or `validated_by`.
 Frontier records transmitted evidence categories, latency, token counts, and
 cost only when the provider reports or configuration can calculate them.
+Async collaboration remains inside trace v3's existing event and artifact
+envelopes. `async_moa_started` records the launch snapshot hash, task-state
+version, repository HEAD, working-evidence hash, decision version, and requested
+roles. `async_delegate_resolved` records handle, role, launch snapshot, and
+`CURRENT|PARTIALLY_STALE|STALE`. `executor_useful_work_while_delegates_pending`
+proves non-blocking Executor progress. Material corrections add a normal
+Executor decision plus `executor_direction_invalidated` and
+`executor_reloop_notification`; `executor_task_graph_rebuilt` identifies the
+invalidated Graph descendants and affected work before re-entry.
+`executor_async_fan_in_started|completed` mark the synchronized finalization
+barrier. Claims retain the explicit classes
+`FACT`, `OBSERVATION`, `EXECUTOR_HYPOTHESIS`, `AGENT_RECOMMENDATION`, and
+`DECISION` rather than promoting recommendations to facts.
 The original fields are mandatory in v3. Older valid v3 archives remain readable
 without `engineering_loop`; new exports always include it. Pre-Dynamic-MoA v2
 archives may also omit the later specialist routing fields; new exports include
@@ -30,7 +43,10 @@ Strict provenance values are `main|dev|candidate` and
 `production|benchmark|validation|diagnostic|candidate_evaluation`. Production is
 valid only with `main`; candidate evaluation is valid only with `candidate`.
 Archives use `data/traces/<runtime>/<origin>/<date>/<session>.jsonl` and remain
-discoverable through the SQLite trace index.
+discoverable through the SQLite trace index. Each session file is an atomically
+replaced, single-record cumulative snapshot; durable event history remains in
+the SQLite state store. Readers continue to accept older multi-record JSONL
+files and select the latest record for a session.
 
 V1 remains readable as `legacy`, but is never silently counted as complete v2/v3
 or exported for training. Run `scripts/audit-trace-completeness.sh data/traces` to

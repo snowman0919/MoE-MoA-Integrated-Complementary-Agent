@@ -10,8 +10,14 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import unquote, urlsplit
 
+from .actions.compat import (
+    local_file_compat_applies,
+    normalize_edit_call,
+    normalize_legacy_call,
+    normalize_local_file_compat,
+    parse_textual_tool_calls,
+)
 from .controller import fingerprint, is_workspace_objective
 from .usage import SQLITE_MAX_INTEGER
 
@@ -66,64 +72,6 @@ class ProgressOnlyResponse(Exception):
     def __init__(self, reason: str = "progress_only") -> None:
         super().__init__(reason)
         self.reason = reason
-
-
-def compatible_edit_call(
-    name: str, raw_arguments: str, custom_tool_names: set[str] | None
-) -> tuple[str, str]:
-    if "apply_patch" not in (custom_tool_names or set()):
-        return name, raw_arguments
-    try:
-        arguments = json.loads(raw_arguments)
-        if name == "write_stdin" and "chars" not in arguments:
-            path = arguments.get("path", arguments.get("file", arguments.get("file_path")))
-            content = arguments.get("content")
-            if (
-                not isinstance(path, str)
-                or not path
-                or "\n" in path
-                or not isinstance(content, str)
-            ):
-                raise TypeError
-            patch = "\n".join(
-                (
-                    "*** Begin Patch",
-                    f"*** Delete File: {path}",
-                    f"*** Add File: {path}",
-                    *(f"+{line}" for line in content.splitlines()),
-                    "*** End Patch",
-                )
-            )
-            return "apply_patch", json.dumps(
-                {"input": patch}, ensure_ascii=False, separators=(",", ":")
-            )
-        if name not in {"edit", "edit_file"}:
-            return name, raw_arguments
-        path = arguments.get("file", arguments.get("path", arguments.get("file_path")))
-        old_text = arguments.get("old_text", arguments.get("old_string", arguments.get("old")))
-        new_text = arguments.get("new_text", arguments.get("new_string", arguments.get("new")))
-        if (
-            not isinstance(path, str)
-            or not path
-            or "\n" in path
-            or not isinstance(old_text, str)
-            or not old_text
-            or not isinstance(new_text, str)
-        ):
-            raise TypeError
-    except (TypeError, ValueError):
-        return name, raw_arguments
-    patch = "\n".join(
-        (
-            "*** Begin Patch",
-            f"*** Update File: {path}",
-            "@@",
-            *(f"-{line}" for line in old_text.splitlines()),
-            *(f"+{line}" for line in new_text.splitlines()),
-            "*** End Patch",
-        )
-    )
-    return "apply_patch", json.dumps({"input": patch}, ensure_ascii=False, separators=(",", ":"))
 
 
 def is_progress_only(text: str) -> bool:
@@ -212,6 +160,31 @@ def has_internal_protocol_leak(text: str) -> bool:
             re.IGNORECASE,
         )
     )
+
+
+def recover_text_tool_calls(
+    text: str, available_tool_names: set[str] | None = None
+) -> list[dict[str, object]] | None:
+    parsed = parse_textual_tool_calls(text)
+    if not parsed:
+        return None
+    calls: list[dict[str, object]] = []
+    for tool_name, arguments in parsed:
+        adapted = normalize_legacy_call(tool_name, arguments, available_tool_names or set())
+        calls.append(
+            {
+                "index": len(calls),
+                "id": f"call_{uuid.uuid4().hex}",
+                "type": "function",
+                "function": {
+                    "name": adapted.tool_name,
+                    "arguments": json.dumps(
+                        adapted.arguments, ensure_ascii=False, separators=(",", ":")
+                    ),
+                },
+            }
+        )
+    return calls
 
 
 def is_read_only_evaluation(objective: str) -> bool:
@@ -593,13 +566,43 @@ def _is_done(event: bytes) -> bool:
     return any(line == b"data: [DONE]" for line in event.splitlines())
 
 
+def _split_text_tool_event(event: bytes) -> tuple[bytes | None, str | None]:
+    for line in event.decode(errors="replace").splitlines():
+        if not line.startswith("data: ") or line == "data: [DONE]":
+            continue
+        try:
+            payload = json.loads(line[6:])
+            choice = (payload.get("choices") or [{}])[0]
+            delta = choice.get("delta") or {}
+            content = delta.get("content")
+        except (AttributeError, IndexError, TypeError, ValueError):
+            continue
+        if not isinstance(content, str) or "<tool_call>" not in content:
+            continue
+        prefix, marker, protocol = content.partition("<tool_call>")
+        prefix_event = None
+        if prefix:
+            delta["content"] = prefix
+            choice["finish_reason"] = None
+            payload.pop("usage", None)
+            prefix_event = (
+                "data: " + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n\n"
+            ).encode()
+        return prefix_event, marker + protocol
+    return None, None
+
+
 async def forward_sse(
     upstream: AsyncIterator[bytes],
     observation: StreamObservation,
     *,
     max_event_bytes: int,
+    available_tool_names: set[str] | None = None,
 ) -> AsyncGenerator[bytes, None]:
     buffer = bytearray()
+    protocol_buffering = False
+    protocol_text: list[str] = []
+    protocol_observation = StreamObservation(max_capture_bytes=0)
     try:
         async for chunk in upstream:
             buffer.extend(chunk)
@@ -610,6 +613,56 @@ async def forward_sse(
                     raise ValueError(f"SSE event exceeds {max_event_bytes} bytes")
                 event = bytes(buffer[:event_size])
                 del buffer[:event_size]
+                if protocol_buffering:
+                    protocol_observation.observe(event)
+                    for line in event.decode(errors="replace").splitlines():
+                        if line.startswith("data: ") and line != "data: [DONE]":
+                            try:
+                                delta = (json.loads(line[6:]).get("choices") or [{}])[0].get(
+                                    "delta"
+                                ) or {}
+                            except ValueError:
+                                continue
+                            if isinstance(delta.get("content"), str):
+                                protocol_text.append(delta["content"])
+                    if _is_done(event):
+                        calls = recover_text_tool_calls(
+                            "".join(protocol_text), available_tool_names
+                        )
+                        if calls is None:
+                            raise ValueError("upstream response contains internal protocol markup")
+                        repaired = (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "choices": [
+                                        {
+                                            "delta": {"tool_calls": calls},
+                                            "finish_reason": "tool_calls",
+                                        }
+                                    ],
+                                    "usage": protocol_observation.usage or None,
+                                },
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                            + "\n\n"
+                        ).encode()
+                        observation.observe(repaired)
+                        yield repaired
+                        observation.done_seen = True
+                        yield event
+                        return
+                    continue
+                prefix_event, protocol_suffix = _split_text_tool_event(event)
+                if protocol_suffix is not None:
+                    if prefix_event is not None:
+                        observation.observe(prefix_event)
+                        yield prefix_event
+                    protocol_buffering = True
+                    protocol_text.append(protocol_suffix)
+                    protocol_observation.observe(event)
+                    continue
                 observation.observe(event)
                 if _is_done(event):
                     if not observation.done_seen:
@@ -696,7 +749,11 @@ async def completed_chat_sse(payload: dict[str, Any]) -> AsyncIterator[bytes]:
     event = {
         "choices": [
             {
-                "delta": {"content": message.get("content"), "tool_calls": tool_calls},
+                "delta": {
+                    "content": message.get("content"),
+                    "reasoning_content": message.get("reasoning_content"),
+                    "tool_calls": tool_calls,
+                },
                 "finish_reason": choice.get("finish_reason"),
             }
         ],
@@ -722,13 +779,19 @@ async def responses_sse(
     successful_tool_fingerprints: frozenset[str] = frozenset(),
     workspace_inventory_complete: bool = False,
     workspace_inventory_paths: tuple[str, ...] = (),
+    reasoning_effort: str | None = None,
+    reasoning_summary: str | None = None,
 ) -> AsyncGenerator[bytes, None]:
     """Translate Chat Completions SSE into Responses text and function-call events."""
     response_id = f"resp_{uuid.uuid4().hex}"
     message_id = f"msg_{uuid.uuid4().hex}"
+    reasoning_id = f"rs_{uuid.uuid4().hex}"
+    include_reasoning_summary = reasoning_summary == "auto"
+    message_output_index = int(include_reasoning_summary)
     created_at = int(time.time())
     sequence_number = 0
     text_parts: list[str] = []
+    reasoning_parts: list[str] = []
     buffered_text_chars = 0
     tool_calls: dict[int, dict[str, object]] = {}
     usage: dict[str, object] | None = None
@@ -750,7 +813,7 @@ async def responses_sse(
             "output": output,
             "parallel_tool_calls": True,
             "previous_response_id": None,
-            "reasoning": {"effort": None, "summary": None},
+            "reasoning": {"effort": reasoning_effort, "summary": reasoning_summary},
             "store": False,
             "temperature": 1.0,
             "text": {"format": {"type": "text"}},
@@ -779,11 +842,26 @@ async def responses_sse(
     }
     yield event("response.created", response=response_payload("in_progress", []))
     yield event("response.in_progress", response=response_payload("in_progress", []))
-    yield event("response.output_item.added", output_index=0, item=pending_message)
+    if include_reasoning_summary:
+        yield event(
+            "response.output_item.added",
+            output_index=0,
+            item={"id": reasoning_id, "type": "reasoning", "summary": []},
+        )
+        yield event(
+            "response.reasoning_summary_part.added",
+            item_id=reasoning_id,
+            output_index=0,
+            summary_index=0,
+            part={"type": "summary_text", "text": ""},
+        )
+    yield event(
+        "response.output_item.added", output_index=message_output_index, item=pending_message
+    )
     yield event(
         "response.content_part.added",
         item_id=message_id,
-        output_index=0,
+        output_index=message_output_index,
         content_index=0,
         part={"type": "output_text", "text": "", "annotations": [], "logprobs": []},
     )
@@ -815,6 +893,20 @@ async def responses_sse(
                     terminal_seen = True
                     finish_reasons.append(str(choice["finish_reason"]))
                 delta = choice.get("delta") or {}
+                reasoning_content = delta.get("reasoning_content")
+                if (
+                    include_reasoning_summary
+                    and isinstance(reasoning_content, str)
+                    and reasoning_content
+                ):
+                    reasoning_parts.append(reasoning_content)
+                    yield event(
+                        "response.reasoning_summary_text.delta",
+                        item_id=reasoning_id,
+                        output_index=0,
+                        summary_index=0,
+                        delta=reasoning_content,
+                    )
                 content = delta.get("content")
                 if isinstance(content, str) and content:
                     text_parts.append(content)
@@ -843,13 +935,8 @@ async def responses_sse(
                         item["call_id"] = tool_delta["id"]
                     if function.get("name"):
                         name = str(function["name"])
-                        compat_local_file = (
-                            name in {"read_file", "read_mcp_resource"}
-                            and "exec_command" in (function_tool_names or set())
-                            and (
-                                name == "read_mcp_resource"
-                                or "read_file" not in (function_tool_names or set())
-                            )
+                        compat_local_file = local_file_compat_applies(
+                            name, function_tool_names or set()
                         )
                         item["name"] = name
                         item["_original_name"] = name
@@ -916,11 +1003,36 @@ async def responses_sse(
             ):
                 text = ""
             text_parts = [text]
+        completed_output: list[dict[str, object]] = []
+        if include_reasoning_summary:
+            reasoning_text = "".join(reasoning_parts)
+            reasoning_part = {"type": "summary_text", "text": reasoning_text}
+            reasoning_item: dict[str, object] = {
+                "id": reasoning_id,
+                "type": "reasoning",
+                "summary": [reasoning_part],
+            }
+            yield event(
+                "response.reasoning_summary_text.done",
+                item_id=reasoning_id,
+                output_index=0,
+                summary_index=0,
+                text=reasoning_text,
+            )
+            yield event(
+                "response.reasoning_summary_part.done",
+                item_id=reasoning_id,
+                output_index=0,
+                summary_index=0,
+                part=reasoning_part,
+            )
+            yield event("response.output_item.done", output_index=0, item=reasoning_item)
+            completed_output.append(reasoning_item)
         for content in text_parts:
             yield event(
                 "response.output_text.delta",
                 item_id=message_id,
-                output_index=0,
+                output_index=message_output_index,
                 content_index=0,
                 delta=content,
                 logprobs=[],
@@ -941,7 +1053,7 @@ async def responses_sse(
         yield event(
             "response.output_text.done",
             item_id=message_id,
-            output_index=0,
+            output_index=message_output_index,
             content_index=0,
             text=text,
             logprobs=[],
@@ -949,15 +1061,20 @@ async def responses_sse(
         yield event(
             "response.content_part.done",
             item_id=message_id,
-            output_index=0,
+            output_index=message_output_index,
             content_index=0,
             part=part,
         )
-        yield event("response.output_item.done", output_index=0, item=completed_message)
-        completed_output = [completed_message]
+        yield event(
+            "response.output_item.done",
+            output_index=message_output_index,
+            item=completed_message,
+        )
+        completed_output.append(completed_message)
         for index, item in sorted(tool_calls.items()):
+            tool_output_index = index + message_output_index + 1
             original_name = str(item["name"])
-            item["name"], item["_arguments"] = compatible_edit_call(
+            item["name"], item["_arguments"] = normalize_edit_call(
                 original_name,
                 str(item["_arguments"]),
                 custom_tool_names,
@@ -979,30 +1096,22 @@ async def responses_sse(
                 )
             if item["_compat_local_file"]:
                 try:
-                    arguments = json.loads(str(item["_arguments"]))
-                    if item["_original_name"] == "read_mcp_resource":
-                        uri = arguments["uri"]
-                        parsed = urlsplit(uri)
-                        path = (
-                            unquote(parsed.path)
-                            if (
-                                parsed.scheme == "file"
-                                and parsed.netloc in {"", "localhost"}
-                                or not parsed.scheme
-                                and parsed.path.startswith("/")
-                            )
-                            else ""
-                        )
-                    else:
-                        path = arguments["path"]
-                    if not isinstance(path, str) or not path:
-                        raise TypeError
-                except (KeyError, TypeError, ValueError):
-                    path = ""
-                if path:
-                    item["name"] = "exec_command"
+                    local_arguments = json.loads(str(item["_arguments"]))
+                except ValueError:
+                    local_arguments = None
+                adapted = (
+                    normalize_local_file_compat(
+                        str(item["_original_name"]),
+                        local_arguments,
+                        set(function_tool_names or set()),
+                    )
+                    if isinstance(local_arguments, dict)
+                    else None
+                )
+                if adapted is not None:
+                    item["name"] = adapted.tool_name
                     item["_arguments"] = json.dumps(
-                        {"cmd": f"cat -- {shlex.quote(path)}"},
+                        adapted.arguments,
                         ensure_ascii=False,
                         separators=(",", ":"),
                     )
@@ -1096,7 +1205,7 @@ async def responses_sse(
                     item["_arguments_emitted"] = len(str(item["_arguments"]))
                 yield event(
                     "response.output_item.added",
-                    output_index=index + 1,
+                    output_index=tool_output_index,
                     item={key: value for key, value in item.items() if not key.startswith("_")},
                 )
             if item["_kind"] == "custom":
@@ -1118,16 +1227,18 @@ async def responses_sse(
                     yield event(
                         "response.custom_tool_call_input.delta",
                         item_id=custom_item["id"],
-                        output_index=index + 1,
+                        output_index=tool_output_index,
                         delta=custom_input,
                     )
                 yield event(
                     "response.custom_tool_call_input.done",
                     item_id=custom_item["id"],
-                    output_index=index + 1,
+                    output_index=tool_output_index,
                     input=custom_input,
                 )
-                yield event("response.output_item.done", output_index=index + 1, item=custom_item)
+                yield event(
+                    "response.output_item.done", output_index=tool_output_index, item=custom_item
+                )
                 completed_output.append(custom_item)
                 continue
             item.pop("_arguments", None)
@@ -1137,17 +1248,17 @@ async def responses_sse(
                     "response.function_call_arguments.delta",
                     response_id=response_id,
                     item_id=item["id"],
-                    output_index=index + 1,
+                    output_index=tool_output_index,
                     delta=item["arguments"],
                 )
             yield event(
                 "response.function_call_arguments.done",
                 response_id=response_id,
                 item_id=item["id"],
-                output_index=index + 1,
+                output_index=tool_output_index,
                 arguments=item["arguments"],
             )
-            yield event("response.output_item.done", output_index=index + 1, item=item)
+            yield event("response.output_item.done", output_index=tool_output_index, item=item)
             completed_output.append(item)
         yield event(
             "response.completed",

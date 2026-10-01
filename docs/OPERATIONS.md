@@ -4,17 +4,60 @@
 
 Current operations follow `docs/STATE.md`. The fixed authenticated Gateway is a
 `PILOT_ACTIVE` release on `0.0.0.0:9000`; the overall project is
-`IN_PROGRESS`. The operator intentionally stopped the local Executor, so the
-active low/medium-risk Executor path is the reviewed
-`opencode_go/deepseek-v4-flash` fallback. Lifecycle is fixed and maps only the
-Executor service; ExecutionGraph, specialist routing, and Remote Judge remain
-disabled. Dashboard ON/OFF controls the loopback Executor on port `9001`.
+`IN_PROGRESS`. The physically promoted Executor is the externally managed
+Qwen3.8 Flash-Next server on loopback `127.0.0.1:30000`. The superseded
+Executor port `9001` is closed. ExecutionGraph authority, specialist routing,
+and Remote Judge remain disabled.
 
-The public catalog reports context `131072`. If the local candidate is later
-approved for reactivation, its checked-in target is the qualified fixed-revision
-131K/seq1/3.4-GB-KV B12x profile. Phase 3 65K/1.7-GB-KV MARLIN remains the
-preserved rollback baseline. Neither inactive local profile is the current
-production provider.
+The ignored runtime overlay selects `local/qwen3.8-flash-next`, has lifecycle
+mode disabled and an empty unit map, and keeps the prior `local/qwen3.8-27b`
+definition as rollback data. Do not start `dgx-moa-executor.service` while the
+Flash-Next container owns GPU memory. The public aliases are `dgx-moa`
+(Reasoner + Executor), `dgx-moa-fast` (Executor-only with normal fallback), and
+`dgx-moa-unhold` (local Executor-only, no remote fallback).
+
+The public catalog reports context `262144`. The checked-in Qwen deployment is a
+fail-closed candidate (`runtime_validated: false`, memory fraction `0.5`, DSpark
+off); it is not rewritten to claim authority for the ignored deployment. The
+active external server uses memory fraction `0.89`, FP8 KV, HashK R6, NEXTN 3/4,
+a 65K draft map, two request slots, ten Mamba slots, and eager decode. Phase 3
+65K/1.7-GB-KV MARLIN and the previous DSpark overlay remain preserved rollback
+evidence.
+
+Operational checks:
+
+```bash
+curl -fsS http://127.0.0.1:30000/health
+ss -ltnp | rg ':(30000|9000|9001)\b'
+systemctl --user status dgx-moa-gateway.service
+```
+
+Authenticate Gateway checks from the protected environment; never paste token
+values into commands, logs, or documentation. The expected binding is `30000`
+loopback-only and `9000` wildcard with bearer authentication. `/readyz` also
+requires the externally managed Qwythos Reasoner to be resident.
+
+Rollback material is preserved at
+`/home/kotori9/qwen38-data/backups/omp-optimization-20260915T0259KST`.
+Because the backed-up environment re-enables the old systemd Executor, first
+stop the Gateway and the Flash-Next container; never load both large Executors
+at once. Then restore `dgx-moa/.env.local` to the repository `.env.local`,
+`dgx-moa/operational/runtime.yaml` to the configured ignored runtime path, and
+`opencode.json` to `~/.config/opencode/opencode.json` before restarting the
+Gateway. File modes must remain `0600`. The Qwen image, model trees, HashK
+view, draft maps, and all benchmark results are independent and were not
+deleted or overwritten by promotion.
+
+Current Qwen P0 release certification is not complete. The Gateway base and
+quality-harness base are now digest-pinned, and the Gateway image builds, but
+Compose still has no digest-addressed built Gateway, current Executor, required
+Reasoner, or harness. Do not reuse earlier Mistral/Flash client matrices as Qwen evidence.
+Certification requires an isolated digest-pinned stack and raw API, Codex,
+OpenCode, and Hermes repeated tool-loop runs with external hidden validation.
+The digest-pinned Executor container preflight may run concurrently because it
+only imports the mounted runtime and probes CUDA; it does not load weights. A
+full second Executor is not safe while the resident process leaves less memory
+than the measured 52.4 GB duplicate-runtime peak.
 
 Before starting the checked-in Executor for a Pilot, verify the unit resolves
 `MemoryHigh=12G`, `MemoryMax=16G`, `MemorySwapMax=4G`, `OOMPolicy=stop`, and
@@ -24,9 +67,10 @@ that a global user-session OOM can kill the gateway and user manager. The
 physical containment record is
 `data/diagnostics/pilot/pilot-v1-transition-20260812/containment-result.json`.
 
-The primary model alias is `dgx-moa`; it uses the external Qwythos Reasoner and
-local Executor. `dgx-moa-fast` is the explicit Executor-only compatibility
-alias. Do not silently reroute a failed default Reasoner request to fast mode.
+The primary model alias is `dgx-moa`; it uses the externally lifecycle-managed
+Qwythos Reasoner on loopback and the local Executor. `dgx-moa-fast` is the
+explicit Executor-only compatibility alias. Do not silently reroute a failed
+default Reasoner request to fast mode.
 
 `dgx-moa-fast` must remain Executor-only even when a continuation contains
 implementation, changed-file, validation, or tool-result evidence. Audit
@@ -34,6 +78,11 @@ implementation, changed-file, validation, or tool-result evidence. Audit
 request event window; any Reviewer, Frontier, or remote-Executor selection is a
 contract regression. Use exact service stop/start for isolated gateway rollback;
 do not alter candidate A or the production gateway for this compatibility path.
+
+`dgx-moa-unhold` uses the same single-Executor role invariant but never selects
+OpenCode Go overflow, Frontier correction, or local-HTTP-400 fallback. It queues
+for the local Executor when possible and fails closed when the local Executor is
+unavailable or rejects the request.
 
 The deployed Frontier uses an existing Codex OAuth profile and read-only
 `codex exec`; no OpenAI API key is configured. The current development config
@@ -236,7 +285,19 @@ Local files and `file://` attachment paths are native filesystem inputs. Use
 Codex file or shell tools for them. Call `read_mcp_resource` only with the exact
 server identifier and resource URI returned by MCP discovery; a connector's
 display name such as `local_filesystem` is not evidence that such an MCP server
-exists.
+exists. The Action Runtime additionally enforces this before execution: guessed
+servers/URIs never become executable capabilities.
+
+Output completion is Runtime-owned, not Executor-claimed. Before any final
+user-visible answer, the Output Validation Gate builds a `CompletionManifest`
+from tool results, verified facts, changed paths, evidence nodes, and
+completion evidence, then decides `PASS`, `REWRITE_ONLY`, `REEXECUTE`,
+`RESOLVE_RESOURCE`, `ESCALATE_REVIEW`, or `FAIL_CLOSED` through the same
+Chat/Responses, stream/non-stream gate. Unsupported completion claims fail
+closed; only `PASS` and claim-free `REWRITE_ONLY` reach synthesis unchanged.
+Decisions and Laya shadow agreement are observable as
+`output_validation_*` metrics and `output_validation_decided` /
+`output_validation_blocked` / `output_validation_passed` events.
 
 Lifecycle states and safety rules are canonical in
 `docs/MODEL_LIFECYCLE.md`.
@@ -660,10 +721,11 @@ unless `DGX_MOA_ADMIN_API_ENABLED=true`.
 
 ## API clients
 
-Use `/v1/models` to discover `dgx-moa` and `dgx-moa-fast`. Direct external
+Use `/v1/models` to discover `dgx-moa`, `dgx-moa-fast`, and `dgx-moa-unhold`. Direct external
 agents should select `dgx-moa` and own the native tool loop. Select
 `dgx-moa-fast` only for an intentional
-Executor-only request. Standard OpenAI request fields are sufficient; project
+Executor-only request with normal fallback, or `dgx-moa-unhold` when the request
+must remain on the local Executor and fail closed. Standard OpenAI request fields are sufficient; project
 metadata and provenance headers are optional.
 
 The default executor output budget is 4096 tokens and the server cap is 16384.
@@ -991,11 +1053,13 @@ signal, high-risk implementation evidence, or bounded implementation evidence
 paired with a change objective. Reasoner recommendations cannot add roles.
 Audit `executor_orchestration_decided.payload.authority`; the current value must
 be `runtime_policy`. Lifecycle admission for policy-selected roles occurs before
-the Reasoner call, so a typed cold/unmanaged response must have no model usage.
-After admission, optional Reasoner, Planner, and Frontier A tasks start before
-the join; none waits for another role's output. Their inputs therefore contain
-only the pre-fan-out active state. A completed sibling artifact remains durable
-when another branch fails, while the failed join still prevents synthesis.
+dispatch, so a typed cold/unmanaged response must have no model usage. For every
+non-fast request, the Runtime launches the mature role fan-out as a task and
+immediately sends an independent first-party projection to the Executor. The
+Executor draft is recorded as useful work, never as shared fact. Final synthesis
+waits for every relevant role, classifies result staleness, and may re-enter the
+Executor after a material correction. Streaming opens only after this barrier,
+so no unreconciled draft bytes need revision.
 
 ## Weekly and training administration
 
@@ -1086,18 +1150,18 @@ The current local candidate command uses the pinned manifest rather than model
 name conditionals: SGLang on loopback `9001`, context 262,144, one request,
 FlashInfer attention, FP8 KV metadata, Qwen reasoning/tool parsers, and the
 NVFP4 loader. `SGLANG_PYTHON` may select an isolated qualified environment.
-The checked-in candidate now references the physically validated bundle
+The checked-in candidate references the physically validated bundle
 `snowman0919/qwen38-executor-27b-dspark-nvfp4-v1@034de5c1743e53fcae8b0be9d3e68526522723ed`,
-but remains deliberately blocked by `runtime_validated: false`: do not
-remove that gate without separate production deployment approval and physical
-Gateway lifecycle/routing plus broader output-quality evidence.
+and remains deliberately blocked by `runtime_validated: false`. The later
+human-approved production promotion used a separate ignored overlay; do not copy
+that approval into the checked-in default or remove the fail-closed gate.
 
 DSpark remains `speculative.enabled: false` in the checked-in safe default. The
-all-in-one runtime overlay enables it only after the plain and batch-one graph
-gates pass; the measured isolated overlay passed 256K, tools, controlled
+all-in-one production overlay enabled it only after the plain and batch-one graph
+gates passed; the measured isolated overlay passed 256K, tools, controlled
 streaming, two starts, memory reclamation, and a narrow p50/p95 comparison.
-Broader output equivalence and production failure-rate evidence remain required
-before promotion. A provider-wide OpenCode failure must stop remote routing;
+Current-Executor client/harness certification and broader quality comparison
+remain open after promotion. A provider-wide OpenCode failure must stop remote routing;
 only a MiMo-specific HTTP/model compatibility or malformed-output failure may
 try the configured DeepSeek rollback.
 
@@ -1108,6 +1172,49 @@ existing local pins and leases drain before the full service stop. ON reports
 completion succeeds. Use `GET /v1/admin/local-models` to compare desired state,
 runtime state, and effective route. These endpoints do not authorize new units,
 deployment, or production topology changes.
+
+### Request-path telemetry migration
+
+The continuation indexes and request-stage latency table are rebuildable; the
+canonical `sessions` and `request_usage` rows are not. Apply or roll back only
+while the target Gateway is stopped or against an isolated database:
+
+```bash
+PYTHONPATH=gateway/src .venv/bin/python scripts/manage-request-path-db.py apply data/state/gateway.db
+PYTHONPATH=gateway/src .venv/bin/python scripts/manage-request-path-db.py rollback data/state/gateway.db
+```
+
+Rollback drops only `pending_tool_calls`, `pending_objectives`, and
+`request_stage_latency`. Re-running `apply` recreates and backfills continuation
+indexes from canonical SessionState. Production execution still requires
+separate deployment approval.
+
+Capture a content-free operational baseline from a live database in read-only
+mode. This reports ordinary request completion only, never verified completion:
+
+```bash
+uv run python scripts/summarize-request-path-baseline.py \
+  /path/to/gateway.db /path/to/output.json \
+  --since 2026-08-19T04:16:00+00:00
+```
+
+Add `--executor-python` and `--executor-python-root` to the P0 audit to run the
+read-only digest-pinned CUDA/SGLang container preflight. It does not certify
+weight loading, client tool loops, fault recovery, or soak.
+Provide the five `--executor-*` identity arguments together to hash the live
+argv, state/provenance files, and complete target/draft trees. `--reasoner-url`
+and `--reasoner-model` capture the exact Ollama source digest; STATIC remains
+failed until the inspected endpoint is loopback and the required four Compose
+services use digest-pinned images.
+
+Optional Planner, Reviewer, and Frontier joins share the configured
+`optional_fan_in_timeout_seconds` deadline. The per-effort policy additionally
+bounds activation thresholds, total/per-role calls, concurrent delegates,
+depth, and semantic cooldown; `fast` must keep every value at zero. A completed
+optional result is retained; an overdue optional task is cancelled and recorded
+as `optional_role_deadline_exceeded`. High-risk Planner, fail-closed Reviewer,
+and explicitly required Frontier calls keep their normal role timeout and cannot
+be skipped by this deadline.
 
 Treat `apply_patch verification failed:` without an explicit numeric exit code
 as failure evidence. Do not treat `Do not modify any other file` as global

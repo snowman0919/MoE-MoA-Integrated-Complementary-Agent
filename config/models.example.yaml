@@ -5,6 +5,8 @@ gateway:
   bind_port: 9000
   lifecycle_mode: disabled
   lifecycle_unit_map: {}
+  async_moa:
+    default_effort: medium
   loop_engineering:
     enabled: false
     defaults: {iterations: 32, tool_calls: 500, reasoner_reentries: 32, planner_calls: 8, reviewer_calls: 32, frontier_calls: 16, judge_calls: 4, tokens: 5000000, external_cost_usd: 10, wall_clock_seconds: 43200}
@@ -60,11 +62,36 @@ gateway:
     policies: []
   execution_graph:
     mode: disabled
+  action_runtime:
+    enabled: true
+    workspace_roots: []
+    laya_enabled: false
+    laya_endpoint: ""
+    laya_timeout_seconds: 2.0
+    laya_shadow: true
+    output_validation_enabled: true
+    output_validation_max_claims: 8
+  # Canonical role-to-model switches. Local names resolve through local_models;
+  # remote model names are passed to their provider unchanged.
+  model_routing:
+    # executor: local/<key from local_models>
+    executor_fallback:
+      provider: opencode
+      model: muse-spark-1.3-contributor
+      api: responses
+    executor_rollback: opencode/deepseek-v4-flash
+    planner: opencode/deepseek-v4-pro
+    reviewer: opencode/glm-5.2
+    reasoner: ollama/Qwythos-v2-9B:Q4
+    judge: opencode/kimi-k3
+    frontier_a: codex/gpt-5.6-sol
+    frontier_b: null
   executor_scheduling:
     enabled: false
-    same_key_max_local_queue: 3
-    max_total_local_queue: 256
-    queue_timeout_seconds: 14400
+    max_local_concurrency: 1
+    same_key_max_local_queue: 1
+    max_total_local_queue: 1
+    queue_timeout_seconds: 45
     flash_provider: disabled
     flash_model: deepseek-v4-flash
     flash_endpoint: https://opencode.ai/zen/go

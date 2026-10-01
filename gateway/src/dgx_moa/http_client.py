@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
+
+
+def opencode_headers(api_key: str, session_id: str | None = None) -> dict[str, str]:
+    """Return the headers OpenCode Go requires for coding-agent traffic."""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "User-Agent": "dgx-moa-gateway/1.0",
+    }
+    if session_id:
+        headers["x-opencode-session"] = hmac.new(
+            api_key.encode(), session_id.encode(), hashlib.sha256
+        ).hexdigest()
+    return headers
 
 
 def make_http_client(

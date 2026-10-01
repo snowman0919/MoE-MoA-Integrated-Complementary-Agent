@@ -10227,3 +10227,607 @@ durable invocation records used provider `local` and model
 `OPENCODE_LOCAL_OK`. This physically verifies restored local execution for the
 real client path while retaining MiMo only for genuine post-local HTTP 400
 fallbacks.
+## Executor production recovery — 2026-08-27
+
+The failed `dgx-moa-executor.service` was traced to the pinned DSpark draft
+symlink resolving to an absent Hugging Face snapshot, which made SGLang treat
+the local path as an invalid repository ID. The exact pinned revision
+`RadixArk/Qwen3.8-27B-DSpark@85ef153be924f17ce4bf62726954eeaa4a73e854`
+was restored in the existing cache. Local-only snapshot resolution then passed
+with six files totaling 2,718,609,744 bytes. No unit topology, bind address,
+authentication setting, model target, or runtime profile was changed.
+
+The existing service started at 17:16:05 KST and became active at 17:33:04 KST
+with zero restarts. SGLang reported 19.11 GB of NVFP4 target weights, 2.99 GB
+of DSpark draft weights, 270,000 FP8 KV tokens, context length 262,144, and
+73.30 GB available after graph capture. The first start compiled 17 FlashInfer
+sm120 FP4 GEMM objects; engine tokenizer startup took 1,007.77 seconds. These
+are cold-start observations, not decode-throughput measurements.
+
+The Executor exposed only `127.0.0.1:9001`; `/health` and `/v1/models` returned
+HTTP 200, and the model record reported `dgx-moa-executor` with
+`max_model_len=262144`. A direct non-thinking generation returned exactly
+`EXECUTOR_OK` in 0.688 seconds. The authenticated wildcard gateway remained on
+port 9000, unauthenticated `/v1/models` returned HTTP 401, and an authenticated
+`dgx-moa-fast` request returned HTTP 200 with exactly `FAST_OK` in 111.511
+seconds. Both Executor and gateway remained active after the smokes.
+
+## OpenCode model metadata projection — 2026-08-27
+
+OpenCode 1.17.18 does not derive custom-provider context limits from the
+OpenAI-compatible `/v1/models` payload; it requires each configured model to
+declare `limit.context` and `limit.output`. The checked-in and active OpenCode
+configuration now use only the public `dgx-moa` and `dgx-moa-fast` aliases with
+context 262,144 and output 16,384. `opencode models dgx-moa --verbose` resolved
+both models as active with text input, tool calls, no model reasoning, and the
+exact configured limits. The focused documentation/config contract test passed.
+
+## End-to-end image input — 2026-08-28
+
+The resident Qwen executor configuration declares `Qwen3_5ForConditionalGeneration`,
+an embedded `qwen3_5_vision` configuration, and distinct image/video token IDs.
+A 390×204 PNG sent directly to loopback port 9001 returned HTTP 200 and the
+correct value `0` in 2.585 seconds; usage reported 72 image tokens. The same
+image returned HTTP 200 and `0` through authenticated `dgx-moa-fast` in 3.376
+seconds and authenticated `dgx-moa` in 31.752 seconds.
+
+OpenCode 1.17.18 resolved both aliases with attachment support, text/image
+input, text output, no model reasoning, tool calls, context 262,144, and output
+16,384. An actual `opencode run -f` request through `dgx-moa-fast` read the PNG
+and returned exactly `0`. After the gateway-only production restart,
+unauthenticated `/v1/models` remained HTTP 401 and its authenticated response
+advertised `input_modalities: ["text", "image"]` for both aliases. Gateway and
+Executor remained active with zero automatic restarts; the Executor was not
+restarted. Port 9001 remained bound only to `127.0.0.1` and port 9000 remained
+the authenticated wildcard listener.
+
+This evidence validates image input to text output only. It does not validate
+audio, video, PDF, or image output.
+
+## OpenCode web search and Qwen reasoning controls — 2026-08-28
+
+The resident Executor accepted `enable_thinking=true` with a bounded reasoning
+budget and returned HTTP 200, exact public content `THINK_OK`, 144 characters of
+native `reasoning_content`, and a stop finish reason in 1.500 seconds. The
+gateway now maps `none`, `low`, `medium`, and `high` to disabled, 1,024, 4,096,
+and 8,192 Qwen reasoning tokens without changing the non-reasoning default for
+requests that omit the setting.
+
+After the gateway-only production restart, authenticated `/v1/models`
+advertised `low` as default, `low`/`medium`/`high` controls, reasoning summaries,
+and text-and-image search for both aliases. An authenticated `dgx-moa-fast`
+Chat Completions request with low reasoning returned exact
+`GATEWAY_THINK_OK`, 206 characters of native reasoning, and HTTP 200. A streamed
+Responses request returned a non-empty 115-character reasoning summary through
+the standard reasoning-summary delta/done events and exact public content
+`RESPONSES_THINK_OK`.
+
+OpenCode 1.17.18 resolved both aliases with reasoning enabled, default low
+effort, `none`/`low`/`medium`/`high` variants, and automatic summaries. A real
+`opencode run --variant low --thinking` emitted a reasoning event and exact
+`OPENCODE_REASONING_OK`. With the documented `OPENCODE_ENABLE_EXA=1` gate and
+`websearch: allow`, a separate run completed one Exa `websearch` call, injected
+the result into the next model turn, and returned the first result title. No
+search API key was required or stored.
+
+Ruff, strict mypy over 53 source files, and all 1,203 tests passed. Gateway and
+Executor remained active with zero automatic restarts; the Executor was not
+restarted.
+
+## Codex subagent admission timeout — 2026-08-28
+
+The affected remote client sent non-streaming `dgx-moa-fast` requests in
+parallel. State records show the successful first local request completed in
+63.677 seconds, while later requests waited 63.734 to 98.371 seconds before
+starting. Four representative queued requests were then cancelled by the
+client at 125.020 to 125.088 seconds with no first byte. Executor journals kept
+decoding and recorded a queued request at each cancellation; this rules out a
+model hang. Across 68 decode samples in the incident window, measured mean
+generation throughput was 13.58 token/s and mean speculative acceptance was
+0.099.
+
+The Executor remains physically bounded to one sequence. Gateway admission
+timeout was reduced from 14,400 to 45 seconds so a queued request returns the
+existing retryable HTTP 503 plus `Retry-After` before the client's 120-second
+budget is consumed. The production gateway loaded `queue_timeout_seconds=45`,
+restarted without restarting the Executor, and an authenticated streamed
+Responses smoke returned `SUBAGENT_OK` plus `response.completed`. Ruff, strict
+mypy over 53 source files, and all 1,203 tests passed. Both services remained
+active with zero automatic restarts; port 9001 remained loopback-only, port
+9000 remained the wildcard gateway, and unauthenticated model discovery
+returned HTTP 401.
+
+## Immediate busy overflow and 2026-08-26 usage attribution — 2026-08-28
+
+The 2026-08-26 OpenCode Go charge shown by the provider was attributable to one
+OpenCode session under API token ID `monad`. It ran for 5.38 hours and issued
+550 gateway requests, including 548 native-agent turns. The local Executor had
+failed startup because its DSpark draft path resolved to a missing snapshot, so
+all 550 scheduling decisions were `local_unavailable -> remote_overflow`.
+
+`mimo-v2.5` completed 496 invocations with 55,083,279 prompt tokens and 265,070
+completion tokens. Average prompt size was 111,055 tokens, p95 was 167,750,
+maximum was 198,723, and recorded cached tokens were zero. The session produced
+498 tool-call turns and 1,071 distinct tool-call IDs. Repeated full accumulated
+conversation and tool history, rather than output volume, therefore dominated
+the provider usage. The local database has no provider tariff, so it supports
+the token attribution but does not independently recompute the displayed
+`$7.84` charge.
+
+A separate set of `local_unavailable` decisions at 00:26–00:32 KST on
+2026-08-28 occurred after the systemd service had physically recovered. The
+fixed lifecycle database still held the earlier generation-37
+`service_failed` result, so the gateway trusted stale control-plane state until
+its 00:32:47 restart reconciled Executor state to `ready` at 00:32:49. Current
+health is HTTP 200 on port 9001, lifecycle state is `ready`, and the inspected
+09:17–09:33 requests all selected `local_idle -> dgx-moa-executor`.
+
+Executor admission now permits one global local wait behind the one-sequence
+Executor. Once that slot is occupied, further low/medium-risk requests go
+directly to OpenCode Go; high/critical requests remain local-only and fail
+closed when the slot is full. In the live three-request test, the owner and
+single waiter returned from `dgx-moa-executor` in 4.959 and 9.566 seconds,
+while the third request returned from `mimo-v2.5` in 11.968 seconds. The
+gateway restarted successfully without restarting the Executor.
+
+## OpenCode textual tool-call recovery — 2026-08-29
+
+Gateway state evidence for session `ses_fb4c0c764ffeVmWZ0hBeDhufV3` shows a
+streamed OpenCode request at 11:06:53 KST emitted two complete
+`<tool_call><function=read>` envelopes as assistant content and ended with
+`finish_reason=stop`. The Chat Completions stream forwarded every content
+delta before terminal validation, stored the markup as `final_output`, and
+incorrectly recorded the request as completed.
+
+The common SSE forwarder now buffers an assistant response that starts with
+that textual tool-call envelope, converts only a complete strict envelope to
+native streamed `tool_calls`, and fails closed without forwarding malformed
+markup. Native tool-call bytes remain unchanged. `ruff check`, `ruff format
+--check`, and all tests in `tests/test_streaming.py` and `tests/test_api.py`
+passed. No production service was restarted or changed.
+
+### Main integration and production deployment — 2026-08-29
+
+The OpenCode output recovery, one-slot busy queue, reasoning/image metadata,
+and atomic trace snapshot changes were merged through `dev` into local `main`
+at `f6333fce9a45`. Ruff, strict mypy over 53 source files, and all 1,209 tests
+passed on the merged tree. GitHub publication remained blocked by the locally
+stored invalid OAuth token; no credential was replaced or bypassed.
+
+Production fast-forwarded to the same commit. A stale in-memory drain count of
+two remained despite zero established connections and zero lifecycle leases,
+so the bounded drain was cancelled and only `dgx-moa-gateway.service` was
+restarted. Its PID changed from 555261 to 2362013. The Executor remained PID
+3407598 with zero restarts and loopback-only port 9001; the authenticated
+gateway remained on port 9000. Unauthenticated model discovery returned HTTP
+401, both public models advertised context 262,144 and reasoning summaries,
+and `dgx-moa-fast` returned HTTP 200 from `dgx-moa-executor` with exact content
+`DEPLOY_OK`.
+
+## Async evidence-grounded MoA source validation — 2026-09-16
+
+The Chat/Responses path now starts one Executor draft concurrently
+with the existing independent Reasoner/Planner/Reviewer/Frontier fan-out. The
+finalization barrier tags returned artifacts with launch snapshot provenance and
+staleness, then performs Executor-owned synthesis. A material Reviewer rejection
+records direction invalidation, rebuilds the affected Executor Evidence Graph
+descendants, and emits a Korean re-loop progress notification.
+`dgx-moa-fast` remains one Executor with zero auxiliary calls. The prior ordinary
+`dgx-moa` unit behavior was Reasoner then Executor (two calls); the new converged
+path is Executor draft, concurrent auxiliaries, then final Executor synthesis
+(three calls for the Reasoner-only case). This intentionally spends one extra
+Executor call to overlap useful work with collaboration.
+
+Ruff and targeted Ruff formatting passed on the changed source and tests, strict
+mypy passed all 54 source files, and the final pytest run passed all 1,222 tests
+in 64.45 seconds. The deterministic HTTP
+harness held a Reasoner future open, observed the Executor finish useful work,
+verified that the request remained pending at the finalization barrier, then
+released the Reasoner. Separate tests covered fast isolation, automatic semantic
+Reasoner activation, first-party artifact references, snapshot provenance,
+CURRENT/PARTIALLY_STALE/STALE handling, stale overwrite prevention, material
+direction invalidation, user notification, re-loop synthesis, cancellation, and
+duplicate/budget bounds.
+
+A source-tree gateway started successfully on loopback `127.0.0.1:19090`.
+`/healthz` returned HTTP 200, authenticated `/v1/models` returned both public
+aliases with `xhigh`, and unauthenticated discovery returned HTTP 401. The real
+fast completion and standard streaming smokes reached the gateway but returned
+HTTP 502 (`All connection attempts failed`) because the checked-in Executor
+endpoint on `127.0.0.1:9001` was unavailable; no model-path success is claimed.
+The already-running production gateway on port
+9000 was read-only healthy (HTTP 200 in 0.000890 seconds) and was not restarted.
+
+The existing synthetic MVP benchmark initially reproduced `KeyError: executor`:
+its loader ignored the current `local_models` plus `model_routing.executor`
+configuration. Reusing that selection contract fixed the harness. Its ten tasks
+then remained 10/10 successful with identical route, failure, Reviewer, Judge,
+and 1.2 tool-calls/success metrics; measured synthetic time/success changed from
+0.0420419 to 0.0722444 seconds and token metrics remain unavailable.
+Compose validation was likewise blocked by the intentionally absent `.env`.
+Whole-worktree Ruff formatting is not a valid gate in this checkout because
+pre-existing untracked experiment repositories contain malformed/unformatted
+fixtures; every changed Python file passes the targeted format check. A focused
+streaming harness held Reasoner pending while the preliminary Executor completed,
+proved the final stream did not start before the barrier, and then observed the
+reconciled stream after release. A rejected Reviewer also produced a user-visible
+Korean re-loop SSE delta before the corrected stream. No production deployment,
+commit, release, or frontier-performance claim was made.
+
+The required post-change `graphify . --update --code-only` completed with
+3,698 nodes, 9,668 edges, 225 communities, and all 19 curated hyperedges. The
+machine-local untracked experiment directories were excluded from extraction;
+documentation extraction remained unavailable without an LLM key, so this was
+an incremental code-only graph refresh over the retained canonical graph.
+
+## Qwen3.8 Flash-Next Executor promotion — 2026-09-15
+
+The operator-approved optimization run preserved the existing image, model
+trees, results, ignored runtime overlay, and OpenCode configuration before any
+changes. The final server reused image
+`sha256:c5f00d2cd3c2e1163eac3a11e9922240a0628bc626f49d89902fc151859982b8`
+and source revision
+`orcarouter/Qwen3.8-Flash-Next-Uncensored-NVFP4@c1209bda15a6bbc4c68b585e93d40c0d85f50306`.
+Its inspected command line contained language-model-only, context 262,144,
+HashK R4 model view, FP8 E4M3 KV, NEXTN steps 3 / draft tokens 4, 65K draft
+map, memory fraction 0.89, four running requests, and random seed 42.
+The final inspected KV allocation was 363,200 slots; the 65K draft map SHA-256
+was `67b1de6644565e6554cc02a5eb9a988a60b488fd595da98bc1d3ca69b01afce5`.
+
+Fixed-seed comparisons covered 245,760, 229,376, and 204,800 contexts. All
+passed quality 5/5, but none improved the complete workload; 229K and 204K
+regressed controlled short decode. An MTP 2/3 candidate improved OpenCode
+decode by 6.83% to 30.94 tok/s but regressed controlled short decode by 20.64%
+to 37.84 tok/s, so the trap restored the stable 262K MTP 3/4 server.
+
+Final physical evidence:
+
+- controlled short/8K/32K decode medians: 47.68 / 39.79 / 36.59 tok/s;
+- sgbench-compatible E2E median 44.12 tok/s, maximum 55.20 tok/s;
+- real OpenCode server-decode median 28.96 tok/s and exact-payload replay
+  29.19 tok/s;
+- quality 5/5;
+- exact 250,000 server input tokens with needles recovered at 5%, 50%, and 95%
+  in 111.47 seconds;
+- no configured swap, 9.7 GiB host memory available after validation, and
+  94–96% GPU SM use through most of the 250K prefill;
+- direct OpenCode chat, repository reads, file edit, and Python execution passed;
+- Gateway native function call plus matching tool-result continuation returned
+  `42` for `17+25`;
+- authenticated `/healthz` and `/readyz` passed, unauthenticated model discovery
+  returned 401, port `30000` was loopback-only, and old port `9001` was closed.
+
+The ignored runtime overlay now selects `local/qwen3.8-flash-next`, marks its
+lifecycle external, and leaves the old `qwen3.8-27b` entry intact for rollback.
+Only `dgx-moa-gateway.service` was restarted; the independently managed model
+container remained live. `dgx-moa-fast` returned exact `FAST_OK`, and the full
+Reasoner + Executor `dgx-moa` path returned exact `MOA_OK` after loading the
+configured external Reasoner.
+
+One pre-existing orchestration boundary remains: an actual OpenCode code-edit
+request through the Gateway successfully edited and repeatedly validated the
+fixture, but the Gateway did not accept OpenCode's `bash` evidence as completion
+and continued issuing redundant validation turns. The CLI was interrupted only
+after the requested file and all checks had passed. Direct OpenCode-to-Executor
+completed normally, and direct Gateway tool call/continuation completed
+normally. This is recorded as a Gateway completion-policy issue, not hidden as
+an Executor quality pass.
+
+The 70 tok/s single-request target and 40 tok/s real-OpenCode primary target
+remain unmet. The historical 85.61 tok/s result is four-stream aggregate
+throughput, never a single-request claim. Full artifacts are under
+`/home/kotori9/qwen38-data/results/omp-optimization-20260914T1655Z/`.
+
+## Harness-safe Flash-Next retune — 2026-09-15
+
+The final external Executor kept context and KV capacity at 262,144 tokens and
+used HashK R6, FP8 KV, NEXTN 3/4, the 65K draft map, one request slot, five
+Mamba slots, and eager decode. Controlled single-request decode was 37.16
+tok/s median and 42.39 maximum, versus 26.72 tok/s for the best preserved 27B
+Executor run. The requested 60 tok/s gate remained unmet.
+
+Quality sanity was 5/5 and a fresh 250,000-token three-needle retrieval passed
+in 108.70 seconds. Codex, OpenCode, Hermes, generic Gateway, and full primary
+Gateway paths all passed. With Qwythos-v2-9B:Q4 resident at 65,536 context, the
+systemd-backed memory watchdog stayed active with a 7.086 GiB low-water and no
+swap. Evidence is in
+`/home/kotori9/qwen38-data/results/harness-optimization-20260915/`.
+
+## Async MoA + Qwen3.8 production integration — 2026-09-16
+
+The async evidence-grounded MoA changes were merged with the preserved
+Qwen3.8 production integration and validated at
+`5aba1ab5f621ed2e880b0847075e77f8fe50091f`. Ruff lint and formatting passed,
+strict mypy passed all 54 source files, and the complete suite passed 1,229
+tests with one upstream Starlette deprecation warning. The deterministic MVP
+benchmark remained 10/10 successful with the unchanged 3/6/1
+fast/standard/escalation route distribution, 1.2 tool calls per success, and
+0.0388344 seconds per success; token metrics remain unavailable.
+
+The production checkout was fast-forwarded to the validated commit. The
+documented stale drain counter again remained at two while both established
+connection counts were zero, so the drain was cancelled and only
+`dgx-moa-gateway.service` was restarted. Its PID changed from 2474447 to
+3569553 with zero restarts; the external Executor listener on loopback port
+30000 was not restarted. Authenticated model discovery and `/healthz` returned
+HTTP 200. A real `dgx-moa-fast` request returned exact `FAST_DEPLOY_OK`, and a
+real low-effort `dgx-moa` request returned `MOA_DEPLOY_OK` in 2.334 seconds.
+
+`/readyz` remains HTTP 503 because the resident profile reports the configured
+external Reasoner at `100.90.167.128:11434` as stopped, while the Executor is
+ready. The successful low-effort request does not prove a physical Reasoner
+call because low effort may legitimately suppress auxiliary activation. The
+deployment is therefore live for the verified Executor paths, but full
+Reasoner readiness remains an explicit operational limitation rather than a
+claimed pass.
+
+The Reasoner host returned after its temporary reboot later on 2026-09-16.
+Network and `/v1/models` checks passed first, while `/readyz` correctly remained
+503 because Ollama `/api/ps` contained no resident model. A real medium-effort
+`dgx-moa` request then loaded `Qwythos-v2-9B:Q4` (7,680,305,397 reported VRAM
+bytes) and returned exact `REASONER_RECOVERY_OK` with HTTP 200 in 12.419 seconds.
+Afterward `/api/ps` listed Qwythos resident, `/readyz` returned HTTP 200 with
+both Reasoner and Executor ready, and the complete healthcheck passed. No
+Gateway restart or source/configuration change was required.
+
+## OMP textual tool-call recovery — 2026-09-16
+
+The active OMP/OpenCode session showed the Executor ending a streamed response
+with Korean commentary followed by a textual `<tool_call>` envelope in the same
+SSE delta. The Gateway forwarded that markup as assistant text and recorded
+`finish_reason=stop`, so the client received neither a native tool call nor a
+continuation barrier. The envelope also named `shell` with a `cmd` argument,
+while first-party session evidence showed that OMP exposed `bash` with a
+`command` argument.
+
+The common Chat SSE forwarder now splits and preserves commentary preceding the
+envelope, buffers the strict envelope, and emits a native tool call. Recovered
+`shell` calls are mapped only when necessary to an actually advertised `bash`
+or `exec_command` tool; the OMP mapping also changes `cmd` to `command`. A
+deterministic regression reproduces the observed event boundary and proves that
+no markup reaches the client, the finish reason is `tool_calls`, and the emitted
+call is `bash({"command":"ls"})`. Ruff, formatting, strict mypy over 54 source
+files, 361 streaming/API tests, and all 1,230 tests passed. Production runtime
+validation is recorded below rather than inferred from these tests.
+
+The first deployed smoke exposed a second, independent interruption path. For a
+non-fast streamed request, the asynchronous runtime performs a preliminary
+Executor completion while Reasoner work is pending. The active SGLang Executor
+occasionally returned HTTP 200 with an empty body for that optional preliminary
+completion. JSON decoding then raised before the authoritative final stream was
+opened, producing Gateway HTTP 502 even though the Executor service remained
+healthy. The runtime now records `executor_preliminary_work_failed` with bounded
+failure metadata, reconciles the completed auxiliary work with an empty draft
+hypothesis, and continues to the final Executor stream. It does not suppress a
+failure from the final authoritative stream.
+
+The focused overlap and preliminary-failure regressions passed, followed by
+Ruff, strict mypy over 54 source files, and all 1,231 tests. Commit
+`c0bba96f4a826bb73b2e2978409cf4fddb0b539c` was fast-forwarded to the production
+checkout and only `dgx-moa-gateway.service` was restarted. The restarted Gateway
+reported PID `3654383`, `NRestarts=0`, and `/readyz` HTTP 200 with both Executor
+and Reasoner ready.
+
+The deployed `scripts/validate-opencode-loop.sh` run completed as session
+`opencode-loop-1789538543`: native tool request/result continuation passed and a
+separate streamed response reached `[DONE]`. An actual local OpenCode 1.18.29
+staging client then completed the `read-1` fixture as Gateway session
+`ses_f572fdf62ffed7vu1XFPgmpL5U` in 32.282 seconds with OpenCode exit 0,
+validation exit 0, and finalization exit 0. This is physical client evidence for
+the deployed path; it is not a synthetic benchmark or a frontier-performance
+claim.
+
+## Local-only unhold model — 2026-09-16
+
+Public alias `dgx-moa-unhold` was added as a strict local Executor-only option.
+It reuses the established fast role path, so `roles_required` is exactly
+`["executor"]`, while disabling OpenCode Go overflow, Frontier selection and
+correction, Responses quality fallback, and local-HTTP-400 fallback. If the
+local Executor is unavailable, queued beyond the local policy, or rejects the
+request, the request fails closed instead of changing provider.
+
+Deterministic tests cover public discovery, the one-Executor role invariant,
+local-unavailable failure with a configured overflow provider, and suppression
+of local-HTTP-400 fallback. Ruff, formatting, strict mypy over 54 source files,
+and all 1,236 tests passed. One pre-existing Planner deadline test initially
+measured 0.209 seconds against its 0.2-second bound; it passed alone and the
+unchanged full suite then passed, so no threshold was weakened.
+
+Commit `5eb6e5eb3` was fast-forwarded to the production checkout and only the
+Gateway was restarted. PID `3826508` reported `NRestarts=0`; `/readyz` returned
+HTTP 200 with Executor and Reasoner ready. Authenticated `/v1/models` returned
+`dgx-moa`, `dgx-moa-fast`, and `dgx-moa-unhold`. Production session
+`unhold-production-smoke-20260916` returned exact `UNHOLD_OK` with HTTP 200;
+usage recorded `runtime_mode=fast`, `roles_required=["executor"]`, and the
+scheduler recorded `selected_executor=local_primary` with `reason=local_idle`.
+
+## Successful tool-repeat recovery — 2026-09-24
+
+The production state database through 2026-09-23 contained 13,510 requests and
+2,327 sessions. Across retained session tool histories, 445 successful tool
+executions in 57 sessions exactly repeated the immediately preceding argument
+fingerprint. Two long-running local-only sessions reached 979 and 823 Executor
+steps; their traces retained 67 and 113 failures respectively. The latter trace
+showed the same successful SSH probe emitted twice with the same tool-call ID
+and arguments. Existing protection covered repeated failed calls and recognized
+inspection commands, but not an arbitrary successful no-change call.
+
+The Responses quality filter now also retains the latest successful,
+non-file-changing tool fingerprint, so an immediate exact repeat enters the
+existing bounded quality-retry path. Polling tools (`write_stdin`, `wait`,
+`vibe_wait`, and `status_check`) remain repeatable. The focused controller,
+Responses streaming, and API regressions passed: `5 passed in 0.83s`; Ruff
+format and lint checks plus strict mypy over 54 source files also passed. The
+complete controller and streaming test
+files then passed `207 passed in 2.92s`; the full suite passed `1,237 passed`
+with one pre-existing Starlette/httpx deprecation warning. No production
+restart, deployment, model change, or benchmark claim was made.
+
+## Bounded Executor thinking with tools — 2026-09-24
+
+The Gateway now applies the configured Async MoA default reasoning effort to an
+Executor request when the client omits the field. Qwen Executor requests no
+longer disable thinking merely because native tools are present. An explicit
+`none` remains authoritative, and the provider caps the reasoning budget at
+half of the request output-token budget so the 2,048-token workspace profile
+retains at least half of its generation allowance for a tool call or public
+answer. The HashK model view and every model-server setting remain unchanged.
+
+Focused provider/API regressions passed `3` tests. Ruff lint and formatting,
+strict mypy over 54 source files, and the complete `1,237`-test suite passed.
+
+A bounded direct A/B then exercised the unchanged loopback HashK Executor with
+three deterministic required-tool decisions. Thinking off produced valid native
+tool calls for all three but scored `2/3`, including arithmetic answer `7489`
+instead of `7429`; latencies were `1.032`, `0.915`, and `1.427` seconds.
+Thinking on with a requested 1,024-token reasoning budget produced valid native
+tool calls and scored `3/3`; latencies were `3.124`, `11.557`, and `4.183`
+seconds, and reported reasoning-token counts were `94`, `415`, and `99`.
+Median latency therefore increased from `1.032` to `4.183` seconds in this tiny
+sample while correcting the arithmetic failure.
+
+A 256-token requested budget did not establish a better operating point: all
+three calls remained native, but the exact ordering assertion scored `2/3`,
+median latency was `5.960` seconds, and one response reported `319` reasoning
+tokens. The chat-template budget is therefore not treated as a physically hard
+token ceiling. This is directional evidence, not a representative quality or
+latency benchmark. No production service was restarted or deployed.
+
+## Local HashK Executor recovery and private log export — 2026-09-27
+
+The existing `qwen38-spark` container was found exited with code 137 and
+`OOMKilled=false`. Its retained log showed a SIGTERM, zero-request graceful
+drain, and process-tree termination on 2026-09-24. Docker subsequently recorded
+the container as manually stopped and cancelled its `unless-stopped` restart.
+A separate kernel OOM event killed the then-Gateway process on 2026-09-25; the
+retained evidence does not identify the model container as the OOM victim.
+
+Recovery started that exact container without changing its command, mounts,
+image, service topology, or HashK model view. SGLang logged HashK mode enabled,
+Qwen3 reasoning and Qwen3 Coder tool parsers, FP8 KV cache, context and token
+capacity 262,144, and at most two running requests. Startup completed in 515.26
+seconds. The Executor remained loopback-only on `127.0.0.1:30000`; the
+authenticated Gateway remained the sole wildcard listener on port 9000, and
+port 9001 stayed closed.
+
+A direct thinking-enabled request returned HTTP 200 with trimmed public content
+`EXECUTOR_RECOVERED`, 131 characters of native reasoning, and 31 reported
+reasoning tokens. An authenticated `dgx-moa-fast` request returned HTTP 200 with
+trimmed public content `GATEWAY_EXECUTOR_RECOVERED`, 102 characters of native
+reasoning, and 26 reported reasoning tokens. Container state remained running
+with `OOMKilled=false`, restart count zero, and `/health` HTTP 200. Gateway
+`/readyz` correctly reported the Executor ready while optional Planner,
+Reviewer, Judge, and Reasoner roles remained stopped.
+
+A private 149 MiB `tar.zst` export captured 2,951 retained operational entries:
+scoped system journals, complete container logs, production traces, diagnostic
+results, run/watchdog logs, and a transactionally consistent compressed Gateway
+SQLite snapshot. Model weights and artifacts, environment/authentication files,
+diagnostic profile and OpenCode-state work copies, admin Codex OAuth state,
+training staging, and datasets were excluded. `zstd -t`, required-entry checks,
+forbidden-path checks, and SHA-256 verification passed; the archive digest is
+`d7d6c1d73d67ed0d58242cbc1c9054d57616520a5609cd3072f02183f242ed81`.
+
+## Action Runtime v1 (branch evidence) — 2026-09-30
+
+Branch `auto/runtime/action-policy-v1` introduces the canonical
+`gateway/src/dgx_moa/actions/` package: request-scoped CapabilitySnapshot,
+explicit resource authority (discovered MCP, observed runtime IDs, workspace
+bounds), deterministic argument compiler plus preflight validator, state-aware
+FailureLedger, verified-only compatibility adapters, and a deterministic policy
+with an optional Laya shadow adapter (disabled by default).
+
+Measured unit evidence: `tests/test_actions.py` 20 passed; API convergence
+`tests/test_action_gates.py` 5 passed (Chat/Responses × stream/non-stream share
+the same gate; tool-result continuation completes without double execution).
+Full `tests/test_api.py` 280 passed; non-API suites 982 passed. Ruff and strict
+mypy pass over all touched modules. Textual `<tool_call>` recovery and
+`compatible_edit_call` now delegate to `actions/compat.py`; duplicated
+`<tool_call>` regexes were removed from `streaming.py`.
+
+Adversarial preflight checks against branch code: nonexistent tool ->
+`unknown_tool`; guessed MCP server/URI -> `unknown_resource`; wrong argument
+type -> `schema_mismatch`; malformed JSON -> `malformed_arguments`; repeated
+failed action in unchanged state -> `duplicate_failed_action`; same semantic
+action after state revision -> eligible. An isolated gateway on loopback
+`127.0.0.1:18099` (branch code, separate state DB) confirmed the service
+surface: unauthenticated requests return 401; requests without an executor
+backend return provider errors, never a bypassed tool call.
+
+Production was not restarted, deployed, or merged. Promotion requires review of
+this branch plus a real-executor harness matrix.
+
+## Action Runtime v1 follow-up (uncommitted) — 2026-10-01
+
+Follow-up deltas on `auto/runtime/action-policy-v1` close the remaining
+fail-closed gaps found during review: every Chat/Responses stream and
+non-stream gate now blocks `unknown_tool` (the legacy bypass that let an
+ungated call through was removed), schema/authority/permission rejections
+carry the semantic fingerprint plus state revision, observed tool outcomes
+record into the canonical ledger with the same revision the gate checks, the
+delta gate tolerates nameless/partial stream fragments and enforces the
+complete call at the terminal gate, and invalid Responses custom-tool input
+fails closed (`failed` + `schema_mismatch`) instead of emitting an
+unsanitized echo.
+
+Measured evidence (re-verified 2026-10-01 on final commit `b8dfa2192`):
+`tests/test_actions.py` 21 passed (denied tool/side-effect with fingerprint
+plus all required capability/schema/resource/ledger/compat cases); API
+convergence `tests/test_action_gates.py` 5 passed (Chat/Responses x
+stream/non-stream share one gate; tool-result continuation completes without
+double execution); full `tests/test_api.py` 280 passed; all non-API suites
+984 passed; `ruff check` plus `ruff format --check` clean (116 files);
+strict mypy clean over the 10 touched modules; `git diff --check` clean.
+`test_responses_post_preserves_custom_tool_loop` indexes `requests[1]` and
+expects the fail-closed payload; both match verified runtime behavior, not
+weakened expectations.
+
+Direct adversarial preflight matrix against branch code (no harness needed
+for the gate itself): nonexistent tool -> `unknown_tool`; guessed MCP
+server/URI -> `unknown_tool`/`unknown_resource`; invented session ID ->
+`unknown_resource`; wrong argument type -> `schema_mismatch`; malformed
+JSON -> `malformed_arguments`; out-of-workspace path ->
+`workspace_violation`; `shell` -> `bash` only when `bash` is advertised
+(with `tool_alias` + `argument_alias` + sanitized canonical call), otherwise
+`unknown_tool`; same semantic failure + same revision ->
+`duplicate_failed_action`; changed revision -> eligible; alternative action
+-> eligible; success -> resolved.
+
+Production was not restarted, deployed, or merged. No live-executor harness
+matrix (raw/Codex/OpenCode/Hermes against a running backend) has been run
+from this checkout: the executor at `127.0.0.1:9001` is closed and the
+checked-in config points at an unvalidated local target, so gateway-level
+live adversarial traffic was out of scope for this closed-box checkout. That
+remains the promotion blocker.
+
+## Output Validation Gate (branch evidence) — 2026-10-01
+
+Branch `auto/runtime/action-policy-v1` adds the post-execution Output
+Validation Gate (`gateway/src/dgx_moa/actions/output.py`, wired through
+`Controller.check_output_completion` into all four synthesis paths:
+Chat/Responses x stream/non-stream). The Runtime builds a structured
+`CompletionManifest` from canonical evidence only (tool results, verified
+facts, changed paths, evidence nodes, completion evidence), resolves every
+material claim with word-boundary verb matching and punctuation-cleaned path
+references, and decides `PASS`, `REWRITE_ONLY`, `REEXECUTE`,
+`RESOLVE_RESOURCE`, `ESCALATE_REVIEW`, or `FAIL_CLOSED` deterministically.
+Only `PASS` and claim-free `REWRITE_ONLY` reach synthesis unchanged;
+unsupported completion claims fail closed. Requests carrying no material
+claims skip the gate without persistence changes. Laya may shadow-assist
+from the same finite set over a loopback-only endpoint (config-validated,
+no redirects) but never establishes facts or overrides the decision.
+
+Measured evidence: `tests/test_output_gates.py` 15 passed (manifest,
+all six decisions, Laya never-overrides, loopback rejection, Chat
+non-stream/stream plus Responses non-stream/stream convergence);
+`tests/test_actions.py` 22, `tests/test_action_gates.py` 5;
+full `tests/test_api.py` 280 passed; all non-API suites 1000 passed;
+`ruff check` plus `ruff format --check` clean; strict mypy clean;
+`git diff --check` clean. Adversarial gate matrix: unsupported
+`Fixed /etc/passwd` fails closed on all four paths; supported
+`/work/app.py` with tool-observed evidence passes; pending tool calls,
+truncation, active failures, missing criteria, and unapproved review map
+to `REEXECUTE`/`RESOLVE_RESOURCE`/`ESCALATE_REVIEW`.
+
+Production was not restarted, deployed, or merged. No live-executor harness
+matrix has been run from this checkout; that remains the promotion blocker.

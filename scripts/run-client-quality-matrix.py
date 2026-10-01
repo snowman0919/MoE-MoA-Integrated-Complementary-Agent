@@ -21,14 +21,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-HARNESSES = ("baseline", "opencode", "codex", "hermes")
+HARNESSES = ("baseline", "raw", "opencode", "codex", "hermes")
 CORE_ENV = ("HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "SHELL", "TERM", "USER")
 TEST_COMMAND = (sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v")
-DOCKER_IMAGE = "python:3.11-slim"
+DOCKER_IMAGE = (
+    "python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7"
+)
 CODEX_BINARY = Path(
     "/home/kotori9/.codex/packages/standalone/releases/0.146.0-aarch64-unknown-linux-musl/bin/codex"
 )
 OPENCODE_BINARY = Path("/home/kotori9/.opencode/bin/opencode")
+RAW_CLIENT = Path(__file__).with_name("run-raw-openai-tool-loop.py")
 OPENCODE_ISOLATION_ENV = {
     "OPENCODE_DISABLE_AUTOUPDATE": "1",
     "OPENCODE_DISABLE_DEFAULT_PLUGINS": "1",
@@ -50,6 +53,7 @@ BAD_TERMINALS = (
     "다음 도구 작업을 준비합니다.",
     "Planner 역할이 구조와 구현 순서를 설계합니다.",
 )
+BAD_FINAL_OUTPUT = ("<tool_call>", "<function=", "다음 도구 작업을 준비합니다.")
 
 
 @dataclass(frozen=True)
@@ -808,6 +812,12 @@ def text_sha256(value: str) -> str:
 
 @functools.cache
 def runtime_fingerprint(harness: str) -> dict[str, str]:
+    if harness == "raw":
+        return {
+            "client": "python-stdlib-openai-compatible",
+            "version": sys.version.split()[0],
+            "script_sha256": sha256(RAW_CLIENT),
+        }
     if harness in {"baseline", "codex"}:
         return {
             "client": "codex",
@@ -937,8 +947,14 @@ def prepare_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str,
                         },
                     },
                     "models": {
-                        "dgx-moa-agent": {"name": "DGX MoA Agent"},
-                        "dgx-moa-fast": {"name": "DGX MoA Fast"},
+                        "dgx-moa-agent": {
+                            "name": "DGX MoA Agent",
+                            "limit": {"context": 262_144, "output": 8_192},
+                        },
+                        "dgx-moa-fast": {
+                            "name": "DGX MoA Fast",
+                            "limit": {"context": 262_144, "output": 8_192},
+                        },
                     },
                 }
             },
@@ -1202,7 +1218,37 @@ def run_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any
     validated_manifest(args, task, manifest_path)
     started_at = time.time()
     started = time.monotonic()
-    if harness == "opencode":
+    if harness == "raw":
+        key = os.getenv("DGX_MOA_OPENCODE_KEY")
+        if not key:
+            raise RuntimeError("DGX_MOA_OPENCODE_KEY is required")
+        state = evidence / "raw-state"
+        command = docker_command(
+            workspace,
+            state,
+            [
+                "python",
+                "/tools/raw-openai-tool-loop.py",
+                "--gateway",
+                args.gateway,
+                "--workspace",
+                str(workspace),
+                "--session-id",
+                f"quality-{args.run_id}-raw-{task.slug}",
+                "--prompt",
+                prompt(task),
+            ],
+            environment_names=("DGX_MOA_API_KEY",),
+            read_only_mounts=((RAW_CLIENT, "/tools/raw-openai-tool-loop.py"),),
+        )
+        run = run_process(
+            command,
+            cwd=workspace,
+            environment=filtered_env({"DGX_MOA_API_KEY": key}),
+            timeout=args.timeout,
+        )
+        return_code, stdout, stderr = run.returncode, run.stdout, run.stderr
+    elif harness == "opencode":
         key = os.getenv("DGX_MOA_OPENCODE_KEY")
         if not key:
             raise RuntimeError("DGX_MOA_OPENCODE_KEY is required")
@@ -1393,6 +1439,55 @@ def log_text(evidence: Path) -> str:
     return "\n".join(values)
 
 
+def user_visible_output(harness: str, stdout: str) -> str:
+    if harness == "hermes":
+        return stdout.strip()
+    events = []
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    if harness == "raw":
+        values = [event.get("content") for event in events if event.get("event") == "final"]
+    elif harness == "opencode":
+        values = [
+            event.get("part", {}).get("text")
+            for event in events
+            if event.get("type") == "text" and isinstance(event.get("part"), dict)
+        ]
+    else:
+        values = [
+            event.get("item", {}).get("text")
+            for event in events
+            if event.get("type") == "item.completed"
+            and isinstance(event.get("item"), dict)
+            and event["item"].get("type") == "agent_message"
+        ]
+    return next(
+        (value.strip() for value in reversed(values) if isinstance(value, str) and value.strip()),
+        "",
+    )
+
+
+def user_visible_checks(output: str, task: Task) -> dict[str, bool]:
+    lines = [line for line in output.splitlines() if line.strip()]
+    return {
+        "user_visible_output": bool(output),
+        "user_visible_six_lines": 0 < len(lines) <= 6,
+        "user_visible_korean": bool(re.search(r"[가-힣]", output)),
+        "user_visible_changed_file": task.source_name in output,
+        "user_visible_test_command": "python -m unittest discover -s tests -v" in output,
+        "user_visible_test_result": bool(re.search(r"\bOK\b|통과|passed|성공", output, re.I)),
+        "user_visible_remaining_risk": bool(re.search(r"남은\s*(?:위험|리스크)", output)),
+        "user_visible_clean": not any(
+            marker.lower() in output.lower() for marker in BAD_FINAL_OUTPUT
+        ),
+    }
+
+
 def successful_hermes_test_result(role: str, tool_name: str | None, content: str) -> bool:
     if role != "tool":
         return False
@@ -1459,7 +1554,84 @@ def hermes_test_evidence(args: argparse.Namespace, task: Task, evidence: Path) -
     return calls > 0 and successful_results > 0
 
 
+def verdict_timing(
+    run: dict[str, Any], scoring_started: float, scored_at: float, passed: bool
+) -> dict[str, float | None]:
+    started = float(run["started_at_epoch"])
+    ended = float(run["ended_at_epoch"])
+    if not started <= ended <= scoring_started <= scored_at:
+        raise RuntimeError("invalid client-quality verdict timestamps")
+    elapsed = round(scored_at - started, 3)
+    return {
+        "scoring_started_at_epoch": scoring_started,
+        "scored_at_epoch": scored_at,
+        "client_to_score_gap_seconds": round(scoring_started - ended, 3),
+        "post_client_verification_seconds": round(scored_at - scoring_started, 3),
+        "time_to_verdict_seconds": elapsed,
+        "verified_completion_seconds": elapsed if passed else None,
+    }
+
+
+def percentile(values: list[float], quantile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * quantile
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    return round(ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower), 3)
+
+
+def epoch_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    verified = [
+        float(row["verified_completion_seconds"])
+        for row in rows
+        if isinstance(row.get("verified_completion_seconds"), (int, float))
+        and not isinstance(row["verified_completion_seconds"], bool)
+    ]
+    verdicts = [
+        float(row["time_to_verdict_seconds"])
+        for row in rows
+        if isinstance(row.get("time_to_verdict_seconds"), (int, float))
+        and not isinstance(row["time_to_verdict_seconds"], bool)
+    ]
+    starts = [float(row["started_at_epoch"]) for row in rows if "started_at_epoch" in row]
+    ends = [float(row["scored_at_epoch"]) for row in rows if "scored_at_epoch" in row]
+    wall_clock = max(ends) - min(starts) if starts and len(ends) == len(rows) else None
+    failed_checks: dict[str, int] = {}
+    for row in rows:
+        for name, passed in row.get("checks", {}).items():
+            if passed is False:
+                failed_checks[name] = failed_checks.get(name, 0) + 1
+    return {
+        "attempts": len(rows),
+        "verified_completions": len(verified),
+        "verified_completion_seconds": {
+            "p50": percentile(verified, 0.50),
+            "p95": percentile(verified, 0.95),
+            "p99": percentile(verified, 0.99),
+        },
+        "time_to_verdict_seconds": {
+            "p50": percentile(verdicts, 0.50),
+            "p95": percentile(verdicts, 0.95),
+            "p99": percentile(verdicts, 0.99),
+        },
+        "wall_clock_seconds": round(wall_clock, 3) if wall_clock is not None else None,
+        "successful_tasks_per_hour": (
+            round(len(verified) * 3600 / wall_clock, 3) if wall_clock and verified else None
+        ),
+        "claimed_success_with_failed_contract": sum(
+            row.get("status") != "passed"
+            and row.get("checks", {}).get("user_visible_output") is True
+            and row.get("checks", {}).get("user_visible_test_result") is True
+            for row in rows
+        ),
+        "failed_checks": dict(sorted(failed_checks.items())),
+    }
+
+
 def score_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, Any]:
+    scoring_started = time.time()
     workspace, evidence = paths(args, harness, task)
     manifest = validated_manifest(args, task, evidence / "manifest.json")
     run = json.loads((evidence / "run.json").read_text())
@@ -1514,13 +1686,28 @@ def score_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, A
     raw_log = log_text(evidence)
     stdout = (evidence / "stdout.log").read_text(errors="replace")
     terminal = {
+        "raw": '"event": "final"',
         "opencode": '"reason":"stop"',
         "codex": '"type":"turn.completed"',
         "baseline": '"type":"turn.completed"',
         "hermes": "",
     }[harness]
     terminal_ok = bool(stdout.strip()) if not terminal else terminal in raw_log
-    korean_final = bool(re.search(r"[가-힣]", stdout[-8_000:]))
+    final_output = user_visible_output(harness, stdout)
+    final_checks = user_visible_checks(final_output, task)
+    (evidence / "user-visible-output.txt").write_text(final_output + ("\n" if final_output else ""))
+    (evidence / "user-visible-output.json").write_text(
+        json.dumps(
+            {
+                "sha256": text_sha256(final_output),
+                "nonempty_lines": len([line for line in final_output.splitlines() if line.strip()]),
+                "checks": final_checks,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
     tool_evidence = (
         hermes_test_evidence(args, task, evidence) if harness == "hermes" else "unittest" in raw_log
     )
@@ -1533,13 +1720,16 @@ def score_one(args: argparse.Namespace, harness: str, task: Task) -> dict[str, A
         "source_changed_only": changed == [task.source_name],
         "terminal": terminal_ok,
         "tool_evidence": tool_evidence,
-        "korean_final": korean_final,
+        **final_checks,
         "no_bad_terminal": no_bad_terminal,
         "docker_isolation": run.get("runtime") == "docker",
     }
+    passed = all(checks.values())
+    timing = verdict_timing(run, scoring_started, time.time(), passed)
     score = {
         **run,
-        "status": "passed" if all(checks.values()) else "failed",
+        **timing,
+        "status": "passed" if passed else "failed",
         "checks": checks,
         "changed_paths": changed,
         "validation_exit": validation.returncode,
@@ -1568,13 +1758,21 @@ def summary(args: argparse.Namespace) -> dict[str, Any]:
     matrix_complete = all(counts[harness]["total"] == len(TASKS) for harness in HARNESSES)
     usability_not_below_baseline = {
         harness: counts[harness]["passed"] >= baseline_passed if matrix_complete else None
-        for harness in ("opencode", "codex", "hermes")
+        for harness in ("raw", "opencode", "codex", "hermes")
+    }
+    metrics = {
+        "overall": epoch_metrics(rows),
+        "by_harness": {
+            harness: epoch_metrics([row for row in rows if row["harness"] == harness])
+            for harness in HARNESSES
+        },
     }
     result = {
         "run_id": args.run_id,
         "counts": counts,
         "matrix_complete": matrix_complete,
         "usability_not_below_baseline": usability_not_below_baseline,
+        "metrics": metrics,
         "complete": (
             matrix_complete
             and baseline_passed == len(TASKS)

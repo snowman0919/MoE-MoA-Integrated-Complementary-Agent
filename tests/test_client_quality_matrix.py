@@ -60,6 +60,90 @@ def test_current_hermes_unit_tests_key_is_valid_test_evidence() -> None:
     assert SUCCESS("tool", "execute_code", content)
 
 
+@pytest.mark.parametrize(
+    ("harness", "stdout"),
+    (
+        ("raw", '{"event":"final","content":"최종 답변"}\n'),
+        ("opencode", '{"type":"text","part":{"text":"최종 답변"}}\n'),
+        (
+            "codex",
+            '{"type":"item.completed","item":{"type":"agent_message","text":""}}\n'
+            '{"type":"item.completed","item":{"type":"agent_message","text":"최종 답변"}}\n',
+        ),
+        (
+            "baseline",
+            '{"type":"item.completed","item":{"type":"agent_message","text":"최종 답변"}}\n',
+        ),
+        ("hermes", "\n최종 답변\n"),
+    ),
+)
+def test_user_visible_output_extracts_harness_final(harness: str, stdout: str) -> None:
+    assert GLOBALS["user_visible_output"](harness, stdout) == "최종 답변"
+
+
+def test_user_visible_contract_checks_the_actual_final_message() -> None:
+    task = GLOBALS["TASKS"][0]
+    output = (
+        f"변경 파일: `{task.source_name}`\n"
+        "테스트: `python -m unittest discover -s tests -v` → OK, 모두 통과\n"
+        "남은 위험: 없음"
+    )
+
+    assert all(GLOBALS["user_visible_checks"](output, task).values())
+    rejected = GLOBALS["user_visible_checks"]("<tool_call>\n다음 도구 작업을 준비합니다.", task)
+    assert not rejected["user_visible_clean"]
+    assert not rejected["user_visible_test_result"]
+
+
+def test_verdict_timing_measures_through_hidden_validation() -> None:
+    run = {"started_at_epoch": 10.0, "ended_at_epoch": 20.0}
+
+    passed = GLOBALS["verdict_timing"](run, 21.0, 24.5, True)
+    failed = GLOBALS["verdict_timing"](run, 21.0, 24.5, False)
+
+    assert passed["client_to_score_gap_seconds"] == 1.0
+    assert passed["post_client_verification_seconds"] == 3.5
+    assert passed["time_to_verdict_seconds"] == 14.5
+    assert passed["verified_completion_seconds"] == 14.5
+    assert failed["verified_completion_seconds"] is None
+    with pytest.raises(RuntimeError, match="invalid client-quality verdict timestamps"):
+        GLOBALS["verdict_timing"](run, 19.0, 24.5, True)
+
+
+def test_epoch_metrics_report_verified_latency_throughput_and_false_completion() -> None:
+    rows = [
+        {
+            "started_at_epoch": 10.0,
+            "scored_at_epoch": 20.0,
+            "time_to_verdict_seconds": 10.0,
+            "verified_completion_seconds": 10.0,
+            "status": "passed",
+            "checks": {"user_visible_output": True, "user_visible_test_result": True},
+        },
+        {
+            "started_at_epoch": 21.0,
+            "scored_at_epoch": 41.0,
+            "time_to_verdict_seconds": 20.0,
+            "verified_completion_seconds": None,
+            "status": "failed",
+            "checks": {
+                "hidden_validation_exit": False,
+                "user_visible_output": True,
+                "user_visible_test_result": True,
+            },
+        },
+    ]
+
+    metrics = GLOBALS["epoch_metrics"](rows)
+
+    assert metrics["verified_completion_seconds"] == {"p50": 10.0, "p95": 10.0, "p99": 10.0}
+    assert metrics["time_to_verdict_seconds"] == {"p50": 15.0, "p95": 19.5, "p99": 19.9}
+    assert metrics["wall_clock_seconds"] == 31.0
+    assert metrics["successful_tasks_per_hour"] == 116.129
+    assert metrics["claimed_success_with_failed_contract"] == 1
+    assert metrics["failed_checks"] == {"hidden_validation_exit": 1}
+
+
 def test_codex_command_uses_explicit_model_catalog(tmp_path: Path) -> None:
     command = GLOBALS["codex_moa_command"](
         Namespace(gateway="http://127.0.0.1:9000"),
@@ -224,6 +308,24 @@ def test_fixture_manifest_pins_gateway_runner_and_prompt(
         GLOBALS["run_one"](args, "codex", task)
 
 
+def test_opencode_fixture_declares_executor_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(
+        GLOBALS, "runtime_fingerprint", lambda harness: {"client": harness, "version": "test"}
+    )
+    args = matrix_args(tmp_path)
+    task = GLOBALS["TASKS"][0]
+
+    GLOBALS["prepare_one"](args, "opencode", task)
+    workspace, _ = GLOBALS["paths"](args, "opencode", task)
+    model = json.loads((workspace / "opencode.json").read_text())["provider"]["dgx-moa"]["models"][
+        "dgx-moa-agent"
+    ]
+
+    assert model["limit"] == {"context": 262_144, "output": 8_192}
+
+
 def test_partial_summary_does_not_claim_noninferiority(tmp_path: Path) -> None:
     args = matrix_args(tmp_path)
     task = GLOBALS["TASKS"][0]
@@ -238,6 +340,7 @@ def test_partial_summary_does_not_claim_noninferiority(tmp_path: Path) -> None:
     assert result["matrix_complete"] is False
     assert result["complete"] is False
     assert result["usability_not_below_baseline"] == {
+        "raw": None,
         "opencode": None,
         "codex": None,
         "hermes": None,
