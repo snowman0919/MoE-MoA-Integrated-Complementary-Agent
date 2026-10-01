@@ -21,9 +21,13 @@ from .actions import (
     PreflightPolicy,
     ResourceAuthority,
     build_capability_snapshot,
+    build_completion_manifest,
     canonical_semantic_key,
+    decide_output,
+    observe_output_shadow,
     preflight_action,
     preflight_tool_call,
+    shadow_agreement,
     state_revision_from_session,
 )
 from .actions import (
@@ -942,6 +946,130 @@ class Controller:
         return ResourceAuthority.from_session(
             state, workspace_roots=self.action_workspace_roots(state)
         )
+
+    def check_output_completion(
+        self,
+        state: SessionState,
+        *,
+        final_text: str,
+        finish_reason: str | None = None,
+        has_tool_calls_in_draft: bool = False,
+        metadata: dict[str, Any] | None = None,
+        messages: list[dict[str, Any]] | None = None,
+    ) -> Any:
+        """Run the canonical post-execution Output Validation Gate.
+
+        Builds a CompletionManifest from canonical runtime evidence only,
+        resolves every material claim, and returns one bounded deterministic
+        decision. Only PASS may reach final user-visible synthesis unchanged.
+        """
+        from .actions.output import OutputGateContext
+
+        metadata = metadata if isinstance(metadata, dict) else {}
+        successful = tuple(item for item in state.tool_executions if item.get("exit_code") == 0)
+        failed = tuple(item for item in state.tool_executions if item.get("exit_code") != 0)
+        nodes = tuple(item for item in state.evidence_nodes if isinstance(item, dict))
+        failures = tuple(item for item in state.failures if isinstance(item, dict))
+        unresolved = tuple(
+            str(item.get("failure_class") or item.get("class") or "failure")
+            for item in failures
+            if item.get("resolution_status", "active") == "active"
+        )
+        review_required = "reviewer" in state.roles_required or bool(metadata.get("heavy_review"))
+        result_ids = {
+            str(message.get("tool_call_id", ""))
+            for message in (messages or [])
+            if isinstance(message, dict) and message.get("role") == "tool"
+        }
+        pending = tuple(
+            call_id for call_id in state.pending_tool_call_ids if call_id not in result_ids
+        )
+        context = OutputGateContext(
+            objective=state.resolved_objective or state.objective,
+            final_text=final_text,
+            finish_reason=finish_reason,
+            has_tool_calls_in_draft=has_tool_calls_in_draft,
+            pending_tool_call_ids=pending,
+            review_status=state.review_status,
+            review_required=review_required,
+            truncated=bool(state.truncated),
+            successful_executions=successful,
+            failed_executions=failed,
+            evidence_nodes=nodes,
+            verified_facts=tuple(state.verified_facts),
+            changed_paths=tuple(changed_paths_evidence(state, metadata)),
+            completion_evidence=dict(state.completion_evidence),
+            acceptance_criteria=tuple(state.acceptance_criteria),
+            unresolved_discovery=unresolved,
+        )
+        manifest = build_completion_manifest(context)
+        result = decide_output(manifest, context)
+        self.store.event(
+            state.session_id,
+            "output_validation_decided",
+            {
+                "decision": result.decision,
+                "reason": result.reason,
+                "manifest_id": manifest.manifest_id,
+                "supported": manifest.supported_claims,
+                "unsupported": manifest.unsupported_claims,
+                "stale_rejected": manifest.stale_rejected,
+            },
+        )
+        laya_choice, _ = observe_output_shadow(manifest, choose=self._output_laya_choice)
+        agrees = shadow_agreement(result.decision, laya_choice)
+        if laya_choice is not None:
+            self.store.event(
+                state.session_id,
+                "output_validation_laya_shadow",
+                {
+                    "choice": laya_choice,
+                    "agreement": bool(agrees),
+                    "manifest_id": manifest.manifest_id,
+                },
+            )
+        return result
+
+    def _output_laya_choice(
+        self, candidates: tuple[str, ...], manifest: dict[str, Any]
+    ) -> str | None:
+        """Laya semantic assist: finite candidate set only, never fact authority."""
+        adapter = self.action_policy.laya
+        if not adapter.enabled or not adapter.endpoint:
+            return None
+        try:
+            from urllib.parse import urlsplit
+
+            host = (urlsplit(adapter.endpoint).hostname or "").lower()
+            if host not in {"localhost", "127.0.0.1", "::1"}:
+                return None
+        except ValueError:
+            return None
+        payload = json.dumps(
+            {"candidates": list(candidates), "manifest_digest": manifest.get("manifest_id")}
+        ).encode()
+        try:
+            from urllib.error import HTTPError
+            from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+            class _NoRedirect(HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+                    return None
+
+            opener = build_opener(_NoRedirect)
+            request = Request(
+                adapter.endpoint, data=payload, headers={"Content-Type": "application/json"}
+            )
+            with opener.open(request, timeout=adapter.timeout_seconds) as response:
+                body = json.loads(response.read().decode() or "{}")
+            choice = body.get("choice", body.get("index"))
+            if isinstance(choice, int) and 0 <= choice < len(candidates):
+                return str(candidates[choice])
+            if isinstance(choice, str) and choice in candidates:
+                return choice
+        except (Exception, HTTPError):
+            return None
+        return None
 
     def action_revision(self, state: SessionState, snapshot: Any) -> Any:
         authority = self.action_authority(state)

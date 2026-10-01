@@ -70,6 +70,14 @@ METRIC_NAMES = (
     "compatibility_action_recovered",
     "laya_shadow_agreement",
     "laya_shadow_disagreement",
+    "output_validation_pass",
+    "output_validation_rewrite_only",
+    "output_validation_reexecute",
+    "output_validation_resolve_resource",
+    "output_validation_escalate_review",
+    "output_validation_fail_closed",
+    "output_validation_laya_shadow_agreement",
+    "output_validation_laya_shadow_disagreement",
 )
 
 
@@ -189,6 +197,23 @@ class RuntimeMetrics:
                 self.increment("laya_shadow_agreement")
             else:
                 self.increment("laya_shadow_disagreement")
+        elif event_type == "output_validation_decided":
+            decision = str(payload.get("decision", ""))
+            mapping = {
+                "PASS": "output_validation_pass",
+                "REWRITE_ONLY": "output_validation_rewrite_only",
+                "REEXECUTE": "output_validation_reexecute",
+                "RESOLVE_RESOURCE": "output_validation_resolve_resource",
+                "ESCALATE_REVIEW": "output_validation_escalate_review",
+                "FAIL_CLOSED": "output_validation_fail_closed",
+            }
+            if decision in mapping:
+                self.increment(mapping[decision])
+        elif event_type == "output_validation_laya_shadow":
+            if payload.get("agreement"):
+                self.increment("output_validation_laya_shadow_agreement")
+            else:
+                self.increment("output_validation_laya_shadow_disagreement")
 
     def snapshot(self, overlays: dict[str, int | float] | None = None) -> dict[str, int | float]:
         values = {name: self._values[name] for name in METRIC_NAMES}

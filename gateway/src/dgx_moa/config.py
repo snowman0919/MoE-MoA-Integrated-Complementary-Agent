@@ -506,6 +506,8 @@ class ActionRuntimeConfig(BaseModel):
     laya_endpoint: str = ""
     laya_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
     laya_shadow: bool = True
+    output_validation_enabled: bool = True
+    output_validation_max_claims: int = Field(default=8, ge=1, le=32)
 
     @model_validator(mode="after")
     def validate_laya(self) -> ActionRuntimeConfig:

@@ -201,5 +201,10 @@ checkout) adds the canonical `gateway/src/dgx_moa/actions/` runtime: one
 request-scoped CapabilitySnapshot plus deterministic preflight gate shared by
 Chat/Responses stream and non-stream paths, a state-aware `FailureLedger`
 kept in `state.action_failures`, and an optional Laya shadow policy that is
-disabled by default. It is test-verified only and has not been deployed,
-merged, or physically validated against production role endpoints.
+disabled by default. It further adds the post-execution Output Validation
+Gate: a structured `CompletionManifest` built from canonical runtime
+evidence only, with one bounded deterministic decision (`PASS`,
+`REWRITE_ONLY`, `REEXECUTE`, `RESOLVE_RESOURCE`, `ESCALATE_REVIEW`,
+`FAIL_CLOSED`) shared by all four synthesis paths. It is test-verified
+only and has not been deployed, merged, or physically validated against
+production role endpoints.

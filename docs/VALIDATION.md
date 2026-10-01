@@ -10799,3 +10799,35 @@ from this checkout: the executor at `127.0.0.1:9001` is closed and the
 checked-in config points at an unvalidated local target, so gateway-level
 live adversarial traffic was out of scope for this closed-box checkout. That
 remains the promotion blocker.
+
+## Output Validation Gate (branch evidence) — 2026-10-01
+
+Branch `auto/runtime/action-policy-v1` adds the post-execution Output
+Validation Gate (`gateway/src/dgx_moa/actions/output.py`, wired through
+`Controller.check_output_completion` into all four synthesis paths:
+Chat/Responses x stream/non-stream). The Runtime builds a structured
+`CompletionManifest` from canonical evidence only (tool results, verified
+facts, changed paths, evidence nodes, completion evidence), resolves every
+material claim with word-boundary verb matching and punctuation-cleaned path
+references, and decides `PASS`, `REWRITE_ONLY`, `REEXECUTE`,
+`RESOLVE_RESOURCE`, `ESCALATE_REVIEW`, or `FAIL_CLOSED` deterministically.
+Only `PASS` and claim-free `REWRITE_ONLY` reach synthesis unchanged;
+unsupported completion claims fail closed. Requests carrying no material
+claims skip the gate without persistence changes. Laya may shadow-assist
+from the same finite set over a loopback-only endpoint (config-validated,
+no redirects) but never establishes facts or overrides the decision.
+
+Measured evidence: `tests/test_output_gates.py` 15 passed (manifest,
+all six decisions, Laya never-overrides, loopback rejection, Chat
+non-stream/stream plus Responses non-stream/stream convergence);
+`tests/test_actions.py` 22, `tests/test_action_gates.py` 5;
+full `tests/test_api.py` 280 passed; all non-API suites 1000 passed;
+`ruff check` plus `ruff format --check` clean; strict mypy clean;
+`git diff --check` clean. Adversarial gate matrix: unsupported
+`Fixed /etc/passwd` fails closed on all four paths; supported
+`/work/app.py` with tool-observed evidence passes; pending tool calls,
+truncation, active failures, missing criteria, and unapproved review map
+to `REEXECUTE`/`RESOLVE_RESOURCE`/`ESCALATE_REVIEW`.
+
+Production was not restarted, deployed, or merged. No live-executor harness
+matrix has been run from this checkout; that remains the promotion blocker.

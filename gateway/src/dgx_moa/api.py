@@ -34,6 +34,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .actions.compat import normalize_edit_call
+from .actions.output import extract_material_claims as _output_claims
 from .admin_codex import AdminCodexRequest, AdminCodexRunner
 from .admin_dashboard import ADMIN_DASHBOARD
 from .config import Settings, get_settings
@@ -4140,7 +4141,35 @@ def create_app(
                                 mode="final_synthesis",
                             )
                             if terminal:
-                                state.final_output = "".join(observation.assistant_content)
+                                draft_text = "".join(observation.assistant_content)
+                                if not observation.tool_call_ids:
+                                    gate_result = (
+                                        request.app.state.controller.check_output_completion(
+                                            state,
+                                            final_text=draft_text,
+                                            finish_reason=next(
+                                                iter(observation.finish_reasons), None
+                                            ),
+                                            has_tool_calls_in_draft=False,
+                                            metadata=raw.get("metadata", {}),
+                                            messages=raw.get("messages", []),
+                                        )
+                                    )
+                                    request.app.state.store.event(
+                                        state_session_id,
+                                        "output_validation_passed"
+                                        if gate_result.decision in ("PASS", "REWRITE_ONLY")
+                                        else "output_validation_blocked",
+                                        {
+                                            "decision": gate_result.decision,
+                                            "reason": gate_result.reason,
+                                            "manifest_id": gate_result.manifest.manifest_id,
+                                            "path": "chat_stream",
+                                        },
+                                    )
+                                    if gate_result.decision not in ("PASS", "REWRITE_ONLY"):
+                                        state.final_status = "failed"
+                                state.final_output = draft_text
                                 execution_evidence_ids.append(
                                     request.app.state.controller.record_evidence(
                                         state,
@@ -5167,6 +5196,51 @@ def create_app(
                     else:
                         raise JudgeCorrectionRequired(correction_verdict)
             assistant_content = assistant_message.get("content")
+            draft_claims = (
+                _output_claims(assistant_content) if isinstance(assistant_content, str) else []
+            )
+            if (
+                finish_reason != "tool_calls"
+                and not assistant_message.get("tool_calls")
+                and draft_claims
+            ):
+                gate_result = request.app.state.controller.check_output_completion(
+                    state,
+                    final_text=assistant_content if isinstance(assistant_content, str) else "",
+                    finish_reason=finish_reason,
+                    has_tool_calls_in_draft=False,
+                    metadata=body.metadata,
+                    messages=raw.get("messages", []),
+                )
+                if gate_result.decision in ("PASS", "REWRITE_ONLY"):
+                    request.app.state.store.event(
+                        state_session_id,
+                        "output_validation_passed",
+                        {
+                            "decision": gate_result.decision,
+                            "reason": gate_result.reason,
+                            "manifest_id": gate_result.manifest.manifest_id,
+                            "path": "chat_nonstream",
+                        },
+                    )
+                else:
+                    state.final_status = "failed"
+                    request.app.state.store.event(
+                        state_session_id,
+                        "output_validation_blocked",
+                        {
+                            "decision": gate_result.decision,
+                            "reason": gate_result.reason,
+                            "manifest_id": gate_result.manifest.manifest_id,
+                            "path": "chat_nonstream",
+                        },
+                    )
+                    state.current_draft = (
+                        assistant_content if isinstance(assistant_content, str) else ""
+                    )
+                    raise ValueError(
+                        f"output validation {gate_result.decision}: {gate_result.reason}"
+                    )
             if isinstance(assistant_content, str):
                 state.current_draft = assistant_content
                 state.final_output = assistant_content
@@ -5942,6 +6016,39 @@ def create_app(
                             and not upstream_error
                         ):
                             response_state = request.app.state.store.get(response_session_id)
+                            if response_state is not None:
+                                message = (chat_payload.get("choices") or [{}])[0].get(
+                                    "message", {}
+                                )
+                                if not message.get("tool_calls"):
+                                    gate_result = (
+                                        request.app.state.controller.check_output_completion(
+                                            response_state,
+                                            final_text=message.get("content")
+                                            if isinstance(message.get("content"), str)
+                                            else "",
+                                            finish_reason=(chat_payload.get("choices") or [{}])[
+                                                0
+                                            ].get("finish_reason"),
+                                            has_tool_calls_in_draft=False,
+                                            metadata=dict(chat_body.metadata),
+                                            messages=list(messages),
+                                        )
+                                    )
+                                    request.app.state.store.event(
+                                        response_session_id,
+                                        "output_validation_passed"
+                                        if gate_result.decision in ("PASS", "REWRITE_ONLY")
+                                        else "output_validation_blocked",
+                                        {
+                                            "decision": gate_result.decision,
+                                            "reason": gate_result.reason,
+                                            "manifest_id": gate_result.manifest.manifest_id,
+                                            "path": "responses_stream",
+                                        },
+                                    )
+                                    if gate_result.decision not in ("PASS", "REWRITE_ONLY"):
+                                        response_state.final_status = "failed"
                             async for chunk in responses_sse(
                                 completed_chat_sse(chat_payload),
                                 response_model,
@@ -6078,6 +6185,36 @@ def create_app(
                 _responses_payload(response_model, chat_payload, status="failed"),
                 status_code=status.HTTP_200_OK,
             )
+        message = (chat_payload.get("choices") or [{}])[0].get("message", {})
+        if not message.get("tool_calls"):
+            response_state = request.app.state.store.get(
+                str(body.metadata.get("session_id") or x_session_id or "")
+            )
+            if response_state is not None:
+                gate_result = request.app.state.controller.check_output_completion(
+                    response_state,
+                    final_text=message.get("content")
+                    if isinstance(message.get("content"), str)
+                    else "",
+                    finish_reason=(chat_payload.get("choices") or [{}])[0].get("finish_reason"),
+                    has_tool_calls_in_draft=False,
+                    metadata=dict(body.metadata),
+                    messages=list(messages),
+                )
+                request.app.state.store.event(
+                    response_state.session_id,
+                    "output_validation_passed"
+                    if gate_result.decision in ("PASS", "REWRITE_ONLY")
+                    else "output_validation_blocked",
+                    {
+                        "decision": gate_result.decision,
+                        "reason": gate_result.reason,
+                        "manifest_id": gate_result.manifest.manifest_id,
+                        "path": "responses_nonstream",
+                    },
+                )
+                if gate_result.decision not in ("PASS", "REWRITE_ONLY"):
+                    response_state.final_status = "failed"
         return JSONResponse(
             _responses_payload(
                 response_model,
