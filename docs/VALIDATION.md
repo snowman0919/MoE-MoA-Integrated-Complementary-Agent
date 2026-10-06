@@ -11287,3 +11287,11 @@ into `/work`. The redirection exclusion now leaves all preceding characters,
 including descriptor digits, untouched. Added regression checks reject numeric
 out-of-scope filenames while retaining in-scope numbered filenames correctly.
 All 26 focused action tests passed after the review correction.
+
+Final review-corrected code passed 1,315 canonical tests in 57.23 seconds and
+1,334 preserving tests in 59.90 seconds, plus Ruff and mypy. One initial CI job
+failed an unrelated existing reviewer-serialization test's one-second timeout;
+the other CI job and both local full suites passed. The failing test was checked
+individually before rerunning the final CI gate; no timeout or production
+behavior was weakened. The three implemented Codex findings were resolved;
+the user-authorized binding exception thread remains explicitly open.
