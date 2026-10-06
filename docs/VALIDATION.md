@@ -11230,3 +11230,68 @@ and 1,331 preserving-runtime tests in 68.25 seconds, plus Ruff and mypy.
 Both canonical and preserving code replayed the historical OMP session with
 workspace binding, Git-ref exclusion, unknown exit preservation and outside-scope
 denial. This validation does not send new model workloads or access `monad`.
+
+### 2026-10-06 passive two-request performance observation
+
+No model requests or configuration changes were made for this observation.
+Backend log window 13:20:59–13:30:50 UTC contained 60 approximately ten-second
+samples: 22 ending with one running request and 38 with two. Aggregate decode
+mean was 31.355 versus 12.884 tok/s (58.9% lower in the two-running group);
+medians were 33.1 versus 12.1, and the two-running range was 0.5–52.9 tok/s.
+Running count is an end-of-interval snapshot, so these groups include phase
+changes and are not a controlled concurrency benchmark or per-request speeds.
+Positive prompt-throughput medians were 2269.7 versus 2339.4 tok/s. Inspection
+of the installed vLLM logger confirmed this uses computed prompt tokens,
+excluding cached/transferred tokens; it is interval throughput, not kernel-only
+prefill speed. Zero prompt samples include intervals without newly accounted
+prompt work and were excluded from those positive medians.
+
+An additional passive 30.096-second metric window had two running and zero
+waiting requests at all seven samples. It generated 713 tokens, 23.691 aggregate
+tok/s; prompt-token accounting increased by 88782 (2949.956 tokens/s, not an
+uncached PP benchmark). Two new TTFT observations averaged 4.988 seconds.
+Final KV usage was 41.67%. Individual request speeds cannot be recovered from
+these aggregate counters. Private evidence is
+`/tmp/moa-parallel-runtime-20261006.log` and its `.json` summary. No restart,
+SSH access or concurrent test workload was performed.
+
+### 2026-10-06 null-device shell redirection correction
+
+Production session `a541db1c-cda1-4db0-b09c-9ca2d3ce50ef` already had the correct
+observed workspace `/home/monad/develop/workstation-bridge`, but invalid-output
+retry logs still quoted `/dev/null` as an out-of-scope resource. This is a
+separate shell-plumbing false positive, not another missing workspace binding.
+The shared command resource extractor now excludes only redirection targets
+that are exactly `/dev/null`, including numbered, quoted, append, input and
+combined-output redirections. Regular file arguments, null-device mutations,
+lookalike paths, quote concatenation and other absolute redirection destinations
+remain subject to workspace checks. No global `/dev` allowance was introduced.
+The focused 24-test action suite checks these forms and proves `/etc/passwd`
+redirection remains denied. Unknown process exit and completion evidence rules
+are unchanged. No model inference workload or SSH connection was needed.
+
+Codex review on PR #128 (comment 4195764808) identified that the Git-ref fix
+also hid option-attached absolute paths such as `tar -C/etc`. The shared extractor
+now distinguishes relative Git refs from option-attached paths, and continues
+to reject relative parent traversal. Regression examples include `tar -C/etc`,
+`git -C/etc`, compiler `-I/etc`, and traversal combined with null redirection.
+PR #127 comment 4194869109 was addressed by replacing the stale current-state
+and operational recovery instructions. Comment 4194869096 requests a loopback
+rebind, which conflicts with the user's explicit temporary tailnet experiment;
+the current authorities now state its scope and temporary exception, and no
+unapproved binding change was made. The focused action suite passed 25 tests.
+
+PR #129 Codex comment 4195971000 identified that a null-redirection match could
+consume a digit at the end of a preceding path, changing `/work2>/dev/null`
+into `/work`. The redirection exclusion now leaves all preceding characters,
+including descriptor digits, untouched. Added regression checks reject numeric
+out-of-scope filenames while retaining in-scope numbered filenames correctly.
+All 26 focused action tests passed after the review correction.
+
+Final review-corrected code passed 1,315 canonical tests in 57.23 seconds and
+1,334 preserving tests in 59.90 seconds, plus Ruff and mypy. One initial CI job
+failed an unrelated existing reviewer-serialization test's one-second timeout;
+the other CI job and both local full suites passed. The failing test was checked
+individually before rerunning the final CI gate; no timeout or production
+behavior was weakened. The three implemented Codex findings were resolved;
+the user-authorized binding exception thread remains explicitly open.

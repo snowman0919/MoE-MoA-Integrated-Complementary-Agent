@@ -375,3 +375,68 @@ def test_shell_resource_paths_do_not_treat_git_refs_as_absolute_paths() -> None:
         "/tmp/data",
         "/root",
     ]
+
+
+def test_null_device_redirections_are_not_workspace_file_access() -> None:
+    from dgx_moa.actions.types import _shell_path_tokens
+
+    for command in (
+        "git diff origin/master 2>/dev/null",
+        "command >/dev/null 2>&1",
+        "command >> /dev/null",
+        "command < /dev/null",
+        'command >"/dev/null"',
+        "command 2> '/dev/null'",
+        "command &>/dev/null",
+        "command >| /dev/null",
+    ):
+        assert _shell_path_tokens(command) == []
+    for command in (
+        "rm /dev/null",
+        "cat /dev/null",
+        "command >/dev/null-file",
+        "command >/dev/null.",
+        "command >/dev/null/child",
+        "command >'/dev/null'other",
+        "command << /dev/null",
+    ):
+        assert _shell_path_tokens(command)
+    assert _shell_path_tokens("command 2>/dev/null >/etc/passwd") == ["/etc/passwd"]
+    assert _shell_path_tokens("command >/dev/null; rm /dev/null") == ["/dev/null"]
+    snapshot = build_capability_snapshot(_tools())
+    context = _context(snapshot)
+    assert preflight_action(snapshot, "terminal", {"command": "git status 2>/dev/null"}, context).ok
+    assert not preflight_action(
+        snapshot, "terminal", {"command": "git status >/etc/passwd"}, context
+    ).ok
+
+
+def test_attached_options_and_relative_traversal_remain_workspace_bounded() -> None:
+    snapshot = build_capability_snapshot(_tools())
+    for command in (
+        "tar -C/etc -cf archive.tar passwd",
+        "git -C/etc status",
+        "cc -I/etc source.c",
+        "cat ../etc/passwd",
+        "cat subdir/../../etc/passwd",
+        "command 2>/dev/null; tar -C/etc -cf archive.tar passwd",
+    ):
+        result = preflight_action(snapshot, "terminal", {"command": command}, _context(snapshot))
+        assert not result.ok and result.code == "workspace_violation"
+    for command in (
+        "git -C/work status 2>/dev/null",
+        "git diff custom-remote/master",
+        "git diff refs/remotes/origin/master",
+    ):
+        assert preflight_action(snapshot, "terminal", {"command": command}, _context(snapshot)).ok
+
+
+def test_null_redirect_does_not_change_path_ending_in_digits() -> None:
+    from dgx_moa.actions.types import _shell_path_tokens
+
+    snapshot = build_capability_snapshot(_tools())
+    for command in ("cat /work2>/dev/null", "cat /work123>>/dev/null", "cat /work2</dev/null"):
+        result = preflight_action(snapshot, "terminal", {"command": command}, _context(snapshot))
+        assert not result.ok and result.code == "workspace_violation"
+    assert _shell_path_tokens("cat /work/file2>/dev/null") == ["/work/file2"]
+    assert _shell_path_tokens("cat /work/file2 2>/dev/null") == ["/work/file2"]
