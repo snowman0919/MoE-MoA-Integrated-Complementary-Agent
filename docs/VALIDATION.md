@@ -10912,3 +10912,30 @@ After these fixes, Ruff/check/mypy and the complete 1,298-test suite passed
 candidate preserving deployed local contracts passed 1,308 tests before these
 final transport/default-effort additions; its final revision is revalidated
 separately. No production source was changed during these isolated runs.
+
+### Hermes client completion and remaining runtime boundary
+
+Hermes client qualification on the authenticated isolated loopback Gateway
+completed in 55.445 seconds: exit code 0, exact `HERMES_CHAIN_OK` final marker,
+and an independently checked exact result file. The task followed eight
+JSON files in dependency order, wrote the collected result, and ran
+`python -m unittest -q test_result`. The Gateway recorded 15 completed
+`hermes-agent` requests, zero failed/cancelled Hermes requests, and 13 native
+tool executions (10 reads, two terminal calls, one write). The test configured
+`TERMINAL_CWD`, `X-Workspace-Path`, and `X-Workspace-ID` consistently, used
+only file/terminal tools, and supplied an explicit validation command.
+The following isolated fast smoke returned the exact marker in 1.068 seconds.
+
+Earlier bounded harness attempts were cancelled after exposing missing
+workspace anchoring/headers or missing implementation-validation evidence;
+one wrote the correct result but did not reach a final marker. They are not
+passing Hermes completions. Private results remain at
+`/tmp/moa-physical-20261006-r{2,3,4,5,6}`. This one multi-turn workload is
+component evidence, not certification of all long-running Hermes tasks.
+
+A protected read-only production inspection before deployment returned health
+200 but readiness 503: Executor ready, required Reasoner stopped. The isolated
+primary `dgx-moa` smoke also returned 503; it was not rerouted to fast mode.
+The required Reasoner's availability and the historical remote-address overlay
+exception are separate pre-existing operating issues. No alternate Reasoner,
+role exposure, model-memory experiment, or topology change was introduced.

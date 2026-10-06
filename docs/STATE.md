@@ -210,3 +210,19 @@ evidence only, with one bounded deterministic decision (`PASS`,
 is recorded in `docs/VALIDATION.md`; no live-executor harness matrix
 (raw/Codex/OpenCode/Hermes against a running backend) has been run from this
 checkout, which remains the promotion blocker for further claims.
+
+## Hermes latency follow-up — 2026-10-06
+
+The pre-deployment protected audit found the Executor ready and the required
+Reasoner stopped (`/healthz` 200, `/readyz` 503). Primary `dgx-moa` remains
+fail-closed while the Reasoner is unavailable; it is not silently converted to
+Executor-only operation. The historical Reasoner overlay-address exception
+remains unresolved by this request-path patch.
+
+The Hermes patch has measured Qwen prefix-reuse evidence and one passing
+multi-turn Hermes workload with independent result validation, recorded in
+`docs/VALIDATION.md`. Executor-only requests default to no native reasoning
+unless the client explicitly requests effort. Complete provider calls always
+request JSON transport even when derived from a streaming request. These are
+narrow request-path fixes; they do not certify the overall project or change
+model-memory, lifecycle, authentication, or role-endpoint policy.
