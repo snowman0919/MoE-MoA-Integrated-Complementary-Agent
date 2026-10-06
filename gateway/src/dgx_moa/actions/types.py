@@ -42,7 +42,7 @@ _PATH_ARGUMENT_KEYS = frozenset(
     {"path", "file", "filepath", "filename", "target", "targetpath", "uri", "workdir", "cwd"}
 )
 _SHELL_COMMAND_KEYS = frozenset({"cmd", "command"})
-_ABS_PATH_TOKEN_RE = re.compile(r"/[^\s\"'` ,;|&<>()${}=]+")
+_ABS_PATH_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_.:/-])/[^\s\"'` ,;|&<>()${}=]+")
 
 
 def _shell_path_tokens(command: str) -> list[str]:

@@ -4905,3 +4905,33 @@ def test_hermes_verified_write_and_python3_test_finish_without_another_tool(
     assert controller.implementation_completion_ready(state, {})
     state.tool_executions[-1]["exit_code"] = 1
     assert not controller.implementation_completion_ready(state, {})
+
+
+def test_omp_pwd_binds_workspace_without_inventing_exit_status(
+    settings, stub_provider: StubProvider, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(tmp_path / "omp-cwd.db"), stub_provider)
+    state = SessionState(session_id="omp-cwd")
+    probe = {
+        "tool_name": "bash",
+        "exit_code": None,
+        "normalized_arguments": '{"command":"pwd","i":"Checking working directory"}',
+        "stdout_summary": "/home/monad/develop/workstation-bridge\n\n\nWall time: 0.05 seconds",
+    }
+    state.tool_executions = [probe]
+    controller.select_route(state, {})
+    assert state.repository["workspace_path"] == "/home/monad/develop/workstation-bridge"
+    assert probe["exit_code"] is None
+    assert not controller.action_authority(state)._workspace_allows("/etc/passwd")
+    for change in (
+        {"exit_code": 1},
+        {"failure_class": "TOOL_EXECUTION_FAILURE"},
+        {"stderr_summary": "error"},
+        {"truncated": True},
+        {"stdout_summary": "/home/monad\n"},
+        {"stdout_summary": "/home/monad\n/etc\nWall time: 0.05 seconds"},
+        {"normalized_arguments": {"command": "cd /etc && pwd"}},
+    ):
+        state.repository = {}
+        state.tool_executions = [{**probe, **change}]
+        assert controller.action_workspace_roots(state) == ()

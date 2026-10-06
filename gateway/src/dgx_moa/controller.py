@@ -949,7 +949,7 @@ class Controller:
         for execution in state.tool_executions:
             if execution.get("tool_name") not in {"terminal", "shell", "bash", "exec_command"}:
                 continue
-            if execution.get("exit_code") != 0 or execution.get("failure_class"):
+            if execution.get("failure_class"):
                 continue
             arguments = execution.get("normalized_arguments", {})
             if isinstance(arguments, str):
@@ -961,6 +961,19 @@ class Controller:
                 continue
             command = str(arguments.get("cmd", arguments.get("command", ""))).strip()
             if not re.fullmatch(r"pwd(?: -P)?(?: && ls(?: -a)?)?", command):
+                continue
+            # OMP omits process status but appends a duration to a completed pwd.
+            # Use only this exact cwd observation; never promote unknown process success.
+            if execution.get("exit_code") != 0 and (
+                execution.get("exit_code") is not None
+                or command not in {"pwd", "pwd -P"}
+                or execution.get("stderr_summary")
+                or execution.get("truncated")
+                or not re.fullmatch(
+                    r"/[^\n\x00]+\n\s*Wall time: \d+(?:\.\d+)? seconds\s*",
+                    str(execution.get("stdout_summary", "")),
+                )
+            ):
                 continue
             output = str(execution.get("stdout_summary", "")).splitlines()
             path = output[0].strip() if output else ""
