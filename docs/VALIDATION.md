@@ -11122,3 +11122,61 @@ SGLang topology experiment had no running container or listener on port 30000;
 this patch did not restart or reconfigure that experiment.
 The preserving runtime correction passed 1,327 tests in 62.65 seconds plus
 Ruff/mypy, including its production-only unknown-exit-code contracts.
+
+### 2026-10-06 Flash Executor connection and dashboard switch
+
+PRs #125 and #126 connect the operator-deployed blazux vLLM recipe and restore
+the dashboard MODELS Executor switch. The preserving production runtime is
+`ddf73f60cb6e741b5d6ad87ee72343fc10db566b`. The first Gateway deployment was safely
+rolled back after a false-unhealthy result: Qwen's default thinking consumed a
+16-token health probe without public content. The shared lifecycle probe now
+sets `enable_thinking=false` only for models with the `qwen3` reasoning parser;
+public-answer readiness remains mandatory and real inference sampling is
+unchanged. Direct default probing returned reasoning-only HTTP 200; the fixed
+probe returned public `READY` with no reasoning. The subsequent deployment
+passed and adopted the existing container without restarting its active requests.
+
+Inspected backend `/v1/models` reports `qwen3.8-flash-next`,
+`max_model_len=500000`; Gateway aliases advertise context length 500000.
+The private runtime uses `nvidia/Qwen3.8-Flash-Next-NVFP4`, snapshot
+`fc694b54fb0174e0913e6adf86691ef85a4ead47-fp8hybrid`, loopback Gateway backend URL
+`http://127.0.0.1:18300`, and the exact fixed unit map
+`{"executor":"dgx-moa-executor-flash.service"}`. The optional unit adopts
+`qwen38-flash`; the operator-selected container recipe has eight sequences,
+GPU utilization 0.8, automatic KV sizing and modelopt quantization. These are
+observed operator-selected settings, not the historical Phase 3 contract.
+The operator's separate wildcard/tailnet experiment remains unchanged.
+
+Post-deployment exact-marker canaries completed with HTTP 200:
+`dgx-moa-fast` in 2.776 seconds and `dgx-moa-unhold` in 1.362 seconds.
+Request events selected `local_primary` and provider `local`, model
+`qwen3.8-flash-next`; no fallback was active. `/healthz` returned 200,
+unauthenticated `/v1/models` returned 401. `/readyz` remained 503 because
+Reasoner is stopped; this deployment does not establish primary MoA readiness.
+
+Live dashboard checks proved operator-cookie status access and rendered switch
+markup. Non-operator GET/POST returned 403, no-session GET returned 401, and
+missing/foreign Origin POSTs returned 403 without changing runtime state.
+The canonical suite passed 1,310 tests in 75.89 seconds; the preserving suite
+passed 1,329 in 70.31 seconds. Ruff, mypy, dashboard JavaScript syntax checking,
+and both GitHub CI checks passed. No weights or credentials were committed.
+
+A preserving isolated Gateway on the new backend completed the eight-file
+Hermes task in 243.144 seconds, below the 32-turn cap: 27 completed requests,
+26 session steps, exact hidden result, final marker, and no rejection/correction
+or failed-request events. Median request TTFT was 6.413 seconds, maximum
+15.700 seconds; median request duration was 7.826 seconds. Repeated inspections
+still occurred. This sample does not demonstrate a substantial whole-task
+speed improvement over the earlier 258.778-second capped production run.
+
+The subsequently deployed production Gateway completed the same user-level
+fixture in 30.024 seconds: six completed local requests, six session steps,
+exact hidden result, zero-exit Python 3 unittest, and final marker, with no
+workspace rejection. Request TTFT median was 3.568 seconds. Here the model used
+one Python loop to read the remaining dependent JSON files and write the result
+instead of a separate native read call per file. The different tool strategy
+prevents interpreting 30.024 seconds as a controlled latency speedup. The
+workspace was established by native `pwd` without workspace headers, and
+successful validation ended naturally below the turn cap. Private evidence:
+`/tmp/moa-physical-20261006-r9-flash-preserving` and
+`/tmp/moa-production-heavy-noheaders-20261006-r8`. No SSH to `monad` occurred.
