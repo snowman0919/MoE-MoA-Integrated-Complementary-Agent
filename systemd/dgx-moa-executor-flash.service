@@ -1,0 +1,13 @@
+[Unit]
+Description=DGX MoA Executor using the deployed Qwen Flash Docker recipe
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/docker start qwen38-flash
+ExecStop=/usr/bin/docker stop --time 180 qwen38-flash
+TimeoutStartSec=60
+TimeoutStopSec=240
+
+# Install explicitly with a fixed/adaptive executor lifecycle unit map.
+# This unit adopts the existing container; it never rebuilds or removes weights.

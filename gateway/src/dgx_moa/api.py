@@ -6682,6 +6682,25 @@ def create_app(
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid dashboard session")
         return api_key_id, request.app.state.api_keys.is_admin(api_key_id)
 
+    @app.get("/v1/dashboard/executor")
+    async def dashboard_executor_status(request: Request) -> dict[str, Any]:
+        _, operator = dashboard_identity(request)
+        if not operator:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "operator session required")
+        return await executor_control_status(request)
+
+    @app.post("/v1/dashboard/executor/{desired}")
+    async def dashboard_executor_desired(
+        desired: Literal["on", "off"], request: Request
+    ) -> dict[str, Any]:
+        api_key_id, operator = dashboard_identity(request)
+        if not operator:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "operator session required")
+        if request.headers.get("origin") != str(request.base_url).rstrip("/"):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "same-origin request required")
+        request.state.api_token_id = api_key_id
+        return await (admin_executor_on if desired == "on" else admin_executor_off)(request)
+
     @app.post("/v1/dashboard/session", dependencies=[Depends(auth)])
     async def dashboard_session(request: Request) -> Response:
         if not configured.dashboard_enabled:
