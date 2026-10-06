@@ -27,6 +27,22 @@ def changed_paths_evidence(state: SessionState, metadata: dict[str, Any]) -> lis
     )
 
 
+def execution_succeeded(execution: dict[str, Any]) -> bool:
+    if execution.get("failure_class"):
+        return False
+    if execution.get("exit_code") == 0:
+        return True
+    if execution.get("exit_code") is not None:
+        return False
+    effect = execution.get("filesystem_effect")
+    return bool(
+        execution.get("tool_name") in {"write_file", "edit_file", "patch"}
+        and isinstance(effect, dict)
+        and effect.get("verified") is True
+        and any(effect.get(key) for key in ("changed_paths", "created_paths", "deleted_paths"))
+    )
+
+
 def tool_execution_changes_files(execution: dict[str, Any]) -> bool:
     if execution.get("tool_name") in {
         "apply_patch",
@@ -127,7 +143,7 @@ def is_successful_validation_execution(execution: dict[str, Any]) -> bool:
                 r"(?:^|&&|\|\||;|\n|[\"'])\s*"
                 r"(?:[A-Za-z_][A-Za-z0-9_]*=[^\s;&|]+\s+)*"
                 r"(?:timeout\s+\d+(?:\.\d+)?[smh]?\s+)?"
-                r"(?:uv run )?(?:python -m )?"
+                r"(?:uv run )?(?:python(?:3(?:\.\d+)?)? -m )?"
                 r"(?:unittest|pytest|ruff(?: check| format --check)|mypy)\b",
                 command,
             )

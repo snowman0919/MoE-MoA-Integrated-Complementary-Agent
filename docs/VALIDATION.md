@@ -11091,3 +11091,34 @@ The preserving runtime merge retained the existing production-only contracts
 and passed 1,324 tests in 72.70 seconds, plus Ruff and mypy. No model weights,
 Executor parameters, inference binding, lifecycle settings, bearer requirement,
 or policy-disabled features were changed by this patch.
+
+### 2026-10-06 production Hermes completion gate correction
+
+PR #123 was deployed as preserving runtime commit
+`fcf0f37dabecf0f0a4249cac54e6afc49413eb30` (gateway PID 510114).
+The actual authenticated gateway replay of the same eight-file Hermes scenario
+finished in 258.778 seconds with the exact result and marker, but reached the
+turn cap after redundant successful validations. It is not an accepted latency
+improvement: production completion evidence missed `python3 -m unittest` and
+verified native writes without a process exit code. Workspace binding succeeded
+without workspace headers and no workspace rejection recurred in this replay.
+
+The shared validation parser now recognizes Python 3/versioned Python module
+commands, still requiring a real zero exit code and safe validation syntax.
+Native file writes may establish successful mutation only with explicit verified
+changed paths; unknown terminal exit codes remain unsuccessful. Historical
+production evidence truncated at the first successful Python 3 unittest after
+the final native write gave completion false before the fix and true afterward.
+This evidence replay does not execute tools or alter the production session.
+Private evidence: `/tmp/moa-production-heavy-noheaders-20261006` and
+`/tmp/moa-completion-replay-20261006.py`. Physical completion verification remains
+required before considering the goal achieved.
+
+The correction passed 1,308 canonical tests in 71.07 seconds and Ruff/mypy.
+The preserving runtime candidate independently replayed the same historical
+production evidence with completion and review evidence both true. Live model
+verification was temporarily unavailable while the operator's independent
+SGLang topology experiment had no running container or listener on port 30000;
+this patch did not restart or reconfigure that experiment.
+The preserving runtime correction passed 1,327 tests in 62.65 seconds plus
+Ruff/mypy, including its production-only unknown-exit-code contracts.
