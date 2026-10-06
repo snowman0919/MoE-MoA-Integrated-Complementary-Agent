@@ -11202,3 +11202,31 @@ inference workload or further toggle test was run, as explicitly deferred.
 Backend KV capacity may still queue requests whose combined contexts exceed its
 available pool; max sequences is an admission ceiling, not eight full-context
 memory reservations.
+
+### 2026-10-06 OMP workspace rejection correction
+
+Read-only production logs for OMP session
+`7934a755-09db-4f7e-9ed0-be3be939c7a3` contained 17 preflight workspace rejections.
+Three native bash `pwd` observations returned the real
+`/home/monad/develop/workstation-bridge` path, with unknown exit status and OMP's
+`Wall time: ... seconds` footer. The workspace remained client-unspecified.
+Separately, the shared shell path extractor reproduced `origin/master` as the
+absolute path `/master`; the error quotes the rejected path, not the workspace.
+
+The shared extractor now requires an absolute-path token boundary, preserving
+checks for actual absolute command paths while ignoring Git refs and URL paths.
+Workspace discovery accepts an exact native `pwd`/`pwd -P` result with one path
+and OMP's completed-duration footer when exit status is absent, stderr is empty,
+output is untruncated and no failure is recorded. It never changes the unknown
+exit status or establishes successful general execution/validation. Explicit
+failure, arbitrary commands, multi-path output and unfinished output remain
+ineligible. Historical session replay against the corrected code bound and
+persisted the actual workspace, ignored the Git ref, and still denied paths
+outside the workspace. Replay reads production state without changing it or
+executing tools. Private replay script: `/tmp/moa-omp-scope-replay-20261006.py`.
+
+The correction passed 152 focused tests, 1,312 canonical tests in 71.28 seconds,
+and 1,331 preserving-runtime tests in 68.25 seconds, plus Ruff and mypy.
+Both canonical and preserving code replayed the historical OMP session with
+workspace binding, Git-ref exclusion, unknown exit preservation and outside-scope
+denial. This validation does not send new model workloads or access `monad`.

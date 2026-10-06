@@ -362,3 +362,16 @@ def test_laya_endpoint_rejects_non_loopback() -> None:
         ActionRuntimeConfig(laya_enabled=True, laya_endpoint="https://example.com/decide")
     allowed = ActionRuntimeConfig(laya_enabled=True, laya_endpoint="http://127.0.0.1:8080/decide")
     assert allowed.laya_endpoint == "http://127.0.0.1:8080/decide"
+
+
+def test_shell_resource_paths_do_not_treat_git_refs_as_absolute_paths() -> None:
+    from dgx_moa.actions.types import _shell_path_tokens
+
+    assert _shell_path_tokens("git diff origin/master refs/heads/dev HEAD~1") == []
+    assert _shell_path_tokens("git fetch https://github.com/example/repo.git") == []
+    assert _shell_path_tokens("git -C /home/monad/repo diff origin/master") == ["/home/monad/repo"]
+    assert _shell_path_tokens("cat /etc/passwd; cat '/tmp/data'; ls --cwd=/root") == [
+        "/etc/passwd",
+        "/tmp/data",
+        "/root",
+    ]
