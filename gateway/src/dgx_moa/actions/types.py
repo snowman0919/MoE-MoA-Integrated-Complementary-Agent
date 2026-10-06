@@ -43,9 +43,15 @@ _PATH_ARGUMENT_KEYS = frozenset(
 )
 _SHELL_COMMAND_KEYS = frozenset({"cmd", "command"})
 _ABS_PATH_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_.:/-])/[^\s\"'` ,;|&<>()${}=]+")
+_NULL_DEVICE_REDIRECT_RE = re.compile(
+    r"(?<![<>])(?:[0-9]*|&)(?:>(?:>|\|)?|<)\s*"
+    r"(?:/dev/null|\"/dev/null\"|'/dev/null')(?=$|[\s;|&()<>])"
+)
 
 
 def _shell_path_tokens(command: str) -> list[str]:
+    # The null device is shell plumbing, not a workspace file. Other uses stay bounded.
+    command = _NULL_DEVICE_REDIRECT_RE.sub(" ", command)
     tokens: list[str] = []
     for match in _ABS_PATH_TOKEN_RE.finditer(command):
         start = match.start()
