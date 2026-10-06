@@ -226,3 +226,38 @@ unless the client explicitly requests effort. Complete provider calls always
 request JSON transport even when derived from a streaming request. These are
 narrow request-path fixes; they do not certify the overall project or change
 model-memory, lifecycle, authentication, or role-endpoint policy.
+
+## Flash Executor deployment — 2026-10-06
+
+The operator-selected blazux vLLM recipe now serves
+`nvidia/Qwen3.8-Flash-Next-NVFP4` as `qwen3.8-flash-next`. The authenticated
+Gateway uses `local/qwen3.8-flash-next` at `http://127.0.0.1:18300`; its model
+aliases advertise the physically observed 500,000-token context. The production
+preserving source commit is `ddf73f60cb6e741b5d6ad87ee72343fc10db566b`, incorporating
+PRs #125 and #126 while retaining the production-only contracts. The private
+runtime configuration is `~/.config/dgx-moa/flash-executor-runtime.yaml`.
+
+The operator dashboard MODELS panel again provides a local Executor switch.
+It shares the existing drain and full service stop/start implementation;
+operator-session authentication and same-origin POST checks are mandatory.
+The inspected runtime has fixed lifecycle mode with the exact unit map
+`{"executor":"dgx-moa-executor-flash.service"}`. The optional oneshot unit
+adopts the existing `qwen38-flash` container. Executor remains normally resident
+with idle unload disabled; checked-in disabled/empty lifecycle defaults and the
+historical Phase 3 baseline are unchanged. This is the specifically authorized
+replacement, not a new baseline safety/quality certification.
+
+The operator's concurrent direct tailnet experiment keeps backend port 18300
+bound to wildcard addresses. This is an explicit operator exception; the
+Gateway connects through loopback and retains bearer authentication. No SSH
+connection to `monad` was made and its Hermes configuration was not changed.
+Reasoner remains stopped: `/readyz` is 503 and the primary `dgx-moa` path remains
+fail-closed. Verified local inference uses `dgx-moa-fast` and `dgx-moa-unhold`.
+
+The subsequent operator instruction deferred further physical validation and
+aligned Gateway admission with vLLM's `--max-num-seqs 8`: the private runtime
+and `DGX_MOA_EXECUTOR_SCHEDULING` override now set `max_local_concurrency=8`.
+Only Gateway was restarted for this setting. The physical toggle watcher was
+stopped, Executor was left ON, and the backend container was not restarted for
+the concurrency change. Eight admission slots do not guarantee eight simultaneous
+500,000-token contexts; the shared KV pool remains the backend resource limit.
