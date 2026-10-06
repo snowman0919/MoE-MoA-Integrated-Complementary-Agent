@@ -41,8 +41,14 @@ def compress_messages(messages: list[dict[str, Any]], limits: Limits) -> list[di
         (message for message in reversed(messages[:start]) if message.get("role") == "user"),
         None,
     )
+    # Keep client policy at the stable prefix when the observation window advances.
+    prefix = []
+    for message in messages[:start]:
+        if message.get("role") not in {"system", "developer"}:
+            break
+        prefix.append(message)
     retained_reversed: list[dict[str, Any]] = []
-    for message in reversed(([anchor] if anchor else []) + messages[start:]):
+    for message in reversed(prefix + ([anchor] if anchor else []) + messages[start:]):
         item = redact(message.copy())
         fingerprint = message_fingerprint(item)
         if fingerprint in seen:

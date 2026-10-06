@@ -10985,3 +10985,78 @@ The Executor remained resident on loopback 30000; the superseded 9001 stayed
 closed. Readiness still reported the pre-existing stopped Reasoner (503).
 The final protected deployment record and rollback environment are at
 `/home/kotori9/.local/state/dgx-moa/backups/hermes-latency-20261006T074215Z`.
+
+## 2026-10-06 — reopened Hermes latency and workspace rejection investigation
+
+The preceding short canaries did not certify long Hermes work. A read-only
+snapshot at 17:10 KST showed completed requests taking 6.112 and 115.182 seconds,
+a failed request taking 226.576 seconds, two additional sub-second failures,
+and one request still running. Executor TTFT for the slow completed/failed
+requests was 43.236/43.702 seconds. Later requests repeated the same failure.
+Do not describe the earlier goal closeout as proof that these problems were
+resolved.
+
+The authenticated client session had `identity_quality=client_unspecified`,
+no workspace path/header, and successful native `terminal` output from
+`pwd && ls -a` reporting `/home/monad`. Absolute client paths below that cwd
+were rejected as `workspace_violation`; a bounded correction could repeat the
+same rejection. These are client-side tool paths, not Gateway host paths.
+The source also read only `cmd` in the shared tool-command evidence helper,
+although Hermes native terminal uses `command`. This prevented some recorded
+inventory/validation commands from being recognized by its callers.
+
+The canonical evidence snapshot was 173,624 bytes and its Executor projection
+176,883 bytes; the recorded rendered request was 272,685 bytes / 80,791 provider
+input tokens in the final inspected request. Historical tool output was
+repeated in the dynamic projection as well as retained client history. The
+production observation window was 12 messages; compression also discarded
+leading client system/developer policy when that window moved.
+
+The candidate retains initial client policy, uses the existing discretionary
+projection budget mechanism with a 64 KiB Executor target, renders compact
+JSON, recognizes both native terminal command fields, and uses successful
+session-local native cwd probes only when explicit/configured workspace scope
+is absent. Once learned, the observed scope persists beyond history eviction.
+It does not authorize guessed paths, `/`, failed probes, file text, another
+session's observations, or paths outside the resulting boundary. Workspace
+scope participates in the action revision so rejection under an absent scope
+is not confused with a duplicate failure after real scope becomes available.
+
+Before an independently initiated Executor restart, an isolated read-only
+replay of the actual session's canonical evidence plus reconstructed recent
+native history produced an exact `read_file` call for the same client target.
+Baseline `4dc8168` used 65,320 input tokens; its cold TTFT/total was
+26.448/27.039 seconds and preflight rejected the call. Exact unchanged baseline
+repeats had 0.470/0.471-second TTFT, illustrating why repeat-only canaries are
+insufficient. Candidate rolling-evidence turns used 26,987/26,177/25,795 input
+tokens, TTFT 11.058/10.720/10.552 seconds, and total
+11.665/11.332/11.160 seconds; all three exact calls passed preflight and
+reported zero reasoning tokens. These measurements establish a narrower
+context/call replay result, not successful completion of the original remote
+production objective. Private payloads/results remain outside Git at
+`/tmp/moa-long-context-20261006`.
+
+The first full candidate suite passed 1,302 tests in 57.24 seconds. Subsequent
+workspace-persistence and first-declaration regressions plus the affected
+controller/action/projection/compression suites passed 175 tests in 11.24
+seconds. Ruff and mypy passed. The only test warning was the upstream
+Starlette TestClient/httpx deprecation. The user's `ssh monad` access hold was
+respected; no remote client configuration or goal state was mutated.
+
+Physical follow-up encountered connection refusal during a separate operator
+Executor rebind/restart. The user confirmed that tailnet-direct testing was in
+progress. This patch does not own or alter that inference topology. Comparable
+follow-up measurements require a stable Executor; neither its downtime nor
+its rebind is attributable to this Gateway candidate.
+
+The final candidate also summarizes successful tool `stdout`/`stderr`/`output`
+with the existing head/error/tail compressor before whole-item budget eviction.
+Each summary carries exact omitted-character counts; full source payloads stay
+in the immutable snapshot. Policy, failures, test/diff evidence, arguments,
+original contract, and model contributions are not shortened by this step.
+A 16-part dependency regression retains every early marker and final next-link
+while validating both snapshot and projection hashes. The final full suite
+passed 1,305 tests in 76.73 seconds; Ruff and mypy passed. Graphify was refreshed
+before and after the code edits in AST/code-only mode; semantic docs extraction
+was omitted, and its reported unsupported/zero-node sources are not claimed
+as inspected semantic evidence.

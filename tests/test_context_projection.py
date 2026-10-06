@@ -402,7 +402,10 @@ def test_role_targets_bound_discretionary_evidence_without_dropping_original_con
 
     assert len(planner.model_dump_json().encode()) <= ROLE_CONTEXT_TARGET_BYTES["planner"]
     assert len(executor.model_dump_json().encode()) <= ROLE_CONTEXT_TARGET_BYTES["executor"]
-    assert len(planner.runtime_evidence) < len(executor.runtime_evidence)
+    assert executor.provenance.included_evidence_ids
+    assert executor.request_inputs[0].payload()["content"] == "original request"
+    assert json.loads(executor.request_constraints_json[0]) == "hard constraint"
+    assert json.loads(executor.acceptance_criteria_json[0]) == "acceptance criterion"
     assert planner.request_inputs[0].payload()["content"] == "original request"
     assert json.loads(planner.request_constraints_json[0]) == "hard constraint"
     assert json.loads(planner.acceptance_criteria_json[0]) == "acceptance criterion"
@@ -496,3 +499,35 @@ def test_role_projection_deduplicates_harness_messages_with_new_ids() -> None:
     projection = project_role_context(source, "executor", stage="fanout")
 
     assert [item.input_id for item in projection.request_inputs] == ["new", "user"]
+
+
+def test_executor_summary_keeps_early_dependency_values_and_original_tool_evidence() -> None:
+    outputs = [
+        runtime_evidence_item(
+            f"part-{index}",
+            "tool",
+            {
+                "stdout": f"marker=part-{index}\n"
+                + "inert reference\n" * 2000
+                + f"\nnext=part-{index + 1}"
+            },
+        )
+        for index in range(16)
+    ]
+    source = build_runtime_evidence_snapshot(
+        request_id="long-linked-reads",
+        objective="join every observed marker in order",
+        runtime_evidence=outputs,
+    )
+    projection = project_role_context(source, "executor", stage="fan_in")
+    assert len(projection.runtime_evidence) == len(outputs)
+    for original, summarized in zip(
+        source.runtime_evidence, projection.runtime_evidence, strict=True
+    ):
+        index = original.evidence_id.removeprefix("part-")
+        assert f"marker=part-{index}" in summarized.payload()["stdout"]
+        assert f"next=part-{int(index) + 1}" in summarized.payload()["stdout"]
+        assert summarized.payload()["projection_omitted_characters"]["stdout"] > 0
+        assert len(original.payload()["stdout"]) > 20000
+    assert RoleContextProjection.model_validate(projection.model_dump(mode="json")) == projection
+    assert RuntimeEvidenceSnapshot.model_validate(source.model_dump(mode="json")) == source

@@ -164,3 +164,22 @@ def test_trace_schema_rejects_wrong_version() -> None:
     trace["schema_version"] = "wrong"
     with pytest.raises(ValueError, match="unsupported trace schema version"):
         validate_trace(trace)
+
+
+def test_long_history_keeps_client_policy_and_native_tool_pairs() -> None:
+    policy = {"role": "system", "content": "client safety policy"}
+    messages = [policy, {"role": "user", "content": "original task"}]
+    for index in range(8):
+        messages.extend(
+            [
+                {"role": "assistant", "tool_calls": [{"id": f"call-{index}"}]},
+                {"role": "tool", "tool_call_id": f"call-{index}", "content": str(index)},
+            ]
+        )
+    retained = compress_messages(messages, Limits(max_retained_observations=3))
+    assert retained[0] == policy
+    assert retained[1]["content"] == "original task"
+    calls = {call["id"] for message in retained for call in message.get("tool_calls", [])}
+    assert all(
+        message["tool_call_id"] in calls for message in retained if message["role"] == "tool"
+    )
