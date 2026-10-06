@@ -11180,3 +11180,25 @@ workspace was established by native `pwd` without workspace headers, and
 successful validation ended naturally below the turn cap. Private evidence:
 `/tmp/moa-physical-20261006-r9-flash-preserving` and
 `/tmp/moa-production-heavy-noheaders-20261006-r8`. No SSH to `monad` occurred.
+
+The already-running physical switch check observed backend running/waiting both
+zero, drained Gateway requests, and invoked the dashboard OFF path. Full stop
+completed in 3.359 seconds: container exited, systemd unit inactive, backend
+listener closed, desired OFF and fallback active. ON returned generation 40
+and LOADING with unknown weight progress (`null`). The operator then deferred
+further validation; the watcher was terminated before its final inference
+canary. Executor was left ON and subsequently reported READY. This is partial
+physical lifecycle evidence, not a completed OFF/ON workload certification.
+
+Runtime inspection identified the reported two-request queue threshold as the
+Gateway's `DGX_MOA_EXECUTOR_SCHEDULING.max_local_concurrency=2`, while the actual
+vLLM process already specified `--max-num-seqs 8`. At the operator's request,
+the private runtime configuration and overriding environment were aligned to
+`max_local_concurrency=8` (an intermediate setting of five was superseded).
+Gateway requests were drained before restarting only Gateway; the backend
+container and serving arguments were unchanged. Loaded configuration inspection
+confirmed eight admission slots and Executor ON/READY. No new concurrent
+inference workload or further toggle test was run, as explicitly deferred.
+Backend KV capacity may still queue requests whose combined contexts exceed its
+available pool; max sequences is an admission ceiling, not eight full-context
+memory reservations.

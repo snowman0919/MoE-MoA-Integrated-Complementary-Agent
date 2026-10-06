@@ -253,3 +253,11 @@ Gateway connects through loopback and retains bearer authentication. No SSH
 connection to `monad` was made and its Hermes configuration was not changed.
 Reasoner remains stopped: `/readyz` is 503 and the primary `dgx-moa` path remains
 fail-closed. Verified local inference uses `dgx-moa-fast` and `dgx-moa-unhold`.
+
+The subsequent operator instruction deferred further physical validation and
+aligned Gateway admission with vLLM's `--max-num-seqs 8`: the private runtime
+and `DGX_MOA_EXECUTOR_SCHEDULING` override now set `max_local_concurrency=8`.
+Only Gateway was restarted for this setting. The physical toggle watcher was
+stopped, Executor was left ON, and the backend container was not restarted for
+the concurrency change. Eight admission slots do not guarantee eight simultaneous
+500,000-token contexts; the shared KV pool remains the backend resource limit.
