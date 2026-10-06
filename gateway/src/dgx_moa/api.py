@@ -670,6 +670,11 @@ def create_app(
                         "temperature": 0,
                         "max_tokens": 16,
                         "stream": False,
+                        **(
+                            {"chat_template_kwargs": {"enable_thinking": False}}
+                            if model.reasoning_parser == "qwen3"
+                            else {}
+                        ),
                     },
                 )
                 return openai_inference_ready(response)
