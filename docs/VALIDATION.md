@@ -10973,3 +10973,15 @@ usage/API suites passed 320 tests in 36.41 seconds with the same upstream
 TestClient deprecation warning. The regression preserves existing completion
 and duration evidence, preserves requests at/after the startup cutoff, and
 proves a second recovery changes no records.
+
+The final startup-recovery deployment preserves the same reviewed executable
+changes plus the existing local production contracts. PR #121 merged as
+`main@6cab6c7af`; both immutable-head CI checks passed. Its preserving merge
+passed 329 usage/API tests in 33.53 seconds, plus Ruff and mypy. After a zero
+active-request drain, the fixed Gateway restarted at build `4dc8168764812cac70b3112e4b62081e55f6fb68`,
+PID 345368, `NRestarts=0`. Fast/unhold exact canaries passed in 1.989/1.828
+seconds; health was 200, unauthenticated models 401, and active requests zero.
+The Executor remained resident on loopback 30000; the superseded 9001 stayed
+closed. Readiness still reported the pre-existing stopped Reasoner (503).
+The final protected deployment record and rollback environment are at
+`/home/kotori9/.local/state/dgx-moa/backups/hermes-latency-20261006T074215Z`.
