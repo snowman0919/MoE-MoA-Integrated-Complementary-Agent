@@ -9,7 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .compression import message_fingerprint
+from .compression import compress_text, message_fingerprint
+from .config import Limits
 from .security import redact
 
 SNAPSHOT_SCHEMA_VERSION: Literal["runtime-evidence-snapshot-v1"] = "runtime-evidence-snapshot-v1"
@@ -19,7 +20,7 @@ ROLE_CONTEXT_TARGET_BYTES: dict[ProjectionRole, int] = {
     "reasoner": 96 * 1024,
     "planner": 80 * 1024,
     "frontier_a": 192 * 1024,
-    "executor": 524 * 1024,
+    "executor": 64 * 1024,
     "reviewer": 128 * 1024,
     "judge": 80 * 1024,
     "frontier_b": 128 * 1024,
@@ -573,6 +574,32 @@ def project_role_context(
         request_inputs_reversed.append(item)
     request_inputs = tuple(reversed(request_inputs_reversed))
     target_bytes = ROLE_CONTEXT_TARGET_BYTES[role]
+    if role == "executor":
+        # Preserve identities before eviction; raw output stays in the snapshot.
+        # ponytail: head/error/tail summaries can omit middle lines; reread targeted missing facts.
+        output_limit = max(256, target_bytes // max(1, len(evidence)) // 2)
+        output_limits = Limits(max_tool_output_characters=output_limit)
+        summarized = []
+        for runtime_item in evidence:
+            payload = runtime_item.payload()
+            if runtime_item.kind == "tool" and isinstance(payload, dict):
+                omitted = {}
+                for key in ("stdout", "stderr", "output"):
+                    value = payload.get(key)
+                    if isinstance(value, str) and len(value) > output_limit:
+                        payload[key] = compress_text(value, output_limits)
+                        omitted[key] = len(value) - len(payload[key])
+                if omitted:
+                    payload["projection_omitted_characters"] = omitted
+                    runtime_item = runtime_evidence_item(
+                        runtime_item.evidence_id,
+                        runtime_item.kind,
+                        payload,
+                        source_attempt_id=runtime_item.source_attempt_id,
+                        parent_evidence_ids=runtime_item.parent_evidence_ids,
+                    )
+            summarized.append(runtime_item)
+        evidence = tuple(summarized)
 
     def build() -> RoleContextProjection:
         source_attempt_values = [

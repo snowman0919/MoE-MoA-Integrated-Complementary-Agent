@@ -50,3 +50,19 @@ These identify the client tool workspace; the Gateway does not execute those
 file tools. An invented tool name or a path outside the declared workspace
 still fails preflight. Tool streams permit one bounded Executor correction and
 then return an explicit failure; reconnects must not be treated as completion.
+
+When no workspace header is available, the Gateway can use this session's
+successful native terminal `pwd` observation as its client workspace boundary.
+`pwd -P` and the historical `pwd && ls -a` probe are also recognized. The first
+successful probe establishes the fallback scope; later `cd`/`pwd` commands do
+not expand it. Failed probes, arbitrary file text, model-suggested paths, `/`,
+and observations from another session never establish a workspace. Explicit
+workspace metadata or configured roots take precedence. The Executor receives
+the resulting allowed roots; absolute paths inside them pass normal preflight
+and paths outside them remain rejected. This does not execute client tools on
+the Gateway host.
+
+After an earlier provider failure has paused a Hermes goal, retry or resume that
+goal after the Gateway fix is deployed; restarting the Gateway does not resume
+a paused client goal. Do not add a fallback provider to mask a workspace
+identity failure.

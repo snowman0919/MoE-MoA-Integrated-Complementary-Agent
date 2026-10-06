@@ -4750,3 +4750,87 @@ async def test_qwen_runtime_context_preserves_history_prefix(settings, stub_prov
         {"role": "system", "content": "Client policy"},
         {"role": "user", "content": "Answer briefly"},
     ]
+
+
+def test_client_workspace_discovery_is_scoped_to_successful_native_pwd(
+    settings, stub_provider: StubProvider, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(tmp_path / "cwd.db"), stub_provider)
+    state = SessionState(session_id="remote-cwd")
+    snapshot = controller.action_snapshot([])
+    initial_revision = controller.action_revision(state, snapshot).revision
+    assert controller.action_workspace_roots(state) == ()
+    probe = {
+        "tool_name": "terminal",
+        "exit_code": 0,
+        "normalized_arguments": {"command": "pwd && ls -a"},
+        "stdout_summary": "/home/monad\n.\n..\n",
+    }
+    state.tool_executions = [probe]
+    assert controller.action_workspace_roots(state) == ("/home/monad",)
+    assert controller.action_revision(state, snapshot).revision != initial_revision
+    authority = controller.action_authority(state)
+    assert authority._workspace_allows("/home/monad/develop/clef-use")
+    assert not authority._workspace_allows("/home/monad/../someone-else")
+    assert not authority._workspace_allows("/etc/passwd")
+    state.repository = {"workspace_path": "/home/monad/develop/clef-use"}
+    assert controller.action_workspace_roots(state) == ("/home/monad/develop/clef-use",)
+    state.repository = {}
+    for change in (
+        {"exit_code": 1},
+        {"failure_class": "TOOL_EXECUTION_FAILURE"},
+        {"tool_name": "read_file"},
+        {"stdout_summary": "/\n"},
+        {"normalized_arguments": {"command": "printf /etc"}},
+        {"normalized_arguments": {"command": "cd /etc && pwd"}},
+    ):
+        state.tool_executions = [{**probe, **change}]
+        assert controller.action_workspace_roots(state) == ()
+    assert controller.action_workspace_roots(SessionState(session_id="other-client")) == ()
+
+
+def test_native_terminal_command_is_recognized_by_shared_evidence_checks() -> None:
+    assert (
+        Controller.tool_execution_command(
+            {"normalized_arguments": {"command": "python -m unittest -q test_result"}}
+        )
+        == "python -m unittest -q test_result"
+    )
+    assert (
+        Controller.tool_execution_command({"normalized_arguments": '{"command":"git ls-files"}'})
+        == "git ls-files"
+    )
+
+
+def test_observed_client_workspace_survives_history_eviction(
+    settings, stub_provider: StubProvider, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(tmp_path / "scope.db"), stub_provider)
+    state = SessionState(session_id="persist-cwd")
+    state.tool_executions = [
+        {
+            "tool_name": "terminal",
+            "exit_code": 0,
+            "normalized_arguments": {"command": "pwd"},
+            "stdout_summary": "/home/monad\n",
+        }
+    ]
+    controller.select_route(state, {})
+    assert state.repository["workspace_path"] == "/home/monad"
+    state.tool_executions = []
+    controller.select_route(state, {})
+    assert controller.action_workspace_roots(state) == ("/home/monad",)
+    with pytest.raises(ValueError, match="repository identity changed"):
+        controller.select_route(state, {"repository": {"workspace_path": "/etc"}})
+
+
+def test_unspecified_repository_can_be_declared_once(
+    settings, stub_provider: StubProvider, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(tmp_path / "bind.db"), stub_provider)
+    state = SessionState(session_id="explicit-cwd")
+    controller.select_route(state, {})
+    controller.select_route(state, {"repository": {"workspace_path": "/home/monad/develop"}})
+    assert state.repository["workspace_path"] == "/home/monad/develop"
+    with pytest.raises(ValueError, match="repository identity changed"):
+        controller.select_route(state, {"repository": {"workspace_path": "/etc"}})
