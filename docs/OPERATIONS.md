@@ -1285,3 +1285,22 @@ the exact stop to finish, verify the unit is inactive, preserve failure events,
 reset only the automation latch and role retry state with the existing
 LifecycleStore recovery operations, then use authenticated `/on` once.
 Readiness requires both loopback `9001` health and Dashboard state `ready`.
+
+### Adopt a deployed Qwen Flash Docker Executor
+
+`systemd/dgx-moa-executor-flash.service` adopts the existing `qwen38-flash`
+container from the blazux recipe. It uses exact Docker start/stop, preserves the
+container and checkpoint, and does not rebuild or change inference parameters.
+Install the unit explicitly; checked-in lifecycle defaults stay disabled.
+A production override must configure `lifecycle_mode: fixed`, an exact Executor
+unit map, a tested remote fallback, and Executor idle unload disabled.
+Use the container's observed served name, context limit, and loopback API URL
+in the runtime model definition rather than an old SGLang runtime file.
+
+Operators can switch the local Executor in the dashboard MODELS tab. OFF drains
+already admitted local work before stopping the container and routes new work
+to the configured remote Executor. ON starts the same container and waits for
+health before local admission. Dashboard controls require an operator session
+and same-origin POST; ordinary API keys cannot stop local models. Cold weight
+progress remains unavailable unless the selected service journal provides a
+trustworthy counter. Keep rollback runtime settings and unit backups outside Git.

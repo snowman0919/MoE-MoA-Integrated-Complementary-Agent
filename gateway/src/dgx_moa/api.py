@@ -6473,7 +6473,8 @@ def create_app(
 
     def executor_control_available() -> bool:
         return bool(
-            configured.lifecycle_mode in {"fixed", "adaptive"}
+            configured.admin_api_enabled
+            and configured.lifecycle_mode in {"fixed", "adaptive"}
             and "executor" in configured.lifecycle_unit_map
             and configured.executor_scheduling.enabled
             and app.state.overflow_executor is not None
@@ -6681,6 +6682,25 @@ def create_app(
         if api_key_id is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid dashboard session")
         return api_key_id, request.app.state.api_keys.is_admin(api_key_id)
+
+    @app.get("/v1/dashboard/executor")
+    async def dashboard_executor_status(request: Request) -> dict[str, Any]:
+        _, operator = dashboard_identity(request)
+        if not operator:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "operator session required")
+        return await executor_control_status(request)
+
+    @app.post("/v1/dashboard/executor/{desired}")
+    async def dashboard_executor_desired(
+        desired: Literal["on", "off"], request: Request
+    ) -> dict[str, Any]:
+        api_key_id, operator = dashboard_identity(request)
+        if not operator:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "operator session required")
+        if request.headers.get("origin") != str(request.base_url).rstrip("/"):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "same-origin request required")
+        request.state.api_token_id = api_key_id
+        return await (admin_executor_on if desired == "on" else admin_executor_off)(request)
 
     @app.post("/v1/dashboard/session", dependencies=[Depends(auth)])
     async def dashboard_session(request: Request) -> Response:

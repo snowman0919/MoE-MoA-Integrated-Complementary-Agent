@@ -363,3 +363,88 @@ def test_admin_dashboard_runs_bounded_custom_provider_codex(
     assert "--skip-git-repo-check" in chat_args
     assert chat_kwargs["cwd"] == tmp_path / configured.run_dir / "admin-codex-chat"
     assert chat_input == "상태를 설명해".encode()
+
+
+def test_runtime_dashboard_executor_switch_requires_operator_and_same_origin(
+    settings: Settings,
+) -> None:
+    configured = Settings.model_validate(
+        settings.model_dump()
+        | {
+            "api_key": None,
+            "api_keys": {"operator": "operator-secret-value", "general": "general-secret-value"},
+            "admin_api_enabled": True,
+            "dashboard_enabled": True,
+            "admin_token_ids": ["operator"],
+            "lifecycle_mode": "fixed",
+            "lifecycle_unit_map": {"executor": "dgx-moa-dev-executor.service"},
+            "executor_scheduling": {
+                "enabled": True,
+                "remote_provider": "opencode",
+                "remote_endpoint": "https://opencode.invalid",
+            },
+        }
+    )
+    driver = FakeLifecycleDriver({"executor": "active"})
+    app = create_app(
+        configured,
+        overflow_executor=StubFlashExecutor(),  # type: ignore[arg-type]
+        lifecycle_driver=driver,
+        lifecycle_health_probe=lambda role: asyncio.sleep(0, result=True),
+        lifecycle_sleeper=lambda seconds: asyncio.Event().wait(),
+        lifecycle_memory_probe=lambda: 1_000,
+    )
+    with TestClient(app) as client:
+        assert client.get("/v1/dashboard/executor").status_code == 401
+        client.post(
+            "/v1/dashboard/session", headers={"Authorization": "Bearer general-secret-value"}
+        )
+        assert client.get("/v1/dashboard/executor").status_code == 403
+        assert (
+            client.post(
+                "/v1/dashboard/executor/off", headers={"Origin": "http://testserver"}
+            ).status_code
+            == 403
+        )
+        client.post(
+            "/v1/dashboard/session", headers={"Authorization": "Bearer operator-secret-value"}
+        )
+        assert client.get("/v1/dashboard/executor").json()["control_available"] is True
+        assert client.post("/v1/dashboard/executor/off").status_code == 403
+        assert (
+            client.post(
+                "/v1/dashboard/executor/off", headers={"Origin": "https://other.invalid"}
+            ).status_code
+            == 403
+        )
+        assert driver.calls.count(("stop", "executor")) == 0
+        response = client.post(
+            "/v1/dashboard/executor/off", headers={"Origin": "http://testserver"}
+        )
+        assert response.status_code == 200
+        assert response.json()["operator_enabled"] is False
+        assert driver.calls.count(("stop", "executor")) == 1
+        assert app.state.store.events("runtime-executor")[-1]["payload"]["operator"] == "operator"
+        assert (
+            client.post(
+                "/v1/dashboard/executor/on", headers={"Origin": "http://testserver"}
+            ).status_code
+            == 200
+        )
+        for _ in range(100):
+            if driver.calls.count(("start", "executor")):
+                break
+            time.sleep(0.01)
+        assert driver.calls.count(("start", "executor")) == 1
+        page = client.get("/dashboard").text
+        assert 'toggle.setAttribute("role","switch")' in page
+        assert '"/v1/dashboard/executor/"' in page
+        app.state.settings.admin_api_enabled = False
+        assert client.get("/v1/dashboard/executor").json()["control_available"] is False
+        assert (
+            client.post(
+                "/v1/dashboard/executor/off", headers={"Origin": "http://testserver"}
+            ).status_code
+            == 409
+        )
+        assert driver.calls.count(("stop", "executor")) == 1
