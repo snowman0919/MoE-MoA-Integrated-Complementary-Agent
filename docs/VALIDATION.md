@@ -11060,3 +11060,34 @@ passed 1,305 tests in 76.73 seconds; Ruff and mypy passed. Graphify was refreshe
 before and after the code edits in AST/code-only mode; semantic docs extraction
 was omitted, and its reported unsupported/zero-node sources are not claimed
 as inspected semantic evidence.
+
+After the separately managed Executor was ready, both revisions were measured
+sequentially against the same resident served model with rolling tool evidence
+and the same fixed native-call objective. Baseline `4dc8168` input tokens were
+65,329/64,602/64,011, TTFT 34.109/26.652/26.547 seconds, total
+34.887/27.506/27.312 seconds, with exact calls rejected in all three turns.
+Final candidate `aaf6de7cf` input tokens were 28,141/27,568/27,279,
+TTFT 11.526/11.518/11.180 seconds, total 12.294/12.277/12.393 seconds;
+all three exact native calls passed. TTFT medians were 26.652 versus 11.518
+seconds (56.8% lower in this replay); this is a measured context/call comparison,
+not a population latency benchmark or proof of the remote production objective.
+
+The real Hermes large-file/no-workspace-header scenario first executes native
+`pwd`, follows eight dependent JSON files containing roughly 14 KiB of inert
+reference text each, joins randomly generated markers, writes the result, and
+runs an independent unittest before final output. Candidate completed in
+133.227 seconds: all 16 API requests completed, one cwd binding was recorded,
+and no preflight rejection, correction, cancellation, or failed request occurred.
+The written hidden expected result and final marker both matched. The same
+scenario against baseline stopped after three provider failures in 43.170
+seconds: two requests completed, three failed, six workspace rejections,
+no result file and no final marker. Baseline CLI exit code was zero despite the
+incomplete turn; it is explicitly a failure, not a completed-task latency sample.
+Do not calculate a whole-task speedup from that shorter failed baseline run.
+Private raw evidence is at `/tmp/moa-physical-20261006-r7-heavy-noheaders` and
+its `-baseline` sibling. No SSH connection to `monad` was made.
+
+The preserving runtime merge retained the existing production-only contracts
+and passed 1,324 tests in 72.70 seconds, plus Ruff and mypy. No model weights,
+Executor parameters, inference binding, lifecycle settings, bearer requirement,
+or policy-disabled features were changed by this patch.
