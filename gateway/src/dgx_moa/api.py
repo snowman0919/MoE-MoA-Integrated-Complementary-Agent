@@ -6473,7 +6473,8 @@ def create_app(
 
     def executor_control_available() -> bool:
         return bool(
-            configured.lifecycle_mode in {"fixed", "adaptive"}
+            configured.admin_api_enabled
+            and configured.lifecycle_mode in {"fixed", "adaptive"}
             and "executor" in configured.lifecycle_unit_map
             and configured.executor_scheduling.enabled
             and app.state.overflow_executor is not None

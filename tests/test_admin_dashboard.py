@@ -439,3 +439,12 @@ def test_runtime_dashboard_executor_switch_requires_operator_and_same_origin(
         page = client.get("/dashboard").text
         assert 'toggle.setAttribute("role","switch")' in page
         assert '"/v1/dashboard/executor/"' in page
+        app.state.settings.admin_api_enabled = False
+        assert client.get("/v1/dashboard/executor").json()["control_available"] is False
+        assert (
+            client.post(
+                "/v1/dashboard/executor/off", headers={"Origin": "http://testserver"}
+            ).status_code
+            == 409
+        )
+        assert driver.calls.count(("stop", "executor")) == 1
