@@ -3434,6 +3434,33 @@ class Controller:
         )
         return decision
 
+    def executor_context_messages(
+        self, messages: list[dict[str, Any]], executor_system: str
+    ) -> list[dict[str, Any]]:
+        if self.settings.models["executor"].reasoning_parser == "qwen3":
+            # Keep changing evidence after history so Qwen can reuse its prefix cache.
+            policy = executor_system.split("\n\nROLE CONTEXT\n", 1)[0]
+            messages.insert(0, {"role": "system", "content": policy})
+            messages.append({"role": "system", "content": executor_system})
+            return messages
+        leading_systems = 0
+        for message in messages:
+            if message.get("role") != "system":
+                break
+            leading_systems += 1
+        if leading_systems:
+            messages[0]["content"] = (
+                executor_system
+                + "\n\n"
+                + "\n\n".join(
+                    text_content(message.get("content")) for message in messages[:leading_systems]
+                )
+            )
+            del messages[1:leading_systems]
+        else:
+            messages.insert(0, {"role": "system", "content": executor_system})
+        return messages
+
     def prepare_executor_draft(
         self, state: SessionState, request: dict[str, Any]
     ) -> dict[str, Any]:
@@ -3457,21 +3484,17 @@ class Controller:
                 }
             )
         )
-        messages.insert(
-            0,
-            {
-                "role": "system",
-                "content": self.prompt_sandwich(
-                    "executor",
-                    state,
-                    "Auxiliary evidence is pending; use current first-party evidence now.",
-                    "Take one useful independent step",
-                    available_tools=available_tools,
-                    runtime_projection=projection,
-                ),
-            },
+        body["messages"] = self.executor_context_messages(
+            messages,
+            self.prompt_sandwich(
+                "executor",
+                state,
+                "Auxiliary evidence is pending; use current first-party evidence now.",
+                "Take one useful independent step",
+                available_tools=available_tools,
+                runtime_projection=projection,
+            ),
         )
-        body["messages"] = messages
         return body
 
     async def prepare_executor(
@@ -5037,23 +5060,7 @@ class Controller:
             available_tools=available_tools,
             runtime_projection=executor_projection,
         )
-        leading_systems = 0
-        for message in messages:
-            if message.get("role") != "system":
-                break
-            leading_systems += 1
-        if leading_systems:
-            messages[0]["content"] = (
-                executor_system
-                + "\n\n"
-                + "\n\n".join(
-                    text_content(message.get("content")) for message in messages[:leading_systems]
-                )
-            )
-            del messages[1:leading_systems]
-        else:
-            messages.insert(0, {"role": "system", "content": executor_system})
-        body["messages"] = messages
+        body["messages"] = self.executor_context_messages(messages, executor_system)
         return body
 
     @staticmethod

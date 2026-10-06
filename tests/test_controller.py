@@ -4724,3 +4724,29 @@ def test_shell_wrapped_validation_allows_deferred_review(
     )
 
     assert controller.has_review_evidence(state, {})
+
+
+@pytest.mark.asyncio
+async def test_qwen_runtime_context_preserves_history_prefix(settings, stub_provider) -> None:  # type: ignore[no-untyped-def]
+    from dgx_moa.providers import ModelProvider
+
+    settings.models["executor"].reasoning_parser = "qwen3"
+    controller = Controller(settings, StateStore(settings.state_db), stub_provider)
+    state = SessionState(session_id="prefix-cache", objective="Answer briefly")
+    history = [
+        {"role": "system", "content": "Client policy"},
+        {"role": "user", "content": "Answer briefly"},
+    ]
+    first = await controller.prepare_executor(state, {"messages": history}, ("executor",))
+    second = await controller.prepare_executor(state, {"messages": history}, ("executor",))
+    first_body = ModelProvider.body("executor", settings.models["executor"], first)
+    second_body = ModelProvider.body("executor", settings.models["executor"], second)
+    assert first_body["messages"][:-1] == second_body["messages"][:-1]
+    assert first_body["messages"][-1] != second_body["messages"][-1]
+    assert "IMMUTABLE ROLE POLICY" in first_body["messages"][0]["content"]
+    assert "Client policy" in first_body["messages"][0]["content"]
+    assert "ROLE CONTEXT" in first_body["messages"][-1]["content"]
+    assert history == [
+        {"role": "system", "content": "Client policy"},
+        {"role": "user", "content": "Answer briefly"},
+    ]

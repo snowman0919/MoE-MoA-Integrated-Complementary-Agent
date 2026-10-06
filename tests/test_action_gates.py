@@ -139,7 +139,7 @@ def test_chat_stream_records_schema_mismatch(settings, stub_provider: StubProvid
 
     if response is not None:
         assert response.status_code == 200
-        assert "schema_mismatch" in response.text
+        assert "call-preserved" in response.text
     assert _rejected_events(client.app, "gate-chat-stream")
 
 
@@ -245,7 +245,7 @@ async def test_responses_stream_records_schema_mismatch(
             )
             assert isinstance(chat_response, StreamingResponse)
             text = b"".join([chunk async for chunk in chat_response.body_iterator]).decode()
-            assert "schema_mismatch" in text
+            assert "call-preserved" in text
         except ValueError as error:
             assert "schema_mismatch" in str(error)
     assert _rejected_events(app, "gate-responses-stream")
@@ -329,3 +329,85 @@ def test_tool_result_continuation_does_not_double_execute(
     assert second.status_code == 200
     assert second.json()["choices"][0]["message"]["content"] == "done"
     assert len(seen) == 2
+
+
+@pytest.mark.parametrize("invalid", ["fragmented", "unknown", "schema", "unrecoverable"])
+@pytest.mark.parametrize("endpoint", ["chat", "responses"])
+def test_stream_tool_preflight_is_complete_and_correction_is_bounded(
+    settings, stub_provider: StubProvider, invalid: str, endpoint: str
+) -> None:  # type: ignore[no-untyped-def]
+    import json
+
+    corrections = []
+    original = stub_provider.complete
+
+    async def corrected(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        corrections.append(request)
+        response = await original(role, model, request, **kwargs)
+        if invalid == "unrecoverable":
+            response["choices"][0]["message"]["tool_calls"][0]["function"]["name"] = "invented"
+        return response
+
+    async def streamed(role, model, request, **kwargs):  # type: ignore[no-untyped-def]
+        async def upstream():  # type: ignore[no-untyped-def]
+            name = (
+                "ter"
+                if invalid == "fragmented"
+                else "terminal"
+                if invalid == "schema"
+                else "invented"
+            )
+            arguments = '{"command":42}' if invalid == "schema" else '{"command":"echo hi"}'
+            fragments = [
+                {
+                    "index": 0,
+                    "id": "call-safe",
+                    "type": "function",
+                    "function": {"name": name, "arguments": arguments},
+                }
+            ]
+            yield (
+                "data: " + json.dumps({"choices": [{"delta": {"tool_calls": fragments}}]}) + "\n\n"
+            ).encode()
+            if invalid == "fragmented":
+                yield (
+                    b'data: {"choices":[{"delta":{"tool_calls":'
+                    b'[{"index":0,"function":{"name":"minal"}}]}}]}\n\n'
+                )
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return upstream()
+
+    stub_provider.stream = streamed  # type: ignore[method-assign]
+    stub_provider.complete = corrected  # type: ignore[method-assign]
+    session_id = f"bounded-{endpoint}-{invalid}"
+    with TestClient(create_app(settings)) as client:
+        client.app.state.provider = stub_provider
+        client.app.state.controller.provider = stub_provider
+        body = {"model": "dgx-moa-fast", "stream": True}
+        if endpoint == "chat":
+            body.update(messages=[{"role": "user", "content": "run it"}], tools=_tools())
+        else:
+            body.update(input="run it", tools=[{"type": "function", **_tools()[0]["function"]}])
+        response = client.post(
+            "/v1/chat/completions" if endpoint == "chat" else "/v1/responses",
+            headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
+            json=body,
+        )
+        state = client.app.state.store.get(session_id)
+    assert response.status_code == 200
+    assert len(corrections) == (0 if invalid == "fragmented" else 1)
+    assert state is not None
+    if invalid == "unrecoverable":
+        assert "invalid_executor_output" in response.text or "response.failed" in response.text
+        assert state.final_status == "failed"
+        assert not state.pending_tool_call_ids
+    else:
+        assert "invented" not in response.text
+        if endpoint == "chat" and invalid == "fragmented":
+            assert '"name": "ter"' in response.text and '"name":"minal"' in response.text
+        else:
+            assert "terminal" in response.text
+        assert state.pending_tool_call_ids
+        assert state.final_status != "failed"

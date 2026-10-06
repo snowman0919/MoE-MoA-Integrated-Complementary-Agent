@@ -10831,3 +10831,58 @@ to `REEXECUTE`/`RESOLVE_RESOURCE`/`ESCALATE_REVIEW`.
 
 Production was not restarted, deployed, or merged. No live-executor harness
 matrix has been run from this checkout; that remains the promotion blocker.
+
+## Hermes latency and streamed action recovery — 2026-10-06
+
+Read-only inspection covered the running Gateway (`main@4ee898f15`, PID
+3497105, `NRestarts=0`) and its retained SQLite/journal records. Among 136
+`hermes-agent` requests accepted since 2026-10-01 00:00 KST, 128 completed,
+seven were cancelled, and one failed. Completed-request median/p95 duration
+was 30.218/79.406 seconds; median Executor TTFT was 14.029 seconds and median
+decode duration 15.137 seconds. The earlier 24.044-second median includes
+`openai-python` requests using the same `legacy` credential ID and must not be
+presented as a Hermes-only benchmark. The journal recorded schema rejection
+for `terminal` on October 2 and `unknown_tool: process_manage` on October 5.
+The October 6 queue failure consumed about 47 seconds, including the existing
+45-second bounded local queue. This is distinct from decoding throughput.
+
+Executor logs showed full repeated prefill with zero cached tokens. The Qwen
+request path put changing Runtime snapshots before client history, invalidating
+its reusable prefix. The patch keeps immutable role policy and client history
+first and places current Runtime context after history, for Qwen only. Both
+preliminary and authoritative Executor preparations use that placement.
+The Runtime retains evidence/provenance and the Executor synthesis barrier.
+
+A controlled loopback test against the resident Flash-Next Executor submitted
+three requests per placement with about 29,600 prompt tokens, the same inert
+history, different Runtime-context snapshots, deterministic decoding, and a
+16-token cap. All six returned the required marker. Head placement TTFT was
+11.440, 11.626, and 11.454 seconds; tail placement TTFT was 11.485, 0.683, and
+0.315 seconds. This demonstrates repeated-prefix reuse for this workload;
+it is not a general throughput benchmark, a cold-load improvement, or proof
+that changing histories/client tool schemas will achieve those latencies.
+The provider returned no `prompt_tokens_details` counter, so API-level cache
+hit percentages are unavailable. Private artifacts remain under
+`/tmp/moa-physical-20261006`; no prompts, credentials, or weights were committed.
+
+Streamed tool calls now wait for complete names/arguments and terminal preflight
+before publication. One bounded correction uses the selected Executor path and
+remaining original deadline; a second invalid result emits a structured failure,
+never a successful continuation. Buffering is capped by the existing capture
+limit. Local waits and validation buffering receive named SSE pings. Responses
+translation accumulates fragmented tool names rather than replacing each piece.
+Observed upstream `[DONE]` alone no longer classifies rejected output as success.
+Regression coverage includes Chat/Responses, fragmented names, invented tools,
+wrong argument types, correction exhaustion, and unchanged Qwen history prefixes.
+Existing continuation mocks now advertise their tools, preserving fail-closed
+validation even when the incoming request supplies no tools.
+
+Validation: Ruff format/check and mypy passed. The full suite passed 1,289 tests
+in 75.52 seconds. After the review added the correction deadline wrapper,
+selected-provider preservation, and bounded tool buffering, the affected
+API/stream/action suites passed 378 tests in 46.68 seconds. The sole warning was
+the existing upstream Starlette TestClient deprecation. Graphify AST was refreshed
+before flow inspection and again before validation; semantic extraction was
+skipped because no provider credential was configured. No model/runtime-memory
+settings, role endpoints, authentication, lifecycle policy, or disabled feature
+gates were changed by this patch.
