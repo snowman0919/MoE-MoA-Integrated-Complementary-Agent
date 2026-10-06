@@ -448,3 +448,43 @@ def test_runtime_dashboard_executor_switch_requires_operator_and_same_origin(
             == 409
         )
         assert driver.calls.count(("stop", "executor")) == 1
+
+
+def test_default_qwen_lifecycle_probe_requires_a_public_non_thinking_answer(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+    from dgx_moa import api as api_module
+
+    configured = settings.model_copy(deep=True)
+    configured.models["executor"].reasoning_parser = "qwen3"
+    configured.lifecycle_mode = "fixed"
+    configured.lifecycle_unit_map = {"executor": "dgx-moa-dev-executor.service"}
+    probes: list[dict[str, Any]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, json={"data": [{"id": configured.models["executor"].served_name}]}
+            )
+        body = json.loads(request.content)
+        probes.append(body)
+        public = body.get("chat_template_kwargs", {}).get("enable_thinking") is False
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "READY." if public else None}}]}
+        )
+
+    monkeypatch.setattr(
+        api_module,
+        "managed_http_client",
+        lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    )
+    app = create_app(
+        configured,
+        lifecycle_driver=FakeLifecycleDriver({"executor": "active"}),
+        lifecycle_sleeper=lambda seconds: asyncio.Event().wait(),
+    )
+    with TestClient(app):
+        assert app.state.lifecycle_store.get("executor").state == "ready"
+        assert probes
+        assert all(body["chat_template_kwargs"]["enable_thinking"] is False for body in probes)
