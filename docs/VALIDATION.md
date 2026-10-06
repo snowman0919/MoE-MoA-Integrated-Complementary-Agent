@@ -11120,3 +11120,5 @@ production evidence with completion and review evidence both true. Live model
 verification was temporarily unavailable while the operator's independent
 SGLang topology experiment had no running container or listener on port 30000;
 this patch did not restart or reconfigure that experiment.
+The preserving runtime correction passed 1,327 tests in 62.65 seconds plus
+Ruff/mypy, including its production-only unknown-exit-code contracts.
