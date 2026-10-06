@@ -10,6 +10,7 @@ def test_required_systemd_units_exist() -> None:
     required = {
         "dgx-moa-gateway.service",
         "dgx-moa-executor.service",
+        "dgx-moa-executor-flash.service",
         "dgx-moa-planner.service",
         "dgx-moa-reviewer.service",
         "dgx-moa-judge.service",
@@ -87,7 +88,7 @@ def test_profile_scripts_wait_for_executor_and_verify_all_resident_roles_stop() 
 def test_unit_environment_and_hardening() -> None:
     for path in SYSTEMD.glob("dgx-moa-*.service"):
         unit = path.read_text()
-        if "codex-frontier" not in path.name:
+        if "codex-frontier" not in path.name and path.name != "dgx-moa-executor-flash.service":
             assert "EnvironmentFile=/home/kotori9/dgx-moa-agent/.env" in unit
             assert "EnvironmentFile=-/home/kotori9/dgx-moa-agent/.env.local" in unit
         assert "NoNewPrivileges=true" in unit
