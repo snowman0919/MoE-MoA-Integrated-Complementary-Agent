@@ -11113,3 +11113,10 @@ This evidence replay does not execute tools or alter the production session.
 Private evidence: `/tmp/moa-production-heavy-noheaders-20261006` and
 `/tmp/moa-completion-replay-20261006.py`. Physical completion verification remains
 required before considering the goal achieved.
+
+The correction passed 1,308 canonical tests in 71.07 seconds and Ruff/mypy.
+The preserving runtime candidate independently replayed the same historical
+production evidence with completion and review evidence both true. Live model
+verification was temporarily unavailable while the operator's independent
+SGLang topology experiment had no running container or listener on port 30000;
+this patch did not restart or reconfigure that experiment.
