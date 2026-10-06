@@ -108,6 +108,7 @@ from .remote_judge import (
 )
 from .review_evidence import (
     changed_paths_evidence,
+    execution_succeeded,
     is_successful_validation_execution,
     review_contract_evidence,
     review_tool_executions,
@@ -570,6 +571,11 @@ def normalize_tool_result(message: dict[str, Any]) -> dict[str, Any]:
     for key in ("changed_paths", "created_paths", "deleted_paths"):
         if isinstance(parsed.get(key), list):
             result[key] = [str(path) for path in parsed[key]]
+    if parsed.get("verified") is True and isinstance(parsed.get("files_modified"), list):
+        paths = [path for path in parsed["files_modified"] if isinstance(path, str) and path]
+        if paths:
+            result["changed_paths"] = paths
+            result["file_change_verified"] = True
     return result
 
 
@@ -990,8 +996,8 @@ class Controller:
         from .actions.output import OutputGateContext
 
         metadata = metadata if isinstance(metadata, dict) else {}
-        successful = tuple(item for item in state.tool_executions if item.get("exit_code") == 0)
-        failed = tuple(item for item in state.tool_executions if item.get("exit_code") != 0)
+        successful = tuple(item for item in state.tool_executions if execution_succeeded(item))
+        failed = tuple(item for item in state.tool_executions if not execution_succeeded(item))
         nodes = tuple(item for item in state.evidence_nodes if isinstance(item, dict))
         failures = tuple(item for item in state.failures if isinstance(item, dict))
         unresolved = tuple(
@@ -2502,6 +2508,12 @@ class Controller:
                 for key in ("changed_paths", "created_paths", "deleted_paths")
                 if key in result
             } or {"unknown_effect": True}
+            if (
+                not failed
+                and result.get("file_change_verified") is True
+                and function.get("name") in {"write_file", "edit_file", "patch"}
+            ):
+                effect["verified"] = True
             execution = {
                 "tool_execution_id": str(uuid.uuid4()),
                 "tool_call_id": str(message.get("tool_call_id", "")),
@@ -5432,7 +5444,7 @@ class Controller:
         if not (requests_change and targets_repository):
             return False
         changed = any(
-            execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
+            execution_succeeded(execution) and self.tool_execution_changes_files(execution)
             for execution in state.tool_executions
         )
         validated = self.has_review_evidence(state, metadata)
@@ -5458,7 +5470,7 @@ class Controller:
         if self.is_codebase_evaluation(state):
             return False
         return any(
-            execution.get("exit_code") == 0 and self.tool_execution_changes_files(execution)
+            execution_succeeded(execution) and self.tool_execution_changes_files(execution)
             for execution in state.tool_executions
         ) and not self.requires_implementation_tool_action(state, metadata)
 

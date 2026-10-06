@@ -4834,3 +4834,74 @@ def test_unspecified_repository_can_be_declared_once(
     assert state.repository["workspace_path"] == "/home/monad/develop"
     with pytest.raises(ValueError, match="repository identity changed"):
         controller.select_route(state, {"repository": {"workspace_path": "/etc"}})
+
+
+def test_hermes_verified_write_and_python3_test_finish_without_another_tool(
+    settings, stub_provider: StubProvider, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    controller = Controller(settings, StateStore(tmp_path / "native-write.db"), stub_provider)
+    state = SessionState(
+        session_id="hermes-native-write", objective="Write the result.txt file and validate it"
+    )
+    state.runtime_mode = "fast"
+    state.roles_required = ["executor"]
+    path = "/tmp/client-fixture/result.txt"
+    controller._observe(
+        state,
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "write-verified",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": json.dumps({"path": path, "content": "actual result"}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "write-verified",
+                "content": json.dumps(
+                    {
+                        "verified": True,
+                        "files_modified": [path],
+                        "bytes_written": 13,
+                    }
+                ),
+            },
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "test-python3",
+                        "function": {
+                            "name": "terminal",
+                            "arguments": json.dumps(
+                                {"command": "timeout 120s python3 -m unittest -q test_result"}
+                            ),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "test-python3",
+                "content": json.dumps(
+                    {
+                        "exit_code": 0,
+                        "stdout": "",
+                        "stderr": "Ran 1 test\nOK",
+                    }
+                ),
+            },
+        ],
+    )
+    # Preserve an unavailable process exit for a native file operation.
+    state.tool_executions[0]["exit_code"] = None
+    assert state.tool_executions[0]["filesystem_effect"]["verified"] is True
+    assert controller.implementation_completion_ready(state, {})
+    state.tool_executions[-1]["exit_code"] = 1
+    assert not controller.implementation_completion_ready(state, {})
