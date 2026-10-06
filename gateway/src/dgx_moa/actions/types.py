@@ -42,7 +42,8 @@ _PATH_ARGUMENT_KEYS = frozenset(
     {"path", "file", "filepath", "filename", "target", "targetpath", "uri", "workdir", "cwd"}
 )
 _SHELL_COMMAND_KEYS = frozenset({"cmd", "command"})
-_ABS_PATH_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_.:/-])/[^\s\"'` ,;|&<>()${}=]+")
+_ABS_PATH_TOKEN_RE = re.compile(r"/[^\s\"'` ,;|&<>()${}=]+")
+_SHELL_PATH_PREFIX_RE = re.compile(r"[^\s\"'` ,;|&<>()${}=]+$")
 _NULL_DEVICE_REDIRECT_RE = re.compile(
     r"(?<![<>])(?:[0-9]*|&)(?:>(?:>|\|)?|<)\s*"
     r"(?:/dev/null|\"/dev/null\"|'/dev/null')(?=$|[\s;|&()<>])"
@@ -60,6 +61,13 @@ def _shell_path_tokens(command: str) -> list[str]:
         if start >= 2 and command[start - 2] == ":" and command[start - 1] == "/":
             continue
         token = match.group(0).rstrip(".,:;!?)")
+        prefix_match = _SHELL_PATH_PREFIX_RE.search(command[:start])
+        prefix = prefix_match.group(0) if prefix_match else ""
+        if prefix and not prefix.startswith("-"):
+            # Git refs and relative names are not absolute paths; traversal still needs checking.
+            if ".." not in (prefix + token).split("/"):
+                continue
+            token = prefix + token
         if token:
             tokens.append(token)
     return tokens

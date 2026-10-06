@@ -2,51 +2,41 @@
 
 ## Dynamic MoA operational boundary
 
-Current operations follow `docs/STATE.md`. The fixed authenticated Gateway is a
-`PILOT_ACTIVE` release on `0.0.0.0:9000`; the overall project is
-`IN_PROGRESS`. The physically promoted Executor is the externally managed
-Qwen3.8 Flash-Next server on loopback `127.0.0.1:30000`. The superseded
-Executor port `9001` is closed. ExecutionGraph authority, specialist routing,
-and Remote Judge remain disabled.
+Current operations follow `docs/STATE.md`. The fixed bearer-authenticated
+Gateway listens on `0.0.0.0:9000`. Its local Executor URL is
+`http://127.0.0.1:18300`, served name `qwen3.8-flash-next`, context 500000.
+The active vLLM container is `qwen38-flash`; both its max sequences and Gateway
+local admission capacity are eight. The overall project remains `IN_PROGRESS`.
+ExecutionGraph authority, specialist routing and Remote Judge remain disabled.
 
-The ignored runtime overlay selects `local/qwen3.8-flash-next`, has lifecycle
-mode disabled and an empty unit map, and keeps the prior `local/qwen3.8-27b`
-definition as rollback data. Do not start `dgx-moa-executor.service` while the
-Flash-Next container owns GPU memory. The public aliases are `dgx-moa`
-(Reasoner + Executor), `dgx-moa-fast` (Executor-only with normal fallback), and
-`dgx-moa-unhold` (local Executor-only, no remote fallback).
+Use `~/.config/dgx-moa/flash-executor-runtime.yaml` and the production
+`.env.local` overrides as the inspected runtime configuration. Fixed lifecycle
+uses exactly `{"executor":"dgx-moa-executor-flash.service"}`. The dashboard
+MODELS operator switch controls full container stop/start through the existing
+Gateway drain path. Keep Executor ON and idle unload disabled. Checked-in
+lifecycle defaults remain disabled with an empty map; historical Phase 3
+parameters are preserved separately.
 
-The public catalog reports context `262144`. The checked-in Qwen deployment is a
-fail-closed candidate (`runtime_validated: false`, memory fraction `0.5`, DSpark
-off); it is not rewritten to claim authority for the ignored deployment. The
-active external server uses memory fraction `0.89`, FP8 KV, HashK R6, NEXTN 3/4,
-a 65K draft map, two request slots, ten Mamba slots, and eager decode. Phase 3
-65K/1.7-GB-KV MARLIN and the previous DSpark overlay remain preserved rollback
-evidence.
+`systemctl --user status dgx-moa-gateway.service dgx-moa-executor-flash.service`
+and `docker inspect qwen38-flash` inspect the current services. Probe backend
+models at `http://127.0.0.1:18300/v1/models`; authenticated Gateway models at
+`http://127.0.0.1:9000/v1/models`. `/healthz` is 200; `/readyz` remains 503 while
+the required Reasoner is stopped. Use `dgx-moa-fast` or `dgx-moa-unhold` for the
+verified Executor-only paths; do not claim primary MoA readiness.
 
-Operational checks:
+The user's explicit temporary tailnet experiment binds backend port 18300 to
+wildcard addresses. This does not change the default loopback policy. Preserve
+that authorized concurrent experiment until the operator changes its scope;
+Gateway auth does not protect requests sent directly to the backend.
 
-```bash
-curl -fsS http://127.0.0.1:30000/health
-ss -ltnp | rg ':(30000|9000|9001)\b'
-systemctl --user status dgx-moa-gateway.service
-```
-
-Authenticate Gateway checks from the protected environment; never paste token
-values into commands, logs, or documentation. The expected binding is `30000`
-loopback-only and `9000` wildcard with bearer authentication. `/readyz` also
-requires the externally managed Qwythos Reasoner to be resident.
-
-Rollback material is preserved at
-`/home/kotori9/qwen38-data/backups/omp-optimization-20260915T0259KST`.
-Because the backed-up environment re-enables the old systemd Executor, first
-stop the Gateway and the Flash-Next container; never load both large Executors
-at once. Then restore `dgx-moa/.env.local` to the repository `.env.local`,
-`dgx-moa/operational/runtime.yaml` to the configured ignored runtime path, and
-`opencode.json` to `~/.config/opencode/opencode.json` before restarting the
-Gateway. File modes must remain `0600`. The Qwen image, model trees, HashK
-view, draft maps, and all benchmark results are independent and were not
-deleted or overwritten by promotion.
+Port 30000, the old SGLang recipe, removed model trees and September rollback
+instructions are superseded. Use the matching private source/environment backup
+under `~/.local/state/dgx-moa/backups/` for the deployment being rolled back,
+preserving the current runtime config, credentials and the resident backend.
+Never restore an environment that points at deleted model/config paths or load
+two large Executors concurrently. Runtime files containing credentials stay
+mode 0600. Gateway-only patches use admission drain followed by restart of
+`dgx-moa-gateway.service`; they do not require a vLLM restart.
 
 Current Qwen P0 release certification is not complete. The Gateway base and
 quality-harness base are now digest-pinned, and the Gateway image builds, but

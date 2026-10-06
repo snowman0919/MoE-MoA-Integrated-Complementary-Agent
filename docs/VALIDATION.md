@@ -11269,3 +11269,14 @@ remain subject to workspace checks. No global `/dev` allowance was introduced.
 The focused 24-test action suite checks these forms and proves `/etc/passwd`
 redirection remains denied. Unknown process exit and completion evidence rules
 are unchanged. No model inference workload or SSH connection was needed.
+
+Codex review on PR #128 (comment 4195764808) identified that the Git-ref fix
+also hid option-attached absolute paths such as `tar -C/etc`. The shared extractor
+now distinguishes relative Git refs from option-attached paths, and continues
+to reject relative parent traversal. Regression examples include `tar -C/etc`,
+`git -C/etc`, compiler `-I/etc`, and traversal combined with null redirection.
+PR #127 comment 4194869109 was addressed by replacing the stale current-state
+and operational recovery instructions. Comment 4194869096 requests a loopback
+rebind, which conflicts with the user's explicit temporary tailnet experiment;
+the current authorities now state its scope and temporary exception, and no
+unapproved binding change was made. The focused action suite passed 25 tests.

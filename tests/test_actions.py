@@ -405,9 +405,27 @@ def test_null_device_redirections_are_not_workspace_file_access() -> None:
     assert _shell_path_tokens("command >/dev/null; rm /dev/null") == ["/dev/null"]
     snapshot = build_capability_snapshot(_tools())
     context = _context(snapshot)
-    assert preflight_action(
-        snapshot, "terminal", {"command": "git status 2>/dev/null"}, context
-    ).ok
+    assert preflight_action(snapshot, "terminal", {"command": "git status 2>/dev/null"}, context).ok
     assert not preflight_action(
         snapshot, "terminal", {"command": "git status >/etc/passwd"}, context
     ).ok
+
+
+def test_attached_options_and_relative_traversal_remain_workspace_bounded() -> None:
+    snapshot = build_capability_snapshot(_tools())
+    for command in (
+        "tar -C/etc -cf archive.tar passwd",
+        "git -C/etc status",
+        "cc -I/etc source.c",
+        "cat ../etc/passwd",
+        "cat subdir/../../etc/passwd",
+        "command 2>/dev/null; tar -C/etc -cf archive.tar passwd",
+    ):
+        result = preflight_action(snapshot, "terminal", {"command": command}, _context(snapshot))
+        assert not result.ok and result.code == "workspace_violation"
+    for command in (
+        "git -C/work status 2>/dev/null",
+        "git diff custom-remote/master",
+        "git diff refs/remotes/origin/master",
+    ):
+        assert preflight_action(snapshot, "terminal", {"command": command}, _context(snapshot)).ok

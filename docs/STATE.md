@@ -1,36 +1,34 @@
 # State
 
-Updated: 2026-09-16
+Updated: 2026-10-06
 
-## Current operational overlay — 2026-09-15
+## Current operational overlay — 2026-10-06
 
-The operator-approved ignored overlay now routes all public aliases to the
-externally managed Qwen3.8 Flash-Next Executor at `127.0.0.1:30000`:
+The operator-selected Flash Executor uses the blazux vLLM recipe. The ignored
+runtime configuration is `~/.config/dgx-moa/flash-executor-runtime.yaml`;
+production environment overrides are in `/home/kotori9/dgx-moa-agent/.env.local`.
 
 | Item | Current fact |
 | --- | --- |
 | Executor route | `local/qwen3.8-flash-next` |
-| Source | `orcarouter/Qwen3.8-Flash-Next-Uncensored-NVFP4@c1209bda15a6bbc4c68b585e93d40c0d85f50306` |
-| Image | `sha256:c5f00d2cd3c2e1163eac3a11e9922240a0628bc626f49d89902fc151859982b8` |
-| Runtime | SGLang, language-model-only, HashK R6, FP8 E4M3 KV, NEXTN 3/4, 65K draft map, context/KV 262,144, one request slot, eager decode |
-| Network | Executor loopback `30000`; authenticated Gateway wildcard `9000`; superseded Executor port `9001` is closed |
-| Lifecycle | Gateway lifecycle is disabled for the externally managed Executor; the old `qwen3.8-27b` entry remains in the overlay for rollback |
-| Health | Gateway `/healthz` and `/readyz` passed; unauthenticated `/v1/models` returned 401 |
-| Public behavior | `dgx-moa`: Reasoner + Executor; `dgx-moa-fast`: Executor-only with fallback; `dgx-moa-unhold`: local Executor-only without fallback |
+| Source | `nvidia/Qwen3.8-Flash-Next-NVFP4@fc694b54fb0174e0913e6adf86691ef85a4ead47`, fp8-hybrid layout |
+| Container/image | `qwen38-flash`, `qwen38-flash-dgx:v0.30` |
+| Runtime | vLLM 0.30, context 500000, max sequences 8, GPU utilization 0.80, automatic KV, MTP 2 |
+| Gateway admission | Eight local slots, one queued request, 45-second queue timeout |
+| Network | Gateway uses `127.0.0.1:18300`; bearer-authenticated Gateway listens on `0.0.0.0:9000` |
+| Lifecycle | Fixed; exact map `{"executor":"dgx-moa-executor-flash.service"}`; full container stop/start; normally resident, idle unload disabled |
+| Health | `/healthz` 200, unauthenticated `/v1/models` 401; `/readyz` 503 because required Reasoner is stopped |
+| Public behavior | `dgx-moa`: Reasoner + Executor, fail-closed without Reasoner; `dgx-moa-fast`: Executor-only with fallback; `dgx-moa-unhold`: local Executor-only without fallback |
 
-The new Executor passed quality 5/5, a real 250,000-input-token three-needle
-retrieval, native tool call/continuation, and OpenCode edit/test execution. Its
-single-request speed gate did not reach 70 tok/s: the final controlled short
-decode median was 47.68 tok/s, sgbench-compatible E2E median 44.12 tok/s, and
-real OpenCode server-decode median 28.96 tok/s. This is a narrow Executor
-promotion, not a claim that the overall Dynamic MoA project reached `STABLE`.
-
-The 2026-09-15 harness-safe retune kept the same target revision and MTP path,
-then capped KV at 262,144, reduced Mamba slots to five, disabled decode CUDA
-graphs, and compressed PLE to HashK R6. Its controlled median was 37.16 tok/s,
-still 39% above the preserved 27B Executor best run. Quality 5/5, actual 250K
-retrieval, and Codex/OpenCode/Hermes passed with the 65K Reasoner resident;
-the host-memory watchdog low-water was 7.086 GiB with zero swap.
+The backend currently also binds wildcard port 18300 for the user's explicitly
+approved direct tailnet experiment (2026-10-06). This is a temporary operator
+exception to the loopback-only repository default, not the recommended topology
+or an approved permanent policy change. Do not broaden it or treat its direct
+traffic as authenticated Gateway traffic. The user instructed that this ongoing
+experiment remain intact; restoring the default binding is a separate operator
+change. Executor connection and lifecycle checks do not certify the full MoA
+project. Historical SGLang settings and performance are in `docs/VALIDATION.md`;
+port 30000 and the removed SGLang assets are not current recovery targets.
 
 ## Authority layers
 
@@ -45,7 +43,7 @@ Do not collapse these three layers:
   `snowman0919/qwen38-executor-27b-dspark-nvfp4-v1@034de5c1743e53fcae8b0be9d3e68526522723ed`,
   SGLang, loopback `9001`, context 262,144, one request, and the remote route
   `MiMo -> DeepSeek` after local failure.
-- **Last physically promoted deployment:** a separately reviewed ignored
+- **Historical 27B deployment (superseded):** a separately reviewed ignored
   overlay uses the same pinned official source, ModelOpt
   `fbcdc16c2d67ca6db3f33b2848e923600f7012c7`, SGLang
   `0111b290312aa224962397db86c04fe112539fb2`, and DSpark
