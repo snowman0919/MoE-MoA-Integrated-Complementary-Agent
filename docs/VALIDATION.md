@@ -11224,3 +11224,9 @@ ineligible. Historical session replay against the corrected code bound and
 persisted the actual workspace, ignored the Git ref, and still denied paths
 outside the workspace. Replay reads production state without changing it or
 executing tools. Private replay script: `/tmp/moa-omp-scope-replay-20261006.py`.
+
+The correction passed 152 focused tests, 1,312 canonical tests in 71.28 seconds,
+and 1,331 preserving-runtime tests in 68.25 seconds, plus Ruff and mypy.
+Both canonical and preserving code replayed the historical OMP session with
+workspace binding, Git-ref exclusion, unknown exit preservation and outside-scope
+denial. This validation does not send new model workloads or access `monad`.
