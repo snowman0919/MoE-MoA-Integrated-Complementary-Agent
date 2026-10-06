@@ -11280,3 +11280,10 @@ and operational recovery instructions. Comment 4194869096 requests a loopback
 rebind, which conflicts with the user's explicit temporary tailnet experiment;
 the current authorities now state its scope and temporary exception, and no
 unapproved binding change was made. The focused action suite passed 25 tests.
+
+PR #129 Codex comment 4195971000 identified that a null-redirection match could
+consume a digit at the end of a preceding path, changing `/work2>/dev/null`
+into `/work`. The redirection exclusion now leaves all preceding characters,
+including descriptor digits, untouched. Added regression checks reject numeric
+out-of-scope filenames while retaining in-scope numbered filenames correctly.
+All 26 focused action tests passed after the review correction.

@@ -45,7 +45,7 @@ _SHELL_COMMAND_KEYS = frozenset({"cmd", "command"})
 _ABS_PATH_TOKEN_RE = re.compile(r"/[^\s\"'` ,;|&<>()${}=]+")
 _SHELL_PATH_PREFIX_RE = re.compile(r"[^\s\"'` ,;|&<>()${}=]+$")
 _NULL_DEVICE_REDIRECT_RE = re.compile(
-    r"(?<![<>])(?:[0-9]*|&)(?:>(?:>|\|)?|<)\s*"
+    r"(?<![<>])(?:>(?:>|\|)?|<)\s*"
     r"(?:/dev/null|\"/dev/null\"|'/dev/null')(?=$|[\s;|&()<>])"
 )
 

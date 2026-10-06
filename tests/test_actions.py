@@ -429,3 +429,14 @@ def test_attached_options_and_relative_traversal_remain_workspace_bounded() -> N
         "git diff refs/remotes/origin/master",
     ):
         assert preflight_action(snapshot, "terminal", {"command": command}, _context(snapshot)).ok
+
+
+def test_null_redirect_does_not_change_path_ending_in_digits() -> None:
+    from dgx_moa.actions.types import _shell_path_tokens
+
+    snapshot = build_capability_snapshot(_tools())
+    for command in ("cat /work2>/dev/null", "cat /work123>>/dev/null", "cat /work2</dev/null"):
+        result = preflight_action(snapshot, "terminal", {"command": command}, _context(snapshot))
+        assert not result.ok and result.code == "workspace_violation"
+    assert _shell_path_tokens("cat /work/file2>/dev/null") == ["/work/file2"]
+    assert _shell_path_tokens("cat /work/file2 2>/dev/null") == ["/work/file2"]
