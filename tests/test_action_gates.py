@@ -411,3 +411,30 @@ def test_stream_tool_preflight_is_complete_and_correction_is_bounded(
             assert "terminal" in response.text
         assert state.pending_tool_call_ids
         assert state.final_status != "failed"
+
+
+@pytest.mark.parametrize("endpoint", ["chat", "responses"])
+@pytest.mark.parametrize("alias", ["dgx-moa-fast", "dgx-moa-unhold"])
+@pytest.mark.parametrize("effort", [None, "high"])
+def test_executor_only_reasoning_defaults_to_none_but_honors_explicit_effort(
+    settings, stub_provider: StubProvider, endpoint: str, alias: str, effort: str | None
+) -> None:  # type: ignore[no-untyped-def]
+    with TestClient(create_app(settings)) as client:
+        client.app.state.provider = stub_provider
+        client.app.state.controller.provider = stub_provider
+        body = {"model": alias}
+        if endpoint == "chat":
+            body["messages"] = [{"role": "user", "content": "Reply briefly"}]
+            if effort:
+                body["reasoning_effort"] = effort
+        else:
+            body["input"] = "Reply briefly"
+            if effort:
+                body["reasoning"] = {"effort": effort}
+        response = client.post(
+            "/v1/chat/completions" if endpoint == "chat" else "/v1/responses",
+            headers={"Authorization": "Bearer test-secret"},
+            json=body,
+        )
+    assert response.status_code == 200
+    assert stub_provider.requests[-1]["reasoning_effort"] == (effort or "none")

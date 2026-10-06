@@ -10886,3 +10886,29 @@ before flow inspection and again before validation; semantic extraction was
 skipped because no provider credential was configured. No model/runtime-memory
 settings, role endpoints, authentication, lifecycle policy, or disabled feature
 gates were changed by this patch.
+
+### Physical follow-ups before merge
+
+The first live correction replay exposed a shared transport bug: `complete()`
+inherited `stream=true` and `stream_options` from the original stream request,
+then attempted JSON decoding on an SSE body. This also affects preliminary
+Executor work. The common provider now forces `stream=false` and removes
+stream-only options; a MockTransport regression verifies JSON transport and
+that the caller request remains unchanged.
+
+Inspection also found that both Executor-only aliases inherited the MoA
+`medium` effort when clients omitted it. They now default to `none`; explicitly
+requested effort remains unchanged, and primary `dgx-moa` retains its configured
+collaboration effort. Chat/Responses regressions cover both aliases and explicit
+`high`. With a 256-token cap, the isolated fast smoke returned the exact marker
+in 1.120 seconds. A controlled replay injected the journal's invalid
+`process_manage` stream and used the real resident Executor for correction:
+3.597 seconds, one valid native `read_file`, no invalid call published, exactly
+one pending continuation, and terminal `[DONE]`. The injected first attempt is
+synthetic; only the correction is live-model evidence.
+
+After these fixes, Ruff/check/mypy and the complete 1,298-test suite passed
+(75.25 seconds, the same upstream deprecation warning). The separate merge
+candidate preserving deployed local contracts passed 1,308 tests before these
+final transport/default-effort additions; its final revision is revalidated
+separately. No production source was changed during these isolated runs.

@@ -844,3 +844,26 @@ async def test_stream_iteration_cancellation_closes_response_and_client_once(
     assert clients[0].close_count == 0
     await provider.aclose()
     assert clients[0].close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_complete_forces_json_even_when_called_from_a_stream_request(settings) -> None:  # type: ignore[no-untyped-def]
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["stream"] is False
+        assert "stream_options" not in body
+        return httpx.Response(200, json={"choices": [{"message": {"content": "corrected"}}]})
+
+    provider = ModelProvider()
+    provider._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    request = {
+        "messages": [{"role": "user", "content": "work"}],
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    try:
+        result = await provider.complete("executor", settings.models["executor"], request)
+        assert result["choices"][0]["message"]["content"] == "corrected"
+        assert request["stream"] is True
+    finally:
+        await provider.aclose()

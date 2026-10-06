@@ -2200,7 +2200,9 @@ def create_app(
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "executor is not configured")
         raw = body.model_dump(exclude_none=True)
         raw["model"] = model_alias
-        raw.setdefault("reasoning_effort", configured.async_moa.default_effort)
+        raw.setdefault(
+            "reasoning_effort", "none" if mode == "fast" else configured.async_moa.default_effort
+        )
         provided_session_id = x_session_id or str(body.metadata.get("session_id") or "")
         session_id = provided_session_id or str(uuid.uuid4())
         if model_alias != body.model:

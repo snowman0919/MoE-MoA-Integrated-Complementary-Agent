@@ -464,6 +464,8 @@ class ModelProvider:
                     )
                 else:
                     body = self.body(role, model, request)
+                    body["stream"] = False
+                    body.pop("stream_options", None)
                     if role == "planner" and model.reasoning_parser == "nemotron_v3":
                         return await self.complete_reasoning_planner(client, model, body)
                     if role == "reviewer":
