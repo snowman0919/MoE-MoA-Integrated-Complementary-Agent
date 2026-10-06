@@ -2200,7 +2200,9 @@ def create_app(
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "executor is not configured")
         raw = body.model_dump(exclude_none=True)
         raw["model"] = model_alias
-        raw.setdefault("reasoning_effort", configured.async_moa.default_effort)
+        raw.setdefault(
+            "reasoning_effort", "none" if mode == "fast" else configured.async_moa.default_effort
+        )
         provided_session_id = x_session_id or str(body.metadata.get("session_id") or "")
         session_id = provided_session_id or str(uuid.uuid4())
         if model_alias != body.model:
@@ -4045,9 +4047,7 @@ def create_app(
                         if stream_cleaned:
                             return
                         stream_cleaned = True
-                        terminal = (
-                            stream_completed or observation.done_seen
-                        ) and not remote_failure
+                        terminal = stream_completed and not remote_failure
                         state.timings_ms["executor_total"] = round(
                             (time.monotonic() - executor_started) * 1000, 3
                         )
@@ -4295,16 +4295,53 @@ def create_app(
                                 )
 
                 async def stream_response() -> AsyncIterator[bytes]:
-                    nonlocal first_byte_at, loop_admission_failed, stream_completed
-                    admitted_tool_calls = 0
+                    nonlocal first_byte_at, loop_admission_failed, stream_completed, observation
                     accounted_total_tokens = 0
-                    published_output_characters = 0
                     buffered_tool_chunks: list[bytes] = []
+                    buffered_tool_bytes = 0
+                    published_output_characters = 0
                     buffered_content_chunks: list[bytes] = []
                     buffered_content_bytes = 0
                     content_gate_limit = configured.limits.max_stream_capture_bytes
                     content_blocked = False
                     content_block_message = ""
+
+                    def stream_tool_calls() -> list[dict[str, Any]]:
+                        calls = []
+                        indices = sorted(
+                            set(observation.tool_call_names)
+                            | set(observation.tool_call_ids_by_index)
+                        )
+                        if not indices:
+                            raise ValueError("invalid tool call: missing tool identity")
+                        for index in indices:
+                            call: dict[str, Any] = {
+                                "id": observation.tool_call_ids_by_index.get(index, ""),
+                                "type": "function",
+                                "function": {
+                                    "name": observation.tool_call_names.get(index, ""),
+                                    "arguments": observation.tool_call_arguments.get(index, ""),
+                                },
+                            }
+                            validate_executor_response(
+                                {"choices": [{"message": {"tool_calls": [call]}}]}
+                            )
+                            gate = request.app.state.controller.check_action_call(
+                                state, call, prepared.get("tools")
+                            )
+                            if not gate.ok:
+                                request.app.state.store.event(
+                                    state_session_id,
+                                    "action_preflight_rejected",
+                                    {
+                                        "code": gate.code,
+                                        "path": "chat_stream",
+                                        "capability": call["function"]["name"],
+                                    },
+                                )
+                                raise ValueError(f"invalid tool call: {gate.code}: {gate.message}")
+                            calls.append(call)
+                        return calls
 
                     def check_content_gate() -> str | None:
                         """Return a block reason if the draft must not stream yet."""
@@ -4382,63 +4419,15 @@ def create_app(
                                     )
                                 except StopAsyncIteration:
                                     break
-                                required_admissions = max(
-                                    len(observation.tool_call_ids),
-                                    1 if observation.tool_delta_seen else 0,
-                                )
-                                pending_tool_seen = observation.tool_delta_seen or bool(
-                                    observation.tool_call_ids
-                                )
-                                while admitted_tool_calls < required_admissions:
-                                    tool_name = observation.tool_call_names.get(admitted_tool_calls)
-                                    if not tool_name:
-                                        # Nameless fragment: the tool call is not
-                                        # complete yet, so there is nothing to
-                                        # validate. Wait for more chunks; the
-                                        # terminal gate enforces unknown tools.
-                                        break
-                                    if prepared.get("tools"):
-                                        gate = request.app.state.controller.check_action(
-                                            state,
-                                            tool_name,
-                                            observation.tool_call_arguments.get(
-                                                admitted_tool_calls, ""
-                                            ),
-                                            prepared.get("tools"),
-                                        )
-                                        if not gate.ok:
-                                            if gate.code in (
-                                                "malformed_arguments",
-                                                "schema_mismatch",
-                                                "unknown_resource",
-                                                "workspace_violation",
-                                            ):
-                                                # Possibly a partial argument
-                                                # fragment; the terminal gate
-                                                # validates complete arguments.
-                                                break
-                                            request.app.state.store.event(
-                                                state_session_id,
-                                                "action_preflight_rejected",
-                                                {
-                                                    "code": gate.code,
-                                                    "path": "chat_stream_delta",
-                                                    "capability": tool_name,
-                                                },
-                                            )
-                                            raise ValueError(
-                                                f"invalid tool call: {gate.code}: {gate.message}"
-                                            )
-                                    request.app.state.controller.admit_tool_call(state, tool_name)
-                                    admitted_tool_calls += 1
-                                tool_chunk_pending = pending_tool_seen and (
-                                    admitted_tool_calls < len(observation.tool_call_ids)
-                                    or admitted_tool_calls < required_admissions
-                                )
-                                if tool_chunk_pending:
-                                    # A tool call is still incomplete: buffer this
-                                    # chunk until its complete arguments pass the
-                                    # terminal preflight gate.
+                                if observation.tool_delta_seen:
+                                    # Tool names and arguments can be fragmented. Publish only
+                                    # complete calls that pass the same terminal preflight gate.
+                                    buffered_tool_bytes += len(chunk)
+                                    if (
+                                        buffered_tool_bytes
+                                        > configured.limits.max_stream_capture_bytes
+                                    ):
+                                        raise ValueError("tool stream exceeds capture limit")
                                     buffered_tool_chunks.append(chunk)
                                     continue
                                 observed_total_tokens = observation.usage.get("total_tokens", 0)
@@ -4461,9 +4450,6 @@ def create_app(
                                         "assistant_output_delta",
                                         {"role": "executor", "delta": delta},
                                     )
-                                for buffered in buffered_tool_chunks:
-                                    yield buffered
-                                buffered_tool_chunks.clear()
                                 if (
                                     not content_blocked
                                     and not observation.tool_call_ids
@@ -4496,6 +4482,8 @@ def create_app(
                                 if "first_downstream_byte" not in state.timings_ms:
                                     state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
                                     first_byte_at = time.time()
+                                if chunk == b"data: [DONE]\n\n":
+                                    stream_completed = not remote_failure
                                 yield chunk
                         if content_blocked:
                             raise ValueError(content_block_message)
@@ -4510,10 +4498,118 @@ def create_app(
                             yield buffered
                         buffered_content_chunks.clear()
                         buffered_content_bytes = 0
-                        for buffered in buffered_tool_chunks:
-                            yield buffered
-                        buffered_tool_chunks.clear()
+                        if observation.tool_delta_seen:
+                            calls = stream_tool_calls()
+                            for call in calls:
+                                request.app.state.controller.admit_tool_call(
+                                    state, call["function"]["name"]
+                                )
+                            for chunk in buffered_tool_chunks:
+                                if "first_downstream_byte" not in state.timings_ms:
+                                    state.timings_ms["first_downstream_byte"] = elapsed_ms(accepted)
+                                    first_byte_at = time.time()
+                                if chunk == b"data: [DONE]\n\n":
+                                    stream_completed = not remote_failure
+                                yield chunk
                         stream_completed = not remote_failure
+                    except ValueError as error:
+                        stage_status["executor_total"] = "failed"
+                        if not observation.tool_delta_seen:
+                            raise
+                        # One correction, before any tool call reaches the client. Never
+                        # relax preflight or retry a partially published content response.
+                        corrected = False
+                        if observation.tool_delta_seen and not published_output_characters:
+                            try:
+                                remaining = deadline - time.monotonic()
+                                if remaining <= 0:
+                                    raise TimeoutError
+                                retry = {
+                                    **prepared,
+                                    "tool_choice": "required",
+                                    "messages": [
+                                        *prepared.get("messages", []),
+                                        {
+                                            "role": "system",
+                                            "content": "The previous tool call failed preflight: "
+                                            + str(error)[:256]
+                                            + ". Use advertised tools and exact schemas. "
+                                            "Return a valid native tool call; do not return prose.",
+                                        },
+                                    ],
+                                }
+                                request.app.state.controller.record_invocation(
+                                    state,
+                                    "executor",
+                                    {"usage": observation.usage},
+                                    executor_started,
+                                    mode="invalid_tool_output",
+                                    rendered_prompt=request.app.state.controller.rendered_model_request(
+                                        "executor", prepared
+                                    ),
+                                )
+                                prepared.update(retry)
+                                async with asyncio.timeout(remaining):
+                                    response = (
+                                        await remote_executor_correction(
+                                            retry, "executor_tool_correction"
+                                        )
+                                        if executor_remote
+                                        else await request.app.state.provider.complete(
+                                            "executor",
+                                            configured.models["executor"],
+                                            retry,
+                                            timeout_seconds=remaining,
+                                            stage="executor_tool_correction",
+                                        )
+                                    )
+                                validate_executor_response(response)
+                                observation = StreamObservation(
+                                    configured.limits.max_stream_capture_bytes
+                                )
+                                async for chunk in completed_chat_sse(response):
+                                    observation.observe(chunk)
+                                calls = stream_tool_calls()
+                                for call in calls:
+                                    request.app.state.controller.admit_tool_call(
+                                        state, call["function"]["name"]
+                                    )
+                                response["choices"][0]["message"]["tool_calls"] = calls
+                                request.app.state.store.event(
+                                    state_session_id,
+                                    "executor_invalid_output_retried",
+                                    {
+                                        "reason": str(error)[:256],
+                                        "attempt": 2,
+                                        "path": "chat_stream",
+                                    },
+                                )
+                                async for chunk in completed_chat_sse(response):
+                                    if "first_downstream_byte" not in state.timings_ms:
+                                        state.timings_ms["first_downstream_byte"] = elapsed_ms(
+                                            accepted
+                                        )
+                                        first_byte_at = time.time()
+                                    if chunk == b"data: [DONE]\n\n":
+                                        stream_completed = True
+                                    yield chunk
+                                corrected = True
+                                stage_status["executor_total"] = "completed"
+                            except (ValueError, httpx.HTTPError, TimeoutError) as correction_error:
+                                error = ValueError(str(correction_error))
+                        if not corrected:
+                            observation.done_seen = False
+                            payload = {
+                                "error": {
+                                    "message": str(error)[:256],
+                                    "type": "backend_error",
+                                    "code": "invalid_executor_output",
+                                }
+                            }
+                            yield (
+                                "data: " + json.dumps(payload, separators=(",", ":")) + "\n\n"
+                            ).encode()
+                            yield b"data: [DONE]\n\n"
                     except LoopAdmissionError:
                         loop_admission_failed = True
                         stage_status["executor_total"] = "failed"
@@ -4551,7 +4647,14 @@ def create_app(
                         await finish_stream()
 
                 return ResponseOwnedStreamingResponse(
-                    ResponseOwnedIterator(stream_response(), finish_stream),
+                    ResponseOwnedIterator(
+                        keepalive_sse(
+                            stream_response(),
+                            interval_seconds=10,
+                            heartbeat=b"event: ping\ndata: {}\n\n",
+                        ),
+                        finish_stream,
+                    ),
                     media_type="text/event-stream",
                     headers={"X-Session-ID": session_id},
                 )

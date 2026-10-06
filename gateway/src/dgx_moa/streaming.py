@@ -934,7 +934,7 @@ async def responses_sse(
                     if tool_delta.get("id"):
                         item["call_id"] = tool_delta["id"]
                     if function.get("name"):
-                        name = str(function["name"])
+                        name = str(item["name"]) + str(function["name"])
                         compat_local_file = local_file_compat_applies(
                             name, function_tool_names or set()
                         )

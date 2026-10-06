@@ -2948,7 +2948,7 @@ async def test_stream_tool_payload_creates_continuation_when_finish_reason_is_st
     async with app.router.lifespan_context(app):
         app.state.provider = stub_provider
         app.state.controller.provider = stub_provider
-        response = await direct_chat(app, "stream-stop-continuation", stream=True)
+        response = await direct_chat(app, "stream-stop-continuation", stream=True, tools=True)
         assert isinstance(response, StreamingResponse)
         _ = b"".join([chunk async for chunk in response.body_iterator])
         state = app.state.store.get("stream-stop-continuation")
@@ -3039,6 +3039,12 @@ def test_stream_tool_continuation_without_session_header_correlates_by_token(
             json={
                 "model": "dgx-moa-agent",
                 "stream": True,
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {"name": "read_file", "parameters": {"type": "object"}},
+                    }
+                ],
                 "messages": [{"role": "user", "content": "work"}],
             },
         )
@@ -9294,7 +9300,14 @@ def test_responses_retries_stop_while_planned_work_is_pending(  # type: ignore[n
         response = client.post(
             "/v1/responses",
             headers={"Authorization": "Bearer test-secret", "X-Session-ID": session_id},
-            json={"model": "dgx-moa-fast", "input": "계속 진행해", "stream": True},
+            json={
+                "model": "dgx-moa-fast",
+                "input": "계속 진행해",
+                "stream": True,
+                "tools": [
+                    {"type": "function", "name": "exec_command", "parameters": {"type": "object"}}
+                ],
+            },
         )
         events = client.app.state.store.events(session_id)
 
@@ -9355,6 +9368,9 @@ def test_responses_retries_code_block_without_workspace_change(
                     "이 저장소에 rate_limiter.py를 구현하고 테스트해. Do not modify any other file."
                 ),
                 "stream": True,
+                "tools": [
+                    {"type": "function", "name": "exec_command", "parameters": {"type": "object"}}
+                ],
             },
         )
         events = client.app.state.store.events(session_id)

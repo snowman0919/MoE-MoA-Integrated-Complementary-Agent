@@ -33,3 +33,20 @@ reference under `model.api_key` is required for this gateway.
 
 During model loading or a profile transition, the gateway can return HTTP 503
 with `Retry-After`. Wait for the indicated interval before retrying.
+
+For a Hermes client that supports `model.default_headers`, send the actual
+client workspace to the Gateway preflight boundary. Keep the local file-tool
+anchor and HTTP workspace identity consistent:
+
+```yaml
+model:
+  default_headers:
+    X-Workspace-Path: /absolute/client/workspace
+    X-Workspace-ID: hermes-workspace
+```
+
+Set `TERMINAL_CWD=/absolute/client/workspace` in the Hermes process environment.
+These identify the client tool workspace; the Gateway does not execute those
+file tools. An invented tool name or a path outside the declared workspace
+still fails preflight. Tool streams permit one bounded Executor correction and
+then return an explicit failure; reconnects must not be treated as completion.

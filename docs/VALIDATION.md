@@ -10831,3 +10831,111 @@ to `REEXECUTE`/`RESOLVE_RESOURCE`/`ESCALATE_REVIEW`.
 
 Production was not restarted, deployed, or merged. No live-executor harness
 matrix has been run from this checkout; that remains the promotion blocker.
+
+## Hermes latency and streamed action recovery — 2026-10-06
+
+Read-only inspection covered the running Gateway (`main@4ee898f15`, PID
+3497105, `NRestarts=0`) and its retained SQLite/journal records. Among 136
+`hermes-agent` requests accepted since 2026-10-01 00:00 KST, 128 completed,
+seven were cancelled, and one failed. Completed-request median/p95 duration
+was 30.218/79.406 seconds; median Executor TTFT was 14.029 seconds and median
+decode duration 15.137 seconds. The earlier 24.044-second median includes
+`openai-python` requests using the same `legacy` credential ID and must not be
+presented as a Hermes-only benchmark. The journal recorded schema rejection
+for `terminal` on October 2 and `unknown_tool: process_manage` on October 5.
+The October 6 queue failure consumed about 47 seconds, including the existing
+45-second bounded local queue. This is distinct from decoding throughput.
+
+Executor logs showed full repeated prefill with zero cached tokens. The Qwen
+request path put changing Runtime snapshots before client history, invalidating
+its reusable prefix. The patch keeps immutable role policy and client history
+first and places current Runtime context after history, for Qwen only. Both
+preliminary and authoritative Executor preparations use that placement.
+The Runtime retains evidence/provenance and the Executor synthesis barrier.
+
+A controlled loopback test against the resident Flash-Next Executor submitted
+three requests per placement with about 29,600 prompt tokens, the same inert
+history, different Runtime-context snapshots, deterministic decoding, and a
+16-token cap. All six returned the required marker. Head placement TTFT was
+11.440, 11.626, and 11.454 seconds; tail placement TTFT was 11.485, 0.683, and
+0.315 seconds. This demonstrates repeated-prefix reuse for this workload;
+it is not a general throughput benchmark, a cold-load improvement, or proof
+that changing histories/client tool schemas will achieve those latencies.
+The provider returned no `prompt_tokens_details` counter, so API-level cache
+hit percentages are unavailable. Private artifacts remain under
+`/tmp/moa-physical-20261006`; no prompts, credentials, or weights were committed.
+
+Streamed tool calls now wait for complete names/arguments and terminal preflight
+before publication. One bounded correction uses the selected Executor path and
+remaining original deadline; a second invalid result emits a structured failure,
+never a successful continuation. Buffering is capped by the existing capture
+limit. Local waits and validation buffering receive named SSE pings. Responses
+translation accumulates fragmented tool names rather than replacing each piece.
+Observed upstream `[DONE]` alone no longer classifies rejected output as success.
+Regression coverage includes Chat/Responses, fragmented names, invented tools,
+wrong argument types, correction exhaustion, and unchanged Qwen history prefixes.
+Existing continuation mocks now advertise their tools, preserving fail-closed
+validation even when the incoming request supplies no tools.
+
+Validation: Ruff format/check and mypy passed. The full suite passed 1,289 tests
+in 75.52 seconds. After the review added the correction deadline wrapper,
+selected-provider preservation, and bounded tool buffering, the affected
+API/stream/action suites passed 378 tests in 46.68 seconds. The sole warning was
+the existing upstream Starlette TestClient deprecation. Graphify AST was refreshed
+before flow inspection and again before validation; semantic extraction was
+skipped because no provider credential was configured. No model/runtime-memory
+settings, role endpoints, authentication, lifecycle policy, or disabled feature
+gates were changed by this patch.
+
+### Physical follow-ups before merge
+
+The first live correction replay exposed a shared transport bug: `complete()`
+inherited `stream=true` and `stream_options` from the original stream request,
+then attempted JSON decoding on an SSE body. This also affects preliminary
+Executor work. The common provider now forces `stream=false` and removes
+stream-only options; a MockTransport regression verifies JSON transport and
+that the caller request remains unchanged.
+
+Inspection also found that both Executor-only aliases inherited the MoA
+`medium` effort when clients omitted it. They now default to `none`; explicitly
+requested effort remains unchanged, and primary `dgx-moa` retains its configured
+collaboration effort. Chat/Responses regressions cover both aliases and explicit
+`high`. With a 256-token cap, the isolated fast smoke returned the exact marker
+in 1.120 seconds. A controlled replay injected the journal's invalid
+`process_manage` stream and used the real resident Executor for correction:
+3.597 seconds, one valid native `read_file`, no invalid call published, exactly
+one pending continuation, and terminal `[DONE]`. The injected first attempt is
+synthetic; only the correction is live-model evidence.
+
+After these fixes, Ruff/check/mypy and the complete 1,298-test suite passed
+(75.25 seconds, the same upstream deprecation warning). The separate merge
+candidate preserving deployed local contracts passed 1,308 tests before these
+final transport/default-effort additions; its final revision is revalidated
+separately. No production source was changed during these isolated runs.
+
+### Hermes client completion and remaining runtime boundary
+
+Hermes client qualification on the authenticated isolated loopback Gateway
+completed in 55.445 seconds: exit code 0, exact `HERMES_CHAIN_OK` final marker,
+and an independently checked exact result file. The task followed eight
+JSON files in dependency order, wrote the collected result, and ran
+`python -m unittest -q test_result`. The Gateway recorded 15 completed
+`hermes-agent` requests, zero failed/cancelled Hermes requests, and 13 native
+tool executions (10 reads, two terminal calls, one write). The test configured
+`TERMINAL_CWD`, `X-Workspace-Path`, and `X-Workspace-ID` consistently, used
+only file/terminal tools, and supplied an explicit validation command.
+The following isolated fast smoke returned the exact marker in 1.068 seconds.
+
+Earlier bounded harness attempts were cancelled after exposing missing
+workspace anchoring/headers or missing implementation-validation evidence;
+one wrote the correct result but did not reach a final marker. They are not
+passing Hermes completions. Private results remain at
+`/tmp/moa-physical-20261006-r{2,3,4,5,6}`. This one multi-turn workload is
+component evidence, not certification of all long-running Hermes tasks.
+
+A protected read-only production inspection before deployment returned health
+200 but readiness 503: Executor ready, required Reasoner stopped. The isolated
+primary `dgx-moa` smoke also returned 503; it was not rerouted to fast mode.
+The required Reasoner's availability and the historical remote-address overlay
+exception are separate pre-existing operating issues. No alternate Reasoner,
+role exposure, model-memory experiment, or topology change was introduced.
