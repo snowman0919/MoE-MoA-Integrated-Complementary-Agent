@@ -10939,3 +10939,37 @@ primary `dgx-moa` smoke also returned 503; it was not rerouted to fast mode.
 The required Reasoner's availability and the historical remote-address overlay
 exception are separate pre-existing operating issues. No alternate Reasoner,
 role exposure, model-memory experiment, or topology change was introduced.
+
+### Reviewed deployment and stale-request drain recovery
+
+PR #120 merged as `main@3c6f5dc5b`. The isolated merge preserving deployed local
+contracts passed 1,317 tests in 60.14 seconds, plus Ruff and mypy. Production
+advanced from `4ee898f15` to the reviewed merge build `6cdf60b4a` and restarted
+only the fixed Gateway unit (new PID 338857). The Executor was not restarted.
+Authenticated fast/unhold canaries returned exact `RUNTIME_HERMES_OK` markers
+in 1.902/1.846 seconds. Health returned 200, unauthenticated models returned
+401, and the protected active-request count was zero. Readiness remained 503
+with Reasoner stopped, matching the pre-deployment state.
+
+The original drain counted two unfinished request rows accepted in August,
+even though the current Gateway process began October 1. These cannot be live
+requests of that process. Before repair, a consistent SQLite backup was saved
+with mode 0600 at
+`/home/kotori9/.local/state/dgx-moa/backups/hermes-latency-20261006T073603Z/gateway-before-orphan-recovery.db`.
+Only those two exact rows were marked cancelled with backend-error attribution;
+their duration is unavailable, not months of invented active time. Drain then
+reached zero and the reviewed restart proceeded. The same backup directory
+contains the protected environment copies and deployment result; Git rollback
+branch `rollback/hermes-latency-20261006T073603Z` preserves the prior source.
+
+The follow-up closes this recovery gap at startup, before admission: only
+unfinished requests accepted before startup are cancelled, with unavailable
+duration. Completed and later requests remain intact. Recovery is idempotent,
+content-free, and records a count event. It does not reset the lifecycle latch,
+change retention, delete traces, or classify interrupted work as completed.
+
+Startup-recovery validation: Ruff format/check and mypy passed; the affected
+usage/API suites passed 320 tests in 36.41 seconds with the same upstream
+TestClient deprecation warning. The regression preserves existing completion
+and duration evidence, preserves requests at/after the startup cutoff, and
+proves a second recovery changes no records.

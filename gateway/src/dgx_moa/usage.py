@@ -940,6 +940,18 @@ class UsageStore:
             ).fetchone()
         return int(row[0])
 
+    def recover_interrupted_requests(self, *, before: float) -> int:
+        """Cancel prior-process requests at startup; their duration is unavailable."""
+        self.flush()
+        with self._connect() as database:
+            cursor = database.execute(
+                "UPDATE request_usage SET status='cancelled', completed_at=?, "
+                "active_duration_seconds=NULL, retryable_failure_class='backend_error' "
+                "WHERE completed_at IS NULL AND accepted_at < ?",
+                (time.time(), before),
+            )
+        return cursor.rowcount
+
     def record_lifecycle_sample(self, sample: LifecycleSample) -> None:
         with self._connect() as database:
             database.execute(

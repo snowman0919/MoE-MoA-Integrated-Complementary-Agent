@@ -707,6 +707,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+        startup_at = time.time()
         store = StateStore(configured.state_db)
         provider = executor_backend or ModelProvider()
         project_root = Path(os.getenv("DGX_MOA_PROJECT_ROOT", ".")).resolve()
@@ -818,6 +819,11 @@ def create_app(
             invocation_report_path=configured.run_dir / "model-invocation-rates.csv",
             model_catalog=model_catalog,
         )
+        recovered = app.state.usage.recover_interrupted_requests(before=startup_at)
+        if recovered:
+            store.event(
+                "runtime-drain", "gateway_interrupted_requests_recovered", {"count": recovered}
+            )
         app.state.usage_session_namespace = uuid.uuid4()
         app.state.project_root = project_root
         app.state.provider = provider

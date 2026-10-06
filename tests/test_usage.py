@@ -967,3 +967,29 @@ def test_busy_hour_counts_do_not_make_a_sparse_optional_role_adaptive(tmp_path: 
     assert decision.sample_count == 1
     assert decision.threshold_source == "sparse_fallback"
     assert decision.threshold_seconds == 900.0
+
+
+def test_startup_recovery_preserves_terminal_and_new_requests(tmp_path: Path) -> None:
+    module = usage_module()
+    path = tmp_path / "usage.db"
+    store = module.UsageStore(path)
+    store.start(start_record(module, "old", 100))
+    store.start(start_record(module, "complete", 110))
+    store.finalize("complete", finalization(module, 114, 4))
+    store.start(start_record(module, "new", 250))
+    assert store.active_request_count() == 2
+    assert store.recover_interrupted_requests(before=200) == 1
+    assert store.recover_interrupted_requests(before=200) == 0
+    assert store.active_request_count() == 1
+    with sqlite3.connect(path) as database:
+        old = database.execute(
+            "SELECT status,completed_at,active_duration_seconds,retryable_failure_class "
+            "FROM request_usage WHERE request_id='old'"
+        ).fetchone()
+        completed = database.execute(
+            "SELECT status,active_duration_seconds FROM request_usage WHERE request_id='complete'"
+        ).fetchone()
+    assert old[0] == "cancelled" and old[1] is not None and old[2] is None
+    assert old[3] == "backend_error"
+    assert completed == ("completed", 4)
+    store.close()
